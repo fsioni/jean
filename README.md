@@ -2,7 +2,7 @@
 
 # Jean
 
-A desktop AI assistant for managing multiple projects, worktrees, and chat sessions with Claude CLI, Codex CLI, and OpenCode.
+A desktop AI assistant for managing multiple projects, worktrees, and chat sessions with Claude CLI, Codex CLI, Cursor CLI, and OpenCode.
 
 Tauri v2 · React 19 · Rust · TypeScript · Tailwind CSS v4 · shadcn/ui v4 · Zustand v5 · TanStack Query · CodeMirror 6 · xterm.js
 
@@ -10,9 +10,9 @@ Tauri v2 · React 19 · Rust · TypeScript · Tailwind CSS v4 · shadcn/ui v4 ·
 
 ## About the Project
 
-Jean is an opinionated native desktop app built with Tauri that gives you a powerful interface for working with Claude CLI, Codex CLI, and OpenCode across multiple projects. It has strong opinions about how AI-assisted development should work — managing git worktrees, chat sessions, terminals, and GitHub integrations in one cohesive workflow.
+Jean is an opinionated native desktop app built with Tauri that gives you a powerful interface for working with Claude CLI, Codex CLI, Cursor CLI, and OpenCode across multiple projects. It has strong opinions about how AI-assisted development should work — managing git worktrees, chat sessions, terminals, GitHub and Linear integrations in one cohesive workflow.
 
-No vendor lock-in. Everything runs locally on your machine with your own Claude CLI, Codex CLI, or OpenCode installation.
+No vendor lock-in. Everything runs locally on your machine with your own Claude CLI, Codex CLI, Cursor CLI, or OpenCode installation.
 
 For more information, take a look at [jean.build](https://jean.build).
 
@@ -39,14 +39,15 @@ For more information, take a look at [jean.build](https://jean.build).
 
 ## Features
 
-- **Project & Worktree Management** — Multi-project support, git worktree automation (create, archive, restore, delete), custom project avatars
-- **Session Management** — Multiple sessions per worktree, execution modes (Plan, Build, Yolo), archiving, recovery, auto-naming, canvas views
-- **AI Chat (Claude CLI, Codex CLI, OpenCode)** — Model selection (Opus, Sonnet, Haiku), thinking/effort levels, MCP server support, file mentions, image support, custom system prompts
-- **Magic Commands** — Investigate issues/PRs/workflows, code review with finding tracking, AI commit messages, PR content generation, merge conflict resolution, release notes
-- **GitHub Integration** — Issue & PR investigation, checkout PRs as worktrees, auto-archive on PR merge, workflow investigation
-- **Developer Tools** — Integrated terminal, open in editor (Zed, VS Code, Cursor, Xcode), git status, diff viewer (unified & side-by-side), file tree with preview
+- **Project & Worktree Management** — Multi-project support, linked projects for cross-project context, git worktree automation (create, archive, restore, delete), custom project avatars
+- **Session Management** — Multiple sessions per worktree, execution modes (Plan, Build, Yolo) with plan approval flows, session recap/digest, saved contexts with AI summarization, archiving with retention settings, recovery, auto-naming, canvas views
+- **AI Chat (Claude CLI, Codex CLI, Cursor CLI, OpenCode)** — Model selection (Opus 4.5, Opus 4.6, Opus 4.6 1M, Sonnet 4.6, Haiku), thinking/effort levels with per-mode overrides, MCP server support, Codex multi-agent collaboration, file picker & image attachments, chat search, notification sounds, custom system prompts, custom CLI profiles
+- **Magic Commands** — Investigate issues/PRs/workflows, code review with finding tracking, AI commit messages, PR content generation, merge conflict resolution, release notes generation, customizable per-prompt model/backend/effort selection
+- **GitHub Integration** — Dashboard with Issues, PRs, Security Alerts, and Advisories tabs, Dependabot investigation, checkout PRs as worktrees, auto-archive on PR merge, workflow investigation
+- **Linear Integration** — Issue investigation, context loading, per-project API key and team configuration
+- **Developer Tools** — Multi-dock terminal (floating, left, right, bottom), command palette, open in editor (Zed, VS Code, Cursor, Xcode, IntelliJ), git operations (status, stash, revert, fetch/merge with conflict detection), diff viewer (unified & side-by-side), file tree with preview, debug panel with token usage tracking
 - **Remote Access** — Built-in HTTP server with WebSocket support, token-based auth, web browser access
-- **Customization** — Themes (light/dark/system), custom fonts, customizable AI prompts, configurable keybindings
+- **Customization** — Themes (light/dark/system), custom fonts, customizable AI prompts, configurable keybindings, mobile swipe gestures
 
 ## Installation
 

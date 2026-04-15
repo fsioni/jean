@@ -8,8 +8,22 @@ import {
   chatQueryKeys,
 } from '@/services/chat'
 import { invoke } from '@/lib/transport'
-import type { Session, WorktreeSessions } from '@/types/chat'
+import type { Session, ThinkingLevel, WorktreeSessions } from '@/types/chat'
 import type { SessionCardData } from '../session-card-utils'
+
+const THINKING_LEVEL_VALUES = new Set<ThinkingLevel>([
+  'off',
+  'think',
+  'megathink',
+  'ultrathink',
+])
+
+function isThinkingLevel(
+  value: string | null | undefined
+): value is ThinkingLevel {
+  if (!value) return false
+  return THINKING_LEVEL_VALUES.has(value as ThinkingLevel)
+}
 
 interface UsePlanApprovalParams {
   worktreeId: string
@@ -118,9 +132,16 @@ export function usePlanApproval({
       setWaitingForInput(sessionId, false)
       setPendingPlanMessageId(sessionId, null)
 
-      const model = preferences?.selected_model ?? 'opus'
-      const thinkingLevel = preferences?.thinking_level ?? 'off'
       const sessionBackend = card.session.backend
+      const buildBackendOverride = preferences?.build_backend
+      const overridesApply = !buildBackendOverride || buildBackendOverride === sessionBackend
+      const model = overridesApply
+        ? (preferences?.build_model ?? preferences?.selected_model ?? 'opus')
+        : (preferences?.selected_model ?? 'opus')
+      const buildThinkingOverride = overridesApply ? preferences?.build_thinking_level : null
+      const thinkingLevel: ThinkingLevel = isThinkingLevel(buildThinkingOverride)
+        ? buildThinkingOverride
+        : (isThinkingLevel(preferences?.thinking_level) ? preferences.thinking_level : 'off')
 
       const isCodex = sessionBackend === 'codex'
       const baseMsg = isCodex
@@ -286,9 +307,16 @@ export function usePlanApproval({
       setWaitingForInput(sessionId, false)
       setPendingPlanMessageId(sessionId, null)
 
-      const model = preferences?.selected_model ?? 'opus'
-      const thinkingLevel = preferences?.thinking_level ?? 'off'
       const sessionBackend = card.session.backend
+      const yoloBackendOverride = preferences?.yolo_backend
+      const overridesApplyYolo = !yoloBackendOverride || yoloBackendOverride === sessionBackend
+      const model = overridesApplyYolo
+        ? (preferences?.yolo_model ?? preferences?.selected_model ?? 'opus')
+        : (preferences?.selected_model ?? 'opus')
+      const yoloThinkingOverride = overridesApplyYolo ? preferences?.yolo_thinking_level : null
+      const thinkingLevel: ThinkingLevel = isThinkingLevel(yoloThinkingOverride)
+        ? yoloThinkingOverride
+        : (isThinkingLevel(preferences?.thinking_level) ? preferences.thinking_level : 'off')
 
       const isCodexYolo = sessionBackend === 'codex'
       const baseMsgYolo = isCodexYolo

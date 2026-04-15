@@ -6,7 +6,7 @@ import { isMacOS, isWindows } from '../lib/platform'
 // Notification Sounds
 // =============================================================================
 
-export type NotificationSound = 'none' | 'workwork'
+export type NotificationSound = 'none' | 'workwork' | 'jobsdone'
 
 export const notificationSoundOptions: {
   value: NotificationSound
@@ -14,6 +14,7 @@ export const notificationSoundOptions: {
 }[] = [
   { value: 'none', label: 'None' },
   { value: 'workwork', label: 'Work Work' },
+  { value: 'jobsdone', label: "Job's Done" },
 ]
 
 // =============================================================================

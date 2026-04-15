@@ -232,27 +232,23 @@ export function usePlanDialogApproval({
 
       setExecutionMode(activeSessionId, mode)
 
-      const modelOverride =
-        mode === 'yolo' ? yoloModelRef.current : buildModelRef.current
       const backendOverride =
         mode === 'yolo' ? yoloBackendRef.current : buildBackendRef.current
+      const overridesApply = !backendOverride || backendOverride === selectedBackendRef.current
+
+      const modelOverride = overridesApply
+        ? (mode === 'yolo' ? yoloModelRef.current : buildModelRef.current)
+        : null
 
       if (modelOverride) {
         useChatStore.getState().setSelectedModel(activeSessionId, modelOverride)
       }
-      if (backendOverride) {
-        useChatStore
-          .getState()
-          .setSelectedBackend(
-            activeSessionId,
-            backendOverride as 'claude' | 'codex' | 'opencode'
-          )
-      }
 
-      const thinkingOverride =
-        mode === 'yolo'
-          ? yoloThinkingLevelRef.current
-          : buildThinkingLevelRef.current
+      const thinkingOverride = overridesApply
+        ? (mode === 'yolo'
+            ? yoloThinkingLevelRef.current
+            : buildThinkingLevelRef.current)
+        : null
       const resolvedThinkingLevel: ThinkingLevel = isThinkingLevel(
         thinkingOverride
       )

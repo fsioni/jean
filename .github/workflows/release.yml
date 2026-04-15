@@ -112,8 +112,12 @@ jobs:
           if [ -n "$APPIMAGE" ] && [ -f "$APPIMAGE" ]; then
             gh release upload "$RELEASE_TAG" "$APPIMAGE" --clobber
             # Upload updater artifacts (.tar.gz + .sig)
-            [ -f "${APPIMAGE}.tar.gz" ] && gh release upload "$RELEASE_TAG" "${APPIMAGE}.tar.gz" --clobber
-            [ -f "${APPIMAGE}.tar.gz.sig" ] && gh release upload "$RELEASE_TAG" "${APPIMAGE}.tar.gz.sig" --clobber
+            if [ -f "${APPIMAGE}.tar.gz" ]; then
+              gh release upload "$RELEASE_TAG" "${APPIMAGE}.tar.gz" --clobber
+            fi
+            if [ -f "${APPIMAGE}.tar.gz.sig" ]; then
+              gh release upload "$RELEASE_TAG" "${APPIMAGE}.tar.gz.sig" --clobber
+            fi
           fi
 
       - name: Patch latest.json for AppImage updater
@@ -127,6 +131,7 @@ jobs:
           ARCH_LABEL="amd64"
           PLATFORM_KEY="linux-x86_64"
           if [ "$(uname -m)" = "aarch64" ]; then
+            # Convention: "arm64" (not "aarch64") — must match jean.build download page
             ARCH_LABEL="arm64"
             PLATFORM_KEY="linux-aarch64"
           fi

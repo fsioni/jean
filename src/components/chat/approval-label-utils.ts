@@ -30,14 +30,18 @@ export function resolveApprovalLabel(
         selected_cursor_model?: string | null
         default_backend?: string | null
       }
-    | undefined
+    | undefined,
+  sessionBackend?: string | null
 ): string | null {
   if (!preferences) return null
-  const model =
-    mode === 'yolo' ? preferences.yolo_model : preferences.build_model
-  const backend =
+  const modeBackend =
     mode === 'yolo' ? preferences.yolo_backend : preferences.build_backend
-  const resolvedBackend = backend ?? preferences.default_backend ?? 'claude'
+  const overridesApply = !modeBackend || !sessionBackend || modeBackend === sessionBackend
+  const model = overridesApply
+    ? (mode === 'yolo' ? preferences.yolo_model : preferences.build_model)
+    : null
+  const backend = overridesApply ? modeBackend : null
+  const resolvedBackend = backend ?? sessionBackend ?? preferences.default_backend ?? 'claude'
   const backendDefaultModel =
     resolvedBackend === 'codex'
       ? (preferences.selected_codex_model ?? 'gpt-5.4')

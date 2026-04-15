@@ -2568,7 +2568,7 @@ export function ChatWindow({
                       <FloatingButtons
                         showApproveButton={hasPendingPlanApproval}
                         showFindingsButton={!areFindingsVisible}
-                        isAtBottom={isAtBottom}
+                        isAtBottom={isAtBottom || messages.length === 0}
                         approveShortcut={approveShortcut}
                         onApprove={floatingApprove}
                         onYoloApprove={floatingYoloApprove}
