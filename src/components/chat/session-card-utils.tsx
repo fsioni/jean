@@ -121,6 +121,32 @@ export interface ChatStoreState {
   sessionLabels: Record<string, LabelData>
 }
 
+export function sessionCanBeWaiting(session: Session): boolean {
+  return (
+    !session.last_run_status ||
+    session.last_run_status === 'running' ||
+    session.last_run_status === 'resumable' ||
+    (session.last_run_status === 'completed' &&
+      session.waiting_for_input_type === 'plan')
+  )
+}
+
+export function getEffectiveSessionWaiting(
+  session: Session,
+  storeState: Pick<
+    ChatStoreState,
+    'waitingForInputSessionIds' | 'reviewingSessions'
+  >
+): boolean {
+  const canBeWaiting = sessionCanBeWaiting(session)
+  if (!canBeWaiting) return false
+  if (session.waiting_for_input ?? false) return true
+  const isInReviewState =
+    storeState.reviewingSessions[session.id] || !!session.review_results
+  if (isInReviewState) return false
+  return storeState.waitingForInputSessionIds[session.id] ?? false
+}
+
 export function computeSessionCardData(
   session: Session,
   storeState: ChatStoreState
@@ -176,12 +202,7 @@ export function computeSessionCardData(
   // A session's waiting flag is only meaningful while the run is active, resumable,
   // or parked after a plan approval. Otherwise (e.g. completed non-plan run) the
   // flag is stale and must not be trusted — either in persisted state or Zustand.
-  const runCanBeWaiting =
-    !session.last_run_status ||
-    session.last_run_status === 'running' ||
-    session.last_run_status === 'resumable' ||
-    (session.last_run_status === 'completed' &&
-      session.waiting_for_input_type === 'plan')
+  const runCanBeWaiting = sessionCanBeWaiting(session)
 
   // Use persisted waiting_for_input flag from session metadata
   const persistedWaitingForInput =
@@ -247,18 +268,17 @@ export function computeSessionCardData(
   // Stale Zustand flag must not pin status to "waiting" when the backend has
   // already moved the session into review. Backend `waiting_for_input` still
   // flows through `persistedWaitingForInput` below, so genuine waiting wins.
-  const isInReviewState =
-    reviewingSessions[session.id] || !!session.review_results
-  const isExplicitlyWaiting =
-    isInReviewState || !runCanBeWaiting
-      ? false
-      : (waitingForInputSessionIds[session.id] ?? false)
+  const isExplicitlyWaiting = getEffectiveSessionWaiting(session, {
+    waitingForInputSessionIds,
+    reviewingSessions,
+  })
   const hasActionableStreamingPlan = hasStreamingExitPlan && !sessionSending
   const isWaitingFromMessages =
-    hasStreamingQuestion ||
-    hasActionableStreamingPlan ||
-    hasPendingQuestion ||
-    hasPendingExitPlan
+    runCanBeWaiting &&
+    (hasStreamingQuestion ||
+      hasActionableStreamingPlan ||
+      hasPendingQuestion ||
+      hasPendingExitPlan)
   // When sessionSending is true, persisted waiting_for_input from TanStack Query
   // may be stale (not yet refetched after approval). Only use it as fallback when idle.
   const isWaiting = sessionSending
@@ -381,13 +401,13 @@ const STATUS_GROUP_ORDER: {
   statuses: SessionStatus[]
 }[] = [
   { key: 'waiting', title: 'Waiting', statuses: ['waiting', 'permission'] },
-  { key: 'review', title: 'Review', statuses: ['review', 'completed'] },
-  { key: 'idle', title: 'Idle', statuses: ['idle'] },
   {
     key: 'inProgress',
     title: 'In Progress',
     statuses: ['planning', 'vibing', 'yoloing'],
   },
+  { key: 'review', title: 'Review', statuses: ['review', 'completed'] },
+  { key: 'idle', title: 'Idle', statuses: ['idle'] },
 ]
 
 /** Group cards by status. Returns only non-empty groups.

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import userEvent from '@testing-library/user-event'
+import { Zap } from 'lucide-react'
 import { render, screen } from '@/test/test-utils'
 import { MobileSettingsMenu } from './MobileSettingsMenu'
 import * as platform from '@/lib/platform'
@@ -77,6 +78,27 @@ describe('MobileSettingsMenu', () => {
 
     await user.click(screen.getByText('Model'))
     expect(onOpenBackendModelPicker).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows fast mode icon in the model row label', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        backendModelLabel={
+          <>
+            Codex · GPT 5.5
+            <Zap aria-label="Fast mode" />
+          </>
+        }
+        backendModelLabelText="Codex · GPT 5.5"
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+
+    expect(screen.getByLabelText('Fast mode')).toBeInTheDocument()
   })
 
   it('renders worktree PR row when prUrl + prNumber set; click opens externally', async () => {

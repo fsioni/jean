@@ -4879,7 +4879,7 @@ fn execute_summarization_claude(
     magic_backend: Option<&str>,
     reasoning_effort: Option<&str>,
 ) -> Result<ContextSummaryResponse, String> {
-    let model_str = model.unwrap_or("claude-opus-4-7");
+    let model_str = model.unwrap_or("claude-opus-4-7[1m]");
 
     // Per-operation backend > project/global default_backend
     let backend = resolve_magic_prompt_backend(app, magic_backend, worktree_id);
@@ -5386,7 +5386,8 @@ pub async fn resume_session(
 
         // === Codex crash recovery path ===
         if let Some(ref codex_tid) = run.codex_thread_id {
-            let had_active_turn = run.codex_turn_id.is_some();
+            let codex_turn_id = run.codex_turn_id.clone();
+            let had_active_turn = codex_turn_id.is_some();
             log::trace!(
                 "Resuming Codex run: {run_id}, thread={codex_tid}, had_active_turn={had_active_turn}"
             );
@@ -5420,20 +5421,15 @@ pub async fn resume_session(
                     &worktree_id_clone,
                     &run_id_clone,
                     &thread_id_clone,
-                    had_active_turn,
+                    codex_turn_id.as_deref(),
                 ) {
                     Ok(true) => {
                         log::info!(
                             "Codex crash recovery succeeded for session {session_id_clone}, run {run_id_clone}"
                         );
-                        // process_turn_events (if active turn) or
-                        // resume_codex_after_crash (if idle) already emitted
-                        // chat:done, so only emit here for non-active-turn
-                        // paths where the function handled completion internally.
-                        if !had_active_turn {
-                            emit_done(&app_clone, &session_id_clone, &worktree_id_clone);
-                        }
-                        // For active turns, process_turn_events emits chat:done.
+                        // process_turn_events (active turn) or
+                        // resume_codex_after_crash (idle/interrupted turn)
+                        // emits chat:done itself.
                     }
                     Ok(false) => {
                         // Thread expired — mark as crashed

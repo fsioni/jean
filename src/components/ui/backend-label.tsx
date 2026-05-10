@@ -1,6 +1,29 @@
+import type { ForwardRefExoticComponent, RefAttributes } from 'react'
+import type { LucideProps } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { ClaudeIcon } from '@/components/icons/ClaudeIcon'
+import { CodexIcon } from '@/components/icons/CodexIcon'
+import { OpenCodeIcon } from '@/components/icons/OpenCodeIcon'
+import { CursorIcon } from '@/components/icons/CursorIcon'
 import type { CliBackend } from '@/types/preferences'
+
+export type BackendIconComponent = ForwardRefExoticComponent<
+  LucideProps & RefAttributes<SVGSVGElement>
+>
+
+export function getBackendIcon(backend: CliBackend): BackendIconComponent {
+  switch (backend) {
+    case 'claude':
+      return ClaudeIcon
+    case 'codex':
+      return CodexIcon
+    case 'opencode':
+      return OpenCodeIcon
+    case 'cursor':
+      return CursorIcon
+  }
+}
 
 export function getBackendLabel(backend: CliBackend): string {
   switch (backend) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeSessionCardData,
+  getEffectiveSessionWaiting,
   type ChatStoreState,
 } from './session-card-utils'
 import type { Session } from '@/types/chat'
@@ -141,6 +142,25 @@ describe('computeSessionCardData', () => {
 
     expect(card.isWaiting).toBe(false)
     expect(card.status).toBe('review')
+  })
+
+  it('ignores stale Zustand waiting flag when remote run completed normally', () => {
+    const session: Session = {
+      ...createBaseSession(),
+      waiting_for_input: false,
+      is_reviewing: false,
+      last_run_status: 'completed',
+      last_run_execution_mode: 'build',
+    }
+    const storeState = createBaseStoreState({
+      waitingForInputSessionIds: { 'session-1': true },
+    })
+
+    const card = computeSessionCardData(session, storeState)
+
+    expect(getEffectiveSessionWaiting(session, storeState)).toBe(false)
+    expect(card.isWaiting).toBe(false)
+    expect(card.status).toBe('completed')
   })
 
   it('ignores stale persisted waiting_for_input on completed non-plan run', () => {

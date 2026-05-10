@@ -157,6 +157,7 @@ import { useWindowMaximized } from '@/hooks/use-window-maximized'
 import { useUIStore } from '@/store/ui-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useMainWindowEventListeners } from '@/hooks/useMainWindowEventListeners'
+import { useGlobalInputSanitizer } from '@/hooks/useGlobalInputSanitizer'
 import { useCloseSessionOrWorktreeKeybinding } from '@/services/chat'
 import { useUIStatePersistence } from '@/hooks/useUIStatePersistence'
 import { useSessionStatePersistence } from '@/hooks/useSessionStatePersistence'
@@ -295,6 +296,7 @@ export function MainWindow() {
 
   // Set up global event listeners (keyboard shortcuts, etc.)
   useMainWindowEventListeners()
+  useGlobalInputSanitizer()
 
   // Subscribe to Rust → React browser events (loading/loaded/title/nav/closed)
   useBrowserEvents()
@@ -654,6 +656,7 @@ export function MainWindow() {
         offset={toasterOffset}
         mobileOffset={toasterOffset}
         expand={true}
+        swipeDirections={['left', 'right', 'top', 'bottom']}
         style={{ '--width': '400px' } as CSSProperties}
         toastOptions={{
           classNames: {

@@ -361,6 +361,75 @@ Three files need updating when adding a new model option:
 
 No Rust changes needed — model is stored as `String` in `AppPreferences` and passed directly to `--model` CLI flag.
 
+#### Adding a New AI Backend
+
+When adding a backend like Claude, Codex, OpenCode, Cursor, or a future CLI/API backend, verify the integration is complete across Rust, TypeScript, UI, persistence, and web access.
+
+**Backend identity and preferences:**
+
+- [ ] Add backend enum/type in Rust (`src-tauri/src/chat/types.rs`) and TypeScript (`src/types/chat.ts`, `src/types/preferences.ts`)
+- [ ] Add backend label/icon/model options (`src/components/ui/backend-label.tsx`, `src/components/icons/`, `ChatToolbar.tsx`)
+- [ ] Add persisted preferences for default backend, selected model, reasoning/effort, source (`jean` vs `path`) when applicable
+- [ ] Add project-level `default_backend` support and build/yolo backend/model/effort overrides
+- [ ] Keep persisted preference fields in `snake_case` and provide serde/default migration safety
+
+**Install, status, auth, and login:**
+
+- [ ] Add CLI module (`src-tauri/src/<backend>_cli/`) with config/status/auth/install/update commands as needed
+- [ ] Detect whether backend is installed before checking auth
+- [ ] Add auth status command and frontend hook/types (e.g. `check_<backend>_auth`, `use<Backend>CliAuth`, `src/types/<backend>-cli.ts`)
+- [ ] Auth result distinguishes installed+authenticated, installed+unauthenticated, not installed, command failed, and unknown/error
+- [ ] Add login/relogin commands if the backend supports them
+- [ ] If login requires terminal/browser, open the terminal login command, auth URL, or backend-native login flow
+- [ ] Add Settings → General login/relogin buttons with loading state and toast feedback
+- [ ] Re-fetch auth status after login/relogin
+- [ ] Include backend auth readiness in onboarding; do not mark backend ready unless installed and authenticated
+- [ ] Support both Jean-managed binary and system PATH binary login flows
+- [ ] Register every status/auth/login command in both `src-tauri/src/lib.rs` and `src-tauri/src/http_server/dispatch.rs`
+- [ ] Add tests/mocks for authenticated, unauthenticated, not installed, login failure, and `jean` vs `path` source
+
+**Main chat execution:**
+
+- [ ] Create execution module (`src-tauri/src/chat/<backend>.rs`) and export it from `chat/mod.rs`
+- [ ] Return the common response shape: content, backend resume id, tool calls, content blocks, cancelled flag, usage, and error state if needed
+- [ ] Route backend in `src-tauri/src/chat/commands.rs` send-message match
+- [ ] Store backend resume id on Rust/TS `Session` and persist/restore it
+- [ ] Map backend streaming to common events: `chat:chunk`, `chat:tool-use`, `chat:tool-result`, `chat:tool-block`, `chat:thinking`, `chat:done`, `chat:error`, `chat:cancelled`
+- [ ] Preserve ordered `ContentBlock[]`, normalize tool call IDs/names, and attach outputs to matching tool calls
+- [ ] Add cancellation support in `src-tauri/src/chat/registry.rs` (process kill, interrupt request, or cancel flag)
+- [ ] Update run logs, incomplete-run recovery, synthetic plan injection, and session resume behavior
+
+**System prompts, modes, and context:**
+
+- [ ] Assemble prompts with project custom prompt, global system prompt, execution-mode instruction, `RECAP_INSTRUCTION`, language preference, and parallel-execution prompt when enabled
+- [ ] Use the backend-native system prompt mechanism when available; otherwise use a safe fallback
+- [ ] Map Jean execution modes (`plan`, `build`, `yolo`) to backend-native sandbox/approval controls
+- [ ] Update `getSupportedExecutionModes`, `isExecutionModeSupported`, and `normalizeExecutionModeForBackend`
+- [ ] Support backend-native plan tool/approval flow or synthesize a Jean-compatible plan tool call
+- [ ] Apply build/yolo backend/model/effort overrides when approving plans
+- [ ] Merge all relevant context: project/worktree, GitHub issue/PR/security/advisory, Linear issue, saved context files, linked projects, attached files/images, and denied-message re-send context
+- [ ] Embed context directly when the backend cannot access external files/APIs
+
+**Permissions, magic prompts, providers, MCP, and UI:**
+
+- [ ] Add permission/user-input approval structs, events, UI, persistence, and approve/deny commands if backend supports them
+- [ ] Add one-shot execution support for all magic prompt operations (session naming, context summary, PR content, commit message, code review, resolve conflicts, release notes, investigations, review comments)
+- [ ] Add robust structured JSON extraction for one-shot outputs
+- [ ] Update Magic Prompts UI backend/model/default presets and per-prompt backend/provider/model/effort resolution
+- [ ] Add provider/profile support if backend supports custom routing; respect project/global/per-prompt provider precedence
+- [ ] Add MCP discovery/health/toggle support if backend supports MCP
+- [ ] Update frontend chat/settings/onboarding/usage UI and backend-specific pending request components
+- [ ] Add backend to favorite models and fast-mode model handling if relevant
+
+**Web access, tests, and docs:**
+
+- [ ] Register every new `#[tauri::command]` in both native `generate_handler![]` and WebSocket dispatch
+- [ ] Use dispatch helpers (`field`, `field_opt`, `from_field`, `from_field_opt`, `to_value`) and emit cache invalidation for mutations
+- [ ] Use `silent_command()` for background processes to avoid Windows console flashes
+- [ ] Add Rust tests for parsing, default backend resolution, cancellation, one-shot JSON extraction, and auth/login
+- [ ] Add TS/component/E2E tests for preferences, auth/login UI, execution mode normalization, backend selection, plan approval, cancellation, and magic prompt overrides
+- [ ] Update developer docs, user docs, troubleshooting, and all comments that list supported backends
+
 #### Per-Project Worktrees Location
 
 Projects have an optional `worktrees_dir: Option<String>` field that overrides the default `~/jean` base directory for worktree creation.

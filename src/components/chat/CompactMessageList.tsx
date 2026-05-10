@@ -89,6 +89,8 @@ interface CompactMessageListProps {
   isLoadingOlder?: boolean
   onLoadOlderRuns?: () => void
   loadedRunStartIndex?: number
+  hiddenPromptCount?: number
+  onShowHiddenPrompts?: () => void
 }
 
 type RenderItem =
@@ -619,6 +621,8 @@ export const CompactMessageList = memo(
         isLoadingOlder = false,
         onLoadOlderRuns,
         loadedRunStartIndex = 0,
+        hiddenPromptCount = 0,
+        onShowHiddenPrompts,
       },
       ref
     ) {
@@ -627,6 +631,7 @@ export const CompactMessageList = memo(
       const pendingPrependMessagesLengthRef = useRef<number | null>(null)
 
       const lastIndex = messages.length - 1
+      const hasHiddenPrompts = hiddenPromptCount > 0 && !!onShowHiddenPrompts
 
       const hasFollowUpMap = useMemo(() => {
         const map = new Map<number, boolean>()
@@ -857,13 +862,13 @@ export const CompactMessageList = memo(
       // Scroll-to-top auto-load.
       useEffect(() => {
         const container = scrollContainerRef.current
-        if (!container || !hasOlderOnDisk) return
+        if (!container || !hasOlderOnDisk || hasHiddenPrompts) return
         const handleScroll = () => {
           if (container.scrollTop < SCROLL_THRESHOLD) loadOlder()
         }
         container.addEventListener('scroll', handleScroll, { passive: true })
         return () => container.removeEventListener('scroll', handleScroll)
-      }, [scrollContainerRef, hasOlderOnDisk, loadOlder])
+      }, [scrollContainerRef, hasOlderOnDisk, hasHiddenPrompts, loadOlder])
 
       // Scroll-to-bottom on new message arrival.
       const prevMessageCountRef = useRef(messages.length)
@@ -916,20 +921,22 @@ export const CompactMessageList = memo(
 
       return (
         <div className="flex flex-col w-full">
-          {hasOlderOnDisk && (
+          {(hasHiddenPrompts || hasOlderOnDisk) && (
             <button
               type="button"
-              onClick={loadOlder}
-              disabled={isLoadingOlder}
+              onClick={hasHiddenPrompts ? onShowHiddenPrompts : loadOlder}
+              disabled={!hasHiddenPrompts && isLoadingOlder}
               className="w-full text-center text-muted-foreground text-xs py-2 opacity-60 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-wait"
             >
-              {isLoadingOlder ? (
+              {hasHiddenPrompts ? (
+                `↑ Load old prompts (${hiddenPromptCount})`
+              ) : isLoadingOlder ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Loading older messages…
+                  Loading old prompts…
                 </span>
               ) : (
-                `↑ Load older messages (${loadedRunStartIndex} older runs on disk)`
+                `↑ Load old prompts (${loadedRunStartIndex} older runs on disk)`
               )}
             </button>
           )}

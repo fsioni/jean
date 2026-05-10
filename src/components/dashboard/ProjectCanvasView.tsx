@@ -10,6 +10,7 @@ import {
 import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { cn } from '@/lib/utils'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import {
   Search,
   X,
@@ -100,6 +101,12 @@ import {
 import { WorktreeSetupCard } from '@/components/chat/WorktreeSetupCard'
 import { OpenInButton } from '@/components/open-in/OpenInButton'
 import { useCanvasStoreState } from '@/components/chat/hooks/useCanvasStoreState'
+import {
+  type WorktreeSortMode,
+  compareWorktreesForCanvasSort,
+  getSessionActivityTimestamp,
+  getWorktreeLastActivity,
+} from '@/components/projects/worktree-sort-utils'
 import { usePlanApproval } from '@/components/chat/hooks/usePlanApproval'
 import { useClearContextApproval } from '@/components/chat/hooks/useClearContextApproval'
 import { useWorktreeApproval } from '@/components/chat/hooks/useWorktreeApproval'
@@ -154,8 +161,6 @@ interface FlatCard {
   isPending?: boolean
 }
 
-type WorktreeSortMode = 'created' | 'last_activity'
-
 type ActiveStatus =
   | 'waiting'
   | 'planning'
@@ -167,9 +172,9 @@ type ActiveStatus =
 function getActiveStatus(cards: SessionCardData[]): ActiveStatus {
   if (cards.some(c => c.status === 'waiting' || c.status === 'permission'))
     return 'waiting'
-  if (cards.some(c => c.status === 'yoloing')) return 'yoloing'
-  if (cards.some(c => c.status === 'vibing')) return 'vibing'
   if (cards.some(c => c.status === 'planning')) return 'planning'
+  if (cards.some(c => c.status === 'vibing')) return 'vibing'
+  if (cards.some(c => c.status === 'yoloing')) return 'yoloing'
   if (cards.some(c => c.status === 'review' || c.status === 'completed'))
     return 'review'
   return null
@@ -199,32 +204,6 @@ function formatRelativeTime(timestamp?: number): string | null {
   return `${days}d ago`
 }
 
-function getSessionActivityTimestamp(session: Session): number {
-  return session.last_message_at ?? session.updated_at ?? session.created_at
-}
-
-function getWorktreeLastActivity(
-  sessions: Session[],
-  fallbackTimestamp: number
-): number {
-  return sessions.reduce(
-    (latest, session) => Math.max(latest, getSessionActivityTimestamp(session)),
-    fallbackTimestamp
-  )
-}
-
-function getWorktreeSortValue(
-  worktree: Worktree,
-  latestActivityAt: number,
-  sortMode: WorktreeSortMode
-): number {
-  if (sortMode === 'created') {
-    return worktree.created_at
-  }
-
-  return Math.max(latestActivityAt, worktree.created_at)
-}
-
 function getSessionMetrics(cards: SessionCardData[]) {
   const waitingCount = cards.filter(
     c => c.status === 'waiting' || c.status === 'permission'
@@ -232,10 +211,10 @@ function getSessionMetrics(cards: SessionCardData[]) {
   const reviewCount = cards.filter(
     c => c.status === 'review' || c.status === 'completed'
   ).length
-  const activeCount = cards.filter(
-    c =>
-      c.status === 'planning' || c.status === 'vibing' || c.status === 'yoloing'
-  ).length
+  const planningCount = cards.filter(c => c.status === 'planning').length
+  const buildingCount = cards.filter(c => c.status === 'vibing').length
+  const yoloCount = cards.filter(c => c.status === 'yoloing').length
+  const activeCount = planningCount + buildingCount + yoloCount
   const latestActivityAt = cards.reduce(
     (latest, card) =>
       Math.max(latest, getSessionActivityTimestamp(card.session)),
@@ -246,6 +225,9 @@ function getSessionMetrics(cards: SessionCardData[]) {
     totalCount: cards.length,
     waitingCount,
     reviewCount,
+    planningCount,
+    buildingCount,
+    yoloCount,
     activeCount,
     latestActivityAt,
   }
@@ -325,7 +307,7 @@ function WorktreeSectionHeader({
     (e: React.MouseEvent) => {
       e.stopPropagation()
       pickRemoteOrRun(async remote => {
-        const toastId = toast.loading('Pushing changes...')
+        const opToast = dismissibleToast.loading('Pushing changes...')
         try {
           const result = await gitPush(
             worktree.path,
@@ -335,15 +317,14 @@ function WorktreeSectionHeader({
           triggerImmediateGitPoll()
           fetchWorktreesStatus(projectId)
           if (result.fellBack) {
-            toast.warning(
-              'Could not push to PR branch, pushed to new branch instead',
-              { id: toastId }
+            opToast.warning(
+              'Could not push to PR branch, pushed to new branch instead'
             )
           } else {
-            toast.success('Changes pushed', { id: toastId })
+            opToast.success('Changes pushed')
           }
         } catch (error) {
-          toast.error(`Push failed: ${error}`, { id: toastId })
+          opToast.error(`Push failed: ${error}`)
         }
       })
     },
@@ -549,19 +530,29 @@ function WorktreeSectionHeader({
           </div>
           {showDetails && sessionMetrics && (
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              {sessionMetrics.reviewCount > 0 && (
-                <span className="rounded  bg-green-500/10 px-2 py-0.5 text-green-600">
-                  {sessionMetrics.reviewCount} review
-                </span>
-              )}
               {sessionMetrics.waitingCount > 0 && (
                 <span className="rounded bg-yellow-500/90 px-2 py-0.5 text-black">
                   {sessionMetrics.waitingCount} waiting
                 </span>
               )}
-              {sessionMetrics.activeCount > 0 && (
+              {sessionMetrics.planningCount > 0 && (
                 <span className="rounded bg-sky-500/10 px-2 py-0.5 text-sky-600">
-                  {sessionMetrics.activeCount} active
+                  {sessionMetrics.planningCount} planning
+                </span>
+              )}
+              {sessionMetrics.buildingCount > 0 && (
+                <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-indigo-600">
+                  {sessionMetrics.buildingCount} building
+                </span>
+              )}
+              {sessionMetrics.yoloCount > 0 && (
+                <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                  {sessionMetrics.yoloCount} yolo
+                </span>
+              )}
+              {sessionMetrics.reviewCount > 0 && (
+                <span className="rounded bg-green-500/10 px-2 py-0.5 text-green-600">
+                  {sessionMetrics.reviewCount} review
                 </span>
               )}
               {uniqueSessionLabels.map(label => (
@@ -743,6 +734,18 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   const sessionsByWorktreeIdRef = useRef(sessionsByWorktreeId)
   sessionsByWorktreeIdRef.current = sessionsByWorktreeId
 
+  // React to explicit auto-open requests immediately. The effect below still
+  // reads the latest store state imperatively, but this primitive signal makes
+  // queued requests re-run it without waiting for session query refetches.
+  const autoOpenSessionSignal = useUIStore(state => {
+    const worktreeIds = [...state.autoOpenSessionWorktreeIds].sort().join(',')
+    const sessionIds = Object.entries(state.pendingAutoOpenSessionIds)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([worktreeId, sessionId]) => `${worktreeId}:${sessionId}`)
+      .join(',')
+    return `${worktreeIds}|${sessionIds}`
+  })
+
   // Use shared store state hook
   const storeState = useCanvasStoreState()
   const queryClient = useQueryClient()
@@ -886,28 +889,14 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     }
 
     // Sort ready worktrees: base sessions first, then selected sort mode
-    readySections.sort((a, b) => {
-      const aIsBase = isBaseSession(a.worktree)
-      const bIsBase = isBaseSession(b.worktree)
-      if (aIsBase && !bIsBase) return -1
-      if (!aIsBase && bIsBase) return 1
-
-      const sortDiff =
-        getWorktreeSortValue(
-          b.worktree,
-          latestActivityByWorktreeId.get(b.worktree.id) ??
-            b.worktree.created_at,
-          worktreeSortMode
-        ) -
-        getWorktreeSortValue(
-          a.worktree,
-          latestActivityByWorktreeId.get(a.worktree.id) ??
-            a.worktree.created_at,
-          worktreeSortMode
-        )
-      if (sortDiff !== 0) return sortDiff
-      return b.worktree.created_at - a.worktree.created_at
-    })
+    readySections.sort((a, b) =>
+      compareWorktreesForCanvasSort(
+        a.worktree,
+        b.worktree,
+        latestActivityByWorktreeId,
+        worktreeSortMode
+      )
+    )
 
     result.push(...readySections)
 
@@ -1249,29 +1238,61 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     }
   }, [flatCards, selectedIndex, searchQuery])
 
-  // Auto-open session modal for newly created worktrees
+  // Auto-open session modal for newly created worktrees / unread-session clicks
   useEffect(() => {
     const currentSessions = sessionsByWorktreeIdRef.current
-    for (const [worktreeId, sessionData] of currentSessions) {
-      if (!sessionData.sessions.length) continue
+    const queuedWorktreeIds = [
+      ...useUIStore.getState().autoOpenSessionWorktreeIds,
+    ]
+    for (const worktreeId of queuedWorktreeIds) {
+      const worktree = readyWorktrees.find(w => w.id === worktreeId)
+      if (!worktree) continue
+
+      const targetSessionId =
+        useUIStore.getState().pendingAutoOpenSessionIds[worktreeId]
+
+      // Explicit session opens (e.g. clicking a finished unread session) should
+      // not wait for dashboard session-count queries. SessionChatModal and
+      // ChatWindow fetch their own data and can render from the active ID.
+      if (targetSessionId) {
+        const autoOpen = useUIStore
+          .getState()
+          .consumeAutoOpenSession(worktreeId)
+        if (!autoOpen.shouldOpen) continue
+
+        const sessionId = autoOpen.sessionId ?? targetSessionId
+
+        const exactCardIndex = flatCards.findIndex(
+          fc =>
+            fc.worktreeId === worktreeId && fc.card?.session.id === sessionId
+        )
+        const worktreeCardIndex =
+          exactCardIndex !== -1
+            ? exactCardIndex
+            : flatCards.findIndex(
+                fc => !fc.isPending && fc.card && fc.worktreeId === worktreeId
+              )
+        if (worktreeCardIndex !== -1) {
+          setSelectedIndex(worktreeCardIndex)
+          highlightedCardRef.current = {
+            worktreeId,
+            sessionId,
+          }
+        }
+
+        useChatStore.getState().setActiveSession(worktreeId, sessionId)
+        openWorktreeModal(worktreeId, worktree.path, 'auto-open-session')
+        break
+      }
+
+      const sessionData = currentSessions.get(worktreeId)
+      if (!sessionData?.sessions.length) continue
 
       const autoOpen = useUIStore.getState().consumeAutoOpenSession(worktreeId)
       if (!autoOpen.shouldOpen) continue
 
-      const worktree = readyWorktrees.find(w => w.id === worktreeId)
       // Use specific session if provided, otherwise fall back to first session
-      const targetSessionId = autoOpen.sessionId
-      const targetSession = targetSessionId
-        ? sessionData.sessions.find(s => s.id === targetSessionId)
-        : sessionData.sessions[0]
-
-      // If requested session hasn't arrived in this query yet, re-queue and retry later.
-      if (targetSessionId && !targetSession) {
-        useUIStore
-          .getState()
-          .markWorktreeForAutoOpenSession(worktreeId, targetSessionId)
-        continue
-      }
+      const targetSession = sessionData.sessions[0]
 
       if (worktree && targetSession) {
         // Find the index in flatCards for keyboard selection
@@ -1296,7 +1317,13 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     }
     // sessionsFingerprint tracks when session data changes (stable string, not Map reference)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionsFingerprint, readyWorktrees, flatCards, openWorktreeModal])
+  }, [
+    autoOpenSessionSignal,
+    sessionsFingerprint,
+    readyWorktrees,
+    flatCards,
+    openWorktreeModal,
+  ])
 
   // Auto-select session when dashboard opens (visual selection only, no modal unless restore_last_session is on)
   // Prefers last opened per project, then persisted active session per worktree, falls back to first card

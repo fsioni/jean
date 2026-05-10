@@ -81,7 +81,7 @@ fn greet(name: &str) -> String {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-opus-4-7, claude-opus-4-6, sonnet, haiku
+    pub selected_model: String, // Claude model: claude-opus-4-7[1m], claude-opus-4-6[1m], haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -186,6 +186,10 @@ pub struct AppPreferences {
     pub custom_cli_profiles: Vec<CustomCliProfile>, // Custom CLI settings profiles (e.g., OpenRouter, MiniMax)
     #[serde(default)]
     pub default_provider: Option<String>, // Default provider profile name (None = Anthropic direct)
+    #[serde(default)]
+    pub favorite_models: Vec<String>, // Favourited model keys ("backend:model") shown at top of picker
+    #[serde(default)]
+    pub fast_mode_models: Vec<String>, // Model keys ("backend:baseModel") with fast tier last enabled
     #[serde(default = "default_canvas_layout")]
     pub canvas_layout: String, // Canvas display mode: grid or list
     #[serde(default = "default_confirm_session_close")]
@@ -312,7 +316,17 @@ fn default_chat_font() -> String {
 }
 
 fn default_model() -> String {
-    "claude-opus-4-7".to_string()
+    "claude-opus-4-7[1m]".to_string()
+}
+
+fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
+    match model {
+        "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
+        "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
+        "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
+        "sonnet" => Some("claude-sonnet-4-6[1m]"),
+        _ => None,
+    }
 }
 
 fn default_thinking_level() -> String {
@@ -415,7 +429,7 @@ fn default_cli_source() -> String {
 }
 
 fn default_codex_model() -> String {
-    "gpt-5.4".to_string()
+    "gpt-5.5".to_string()
 }
 
 fn default_opencode_model() -> String {
@@ -1179,7 +1193,7 @@ impl Default for MagicPromptModels {
 impl MagicPromptModels {
     /// Upgrade legacy default model values left on existing installs:
     /// fields that previously defaulted to `"opus"` (Opus 4.6) are bumped to
-    /// the new default (`"claude-opus-4-7"`). Users who explicitly picked
+    /// the new default (`"claude-opus-4-7[1m]"`). Users who explicitly picked
     /// other models are untouched. Returns true if any field changed.
     fn migrate_legacy_defaults(&mut self) -> bool {
         let new_opus = default_model();
@@ -1437,6 +1451,8 @@ impl Default for AppPreferences {
             zoom_level: default_zoom_level(),
             custom_cli_profiles: Vec::new(),
             default_provider: None,
+            favorite_models: Vec::new(),
+            fast_mode_models: Vec::new(),
             canvas_layout: default_canvas_layout(),
             confirm_session_close: default_confirm_session_close(),
             default_execution_mode: default_execution_mode(),
@@ -1709,9 +1725,17 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
     // so they auto-update when new defaults are shipped
     preferences.magic_prompts.migrate_defaults();
 
-    // Migrate legacy magic-prompt model names ("opus" → "claude-opus-4-7")
+    // Migrate legacy default Claude model names to the 1M variants where
+    // available so hidden non-1M defaults do not render blank in settings.
+    let mut needs_resave = false;
+    if let Some(new_model) = migrate_default_claude_model(&preferences.selected_model) {
+        preferences.selected_model = new_model.to_string();
+        needs_resave = true;
+    }
+
+    // Migrate legacy magic-prompt model names ("opus" → "claude-opus-4-7[1m]")
     // and legacy auto-naming models ("haiku" → "sonnet")
-    let mut needs_resave = preferences.magic_prompt_models.migrate_legacy_defaults();
+    needs_resave |= preferences.magic_prompt_models.migrate_legacy_defaults();
     if preferences.branch_naming_model == "haiku" {
         preferences.branch_naming_model = default_branch_naming_model();
         needs_resave = true;
@@ -3499,7 +3523,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")
-        .run(move |_app_handle, event| match &event {
+        .run(move |app_handle, event| match &event {
             tauri::RunEvent::Exit => {
                 eprintln!("[TERMINAL CLEANUP] RunEvent::Exit received");
                 let killed = terminal::cleanup_all_terminals();
@@ -3517,6 +3541,16 @@ pub fn run() {
                     api.prevent_exit();
                     return;
                 }
+                if chat::has_running_sessions() {
+                    api.prevent_exit();
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                    log::info!(
+                        "Prevented app exit while sessions are running; hid main window instead"
+                    );
+                    return;
+                }
                 eprintln!("[TERMINAL CLEANUP] RunEvent::ExitRequested received");
                 let killed = terminal::cleanup_all_terminals();
                 eprintln!("[TERMINAL CLEANUP] Killed {killed} terminal(s) on ExitRequested");
@@ -3531,10 +3565,26 @@ pub fn run() {
                 }
                 chat::codex_server::shutdown_server();
             }
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
             tauri::RunEvent::WindowEvent { label, event, .. } => {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     // In headless mode, we already closed the window, don't cleanup terminals
                     if headless {
+                        return;
+                    }
+                    if chat::has_running_sessions() {
+                        api.prevent_close();
+                        if let Some(window) = app_handle.get_webview_window(label) {
+                            let _ = window.hide();
+                        }
+                        log::info!(
+                            "Prevented window close while sessions are running; hid {label} instead"
+                        );
                         return;
                     }
                     eprintln!("[TERMINAL CLEANUP] Window {label} close requested");

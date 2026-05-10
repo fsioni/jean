@@ -292,7 +292,36 @@ export default function useStreamingEvents({
       // Check if THIS client initiated the send (sender calls addSendingSession
       // before sendMessage.mutate, so it's already in sendingSessionIds).
       const isSender = !!useChatStore.getState().sendingSessionIds[session_id]
+      // A remote web/mobile client may start a new turn while this client still
+      // has the previous turn parked as waiting/reviewing in Zustand. Clear
+      // those stale terminal flags before marking the session as running.
+      useChatStore.setState(state => {
+        if (
+          !state.waitingForInputSessionIds[session_id] &&
+          !state.reviewingSessions[session_id]
+        ) {
+          return state
+        }
+        const { [session_id]: _waiting, ...waitingForInputSessionIds } =
+          state.waitingForInputSessionIds
+        const { [session_id]: _reviewing, ...reviewingSessions } =
+          state.reviewingSessions
+        return { waitingForInputSessionIds, reviewingSessions }
+      })
       addSendingSession(session_id)
+      queryClient.setQueryData<Session>(
+        chatQueryKeys.session(session_id),
+        old =>
+          old
+            ? {
+                ...old,
+                waiting_for_input: false,
+                waiting_for_input_type: null,
+                is_reviewing: false,
+                last_run_status: 'running',
+              }
+            : old
+      )
       // Only invalidate for non-sender clients. The sender already has correct
       // optimistic state; refetching can overwrite it with stale disk data
       // (especially on WebSocket where dispatch is concurrent).

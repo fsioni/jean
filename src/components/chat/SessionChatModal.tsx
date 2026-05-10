@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { ModalCloseButton } from '@/components/ui/modal-close-button'
 import { cn } from '@/lib/utils'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -511,16 +512,19 @@ export function SessionChatModal({
     )
   }, [worktreeId, worktreePath, createSession])
 
-  // Sorted tab order: waiting/permission first (need user attention),
-  // idle/review/completed next, running sessions (plan/build/yolo) last.
+  // Sorted tab order: attention and active sessions first, review next,
+  // idle/new empty sessions last.
   // Within each tier, oldest first so click never reorders.
   const sortedCards = useMemo(() => {
     const priority: Record<string, number> = {
       waiting: 0,
       permission: 0,
-      planning: 2,
+      planning: 1,
       vibing: 2,
-      yoloing: 2,
+      yoloing: 3,
+      review: 4,
+      completed: 4,
+      idle: 5,
     }
     return [...cards].sort((a, b) => {
       const pa = priority[a.status] ?? 1
@@ -627,21 +631,20 @@ export function SessionChatModal({
   const handlePush = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation()
-      const toastId = toast.loading('Pushing changes...')
+      const opToast = dismissibleToast.loading('Pushing changes...')
       try {
         const result = await gitPush(worktreePath, worktree?.pr_number)
         triggerImmediateGitPoll()
         if (project) fetchWorktreesStatus(project.id)
         if (result.fellBack) {
-          toast.warning(
-            'Could not push to PR branch, pushed to new branch instead',
-            { id: toastId }
+          opToast.warning(
+            'Could not push to PR branch, pushed to new branch instead'
           )
         } else {
-          toast.success('Changes pushed', { id: toastId })
+          opToast.success('Changes pushed')
         }
       } catch (error) {
-        toast.error(`Push failed: ${error}`, { id: toastId })
+        opToast.error(`Push failed: ${error}`)
       }
     },
     [worktree, worktreePath, project]

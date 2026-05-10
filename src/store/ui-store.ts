@@ -628,15 +628,31 @@ export const useUIStore = create<UIState>()(
 
       markWorktreeForAutoOpenSession: (worktreeId, sessionId) =>
         set(
-          state => ({
-            autoOpenSessionWorktreeIds: new Set([
-              ...state.autoOpenSessionWorktreeIds,
-              worktreeId,
-            ]),
-            pendingAutoOpenSessionIds: sessionId
-              ? { ...state.pendingAutoOpenSessionIds, [worktreeId]: sessionId }
-              : state.pendingAutoOpenSessionIds,
-          }),
+          state => {
+            const alreadyQueued =
+              state.autoOpenSessionWorktreeIds.has(worktreeId)
+            const existingSessionId =
+              state.pendingAutoOpenSessionIds[worktreeId]
+            if (
+              alreadyQueued &&
+              (sessionId ? existingSessionId === sessionId : !existingSessionId)
+            ) {
+              return state
+            }
+
+            return {
+              autoOpenSessionWorktreeIds: new Set([
+                ...state.autoOpenSessionWorktreeIds,
+                worktreeId,
+              ]),
+              pendingAutoOpenSessionIds: sessionId
+                ? {
+                    ...state.pendingAutoOpenSessionIds,
+                    [worktreeId]: sessionId,
+                  }
+                : state.pendingAutoOpenSessionIds,
+            }
+          },
           undefined,
           'markWorktreeForAutoOpenSession'
         ),

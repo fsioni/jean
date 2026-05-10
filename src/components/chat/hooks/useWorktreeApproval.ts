@@ -30,7 +30,6 @@ import {
   extractTextFilePaths,
 } from '../message-content-utils'
 import { navigateToApprovedWorktree } from '../worktree-approval-navigation'
-import { markWorktreeSilentReady } from '@/services/worktree-silent-ready'
 
 const THINKING_LEVEL_VALUES = new Set<ThinkingLevel>([
   'off',
@@ -77,7 +76,7 @@ function getDefaultModelForBackend(
     | undefined
 ): string {
   if (backend === 'codex') {
-    return preferences?.selected_codex_model ?? 'gpt-5.4'
+    return preferences?.selected_codex_model ?? 'gpt-5.5'
   }
   if (backend === 'opencode') {
     return preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex'
@@ -85,7 +84,7 @@ function getDefaultModelForBackend(
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-7'
+  return preferences?.selected_model ?? 'claude-opus-4-7[1m]'
 }
 
 interface UseWorktreeApprovalParams {
@@ -214,8 +213,6 @@ export function useWorktreeApproval({
         toast.error(`Failed to create worktree: ${err}`)
         return
       }
-      markWorktreeSilentReady(pendingWorktree.id)
-
       // Step 4: Wait for worktree to be ready
       let readyWorktree: Worktree
       try {

@@ -18,6 +18,25 @@ const DIRECTORY_MENTION_REGEX =
 const SKILL_ATTACHMENT_REGEX =
   /\[Skill: (.+?) - Read and use this skill to guide your response\]/g
 
+const JEAN_PROMPT_TEXT_METADATA_REGEX =
+  /\n?\n?<!-- jean-prompt:([^>]+) -->\s*$/u
+
+export interface PromptAttachmentMetadata {
+  v: 1
+  images: string[]
+  textFiles: string[]
+  files: { path: string; isDirectory: boolean }[]
+  skills: { name: string; path: string }[]
+}
+
+interface LegacyPromptAttachmentMetadata {
+  v?: number
+  images?: string[]
+  textFiles?: string[]
+  files?: string[] | { path: string; isDirectory?: boolean }[]
+  skills?: { name: string; path: string }[]
+}
+
 /** Extract image paths from message content */
 export function extractImagePaths(content: string): string[] {
   const paths: string[] = []
@@ -86,6 +105,87 @@ export function extractDirectoryMentionPaths(content: string): string[] {
   }
   DIRECTORY_MENTION_REGEX.lastIndex = 0
   return Array.from(paths)
+}
+
+/** Build attachment metadata from a sent user message. */
+export function buildPromptAttachmentMetadata(
+  content: string,
+  getSkillName: (path: string) => string
+): PromptAttachmentMetadata {
+  const fileMentions = extractFileMentionPaths(content).map(path => ({
+    path,
+    isDirectory: false,
+  }))
+  const directoryMentions = extractDirectoryMentionPaths(content).map(path => ({
+    path,
+    isDirectory: true,
+  }))
+
+  return {
+    v: 1,
+    images: extractImagePaths(content),
+    textFiles: extractTextFilePaths(content),
+    files: [...fileMentions, ...directoryMentions],
+    skills: extractSkillPaths(content).map(path => ({
+      name: getSkillName(path),
+      path,
+    })),
+  }
+}
+
+function normalizePromptAttachmentMetadata(
+  metadata: LegacyPromptAttachmentMetadata
+): PromptAttachmentMetadata {
+  return {
+    v: 1,
+    images: metadata.images ?? [],
+    textFiles: metadata.textFiles ?? [],
+    files: (metadata.files ?? []).map(file =>
+      typeof file === 'string'
+        ? { path: file, isDirectory: false }
+        : { path: file.path, isDirectory: file.isDirectory ?? false }
+    ),
+    skills: metadata.skills ?? [],
+  }
+}
+
+export function encodePromptAttachmentMetadata(
+  metadata: PromptAttachmentMetadata
+): string {
+  return encodeURIComponent(JSON.stringify(metadata))
+}
+
+export function decodePromptAttachmentMetadata(
+  encoded: string
+): PromptAttachmentMetadata | null {
+  try {
+    return normalizePromptAttachmentMetadata(
+      JSON.parse(decodeURIComponent(encoded)) as LegacyPromptAttachmentMetadata
+    )
+  } catch {
+    return null
+  }
+}
+
+/** Append hidden-ish metadata for plain-text-only clipboard fallbacks. */
+export function appendPromptMetadataToPlainText(
+  text: string,
+  metadata: PromptAttachmentMetadata
+): string {
+  return `${text}\n\n<!-- jean-prompt:${encodePromptAttachmentMetadata(metadata)} -->`
+}
+
+/** Parse and strip plain-text fallback metadata from pasted text. */
+export function parsePlainTextPromptMetadata(text: string): {
+  text: string
+  metadata: PromptAttachmentMetadata | null
+} {
+  const match = text.match(JEAN_PROMPT_TEXT_METADATA_REGEX)
+  if (!match?.[1]) return { text, metadata: null }
+  return {
+    text: text.replace(JEAN_PROMPT_TEXT_METADATA_REGEX, ''),
+    metadata: decodePromptAttachmentMetadata(match[1]),
+  }
 }
 
 /** Remove directory mention markers from content for cleaner display */

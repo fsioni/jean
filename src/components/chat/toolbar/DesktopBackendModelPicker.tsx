@@ -1,4 +1,4 @@
-import { ChevronsUpDown } from 'lucide-react'
+import { ChevronsUpDown, Zap } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import {
   Popover,
@@ -10,7 +10,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { CustomCliProfile } from '@/types/preferences'
+import {
+  getModelFastInfo,
+  type CustomCliProfile,
+} from '@/types/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { cn } from '@/lib/utils'
@@ -125,6 +128,12 @@ export function DesktopBackendModelPicker({
                   badgeClassName="text-[9px] leading-3"
                 />
                 <span className="truncate">· {selectedModelLabel}</span>
+                {getModelFastInfo(selectedBackend, selectedModel).isFast && (
+                  <Zap
+                    className="h-3 w-3 shrink-0 fill-current text-yellow-500"
+                    aria-label="Fast mode"
+                  />
+                )}
               </span>
               {!sessionHasMessages && installedBackends.length > 1 && (
                 <Kbd className="ml-1 hidden 2xl:inline-flex text-[10px]">

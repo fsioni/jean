@@ -7,8 +7,8 @@ import {
   Plus,
 } from 'lucide-react'
 import { convertFileSrc } from '@/lib/transport'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import type { Project } from '@/types/projects'
 import { isBaseSession } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -142,13 +142,13 @@ export function ProjectTreeItem({ project }: ProjectTreeItemProps) {
   const handleBasePush = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation()
-      const toastId = toast.loading('Pushing changes...')
+      const opToast = dismissibleToast.loading('Pushing changes...')
       try {
         await gitPush(project.path)
         fetchWorktreesStatus(project.id)
-        toast.success('Changes pushed', { id: toastId })
+        opToast.success('Changes pushed')
       } catch (error) {
-        toast.error(`Push failed: ${error}`, { id: toastId })
+        opToast.error(`Push failed: ${error}`)
       }
     },
     [project.id, project.path]

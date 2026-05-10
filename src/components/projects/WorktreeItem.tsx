@@ -5,8 +5,8 @@ import type {
   IndicatorVariant,
 } from '@/components/ui/status-indicator'
 import { ArrowDown, ArrowUp, ChevronDown, GitBranch } from 'lucide-react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import { isBaseSession, type Worktree } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
@@ -498,21 +498,20 @@ export function WorktreeItem({
   const handlePush = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation()
-      const toastId = toast.loading('Pushing changes...')
+      const opToast = dismissibleToast.loading('Pushing changes...')
       try {
         const result = await gitPush(worktree.path, worktree.pr_number)
         triggerImmediateGitPoll()
         fetchWorktreesStatus(projectId)
         if (result.fellBack) {
-          toast.warning(
-            'Could not push to PR branch, pushed to new branch instead',
-            { id: toastId }
+          opToast.warning(
+            'Could not push to PR branch, pushed to new branch instead'
           )
         } else {
-          toast.success('Changes pushed', { id: toastId })
+          opToast.success('Changes pushed')
         }
       } catch (error) {
-        toast.error(`Push failed: ${error}`, { id: toastId })
+        opToast.error(`Push failed: ${error}`)
       }
     },
     [worktree.path, worktree.pr_number, projectId]

@@ -1,4 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+const { mockInvoke } = vi.hoisted(() => ({
+  mockInvoke: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/lib/transport', () => ({
+  invoke: mockInvoke,
+}))
+
 import { useChatStore } from './chat-store'
 import type {
   ToolCall,
@@ -13,6 +22,9 @@ import type { ReviewResponse } from '@/types/projects'
 
 describe('ChatStore', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+
     useChatStore.setState({
       activeWorktreeId: null,
       activeWorktreePath: null,
@@ -80,6 +92,46 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sessionWorktreeMap['session-1']).toBe('worktree-1')
       expect(state.sessionWorktreeMap['session-2']).toBe('worktree-2')
+    })
+
+    it('marks sessions opened by default when setting active session', async () => {
+      const handler = vi.fn()
+      window.addEventListener('session-opened', handler)
+
+      useChatStore.getState().setActiveSession('worktree-1', 'session-1')
+
+      expect(mockInvoke).toHaveBeenCalledWith('set_session_last_opened', {
+        sessionId: 'session-1',
+      })
+
+      await Promise.resolve()
+
+      expect(handler).toHaveBeenCalledTimes(1)
+      const event = handler.mock.calls[0]?.[0]
+      expect(event).toMatchObject({
+        detail: { sessionIds: ['session-1'] },
+      })
+
+      window.removeEventListener('session-opened', handler)
+    })
+
+    it('can set active session without marking it opened', async () => {
+      const handler = vi.fn()
+      window.addEventListener('session-opened', handler)
+
+      useChatStore
+        .getState()
+        .setActiveSession('worktree-1', 'session-1', { markOpened: false })
+
+      await Promise.resolve()
+
+      expect(mockInvoke).not.toHaveBeenCalled()
+      expect(handler).not.toHaveBeenCalled()
+      expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
+        'session-1'
+      )
+
+      window.removeEventListener('session-opened', handler)
     })
   })
 

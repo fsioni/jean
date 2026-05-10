@@ -99,7 +99,7 @@ import {
   modelOptions,
   thinkingLevelOptions,
   effortLevelOptions,
-  codexModelOptions,
+  codexDefaultModelOptions,
   codexReasoningOptions,
   backendOptions,
   terminalOptions,
@@ -661,6 +661,10 @@ export const GeneralPane: React.FC = () => {
     cursorModelOptions.find(option => option.value === selectedCursorModel)
       ?.label ?? formatCursorModelLabel(selectedCursorModel)
   const buildBackendOptions = backendOptions
+  const effectiveBuildBackend = (preferences?.build_backend ??
+    effectiveBackend) as CliBackend
+  const effectiveYoloBackend = (preferences?.yolo_backend ??
+    effectiveBackend) as CliBackend
   const cursorAuthMessage = cursorAuth?.timed_out
     ? 'Auth check timed out. Try again or run login manually.'
     : cursorAuth?.error
@@ -1787,7 +1791,7 @@ export const GeneralPane: React.FC = () => {
                 </Select>
               </div>
               <div>
-                {preferences?.build_backend === 'opencode' ? (
+                {effectiveBuildBackend === 'opencode' ? (
                   <Popover
                     open={buildModelPopoverOpen}
                     onOpenChange={setBuildModelPopoverOpen}
@@ -1861,7 +1865,7 @@ export const GeneralPane: React.FC = () => {
                       </Command>
                     </PopoverContent>
                   </Popover>
-                ) : preferences?.build_backend === 'cursor' ? (
+                ) : effectiveBuildBackend === 'cursor' ? (
                   <Popover
                     open={buildModelPopoverOpen}
                     onOpenChange={setBuildModelPopoverOpen}
@@ -1943,8 +1947,8 @@ export const GeneralPane: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="default">Default model</SelectItem>
-                      {(preferences?.build_backend === 'codex'
-                        ? codexModelOptions
+                      {(effectiveBuildBackend === 'codex'
+                        ? codexDefaultModelOptions
                         : modelOptions
                       ).map(option => (
                         <SelectItem key={option.value} value={option.value}>
@@ -1982,8 +1986,15 @@ export const GeneralPane: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Default effort</SelectItem>
-                    {effortLevelOptions.map(option => (
+                    <SelectItem value="default">
+                      {effectiveBuildBackend === 'codex'
+                        ? 'Default reasoning'
+                        : 'Default effort'}
+                    </SelectItem>
+                    {(effectiveBuildBackend === 'codex'
+                      ? codexReasoningOptions
+                      : effortLevelOptions
+                    ).map(option => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>
@@ -2018,7 +2029,7 @@ export const GeneralPane: React.FC = () => {
                 </Select>
               </div>
               <div>
-                {preferences?.yolo_backend === 'opencode' ? (
+                {effectiveYoloBackend === 'opencode' ? (
                   <Popover
                     open={yoloModelPopoverOpen}
                     onOpenChange={setYoloModelPopoverOpen}
@@ -2092,7 +2103,7 @@ export const GeneralPane: React.FC = () => {
                       </Command>
                     </PopoverContent>
                   </Popover>
-                ) : preferences?.yolo_backend === 'cursor' ? (
+                ) : effectiveYoloBackend === 'cursor' ? (
                   <Popover
                     open={yoloModelPopoverOpen}
                     onOpenChange={setYoloModelPopoverOpen}
@@ -2174,8 +2185,8 @@ export const GeneralPane: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="default">Default model</SelectItem>
-                      {(preferences?.yolo_backend === 'codex'
-                        ? codexModelOptions
+                      {(effectiveYoloBackend === 'codex'
+                        ? codexDefaultModelOptions
                         : modelOptions
                       ).map(option => (
                         <SelectItem key={option.value} value={option.value}>
@@ -2213,8 +2224,15 @@ export const GeneralPane: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Default effort</SelectItem>
-                    {effortLevelOptions.map(option => (
+                    <SelectItem value="default">
+                      {effectiveYoloBackend === 'codex'
+                        ? 'Default reasoning'
+                        : 'Default effort'}
+                    </SelectItem>
+                    {(effectiveYoloBackend === 'codex'
+                      ? codexReasoningOptions
+                      : effortLevelOptions
+                    ).map(option => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>
@@ -2237,7 +2255,7 @@ export const GeneralPane: React.FC = () => {
             description="Claude model for AI assistance"
           >
             <Select
-              value={preferences?.selected_model ?? 'claude-opus-4-7'}
+              value={preferences?.selected_model ?? 'claude-opus-4-7[1m]'}
               onValueChange={handleModelChange}
             >
               <SelectTrigger className="w-full sm:min-w-96">
@@ -2255,7 +2273,7 @@ export const GeneralPane: React.FC = () => {
 
           <InlineField
             label="Thinking"
-            description="Extended thinking for complex tasks"
+            description="Claude Sonnet/traditional thinking level"
           >
             <Select
               value={preferences?.thinking_level ?? 'off'}
@@ -2275,8 +2293,8 @@ export const GeneralPane: React.FC = () => {
           </InlineField>
 
           <InlineField
-            label="Effort level"
-            description="Effort for Opus (requires CLI 2.1.32+)"
+            label="Effort"
+            description="Claude Opus adaptive effort (requires CLI 2.1.32+)"
           >
             <Select
               value={preferences?.default_effort_level ?? 'high'}
@@ -2323,14 +2341,14 @@ export const GeneralPane: React.FC = () => {
             description="Codex model for AI assistance"
           >
             <Select
-              value={preferences?.selected_codex_model ?? 'gpt-5.4'}
+              value={preferences?.selected_codex_model ?? 'gpt-5.5'}
               onValueChange={handleCodexModelChange}
             >
               <SelectTrigger className="w-full sm:min-w-96">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {codexModelOptions.map(option => (
+                {codexDefaultModelOptions.map(option => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
@@ -2341,7 +2359,7 @@ export const GeneralPane: React.FC = () => {
 
           <InlineField
             label="Reasoning effort"
-            description="Codex reasoning depth"
+            description="Codex reasoning effort"
           >
             <Select
               value={preferences?.default_codex_reasoning_effort ?? 'high'}

@@ -188,6 +188,11 @@ function App() {
   // Used on both initial preload and WebSocket reconnect.
   const seedCache = useCallback(
     (data: InitialData) => {
+      const runningSnapshotMessages: Array<{
+        sessionId: string
+        message: Session['messages'][number]
+      }> = []
+
       // Seed projects into TanStack Query cache
       if (data.projects) {
         queryClient.setQueryData(projectsQueryKeys.list(), data.projects)
@@ -325,6 +330,17 @@ function App() {
               return init
             }
           )
+
+          const seededSession = queryClient.getQueryData<Session>(
+            chatQueryKeys.session(sessionId)
+          )
+          const lastMsg = seededSession?.messages.at(-1)
+          if (
+            lastMsg?.role === 'assistant' &&
+            lastMsg.id.startsWith('running-')
+          ) {
+            runningSnapshotMessages.push({ sessionId, message: lastMsg })
+          }
         }
       }
       // Replace sendingSessionIds with exactly the server's running sessions.
@@ -377,6 +393,20 @@ function App() {
           },
         }
       })
+
+      for (const { sessionId, message } of runningSnapshotMessages) {
+        hydrateRunningSnapshot(sessionId, message, { allowWhileSending: true })
+        queryClient.setQueryData<Session>(
+          chatQueryKeys.session(sessionId),
+          old =>
+            old
+              ? {
+                  ...old,
+                  messages: old.messages.filter(m => m.id !== message.id),
+                }
+              : old
+        )
+      }
       // Note: Git status is included in worktree cached_* fields, no separate cache needed
       // Seed preferences into cache
       if (data.preferences) {
@@ -956,7 +986,9 @@ function App() {
                 }
               }
 
-              hydrateRunningSnapshot(session.session_id, lastMsg)
+              hydrateRunningSnapshot(session.session_id, lastMsg, {
+                allowWhileSending: true,
+              })
 
               queryClient.setQueryData<Session>(
                 chatQueryKeys.session(session.session_id),

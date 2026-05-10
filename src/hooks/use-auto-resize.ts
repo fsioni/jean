@@ -15,7 +15,9 @@ export function useAutoResize(
   // Lazily detect support once
   if (supportsFieldSizing.current === null) {
     supportsFieldSizing.current =
-      typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content')
+      typeof CSS !== 'undefined' &&
+      typeof CSS.supports === 'function' &&
+      CSS.supports('field-sizing', 'content')
   }
 
   const resize = useCallback(() => {

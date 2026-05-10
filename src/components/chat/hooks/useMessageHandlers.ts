@@ -29,7 +29,6 @@ import { formatAnswersAsNaturalLanguage } from '@/services/chat'
 import { parseReviewFindings, getFindingKey } from '../review-finding-utils'
 import { findPlanFilePath, resolvePlanContent } from '../tool-call-utils'
 import { navigateToApprovedWorktree } from '../worktree-approval-navigation'
-import { markWorktreeSilentReady } from '@/services/worktree-silent-ready'
 import { getCodexPermissionApprovalMode } from '../permission-approval-utils'
 import { isCodexDevUserInputRequest } from '../codex-dev-flows'
 import { generateId } from '@/lib/uuid'
@@ -220,7 +219,7 @@ function getDefaultModelForBackend(
   preferences: AppPreferences | undefined
 ): string {
   if (backend === 'codex') {
-    return preferences?.selected_codex_model ?? 'gpt-5.4'
+    return preferences?.selected_codex_model ?? 'gpt-5.5'
   }
   if (backend === 'opencode') {
     return preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex'
@@ -228,7 +227,7 @@ function getDefaultModelForBackend(
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-7'
+  return preferences?.selected_model ?? 'claude-opus-4-7[1m]'
 }
 
 /**
@@ -1713,8 +1712,6 @@ export function useMessageHandlers({
         toast.error(`Failed to create worktree: ${err}`)
         return
       }
-      markWorktreeSilentReady(pendingWorktree.id)
-
       // Wait for worktree to be ready
       let readyWorktree: Worktree
       try {
@@ -2022,8 +2019,6 @@ export function useMessageHandlers({
         toast.error(`Failed to create worktree: ${err}`)
         return
       }
-      markWorktreeSilentReady(pendingWorktree.id)
-
       // Wait for worktree to be ready
       let readyWorktree: Worktree
       try {

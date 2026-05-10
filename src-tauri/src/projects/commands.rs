@@ -7090,15 +7090,24 @@ fn execute_codex_review(
     std::fs::write(&schema_file, REVIEW_SCHEMA)
         .map_err(|e| format!("Failed to write schema file: {e}"))?;
 
+    let (actual_model, is_fast) = crate::chat::codex::split_fast_model(model);
+    log::info!(
+        "Executing Codex review CLI: model={actual_model}, fast={is_fast}, working_dir={:?}",
+        working_dir
+    );
+
     let mut cmd = crate::platform::silent_command(&cli_path);
     cmd.args([
         "exec",
         "--json",
         "--model",
-        model,
+        actual_model,
         "--full-auto",
         "--output-schema",
     ]);
+    if is_fast {
+        cmd.args(["-c", "service_tier=\"fast\""]);
+    }
     cmd.arg(&schema_file);
     if let Some(dir) = working_dir {
         cmd.arg("--cd");

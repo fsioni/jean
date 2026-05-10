@@ -355,6 +355,30 @@ fn write_message(writer: &Arc<Mutex<BufWriter<ChildStdin>>>, msg: &Value) -> Res
     Ok(())
 }
 
+fn request_debug_summary(method: &str, params: &Value) -> Option<Value> {
+    let keys: &[&str] = match method {
+        "thread/start" | "thread/resume" => &[
+            "threadId",
+            "model",
+            "serviceTier",
+            "cwd",
+            "sandbox",
+            "approvalPolicy",
+            "config",
+        ],
+        "turn/start" => &["threadId", "effort", "cwd", "sandboxPolicy"],
+        _ => return None,
+    };
+
+    let mut summary = serde_json::Map::new();
+    for key in keys {
+        if let Some(value) = params.get(*key) {
+            summary.insert((*key).to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(summary))
+}
+
 /// Send a JSON-RPC request and wait for the response.
 pub fn send_request(method: &str, params: Value) -> Result<Value, String> {
     let guard = CODEX_SERVER.lock().unwrap();
@@ -371,6 +395,10 @@ pub fn send_request(method: &str, params: Value) -> Result<Value, String> {
         "id": id,
         "params": params,
     });
+
+    if let Some(summary) = request_debug_summary(method, &request["params"]) {
+        log::debug!("Codex app-server request {method}: {summary}");
+    }
 
     // Register response handler BEFORE writing (prevent race with reader thread)
     let (tx, rx) = tokio::sync::oneshot::channel();

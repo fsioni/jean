@@ -47,6 +47,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { invoke } from '@/lib/transport'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
 import { openExternal } from '@/lib/platform'
 import { notify } from '@/lib/notifications'
@@ -467,7 +468,7 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[modelKey] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
         : backend === 'opencode'
           ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
           : backend === 'cursor'
@@ -493,7 +494,7 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
         : backend === 'opencode'
           ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
           : backend === 'cursor'
@@ -804,7 +805,7 @@ export function MagicModal() {
           gitDiffSelectedFiles.size > 0
             ? Array.from(gitDiffSelectedFiles)
             : null
-        const toastId = toast.loading(
+        const opToast = dismissibleToast.loading(
           isPush
             ? `Committing and pushing on ${branch}...`
             : `Creating commit on ${branch}...`
@@ -835,22 +836,17 @@ export function MagicModal() {
           window.dispatchEvent(new CustomEvent('git-commit-completed'))
           if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
           if (result.push_fell_back) {
-            toast.warning(
-              'Could not push to PR branch, pushed to new branch instead',
-              {
-                id: toastId,
-              }
+            opToast.warning(
+              'Could not push to PR branch, pushed to new branch instead'
             )
           } else if (result.commit_hash) {
             const prefix = isPush ? 'Committed and pushed' : 'Committed'
-            toast.success(`${prefix}: ${result.message.split('\n')[0]}`, {
-              id: toastId,
-            })
+            opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
           } else {
-            toast.success('Pushed to remote', { id: toastId })
+            opToast.success('Pushed to remote')
           }
         } catch (error) {
-          toast.error(`Failed: ${error}`, { id: toastId })
+          opToast.error(`Failed: ${error}`)
         } finally {
           clearWorktreeLoading(selectedWorktreeId)
         }
@@ -902,7 +898,9 @@ export function MagicModal() {
         }
         case 'push': {
           const doPush = async (remote?: string) => {
-            const toastId = toast.loading(`Pushing ${worktree.branch}...`)
+            const opToast = dismissibleToast.loading(
+              `Pushing ${worktree.branch}...`
+            )
             try {
               const result = await gitPush(
                 worktree.path,
@@ -912,15 +910,14 @@ export function MagicModal() {
               triggerImmediateGitPoll()
               if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
               if (result.fellBack) {
-                toast.warning(
-                  'Could not push to PR branch, pushed to new branch instead',
-                  { id: toastId }
+                opToast.warning(
+                  'Could not push to PR branch, pushed to new branch instead'
                 )
               } else {
-                toast.success('Changes pushed', { id: toastId })
+                opToast.success('Changes pushed')
               }
             } catch (error) {
-              toast.error(`Push failed: ${error}`, { id: toastId })
+              opToast.error(`Push failed: ${error}`)
             }
           }
           if (worktree.pr_number) {
@@ -1096,7 +1093,7 @@ export function MagicModal() {
               override?.model ??
               preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
               (resolvedBackend === 'codex'
-                ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+                ? (preferences?.selected_codex_model ?? 'gpt-5.5')
                 : resolvedBackend === 'opencode'
                   ? (preferences?.selected_opencode_model ??
                     'opencode/gpt-5.3-codex')

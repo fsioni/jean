@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react'
+import { useQueries } from '@tanstack/react-query'
 import {
   DndContext,
   closestCenter,
@@ -9,15 +10,22 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { isBaseSession, type Worktree } from '@/types/projects'
-import { useReorderWorktrees } from '@/services/projects'
+import type { Worktree } from '@/types/projects'
+import type { WorktreeSessions } from '@/types/chat'
+import { invoke } from '@/lib/transport'
+import { chatQueryKeys } from '@/services/chat'
+import { isTauri } from '@/services/projects'
+import { useProjectsStore } from '@/store/projects-store'
+import {
+  compareWorktreesForCanvasSort,
+  getWorktreeLastActivity,
+} from './worktree-sort-utils'
 import { WorktreeItem } from './WorktreeItem'
 import { WorktreeItemSkeleton } from './WorktreeItemSkeleton'
 
@@ -91,32 +99,89 @@ export function WorktreeList({
   worktrees,
   defaultBranch,
 }: WorktreeListProps) {
-  const reorderWorktrees = useReorderWorktrees()
+  const worktreeSortMode = useProjectsStore(
+    state =>
+      state.projectCanvasSettings[projectId]?.worktreeSortMode ?? 'created'
+  )
 
-  // Sort: base sessions first (order 0), then by order field, then by created_at for items without order
-  const sortedWorktrees = useMemo(() => {
-    return [...worktrees].sort((a, b) => {
-      const aIsBase = isBaseSession(a)
-      const bIsBase = isBaseSession(b)
-      const aIsPending = a.status === 'pending'
-      const bIsPending = b.status === 'pending'
+  const pendingWorktrees = useMemo(
+    () => worktrees.filter(w => w.status === 'pending'),
+    [worktrees]
+  )
+  const readyWorktrees = useMemo(
+    () =>
+      worktrees.filter(
+        w => !w.status || w.status === 'ready' || w.status === 'error'
+      ),
+    [worktrees]
+  )
 
-      // Base sessions always come first
-      if (aIsBase && !bIsBase) return -1
-      if (!aIsBase && bIsBase) return 1
+  const sessionQueries = useQueries({
+    queries: readyWorktrees.map(wt => ({
+      queryKey: [...chatQueryKeys.sessions(wt.id), 'with-counts'],
+      queryFn: async (): Promise<WorktreeSessions> => {
+        if (!isTauri() || !wt.id || !wt.path) {
+          return {
+            worktree_id: wt.id,
+            sessions: [],
+            active_session_id: null,
+            version: 2,
+          }
+        }
+        return invoke<WorktreeSessions>('get_sessions', {
+          worktreeId: wt.id,
+          worktreePath: wt.path,
+          includeMessageCounts: true,
+        })
+      },
+      enabled: !!wt.id && !!wt.path,
+    })),
+  })
 
-      // Pending worktrees come next (at top for visibility)
-      if (aIsPending && !bIsPending) return -1
-      if (!aIsPending && bIsPending) return 1
+  const sessionsFingerprint = sessionQueries
+    .map(q => `${q.data?.worktree_id}:${q.dataUpdatedAt}:${q.isLoading}`)
+    .join('|')
 
-      // Sort by order field (lower = higher in list)
-      // If orders are equal, fall back to created_at (newest first)
-      if (a.order !== b.order) {
-        return a.order - b.order
+  const sessionsByWorktreeId = useMemo(() => {
+    const map = new Map<string, WorktreeSessions>()
+    for (const query of sessionQueries) {
+      if (query.data?.worktree_id) {
+        map.set(query.data.worktree_id, query.data)
       }
-      return b.created_at - a.created_at
-    })
-  }, [worktrees])
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsFingerprint])
+
+  // Match ProjectCanvasView ordering: pending first, then base session first,
+  // then selected canvas sort mode using session last activity when requested.
+  const sortedWorktrees = useMemo(() => {
+    const latestActivityByWorktreeId = new Map<string, number>()
+    for (const worktree of pendingWorktrees) {
+      latestActivityByWorktreeId.set(worktree.id, worktree.created_at)
+    }
+    for (const worktree of readyWorktrees) {
+      const sessions = sessionsByWorktreeId.get(worktree.id)?.sessions ?? []
+      latestActivityByWorktreeId.set(
+        worktree.id,
+        getWorktreeLastActivity(sessions, worktree.created_at)
+      )
+    }
+
+    const sortedPending = [...pendingWorktrees].sort(
+      (a, b) => b.created_at - a.created_at
+    )
+    const sortedReady = [...readyWorktrees].sort((a, b) =>
+      compareWorktreesForCanvasSort(
+        a,
+        b,
+        latestActivityByWorktreeId,
+        worktreeSortMode
+      )
+    )
+
+    return [...sortedPending, ...sortedReady]
+  }, [pendingWorktrees, readyWorktrees, sessionsByWorktreeId, worktreeSortMode])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -129,41 +194,13 @@ export function WorktreeList({
     })
   )
 
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event
-      if (!over || active.id === over.id) return
-
-      // Only consider draggable worktrees (not base sessions, pending, or deleting)
-      const draggableWorktrees = sortedWorktrees.filter(
-        w =>
-          !isBaseSession(w) && w.status !== 'pending' && w.status !== 'deleting'
-      )
-
-      const oldIndex = draggableWorktrees.findIndex(w => w.id === active.id)
-      const newIndex = draggableWorktrees.findIndex(w => w.id === over.id)
-
-      if (oldIndex === -1 || newIndex === -1) return
-
-      const reorderedWorktrees = arrayMove(
-        draggableWorktrees,
-        oldIndex,
-        newIndex
-      )
-      const worktreeIds = reorderedWorktrees.map(w => w.id)
-
-      reorderWorktrees.mutate({ projectId, worktreeIds })
-    },
-    [sortedWorktrees, projectId, reorderWorktrees]
-  )
+  const handleDragEnd = useCallback((_event: DragEndEvent) => {
+    // Sidebar order is derived from the ProjectCanvasView sort setting.
+    // Manual reordering is disabled so the sidebar cannot drift from canvas.
+  }, [])
 
   // Get only the draggable worktree IDs for SortableContext
-  const draggableIds = sortedWorktrees
-    .filter(
-      w =>
-        !isBaseSession(w) && w.status !== 'pending' && w.status !== 'deleting'
-    )
-    .map(w => w.id)
+  const draggableIds: string[] = []
 
   return (
     <div className="ml-4 border-l border-border/40 py-0.5">
@@ -177,11 +214,6 @@ export function WorktreeList({
           strategy={verticalListSortingStrategy}
         >
           {sortedWorktrees.map(worktree => {
-            const isDisabled =
-              isBaseSession(worktree) ||
-              worktree.status === 'pending' ||
-              worktree.status === 'deleting'
-
             return (
               <SortableWorktree
                 key={worktree.id}
@@ -189,7 +221,7 @@ export function WorktreeList({
                 projectId={projectId}
                 projectPath={projectPath}
                 defaultBranch={defaultBranch}
-                disabled={isDisabled}
+                disabled
               />
             )
           })}
