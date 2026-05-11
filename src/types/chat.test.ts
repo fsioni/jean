@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasQuestionAnswerOutput } from './chat'
+import { hasQuestionAnswerOutput, normalizeCodexQuestions } from './chat'
 
 describe('hasQuestionAnswerOutput', () => {
   it('returns false for Claude blocking-tool error output', () => {
@@ -17,5 +17,37 @@ describe('hasQuestionAnswerOutput', () => {
 
   it('returns true for non-JSON backend answer output', () => {
     expect(hasQuestionAnswerOutput('Backyard birds')).toBe(true)
+  })
+})
+
+describe('normalizeCodexQuestions', () => {
+  it('normalizes Codex request_user_input questions for Jean question cards', () => {
+    expect(
+      normalizeCodexQuestions([
+        {
+          id: 'scope',
+          header: 'Scope',
+          question: 'Which scope should I use?',
+          options: [
+            { label: 'Backend', description: 'Rust only' },
+            { label: 'Frontend' },
+          ],
+          isOther: true,
+          isSecret: false,
+        },
+      ])
+    ).toEqual([
+      {
+        header: 'Scope',
+        question: 'Which scope should I use?',
+        multiSelect: false,
+        isOther: true,
+        isSecret: false,
+        options: [
+          { label: 'Backend', description: 'Rust only' },
+          { label: 'Frontend', description: undefined },
+        ],
+      },
+    ])
   })
 })

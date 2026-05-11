@@ -2,6 +2,8 @@ import type { ThinkingLevel, EffortLevel, ExecutionMode } from './chat'
 import { DEFAULT_KEYBINDINGS, type KeybindingsMap } from './keybindings'
 import { isMacOS, isWindows } from '../lib/platform'
 
+export type CodexGoalExecutionMode = Extract<ExecutionMode, 'build' | 'yolo'>
+
 // =============================================================================
 // Notification Sounds
 // =============================================================================
@@ -495,8 +497,11 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
 - Use plan mode for verification steps, not just building
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- At the end of each plan, give me a list of unresolved questions to answer, if any.
-- In planning mode, present plans using the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For Codex specifically: after the user answers native \`request_user_input\`/open questions in plan mode, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
+- Every Codex plan-mode response that contains or revises a plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
+- Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
 - Before designing or coding against any external library/framework/SDK/API/CLI, run WebSearch for current docs.
@@ -646,39 +651,50 @@ export interface MagicPromptReasoningEfforts {
 
 /** Default models for each magic prompt */
 export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'claude-opus-4-7',
-  investigate_pr_model: 'claude-opus-4-7',
-  investigate_workflow_run_model: 'claude-opus-4-7',
+  investigate_issue_model: 'claude-opus-4-7[1m]',
+  investigate_pr_model: 'claude-opus-4-7[1m]',
+  investigate_workflow_run_model: 'claude-opus-4-7[1m]',
   pr_content_model: 'sonnet',
   commit_message_model: 'sonnet',
-  code_review_model: 'claude-opus-4-7',
-  context_summary_model: 'claude-opus-4-7',
-  resolve_conflicts_model: 'claude-opus-4-7',
+  code_review_model: 'claude-opus-4-7[1m]',
+  context_summary_model: 'claude-opus-4-7[1m]',
+  resolve_conflicts_model: 'claude-opus-4-7[1m]',
   release_notes_model: 'sonnet',
   session_naming_model: 'sonnet',
-  investigate_security_alert_model: 'claude-opus-4-7',
-  investigate_advisory_model: 'claude-opus-4-7',
-  investigate_linear_issue_model: 'claude-opus-4-7',
-  review_comments_model: 'claude-opus-4-7',
+  investigate_security_alert_model: 'claude-opus-4-7[1m]',
+  investigate_advisory_model: 'claude-opus-4-7[1m]',
+  investigate_linear_issue_model: 'claude-opus-4-7[1m]',
+  review_comments_model: 'claude-opus-4-7[1m]',
 }
 
-/** Codex preset: heavy tasks use top model, light tasks use mini */
-export const CODEX_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'gpt-5.4',
-  investigate_pr_model: 'gpt-5.4',
-  investigate_workflow_run_model: 'gpt-5.4',
-  pr_content_model: 'gpt-5.3-codex',
-  commit_message_model: 'gpt-5.3-codex',
-  code_review_model: 'gpt-5.4',
-  context_summary_model: 'gpt-5.4',
-  resolve_conflicts_model: 'gpt-5.4',
-  release_notes_model: 'gpt-5.3-codex',
-  session_naming_model: 'gpt-5.3-codex',
-  investigate_security_alert_model: 'gpt-5.4',
-  investigate_advisory_model: 'gpt-5.4',
-  investigate_linear_issue_model: 'gpt-5.4',
-  review_comments_model: 'gpt-5.4',
+function makeMagicPromptModelsPreset(
+  model: MagicPromptModel
+): MagicPromptModels {
+  return {
+    investigate_issue_model: model,
+    investigate_pr_model: model,
+    investigate_workflow_run_model: model,
+    pr_content_model: model,
+    commit_message_model: model,
+    code_review_model: model,
+    context_summary_model: model,
+    resolve_conflicts_model: model,
+    release_notes_model: model,
+    session_naming_model: model,
+    investigate_security_alert_model: model,
+    investigate_advisory_model: model,
+    investigate_linear_issue_model: model,
+    review_comments_model: model,
+  }
 }
+
+/** Codex preset: use GPT-5.5 for all magic prompts */
+export const CODEX_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('gpt-5.5')
+
+/** Codex fast preset: use GPT-5.5 Fast for all magic prompts */
+export const CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('gpt-5.5-fast')
 
 /** OpenCode preset for all magic prompts */
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
@@ -939,6 +955,8 @@ export interface AppPreferences {
   zoom_level: number // Zoom level percentage (50-200, default 100)
   custom_cli_profiles: CustomCliProfile[] // Custom CLI settings profiles (e.g., OpenRouter, MiniMax)
   default_provider: string | null // Default provider profile name (null = Anthropic direct)
+  favorite_models: string[] // Favourited model keys ("backend:model") shown at top of picker
+  fast_mode_models: string[] // Model keys ("backend:baseModel") with fast tier last enabled
 
   confirm_session_close: boolean // Show confirmation dialog before closing sessions/worktrees
   default_execution_mode: ExecutionMode // Default execution mode for new sessions: 'plan', 'build', or 'yolo'
@@ -947,6 +965,7 @@ export interface AppPreferences {
   selected_opencode_model: string // Default OpenCode model (provider/model)
   selected_cursor_model: CursorModel // Default Cursor model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
+  codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
   codex_max_agent_threads: number // Max concurrent agent threads (1-8) when multi-agent is enabled
   restore_last_session: boolean // Restore last session when switching projects (default: true)
@@ -965,6 +984,7 @@ export interface AppPreferences {
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
+  coderabbit_cli_source?: 'jean' | 'path' // CodeRabbit CLI source: 'jean' (managed) or 'path' (system PATH)
   expand_tool_calls_by_default: boolean // Expand all tool call collapsibles by default
   auto_update_ai_backends: boolean // Auto-install CLI updates in background when a new version is detected
 }
@@ -1071,17 +1091,81 @@ export type ClaudeModel =
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
-  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
-  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
-  { value: 'claude-opus-4-6-fast', label: 'Claude Opus 4.6 Fast' },
-  { value: 'claude-opus-4-6[1m]-fast', label: 'Claude Opus 4.6 (1M) Fast' },
-  { value: 'sonnet', label: 'Claude Sonnet 4.6' },
+  { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-sonnet-4-6[1m]', label: 'Claude Sonnet 4.6 (1M)' },
   { value: 'haiku', label: 'Claude Haiku' },
 ]
+
+const legacyClaudeDefaultModelMap = {
+  'claude-opus-4-7': 'claude-opus-4-7[1m]',
+  'claude-opus-4-6': 'claude-opus-4-6[1m]',
+  'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
+  sonnet: 'claude-sonnet-4-6[1m]',
+} as const satisfies Partial<Record<ClaudeModel, ClaudeModel>>
+
+const knownClaudeModels = new Set<string>([
+  ...modelOptions.map(option => option.value),
+  'claude-opus-4-6[1m]-fast',
+  'opus',
+])
+
+export function normalizeClaudeModel(model: string): ClaudeModel {
+  if (model in legacyClaudeDefaultModelMap) {
+    return legacyClaudeDefaultModelMap[
+      model as keyof typeof legacyClaudeDefaultModelMap
+    ]
+  }
+
+  return knownClaudeModels.has(model)
+    ? (model as ClaudeModel)
+    : 'claude-opus-4-7[1m]'
+}
+
+// Claude models that support fast service tier. Fast mode is exposed via a
+// separate UI toggle, not as standalone dropdown entries.
+export const CLAUDE_FAST_MODEL_MAP = {
+  'claude-opus-4-6[1m]': 'claude-opus-4-6[1m]-fast',
+} as const
+
+export type ClaudeFastBaseModel = keyof typeof CLAUDE_FAST_MODEL_MAP
+
+const CLAUDE_FAST_TO_BASE: Record<string, ClaudeFastBaseModel> =
+  Object.fromEntries(
+    Object.entries(CLAUDE_FAST_MODEL_MAP).map(([base, fast]) => [fast, base])
+  ) as Record<string, ClaudeFastBaseModel>
+
+export function getClaudeFastInfo(model: string): CodexFastInfo {
+  if (model in CLAUDE_FAST_MODEL_MAP) {
+    const base = model as ClaudeFastBaseModel
+    return {
+      supportsFast: true,
+      isFast: false,
+      baseModel: base,
+      fastModel: CLAUDE_FAST_MODEL_MAP[base],
+    }
+  }
+  const base = CLAUDE_FAST_TO_BASE[model]
+  if (base) {
+    return {
+      supportsFast: true,
+      isFast: true,
+      baseModel: base,
+      fastModel: model,
+    }
+  }
+  return { supportsFast: false, isFast: false, baseModel: model }
+}
+
+export function getModelFastInfo(
+  backend: CliBackend,
+  model: string
+): CodexFastInfo {
+  if (backend === 'codex') return getCodexFastInfo(model)
+  if (backend === 'claude') return getClaudeFastInfo(model)
+  return { supportsFast: false, isFast: false, baseModel: model }
+}
 
 export const thinkingLevelOptions: { value: ThinkingLevel; label: string }[] = [
   { value: 'off', label: 'Off' },
@@ -1095,11 +1179,19 @@ export const effortLevelOptions: {
   label: string
   description: string
 }[] = [
-  { value: 'low', label: 'Low', description: 'Minimal thinking' },
-  { value: 'medium', label: 'Medium', description: 'Moderate thinking' },
-  { value: 'high', label: 'High', description: 'Deep reasoning' },
-  { value: 'xhigh', label: 'xHigh', description: 'Extra high (Opus 4.7)' },
-  { value: 'max', label: 'Max', description: 'No limits' },
+  { value: 'low', label: 'Low', description: 'Minimal Claude Opus effort' },
+  {
+    value: 'medium',
+    label: 'Medium',
+    description: 'Moderate Claude Opus effort',
+  },
+  { value: 'high', label: 'High', description: 'High Claude Opus effort' },
+  {
+    value: 'xhigh',
+    label: 'xHigh',
+    description: 'Extra high Claude Opus effort',
+  },
+  { value: 'max', label: 'Max', description: 'Maximum Claude Opus effort' },
 ]
 
 // =============================================================================
@@ -1108,9 +1200,11 @@ export const effortLevelOptions: {
 
 export type CodexModel =
   | 'gpt-5.5'
+  | 'gpt-5.5-fast'
   | 'gpt-5.4'
   | 'gpt-5.4-fast'
   | 'gpt-5.4-mini'
+  | 'gpt-5.4-mini-fast'
   | 'gpt-5.3'
   | 'gpt-5.3-codex'
   | 'gpt-5.2-codex'
@@ -1118,10 +1212,53 @@ export type CodexModel =
   | 'gpt-5.2'
   | 'gpt-5.1-codex-mini'
 
+// Codex models that support fast service tier. Fast mode is exposed via a
+// separate UI toggle, not as standalone dropdown entries.
+export const CODEX_FAST_MODEL_MAP = {
+  'gpt-5.5': 'gpt-5.5-fast',
+  'gpt-5.4': 'gpt-5.4-fast',
+  'gpt-5.4-mini': 'gpt-5.4-mini-fast',
+} as const
+
+export type CodexFastBaseModel = keyof typeof CODEX_FAST_MODEL_MAP
+
+const CODEX_FAST_TO_BASE: Record<string, CodexFastBaseModel> =
+  Object.fromEntries(
+    Object.entries(CODEX_FAST_MODEL_MAP).map(([base, fast]) => [fast, base])
+  ) as Record<string, CodexFastBaseModel>
+
+export interface CodexFastInfo {
+  supportsFast: boolean
+  isFast: boolean
+  baseModel: string
+  fastModel?: string
+}
+
+export function getCodexFastInfo(model: string): CodexFastInfo {
+  if (model in CODEX_FAST_MODEL_MAP) {
+    const base = model as CodexFastBaseModel
+    return {
+      supportsFast: true,
+      isFast: false,
+      baseModel: base,
+      fastModel: CODEX_FAST_MODEL_MAP[base],
+    }
+  }
+  const base = CODEX_FAST_TO_BASE[model]
+  if (base) {
+    return {
+      supportsFast: true,
+      isFast: true,
+      baseModel: base,
+      fastModel: model,
+    }
+  }
+  return { supportsFast: false, isFast: false, baseModel: model }
+}
+
 export const codexModelOptions: { value: CodexModel; label: string }[] = [
   { value: 'gpt-5.5', label: 'GPT 5.5' },
   { value: 'gpt-5.4', label: 'GPT 5.4' },
-  { value: 'gpt-5.4-fast', label: 'GPT 5.4 - Fast' },
   { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
   { value: 'gpt-5.3', label: 'GPT 5.3' },
   { value: 'gpt-5.3-codex', label: 'GPT 5.3 Codex' },
@@ -1129,6 +1266,21 @@ export const codexModelOptions: { value: CodexModel; label: string }[] = [
   { value: 'gpt-5.1-codex-max', label: 'GPT 5.1 Codex Max' },
   { value: 'gpt-5.2', label: 'GPT 5.2' },
   { value: 'gpt-5.1-codex-mini', label: 'GPT 5.1 Codex Mini' },
+]
+
+export const codexDefaultModelOptions: {
+  value: CodexModel
+  label: string
+}[] = [
+  { value: 'gpt-5.5', label: 'GPT 5.5' },
+  { value: 'gpt-5.5-fast', label: 'GPT 5.5 Fast' },
+  { value: 'gpt-5.4', label: 'GPT 5.4' },
+  { value: 'gpt-5.4-fast', label: 'GPT 5.4 Fast' },
+  { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+  { value: 'gpt-5.4-mini-fast', label: 'GPT 5.4 Mini Fast' },
+  ...codexModelOptions.filter(
+    option => !['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'].includes(option.value)
+  ),
 ]
 
 const deprecatedCodexFastModelMap = {
@@ -1147,7 +1299,7 @@ export function normalizeCodexModel(model: string): CodexModel {
     ]
   }
 
-  return isCodexModel(model) ? model : 'gpt-5.4'
+  return isCodexModel(model) ? model : 'gpt-5.5'
 }
 
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
@@ -1183,7 +1335,7 @@ export function isCursorModel(model: string): model is CursorModel {
 
 /** Check if a model string identifies a Codex model */
 export function isCodexModel(model: string): model is CodexModel {
-  return (codexModelOptions as { value: string }[]).some(
+  return (codexDefaultModelOptions as { value: string }[]).some(
     opt => opt.value === model
   )
 }
@@ -1195,7 +1347,7 @@ export const codexReasoningOptions: {
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
+  { value: 'xhigh', label: 'xHigh' },
 ]
 
 // =============================================================================
@@ -1486,7 +1638,7 @@ export function getEditorLabel(editor: EditorApp | undefined): string {
 
 export const defaultPreferences: AppPreferences = {
   theme: 'system',
-  selected_model: 'claude-opus-4-7',
+  selected_model: 'claude-opus-4-7[1m]',
   thinking_level: 'ultrathink',
   default_effort_level: 'high',
   terminal: isWindows ? 'powershell' : 'terminal',
@@ -1538,13 +1690,16 @@ export const defaultPreferences: AppPreferences = {
   zoom_level: ZOOM_LEVEL_DEFAULT,
   custom_cli_profiles: [],
   default_provider: null,
+  favorite_models: [],
+  fast_mode_models: [],
   confirm_session_close: true, // Default: enabled (show confirmation)
   default_execution_mode: 'plan', // Default: plan mode
   default_backend: 'claude', // Default: Claude
-  selected_codex_model: 'gpt-5.4', // Default: latest Codex model
+  selected_codex_model: 'gpt-5.5', // Default: latest Codex model
   selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
+  codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
   codex_max_agent_threads: 3, // Default: 3 threads
   restore_last_session: true, // Default: enabled
@@ -1563,6 +1718,7 @@ export const defaultPreferences: AppPreferences = {
   codex_cli_source: 'jean', // Default: Jean-managed
   opencode_cli_source: 'jean', // Default: Jean-managed
   gh_cli_source: 'jean', // Default: Jean-managed
+  coderabbit_cli_source: 'jean', // Default: Jean-managed
   expand_tool_calls_by_default: false, // Default: collapsed
   auto_update_ai_backends: true, // Default: auto-update AI backends in the background
 }

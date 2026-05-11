@@ -30,7 +30,8 @@ export async function copyToClipboard(text: string): Promise<void> {
  */
 export async function copyHtmlToClipboard(
   html: string,
-  plainText: string
+  plainText: string,
+  fallbackPlainText = plainText
 ): Promise<void> {
   if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
     await navigator.clipboard.write([
@@ -43,7 +44,7 @@ export async function copyHtmlToClipboard(
   }
 
   // Fall back to plain text
-  await copyToClipboard(plainText)
+  await copyToClipboard(fallbackPlainText)
 }
 
 function execCommandCopyFallback(text: string): void {

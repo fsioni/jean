@@ -8,6 +8,7 @@ import {
 import type { RefObject } from 'react'
 import type { VirtualizedMessageListHandle } from '../VirtualizedMessageList'
 import type { ChatMessage } from '@/types/chat'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 interface UseScrollManagementOptions {
   /** Messages array for finding findings index */
@@ -43,12 +44,35 @@ interface UseScrollManagementReturn {
   endKeyboardScroll: () => void
 }
 
+const BOTTOM_THRESHOLD_PX = 100
+const SCROLL_EPSILON_PX = 2
+
+function hasScrollableOverflow(viewport: HTMLDivElement) {
+  return viewport.scrollHeight - viewport.clientHeight > SCROLL_EPSILON_PX
+}
+
+function isViewportAtBottom(viewport: HTMLDivElement) {
+  if (!hasScrollableOverflow(viewport)) {
+    return true
+  }
+
+  return (
+    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+    BOTTOM_THRESHOLD_PX
+  )
+}
+
+function scrollToTail(viewport: HTMLDivElement) {
+  viewport.scrollTop = viewport.scrollHeight
+}
+
 export function useScrollManagement({
   messages,
   virtualizedListRef,
   activeWorktreeId,
   isSending,
 }: UseScrollManagementOptions): UseScrollManagementReturn {
+  const isMobile = useIsMobile()
   const scrollViewportRef = useRef<HTMLDivElement>(null)
 
   // State for tracking if user is at the bottom of scroll area
@@ -136,6 +160,18 @@ export function useScrollManagement({
           scrollTimeoutRef.current = null
         }
         isAutoScrollingRef.current = false
+
+        // Trackpads can emit upward wheel events even when the chat content
+        // does not overflow. In that case no real scroll-away happened, so keep
+        // the viewport logically pinned to the bottom and avoid showing the
+        // floating "Bottom" button.
+        if (!hasScrollableOverflow(viewport)) {
+          userScrollUpUntilRef.current = 0
+          isAtBottomRef.current = true
+          setIsAtBottom(prev => (prev ? prev : true))
+          return
+        }
+
         isAtBottomRef.current = false
         setIsAtBottom(false)
         userScrollUpUntilRef.current = Date.now() + 1000
@@ -149,9 +185,45 @@ export function useScrollManagement({
     return () => viewport.removeEventListener('wheel', handleWheel)
   }, [])
 
+  // Keep scroll state honest when content/viewport size changes. If the chat no
+  // longer overflows (short message list, window got taller, content collapsed),
+  // it is necessarily at the bottom. This clears stale "scrolled away" state
+  // without changing behavior for genuinely scrollable chats.
+  useEffect(() => {
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+
+    let rafId = 0
+    const syncNonScrollableState = () => {
+      cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        if (!hasScrollableOverflow(viewport)) {
+          userScrollUpUntilRef.current = 0
+          isAtBottomRef.current = true
+          setIsAtBottom(prev => (prev ? prev : true))
+        }
+      })
+    }
+
+    syncNonScrollableState()
+
+    const observer = new ResizeObserver(syncNonScrollableState)
+    observer.observe(viewport)
+    if (viewport.firstElementChild) {
+      observer.observe(viewport.firstElementChild)
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      observer.disconnect()
+    }
+  }, [])
+
   // [Tier 2 + 5] Auto-scroll during streaming using ResizeObserver.
   // rAF-coalesced: at most one scroll per animation frame.
-  // Plan elements use direct scrollTop instead of scrollIntoView.
+  // Plan elements use direct scrollTop instead of scrollIntoView on desktop.
+  // On mobile, always follow the live tail: pinning a plan to the top reads as
+  // a jump away from the streaming response.
   useEffect(() => {
     if (!isSending) return
 
@@ -168,11 +240,12 @@ export function useScrollManagement({
         // Don't scroll if user has scrolled away from bottom
         if (!isAtBottomRef.current) return
 
-        // [Tier 5] If a plan is visible, pin it to the top using direct scrollTop
+        // [Tier 5] If a plan is visible on desktop, pin it to the top using
+        // direct scrollTop. Mobile should keep following the streaming tail.
         const planEl = viewport.querySelector(
           '[data-plan-display]'
         ) as HTMLElement | null
-        if (planEl) {
+        if (!isMobile && planEl) {
           // Accumulate offsetTop up the offsetParent chain to the viewport
           let offset = 0
           let el: HTMLElement | null = planEl
@@ -182,7 +255,7 @@ export function useScrollManagement({
           }
           viewport.scrollTop = offset
         } else {
-          viewport.scrollTop = viewport.scrollHeight
+          scrollToTail(viewport)
         }
       })
     })
@@ -192,7 +265,7 @@ export function useScrollManagement({
       cancelAnimationFrame(rafId)
       observer.disconnect()
     }
-  }, [isSending])
+  }, [isSending, isMobile])
 
   // [Tier 4] Scroll management on streaming transitions.
   // - Start: if user was at bottom, smooth-scroll to follow queued/approved execution.
@@ -228,7 +301,7 @@ export function useScrollManagement({
               isAtBottomRef.current &&
               scrollHeight - scrollTop - clientHeight > 2
             ) {
-              viewport.scrollTo({ top: scrollHeight, behavior: 'instant' })
+              scrollToTail(viewport)
             }
           }
           viewport.addEventListener('scrollend', onEnd, { once: true })
@@ -253,7 +326,7 @@ export function useScrollManagement({
           if (viewport && isAtBottomRef.current) {
             const { scrollTop, scrollHeight, clientHeight } = viewport
             if (scrollHeight - scrollTop - clientHeight > 1) {
-              viewport.scrollTo({ top: scrollHeight, behavior: 'instant' })
+              scrollToTail(viewport)
             }
           }
         })
@@ -270,7 +343,7 @@ export function useScrollManagement({
   useLayoutEffect(() => {
     const viewport = scrollViewportRef.current
     if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight
+      scrollToTail(viewport)
     }
   }, [activeWorktreeId])
 
@@ -285,7 +358,7 @@ export function useScrollManagement({
     if (prevLength === 0 && currentLength > 0) {
       const viewport = scrollViewportRef.current
       if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight
+        scrollToTail(viewport)
       }
     }
   }, [messages?.length])
@@ -299,9 +372,7 @@ export function useScrollManagement({
     }
 
     const target = e.target as HTMLDivElement
-    const { scrollTop, scrollHeight, clientHeight } = target
-    // Consider "at bottom" if within 100px of the bottom
-    const atBottom = scrollHeight - scrollTop - clientHeight < 100
+    const atBottom = isViewportAtBottom(target)
 
     // During cooldown after user scrolled up, only allow transitions to NOT-at-bottom
     if (Date.now() < userScrollUpUntilRef.current && atBottom) {
@@ -340,7 +411,7 @@ export function useScrollManagement({
     if (instant) {
       // Instant scroll — no animation, no correction needed
       isAutoScrollingRef.current = false
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' })
+      scrollToTail(viewport)
       return
     }
 
@@ -366,7 +437,7 @@ export function useScrollManagement({
       // (DOM changes during animation can cause stale scrollHeight targeting)
       const { scrollTop, scrollHeight, clientHeight } = viewport
       if (scrollHeight - scrollTop - clientHeight > 2) {
-        viewport.scrollTo({ top: scrollHeight, behavior: 'instant' })
+        scrollToTail(viewport)
       }
     }
 
@@ -411,8 +482,7 @@ export function useScrollManagement({
     isAutoScrollingRef.current = false
     const viewport = scrollViewportRef.current
     if (viewport) {
-      const { scrollTop, scrollHeight, clientHeight } = viewport
-      const atBottom = scrollHeight - scrollTop - clientHeight < 100
+      const atBottom = isViewportAtBottom(viewport)
       isAtBottomRef.current = atBottom
       setIsAtBottom(prev => (prev === atBottom ? prev : atBottom))
     }

@@ -1,4 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+const { mockInvoke } = vi.hoisted(() => ({
+  mockInvoke: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/lib/transport', () => ({
+  invoke: mockInvoke,
+}))
+
 import { useChatStore } from './chat-store'
 import type {
   ToolCall,
@@ -13,6 +22,9 @@ import type { ReviewResponse } from '@/types/projects'
 
 describe('ChatStore', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+
     useChatStore.setState({
       activeWorktreeId: null,
       activeWorktreePath: null,
@@ -23,6 +35,7 @@ describe('ChatStore', () => {
       worktreePaths: {},
       sendingSessionIds: {},
       sendStartedAt: {},
+      completedDurations: {},
       waitingForInputSessionIds: {},
       sessionWorktreeMap: {},
       streamingContents: {},
@@ -80,6 +93,46 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sessionWorktreeMap['session-1']).toBe('worktree-1')
       expect(state.sessionWorktreeMap['session-2']).toBe('worktree-2')
+    })
+
+    it('marks sessions opened by default when setting active session', async () => {
+      const handler = vi.fn()
+      window.addEventListener('session-opened', handler)
+
+      useChatStore.getState().setActiveSession('worktree-1', 'session-1')
+
+      expect(mockInvoke).toHaveBeenCalledWith('set_session_last_opened', {
+        sessionId: 'session-1',
+      })
+
+      await Promise.resolve()
+
+      expect(handler).toHaveBeenCalledTimes(1)
+      const event = handler.mock.calls[0]?.[0]
+      expect(event).toMatchObject({
+        detail: { sessionIds: ['session-1'] },
+      })
+
+      window.removeEventListener('session-opened', handler)
+    })
+
+    it('can set active session without marking it opened', async () => {
+      const handler = vi.fn()
+      window.addEventListener('session-opened', handler)
+
+      useChatStore
+        .getState()
+        .setActiveSession('worktree-1', 'session-1', { markOpened: false })
+
+      await Promise.resolve()
+
+      expect(mockInvoke).not.toHaveBeenCalled()
+      expect(handler).not.toHaveBeenCalled()
+      expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
+        'session-1'
+      )
+
+      window.removeEventListener('session-opened', handler)
     })
   })
 
@@ -197,7 +250,40 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
+      expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
       expect(state.reviewingSessions['session-1']).toBe(true)
+    })
+
+    it('stores completed duration when a session completes', () => {
+      const nowSpy = vi.spyOn(Date, 'now')
+      nowSpy.mockReturnValueOnce(10_000).mockReturnValueOnce(25_000)
+
+      const { addSendingSession, completeSession } = useChatStore.getState()
+      addSendingSession('session-1')
+
+      useChatStore.setState({
+        streamingContents: { 'session-1': 'Done' },
+      })
+
+      completeSession('session-1')
+
+      const state = useChatStore.getState()
+      expect(state.completedDurations['session-1']).toBe(15_000)
+      expect(state.sendStartedAt['session-1']).toBeUndefined()
+
+      nowSpy.mockRestore()
+    })
+
+    it('clears previous completed duration when a new send starts', () => {
+      useChatStore.setState({
+        completedDurations: { 'session-1': 12_000 },
+      })
+
+      useChatStore.getState().addSendingSession('session-1', 20_000)
+
+      const state = useChatStore.getState()
+      expect(state.completedDurations['session-1']).toBeUndefined()
+      expect(state.sendStartedAt['session-1']).toBe(20_000)
     })
 
     it('blocks fast completion when no current streaming state exists', () => {
@@ -247,9 +333,28 @@ describe('ChatStore', () => {
       const state = useChatStore.getState()
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
+      expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
       expect(state.pendingPermissionDenials['session-1']).toBeUndefined()
       expect(state.deniedMessageContext['session-1']).toBeUndefined()
       expect(state.reviewingSessions['session-1']).toBe(true)
+    })
+
+    it('stores completed duration when a session fails after running', () => {
+      const nowSpy = vi.spyOn(Date, 'now')
+      nowSpy.mockReturnValueOnce(30_000)
+
+      useChatStore.setState({
+        sendingSessionIds: { 'session-1': true },
+        sendStartedAt: { 'session-1': 20_000 },
+      })
+
+      useChatStore.getState().failSession('session-1')
+
+      expect(useChatStore.getState().completedDurations['session-1']).toBe(
+        10_000
+      )
+
+      nowSpy.mockRestore()
     })
   })
 

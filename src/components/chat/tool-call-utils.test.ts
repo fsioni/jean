@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTimeline,
   coalesceContentBlocks,
+  getIntroTextBeforeDuplicatePlan,
   isDuplicatePlanTextBlock,
   resolvePlanContent,
   splitTextAroundPlan,
@@ -161,6 +162,26 @@ describe('isDuplicatePlanTextBlock', () => {
         '1. Do you want me to switch out of plan mode?'
       )
     ).toBe(false)
+  })
+})
+
+describe('getIntroTextBeforeDuplicatePlan', () => {
+  it('returns null when the whole assistant text is the rendered plan', () => {
+    expect(
+      getIntroTextBeforeDuplicatePlan(
+        'Short answer: goal is separate from plan mode.',
+        'Short answer: goal is separate from plan mode.'
+      )
+    ).toBeNull()
+  })
+
+  it('returns prose before a matching trailing plan section', () => {
+    expect(
+      getIntroTextBeforeDuplicatePlan(
+        'Repo inspected.\n\nPlan:\n- Implement changes',
+        'Plan:\n- Implement changes'
+      )
+    ).toBe('Repo inspected.')
   })
 })
 

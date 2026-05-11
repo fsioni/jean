@@ -7,7 +7,12 @@ import {
   useSessions,
   chatQueryKeys,
 } from '@/services/chat'
+import { sessionCanBeWaiting } from '@/components/chat/session-card-utils'
 import { logger } from '@/lib/logger'
+import {
+  beginSessionStateHydration,
+  endSessionStateHydration,
+} from '@/lib/session-state-hydration'
 import type {
   QuestionAnswer,
   PermissionDenial,
@@ -292,14 +297,49 @@ export function useSessionStatePersistence() {
   useEffect(() => {
     if (!activeSessionId || !sessionsData) return
 
+    const session = sessionsData.sessions.find(s => s.id === activeSessionId)
+    if (!session) return
+
+    // Always resync authoritative status fields from backend refetches.
+    // Other session UI state is loaded once below to avoid overwriting local edits,
+    // but waiting/reviewing must track remote web/mobile completion immediately.
+    const statusCurrentState = useChatStore.getState()
+    const statusUpdates: Partial<typeof statusCurrentState> = {}
+    const effectiveWaiting =
+      sessionCanBeWaiting(session) && (session.waiting_for_input ?? false)
+    const statusCurrentWaiting =
+      statusCurrentState.waitingForInputSessionIds[activeSessionId] ?? false
+    if (statusCurrentWaiting !== effectiveWaiting) {
+      statusUpdates.waitingForInputSessionIds = {
+        ...statusCurrentState.waitingForInputSessionIds,
+        [activeSessionId]: effectiveWaiting,
+      }
+    }
+
+    const effectiveReviewing = session.is_reviewing ?? false
+    const statusCurrentReviewing =
+      statusCurrentState.reviewingSessions[activeSessionId] ?? false
+    if (statusCurrentReviewing !== effectiveReviewing) {
+      statusUpdates.reviewingSessions = {
+        ...statusCurrentState.reviewingSessions,
+        [activeSessionId]: effectiveReviewing,
+      }
+    }
+
+    if (Object.keys(statusUpdates).length > 0) {
+      beginSessionStateHydration()
+      try {
+        useChatStore.setState(statusUpdates)
+      } finally {
+        endSessionStateHydration()
+      }
+    }
+
     // Only load from disk when switching to a new session.
     // Re-loading on every sessionsData refetch would overwrite in-memory
     // Zustand state with stale on-disk data (due to 500ms debounced saves),
     // causing answered questions / fixed findings to flicker.
     if (loadedSessionRef.current === activeSessionId) return
-
-    const session = sessionsData.sessions.find(s => s.id === activeSessionId)
-    if (!session) return
 
     // Mark as loaded only after finding the session (retry on next refetch if not found)
     loadedSessionRef.current = activeSessionId
@@ -447,7 +487,8 @@ export function useSessionStatePersistence() {
     }
 
     // Load waiting for input status
-    const waitingForInput = session.waiting_for_input ?? false
+    const waitingForInput =
+      sessionCanBeWaiting(session) && (session.waiting_for_input ?? false)
     const currentWaiting =
       currentState.waitingForInputSessionIds[activeSessionId] ?? false
     if (currentWaiting !== waitingForInput) {

@@ -33,6 +33,7 @@ import {
 import { MessageItem } from './MessageItem'
 import { AskUserQuestion } from './AskUserQuestion'
 import { buildTimeline } from './tool-call-utils'
+import { formatDuration, getAssistantDurationMs } from './time-utils'
 import {
   TOOL_CALL_ROW_CLASS,
   TOOL_CALL_DETAIL_PILL_CLASS,
@@ -89,6 +90,8 @@ interface CompactMessageListProps {
   isLoadingOlder?: boolean
   onLoadOlderRuns?: () => void
   loadedRunStartIndex?: number
+  hiddenPromptCount?: number
+  onShowHiddenPrompts?: () => void
 }
 
 type RenderItem =
@@ -111,6 +114,21 @@ function messageContainsPlan(message: ChatMessage): boolean {
 
 function messageContainsQuestion(message: ChatMessage): boolean {
   return Boolean(message.tool_calls?.some(isAskUserQuestion))
+}
+
+function isPureTextAssistantMessage(message: ChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  if ((message.tool_calls?.length ?? 0) > 0) return false
+
+  const blocks = message.content_blocks ?? []
+  if (blocks.some(block => block.type !== 'text')) return false
+
+  const blockText = blocks
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+
+  return Boolean(blockText.trim() || message.content?.trim())
 }
 
 const RECAP_HEADING_RE = /^##\s+Recap\s*$/im
@@ -361,6 +379,15 @@ function CompactActivityRow({
   const summary = useMemo(() => summarizeGroup(group), [group])
   const stepCount = useMemo(() => countSteps(group), [group])
   const messageCount = group.length
+  const groupDurationMs = useMemo(() => {
+    for (let i = group.length - 1; i >= 0; i--) {
+      const item = group[i]
+      if (!item) continue
+      const duration = durationFor(item.globalIndex, item.message)
+      if (duration != null && duration > 0) return duration
+    }
+    return null
+  }, [group, durationFor])
 
   const renderGroup = useMemo(() => {
     if (!recapShownExternally) return group
@@ -429,6 +456,11 @@ function CompactActivityRow({
           </div>
         </CollapsibleContent>
       </div>
+      {groupDurationMs != null && (
+        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
+          {formatDuration(groupDurationMs)}
+        </span>
+      )}
       <span aria-hidden className="sr-only">
         Total: {total}
       </span>
@@ -556,9 +588,11 @@ function CompactQuestionMessage({
           />
         )
       })}
-      <span aria-hidden className="sr-only">
-        {durationMs ? `Duration ${durationMs}ms` : ''}
-      </span>
+      {durationMs != null && durationMs > 0 && (
+        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
+          {formatDuration(durationMs)}
+        </span>
+      )}
     </>
   )
 }
@@ -619,6 +653,8 @@ export const CompactMessageList = memo(
         isLoadingOlder = false,
         onLoadOlderRuns,
         loadedRunStartIndex = 0,
+        hiddenPromptCount = 0,
+        onShowHiddenPrompts,
       },
       ref
     ) {
@@ -627,6 +663,7 @@ export const CompactMessageList = memo(
       const pendingPrependMessagesLengthRef = useRef<number | null>(null)
 
       const lastIndex = messages.length - 1
+      const hasHiddenPrompts = hiddenPromptCount > 0 && !!onShowHiddenPrompts
 
       const hasFollowUpMap = useMemo(() => {
         const map = new Map<number, boolean>()
@@ -657,20 +694,14 @@ export const CompactMessageList = memo(
 
       const durationFor = useCallback(
         (globalIndex: number, message: ChatMessage): number | null => {
-          if (message.role !== 'assistant') return null
-          if (globalIndex === lastIndex && completedDurationMs) {
-            return completedDurationMs
-          }
-          if (globalIndex > 0) {
-            const prev = messages[globalIndex - 1]
-            if (prev?.role === 'user') {
-              const deltaSecs = message.timestamp - prev.timestamp
-              if (deltaSecs > 0 && deltaSecs < 3600) return deltaSecs * 1000
-            }
-          }
-          return null
+          if (message !== messages[globalIndex]) return null
+          return getAssistantDurationMs(
+            messages,
+            globalIndex,
+            completedDurationMs
+          )
         },
-        [messages, lastIndex, completedDurationMs]
+        [messages, completedDurationMs]
       )
 
       // Group messages into render items. Anything that should always render
@@ -857,13 +888,13 @@ export const CompactMessageList = memo(
       // Scroll-to-top auto-load.
       useEffect(() => {
         const container = scrollContainerRef.current
-        if (!container || !hasOlderOnDisk) return
+        if (!container || !hasOlderOnDisk || hasHiddenPrompts) return
         const handleScroll = () => {
           if (container.scrollTop < SCROLL_THRESHOLD) loadOlder()
         }
         container.addEventListener('scroll', handleScroll, { passive: true })
         return () => container.removeEventListener('scroll', handleScroll)
-      }, [scrollContainerRef, hasOlderOnDisk, loadOlder])
+      }, [scrollContainerRef, hasOlderOnDisk, hasHiddenPrompts, loadOlder])
 
       // Scroll-to-bottom on new message arrival.
       const prevMessageCountRef = useRef(messages.length)
@@ -916,20 +947,22 @@ export const CompactMessageList = memo(
 
       return (
         <div className="flex flex-col w-full">
-          {hasOlderOnDisk && (
+          {(hasHiddenPrompts || hasOlderOnDisk) && (
             <button
               type="button"
-              onClick={loadOlder}
-              disabled={isLoadingOlder}
+              onClick={hasHiddenPrompts ? onShowHiddenPrompts : loadOlder}
+              disabled={!hasHiddenPrompts && isLoadingOlder}
               className="w-full text-center text-muted-foreground text-xs py-2 opacity-60 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-wait"
             >
-              {isLoadingOlder ? (
+              {hasHiddenPrompts ? (
+                `↑ Load old prompts (${hiddenPromptCount})`
+              ) : isLoadingOlder ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Loading older messages…
+                  Loading old prompts…
                 </span>
               ) : (
-                `↑ Load older messages (${loadedRunStartIndex} older runs on disk)`
+                `↑ Load old prompts (${loadedRunStartIndex} older runs on disk)`
               )}
             </button>
           )}
@@ -988,6 +1021,40 @@ export const CompactMessageList = memo(
                     hasFollowUpFor={hasFollowUpFor}
                     durationFor={durationFor}
                   />
+                </div>
+              )
+            }
+
+            const singleMessage = item.messages[0]
+            if (
+              item.messages.length === 1 &&
+              singleMessage &&
+              isPureTextAssistantMessage(singleMessage.message)
+            ) {
+              const hasFollowUpMessage = hasFollowUpFor(
+                singleMessage.globalIndex
+              )
+              return (
+                <div
+                  key={singleMessage.message.id}
+                  ref={el => {
+                    if (el)
+                      messageRefs.current.set(singleMessage.globalIndex, el)
+                    else messageRefs.current.delete(singleMessage.globalIndex)
+                  }}
+                  className={
+                    singleMessage.globalIndex === lastIndex && isSending
+                      ? ''
+                      : 'pb-4'
+                  }
+                >
+                  {renderMessageItem(singleMessage, {
+                    hasFollowUpMessage,
+                    durationMs: durationFor(
+                      singleMessage.globalIndex,
+                      singleMessage.message
+                    ),
+                  })}
                 </div>
               )
             }

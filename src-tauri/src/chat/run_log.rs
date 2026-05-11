@@ -255,6 +255,7 @@ impl RunLogWriter {
                     run.codex_thread_id = Some(tid);
                     run.codex_turn_id = tuid;
                 }
+                metadata.codex_thread_id = Some(thread_id.to_string());
                 Ok(())
             },
         )?;

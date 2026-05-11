@@ -126,4 +126,29 @@ describe('DesktopToolbarControls', () => {
 
     expect(onSetExecutionMode).toHaveBeenCalledWith('build')
   })
+
+  it('hides Claude-only Max effort for Codex', () => {
+    renderDesktopToolbarControls({
+      isCodex: true,
+      selectedBackend: 'codex',
+      useAdaptiveThinking: false,
+      selectedEffortLevel: 'max',
+      thinkingDropdownOpen: true,
+    })
+
+    expect(screen.getByText('xHigh')).toBeInTheDocument()
+    expect(screen.queryByText('Max')).not.toBeInTheDocument()
+  })
+
+  it('keeps Max effort available for Claude adaptive thinking', () => {
+    renderDesktopToolbarControls({
+      isCodex: false,
+      selectedBackend: 'claude',
+      useAdaptiveThinking: true,
+      selectedEffortLevel: 'max',
+      thinkingDropdownOpen: true,
+    })
+
+    expect(screen.getAllByText('Max').length).toBeGreaterThan(0)
+  })
 })

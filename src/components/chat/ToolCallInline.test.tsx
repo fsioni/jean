@@ -1,10 +1,29 @@
 import { fireEvent, render, screen } from '@/test/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import { ToolCallInline } from './ToolCallInline'
+import type { ComponentProps } from 'react'
+import type * as InlineFileDiffModule from './InlineFileDiff'
+
+const inlineFileDiffProps = vi.hoisted(() => [] as Record<string, unknown>[])
+type InlineFileDiffProps = ComponentProps<
+  typeof InlineFileDiffModule.InlineFileDiff
+>
 
 vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({ data: undefined }),
 }))
+
+vi.mock('./InlineFileDiff', async importOriginal => {
+  const actual = (await importOriginal()) as typeof InlineFileDiffModule
+
+  return {
+    ...actual,
+    InlineFileDiff: (props: InlineFileDiffProps) => {
+      inlineFileDiffProps.push(props as unknown as Record<string, unknown>)
+      return actual.InlineFileDiff(props)
+    },
+  }
+})
 
 describe('ToolCallInline', () => {
   it('renders Cursor EnterPlanMode instructions', () => {
@@ -95,6 +114,11 @@ describe('ToolCallInline', () => {
 
     expect(screen.getByText('chat-store.ts')).toBeInTheDocument()
     expect(screen.getByText('update')).toBeInTheDocument()
+    expect(inlineFileDiffProps.at(-1)).toMatchObject({
+      patch: '@@ -1 +1 @@\n-old\n+new',
+      filePath: '/tmp/chat-store.ts',
+    })
+    expect(inlineFileDiffProps.at(-1)).not.toHaveProperty('neutral')
     // <FileDiff> renders its diff inside a <diffs-container> custom element
     expect(container.querySelector('diffs-container')).not.toBeNull()
     expect(screen.queryByText('Output:')).not.toBeInTheDocument()

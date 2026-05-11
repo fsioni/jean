@@ -115,7 +115,7 @@ export function ResolveConflictsDialog({
     const model =
       preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
         : backend === 'opencode'
           ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
           : backend === 'cursor'
@@ -390,6 +390,11 @@ export function ResolveConflictsDialog({
                   >
                     <SelectTrigger
                       size="sm"
+                      hideIcon={
+                        installedBackends.filter(backend =>
+                          ['claude', 'codex', 'opencode'].includes(backend)
+                        ).length <= 1
+                      }
                       onClick={() => setResolveSelectionMode('custom')}
                     >
                       <SelectValue />
@@ -417,7 +422,10 @@ export function ResolveConflictsDialog({
                       setCustomResolveModel(value)
                     }}
                   >
-                    <SelectTrigger size="sm">
+                    <SelectTrigger
+                      size="sm"
+                      hideIcon={customResolveModelOptions.length <= 1}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

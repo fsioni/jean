@@ -53,6 +53,7 @@ import {
   endSessionStateHydration,
 } from './lib/session-state-hydration'
 import { scheduleIdleWork } from './lib/idle'
+import { checkWebClientVersion } from './lib/web-client-version'
 
 /** Loading screen shown while preloading initial data (browser mode only). */
 function WebLoadingScreen() {
@@ -188,6 +189,11 @@ function App() {
   // Used on both initial preload and WebSocket reconnect.
   const seedCache = useCallback(
     (data: InitialData) => {
+      const runningSnapshotMessages: Array<{
+        sessionId: string
+        message: Session['messages'][number]
+      }> = []
+
       // Seed projects into TanStack Query cache
       if (data.projects) {
         queryClient.setQueryData(projectsQueryKeys.list(), data.projects)
@@ -325,6 +331,17 @@ function App() {
               return init
             }
           )
+
+          const seededSession = queryClient.getQueryData<Session>(
+            chatQueryKeys.session(sessionId)
+          )
+          const lastMsg = seededSession?.messages.at(-1)
+          if (
+            lastMsg?.role === 'assistant' &&
+            lastMsg.id.startsWith('running-')
+          ) {
+            runningSnapshotMessages.push({ sessionId, message: lastMsg })
+          }
         }
       }
       // Replace sendingSessionIds with exactly the server's running sessions.
@@ -377,6 +394,20 @@ function App() {
           },
         }
       })
+
+      for (const { sessionId, message } of runningSnapshotMessages) {
+        hydrateRunningSnapshot(sessionId, message, { allowWhileSending: true })
+        queryClient.setQueryData<Session>(
+          chatQueryKeys.session(sessionId),
+          old =>
+            old
+              ? {
+                  ...old,
+                  messages: old.messages.filter(m => m.id !== message.id),
+                }
+              : old
+        )
+      }
       // Note: Git status is included in worktree cached_* fields, no separate cache needed
       // Seed preferences into cache
       if (data.preferences) {
@@ -406,6 +437,7 @@ function App() {
           logger.info('Preloaded initial data via HTTP', {
             projects: Array.isArray(data.projects) ? data.projects.length : 0,
           })
+          checkWebClientVersion(data)
           seedCache(data)
           ingestBootstrapEvents(data.replayEvents ?? [])
           setWsDataReady(true)
@@ -548,6 +580,7 @@ function App() {
       dataPromise
         .then(data => {
           if (data) {
+            checkWebClientVersion(data)
             seedCache(data)
             ingestBootstrapEvents(data.replayEvents ?? [])
             logger.info('Reconnect: re-seeded cache from HTTP')
@@ -942,7 +975,9 @@ function App() {
                 }
               }
 
-              hydrateRunningSnapshot(session.session_id, lastMsg)
+              hydrateRunningSnapshot(session.session_id, lastMsg, {
+                allowWhileSending: true,
+              })
 
               queryClient.setQueryData<Session>(
                 chatQueryKeys.session(session.session_id),

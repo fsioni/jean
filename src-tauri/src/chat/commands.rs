@@ -2007,8 +2007,11 @@ pub async fn send_chat_message(
 ## Plan Mode\n\
 \n\
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.\n\
-- At the end of each plan, give me a list of unresolved questions to answer, if any.\n\
-- In planning mode, present plans using the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.\n\
+- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.\n\
+- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.\n\
+- For Codex specifically: after the user answers native `request_user_input`/open questions in plan mode, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.\n\
+- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.\n\
+- Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.\n\
 \n\
 ## Not Plan Mode\n\
 \n\
@@ -2024,8 +2027,10 @@ pub async fn send_chat_message(
                             "You are in PLANNING MODE (read-only sandbox). Create a detailed implementation plan. \
                              Do NOT attempt to make any file changes — you are running in a read-only sandbox and writes will fail. \
                              Describe exactly what changes you WOULD make: which files to create/modify, \
-                             what code to write, and in what order. Use the native plan tool/UI call to show the plan when available. \
-                             End with any unresolved questions."
+                             what code to write, and in what order. Every plan-mode response that contains or revises a plan must call update_plan/emit CodexPlan; never provide a plain-text-only plan. \
+                             For unresolved questions, prefer Codex native request_user_input so Jean can render interactive question cards when the tool is available. \
+                             After the user answers request_user_input/open questions, immediately call update_plan/emit CodexPlan again with the revised plan before any implementation. \
+                             Use plain-text Unresolved Questions only for non-actionable notes or if request_user_input is unavailable."
                                 .to_string(),
                         );
                     }
@@ -3352,7 +3357,7 @@ pub fn codex_goal_set(
 
     if let Some(tid) = thread_id {
         super::codex_server::ensure_running(&app)?;
-        let params = serde_json::json!({ "threadId": tid, "goal": trimmed });
+        let params = codex_goal_set_params(&tid, trimmed);
         super::codex_server::send_request("thread/goal/set", params)?;
     }
 
@@ -3382,10 +3387,7 @@ pub fn codex_goal_get(
             "thread/goal/get",
             serde_json::json!({ "threadId": tid }),
         )?;
-        response
-            .get("goal")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        extract_codex_goal_objective(&response)
     } else {
         super::storage::with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
             Ok(sessions
@@ -3455,10 +3457,26 @@ pub fn flush_pending_codex_goal(app: &AppHandle, session_id: &str, thread_id: &s
             .ok()
             .flatten();
     let Some(objective) = goal else { return };
-    let params = serde_json::json!({ "threadId": thread_id, "goal": objective });
+    let params = codex_goal_set_params(thread_id, &objective);
     if let Err(e) = super::codex_server::send_request("thread/goal/set", params) {
         log::warn!("Failed to flush buffered codex goal: {e}");
     }
+}
+
+fn codex_goal_set_params(thread_id: &str, objective: &str) -> serde_json::Value {
+    serde_json::json!({
+        "threadId": thread_id,
+        "objective": objective,
+        "status": "active",
+    })
+}
+
+pub(crate) fn extract_codex_goal_objective(response: &serde_json::Value) -> Option<String> {
+    response
+        .get("goal")
+        .and_then(|goal| goal.get("objective"))
+        .and_then(|objective| objective.as_str())
+        .map(|objective| objective.to_string())
 }
 
 /// Persist the goal on the session metadata and broadcast cache invalidation.
@@ -4879,7 +4897,7 @@ fn execute_summarization_claude(
     magic_backend: Option<&str>,
     reasoning_effort: Option<&str>,
 ) -> Result<ContextSummaryResponse, String> {
-    let model_str = model.unwrap_or("claude-opus-4-7");
+    let model_str = model.unwrap_or("claude-opus-4-7[1m]");
 
     // Per-operation backend > project/global default_backend
     let backend = resolve_magic_prompt_backend(app, magic_backend, worktree_id);
@@ -5386,7 +5404,8 @@ pub async fn resume_session(
 
         // === Codex crash recovery path ===
         if let Some(ref codex_tid) = run.codex_thread_id {
-            let had_active_turn = run.codex_turn_id.is_some();
+            let codex_turn_id = run.codex_turn_id.clone();
+            let had_active_turn = codex_turn_id.is_some();
             log::trace!(
                 "Resuming Codex run: {run_id}, thread={codex_tid}, had_active_turn={had_active_turn}"
             );
@@ -5420,20 +5439,15 @@ pub async fn resume_session(
                     &worktree_id_clone,
                     &run_id_clone,
                     &thread_id_clone,
-                    had_active_turn,
+                    codex_turn_id.as_deref(),
                 ) {
                     Ok(true) => {
                         log::info!(
                             "Codex crash recovery succeeded for session {session_id_clone}, run {run_id_clone}"
                         );
-                        // process_turn_events (if active turn) or
-                        // resume_codex_after_crash (if idle) already emitted
-                        // chat:done, so only emit here for non-active-turn
-                        // paths where the function handled completion internally.
-                        if !had_active_turn {
-                            emit_done(&app_clone, &session_id_clone, &worktree_id_clone);
-                        }
-                        // For active turns, process_turn_events emits chat:done.
+                        // process_turn_events (active turn) or
+                        // resume_codex_after_crash (idle/interrupted turn)
+                        // emits chat:done itself.
                     }
                     Ok(false) => {
                         // Thread expired — mark as crashed
@@ -6134,6 +6148,49 @@ pub async fn answer_opencode_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_codex_goal_set_params_uses_app_server_schema() {
+        let params = codex_goal_set_params("thread-123", "Ship the goal UI");
+
+        assert_eq!(
+            params,
+            serde_json::json!({
+                "threadId": "thread-123",
+                "objective": "Ship the goal UI",
+                "status": "active",
+            })
+        );
+        assert!(params.get("goal").is_none());
+    }
+
+    #[test]
+    fn test_extract_codex_goal_objective_reads_thread_goal_object() {
+        let response = serde_json::json!({
+            "goal": {
+                "threadId": "thread-123",
+                "objective": "Ship the goal UI",
+                "status": "active",
+                "createdAt": 1,
+                "updatedAt": 2,
+                "timeUsedSeconds": 3,
+                "tokensUsed": 4
+            }
+        });
+
+        assert_eq!(
+            extract_codex_goal_objective(&response).as_deref(),
+            Some("Ship the goal UI")
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_goal_objective_handles_absent_goal() {
+        assert_eq!(
+            extract_codex_goal_objective(&serde_json::json!({ "goal": null })),
+            None
+        );
+    }
 
     #[test]
     fn test_extract_text_from_stream_json_text_only() {

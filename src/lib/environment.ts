@@ -8,9 +8,13 @@
  * UI should use isNativeApp() to hide native-only features (Finder, external editors, etc.).
  */
 
-/** Running inside the native Tauri desktop app. */
+/** Running inside the native Tauri desktop app with usable IPC.
+ * Some mobile/web shells can expose a partial `__TAURI_INTERNALS__` object
+ * without `invoke`; those must use the WebSocket transport instead. */
 export const isNativeApp = (): boolean =>
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  typeof window !== 'undefined' &&
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  typeof (window as any).__TAURI_INTERNALS__?.invoke === 'function'
 
 /** A backend is available (either Tauri IPC, WebSocket connection, or E2E mock). */
 export const hasBackend = (): boolean => {

@@ -1,5 +1,9 @@
 import { useMemo } from 'react'
-import type { ClaudeModel, CustomCliProfile } from '@/types/preferences'
+import {
+  getModelFastInfo,
+  type ClaudeModel,
+  type CustomCliProfile,
+} from '@/types/preferences'
 import {
   CODEX_MODEL_OPTIONS,
   CURSOR_MODEL_OPTIONS,
@@ -140,9 +144,14 @@ export function useToolbarDerivedState({
     resolvedOpencodeModelOptions,
   ])
 
+  // Fast variants share a label with their base model (the Zap indicator
+  // distinguishes them visually). Applies to both Codex and Claude.
+  const fastInfo = getModelFastInfo(selectedBackend, selectedModel)
+  const labelLookupKey = fastInfo.isFast ? fastInfo.baseModel : selectedModel
+
   const selectedModelLabel =
-    filteredModelOptions.find(o => o.value === selectedModel)?.label ??
-    selectedModel
+    filteredModelOptions.find(o => o.value === labelLookupKey)?.label ??
+    labelLookupKey
 
   return {
     isCodex,

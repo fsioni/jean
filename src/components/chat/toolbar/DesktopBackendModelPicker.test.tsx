@@ -19,13 +19,26 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 HTMLCanvasElement.prototype.getContext = vi.fn(() => null)
 Element.prototype.scrollIntoView = vi.fn()
 
+const modelMocks = vi.hoisted(() => ({
+  opencodeModels: ['openai/gpt-5.4', 'groq/compound-mini'],
+  cursorModels: [{ id: 'auto', label: 'Auto' }],
+}))
+
 vi.mock('@/services/opencode-cli', () => ({
   useAvailableOpencodeModels: () => ({
-    data: ['openai/gpt-5.4', 'groq/compound-mini'],
+    data: modelMocks.opencodeModels,
+  }),
+}))
+
+vi.mock('@/services/cursor-cli', () => ({
+  useAvailableCursorModels: () => ({
+    data: modelMocks.cursorModels,
   }),
 }))
 
 beforeEach(() => {
+  modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
+  modelMocks.cursorModels = [{ id: 'auto', label: 'Auto' }]
   vi.stubGlobal(
     'matchMedia',
     vi.fn().mockImplementation(() => ({
@@ -47,7 +60,45 @@ beforeEach(() => {
 })
 
 describe('DesktopBackendModelPicker', () => {
-  it('renders grouped backend sections and switches backend+model together', async () => {
+  it('hides the chevron when there is only one selectable backend/model choice', () => {
+    modelMocks.opencodeModels = ['openai/gpt-5.4']
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="opencode"
+        selectedModel="openai/gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('backend-model-picker-chevron')).toBeNull()
+  })
+
+  it('shows the chevron when another selectable choice is available', () => {
+    modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="opencode"
+        selectedModel="openai/gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByTestId('backend-model-picker-chevron')
+    ).toBeInTheDocument()
+  })
+
+  it('opens picker, lists backend tabs, and selects a model from another backend', async () => {
     const user = userEvent.setup()
     const onModelChange = vi.fn()
     const onBackendModelChange = vi.fn()
@@ -68,25 +119,30 @@ describe('DesktopBackendModelPicker', () => {
       screen.getByRole('button', { name: /choose backend and model/i })
     )
 
-    const popover = await screen.findByPlaceholderText(
-      'Search backends and models...'
-    )
-    const list = popover.closest('[data-slot="popover-content"]')
+    const popoverContent = await screen.findByRole('tab', { name: 'Codex' })
+    const list = popoverContent.closest('[data-slot="popover-content"]')
     expect(list).not.toBeNull()
 
-    expect(within(list as HTMLElement).getByText('Claude')).toBeInTheDocument()
-    expect(within(list as HTMLElement).getByText('Codex')).toBeInTheDocument()
     expect(
-      within(list as HTMLElement).getByText('OpenCode')
+      within(list as HTMLElement).getByRole('tab', { name: 'Claude' })
+    ).toBeInTheDocument()
+    expect(
+      within(list as HTMLElement).getByRole('tab', { name: 'Codex' })
+    ).toBeInTheDocument()
+    expect(
+      within(list as HTMLElement).getByRole('tab', { name: 'OpenCode' })
     ).toBeInTheDocument()
 
+    await user.click(
+      within(list as HTMLElement).getByRole('tab', { name: 'Codex' })
+    )
     await user.click(within(list as HTMLElement).getByText('GPT 5.4'))
 
     expect(onBackendModelChange).toHaveBeenCalledWith('codex', 'gpt-5.4')
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('searches across all sections and changes model only inside current backend', async () => {
+  it('searches within the active backend and changes the model in-place', async () => {
     const user = userEvent.setup()
     const onModelChange = vi.fn()
     const onBackendModelChange = vi.fn()
@@ -107,14 +163,8 @@ describe('DesktopBackendModelPicker', () => {
       screen.getByRole('button', { name: /choose backend and model/i })
     )
 
-    const searchInput = await screen.findByPlaceholderText(
-      'Search backends and models...'
-    )
-    await user.type(searchInput, 'compound mini')
-
-    expect(screen.getByText('Compound Mini (Groq)')).toBeInTheDocument()
-
-    await user.clear(searchInput)
+    const searchInput =
+      await screen.findByPlaceholderText(/search codex models/i)
     await user.type(searchInput, 'gpt 5.4')
     await user.click(screen.getByText('GPT 5.4'))
 
@@ -122,7 +172,7 @@ describe('DesktopBackendModelPicker', () => {
     expect(onBackendModelChange).not.toHaveBeenCalled()
   })
 
-  it('locks sections to the current backend once the session has messages', async () => {
+  it('disables non-selected backend tabs while a session has messages', async () => {
     const user = userEvent.setup()
 
     render(
@@ -142,17 +192,15 @@ describe('DesktopBackendModelPicker', () => {
       screen.getByRole('button', { name: /choose backend and model/i })
     )
 
-    const popover = await screen.findByPlaceholderText(
-      'Search backends and models...'
-    )
-    const list = popover.closest('[data-slot="popover-content"]')
+    const codexTab = await screen.findByRole('tab', { name: 'Codex' })
+    const list = codexTab.closest('[data-slot="popover-content"]')
 
     expect(
-      within(list as HTMLElement).queryByText('Claude')
-    ).not.toBeInTheDocument()
-    expect(within(list as HTMLElement).getByText('Codex')).toBeInTheDocument()
+      within(list as HTMLElement).getByRole('tab', { name: 'Claude' })
+    ).toBeDisabled()
+    expect(codexTab).not.toBeDisabled()
     expect(
-      within(list as HTMLElement).queryByText('OpenCode')
-    ).not.toBeInTheDocument()
+      within(list as HTMLElement).getByRole('tab', { name: 'OpenCode' })
+    ).toBeDisabled()
   })
 })

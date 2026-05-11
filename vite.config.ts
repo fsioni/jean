@@ -1,13 +1,65 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import { execSync } from 'child_process'
+import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 
 const host = process.env.TAURI_DEV_HOST
 
+function gitSha(): string {
+  try {
+    return execSync('git rev-parse --short=12 HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      version?: string
+    }
+    return pkg.version ?? '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+const appVersion = packageVersion()
+const buildGitSha = gitSha()
+const builtAt = new Date().toISOString()
+const webBuildInfo = {
+  webBuildId:
+    process.env.JEAN_WEB_BUILD_ID ?? `${appVersion}-${buildGitSha}-${builtAt}`,
+  appVersion,
+  gitSha: buildGitSha,
+  builtAt,
+}
+
+function jeanWebBuildInfoPlugin(): Plugin {
+  return {
+    name: 'jean-web-build-info',
+    writeBundle(options) {
+      const outDir = path.resolve(String(options.dir ?? 'dist'))
+      mkdirSync(outDir, { recursive: true })
+      writeFileSync(
+        path.join(outDir, 'jean-build.json'),
+        `${JSON.stringify(webBuildInfo, null, 2)}\n`
+      )
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), jeanWebBuildInfoPlugin()],
+  define: {
+    __JEAN_WEB_BUILD_INFO__: JSON.stringify(webBuildInfo),
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

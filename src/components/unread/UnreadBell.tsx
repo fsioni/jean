@@ -26,19 +26,7 @@ import { formatShortcutDisplay } from '@/types/keybindings'
 import type { Session } from '@/types/chat'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isNativeApp } from '@/lib/environment'
-
-function isUnread(session: Session): boolean {
-  if (session.archived_at) return false
-  const actionableStatuses = ['completed', 'cancelled', 'crashed']
-  const hasFinishedRun =
-    session.last_run_status &&
-    actionableStatuses.includes(session.last_run_status)
-  const isWaiting = session.waiting_for_input
-  const isReviewing = session.is_reviewing
-  if (!hasFinishedRun && !isWaiting && !isReviewing) return false
-  if (!session.last_opened_at) return true
-  return session.last_opened_at < session.updated_at
-}
+import { isUnreadSession } from './unread-utils'
 
 function formatRelativeTime(timestamp: number): string {
   const ms = timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
@@ -151,7 +139,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
     const results: UnreadItem[] = []
     for (const entry of allSessions.entries) {
       for (const session of entry.sessions) {
-        if (isUnread(session)) {
+        if (isUnreadSession(session)) {
           results.push({
             session,
             projectId: entry.project_id,
@@ -194,22 +182,45 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
     [queryClient]
   )
 
+  const markSessionsOpened = useCallback(
+    async (sessionIds: string[]) => {
+      const ids = [...new Set(sessionIds)].filter(Boolean)
+      if (ids.length === 0) return
+
+      const idSet = new Set(ids)
+      setSnapshotItems(prev =>
+        prev ? prev.filter(item => !idSet.has(item.session.id)) : prev
+      )
+      markSessionsReadOptimistically(ids)
+
+      try {
+        if (ids.length === 1) {
+          await invoke('set_session_last_opened', {
+            sessionId: ids[0],
+          })
+        } else {
+          await invoke('set_sessions_last_opened_bulk', { sessionIds: ids })
+        }
+      } catch {
+        // Cache invalidation below will reconcile optimistic state.
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
+        window.dispatchEvent(
+          new CustomEvent('session-opened', { detail: { sessionIds: ids } })
+        )
+      }
+    },
+    [markSessionsReadOptimistically, queryClient]
+  )
+
   const handleMarkAllRead = useCallback(async () => {
     const ids = displayItems.map(item => item.session.id)
-    markSessionsReadOptimistically(ids)
-    await invoke('set_sessions_last_opened_bulk', { sessionIds: ids })
-    queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
-    window.dispatchEvent(new CustomEvent('session-opened'))
-  }, [displayItems, queryClient, markSessionsReadOptimistically])
+    await markSessionsOpened(ids)
+  }, [displayItems, markSessionsOpened])
 
   const handleMarkOneRead = useCallback(
     async (item: UnreadItem) => {
-      markSessionsReadOptimistically([item.session.id])
-      await invoke('set_session_last_opened', {
-        sessionId: item.session.id,
-      })
-      queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
-      window.dispatchEvent(new CustomEvent('session-opened'))
+      await markSessionsOpened([item.session.id])
       // Adjust focus: stay at same index or move up if at end
       setFocusedIndex(i => {
         const newTotal = displayItems.length - 1
@@ -217,7 +228,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
         return Math.min(i, newTotal - 1)
       })
     },
-    [queryClient, displayItems.length, markSessionsReadOptimistically]
+    [displayItems.length, markSessionsOpened]
   )
 
   const handleSelect = useCallback(
@@ -232,7 +243,9 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
 
       // Navigate to ProjectCanvasView (no-op if already there)
       clearActiveWorktree()
-      setActiveSession(item.worktreeId, item.session.id)
+      setActiveSession(item.worktreeId, item.session.id, {
+        markOpened: false,
+      })
       setLastOpenedForProject(item.projectId, item.worktreeId, item.session.id)
 
       // Queue auto-open via store so it survives lazy-mount + Suspense + remount.
@@ -243,10 +256,10 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
 
       // Mark read AFTER auto-open is queued so unreadCount->0 unmount can't race
       // the modal-open path. Bell popover closes via the unreadCount===0 check.
-      markSessionsReadOptimistically([item.session.id])
+      void markSessionsOpened([item.session.id])
       setOpen(false)
     },
-    [markSessionsReadOptimistically]
+    [markSessionsOpened]
   )
 
   const handleTriggerClick = useCallback(

@@ -5,10 +5,12 @@ import {
 } from './preferences-search'
 
 const nativeOnlyEntryIds = [
-  'general-claude-cli',
-  'general-github-cli',
-  'general-codex-cli',
-  'general-opencode-cli',
+  'claude-cli',
+  'codex-cli',
+  'opencode-cli',
+  'cursor-cli',
+  'github-cli',
+  'coderabbit-cli',
   'general-troubleshooting',
   'web-access-server',
   'web-access-authentication',
@@ -18,7 +20,7 @@ const setTauriInternals = (enabled: boolean) => {
   if (enabled) {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
-      value: {},
+      value: { invoke: () => undefined },
     })
   } else {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown })
@@ -62,6 +64,19 @@ describe('preferences search index', () => {
         entry => entry.id === 'general-troubleshooting'
       )
     ).toBe(true)
+  })
+
+  it('routes backend searches to dedicated backend panes', () => {
+    setTauriInternals(true)
+
+    expect(searchPreferenceEntries('claude model')[0]?.pane).toBe('claude')
+    expect(searchPreferenceEntries('codex reasoning')[0]?.pane).toBe('codex')
+    expect(searchPreferenceEntries('opencode login')[0]?.pane).toBe('opencode')
+    expect(searchPreferenceEntries('cursor model')[0]?.pane).toBe('cursor')
+    expect(searchPreferenceEntries('github login')[0]?.pane).toBe('github')
+    expect(searchPreferenceEntries('coderabbit login')[0]?.pane).toBe(
+      'coderabbit'
+    )
   })
 
   it('returns relevant appearance hits for font queries', () => {

@@ -494,7 +494,7 @@ export function useCommandContext(
 
   const getCurrentModel = useCallback((): ClaudeModel => {
     // Default - actual model comes from preferences
-    return 'claude-opus-4-7'
+    return 'claude-opus-4-7[1m]'
   }, [])
 
   const getCurrentThinkingLevel = useCallback((): ThinkingLevel => {

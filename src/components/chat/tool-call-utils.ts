@@ -577,6 +577,29 @@ export function isDuplicatePlanTextBlock(
   return normalizePlanText(extracted) === normalizePlanText(resolvedPlanContent)
 }
 
+export function getIntroTextBeforeDuplicatePlan(
+  text: string,
+  resolvedPlanContent: string | null
+): string | null {
+  if (!resolvedPlanContent) return null
+
+  // If the whole assistant text is the rendered plan, there is no separate intro
+  // to show. This happens when Codex final_answer is mirrored into CodexPlan.
+  if (normalizePlanText(text) === normalizePlanText(resolvedPlanContent)) {
+    return null
+  }
+
+  const split = splitTextAroundPlan(text)
+  if (!split.plan) return null
+  if (
+    normalizePlanText(split.plan) !== normalizePlanText(resolvedPlanContent)
+  ) {
+    return null
+  }
+
+  return split.beforePlan
+}
+
 export function getPlanTextBlockIndicesToHide(
   contentBlocks: ContentBlock[] | undefined,
   resolvedPlanContent: string | null

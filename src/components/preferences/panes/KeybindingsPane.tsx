@@ -51,12 +51,18 @@ const KeybindingRow: React.FC<{
     id={rowId}
     data-settings-target={definition.action}
     className={cn(
-      'flex items-center gap-3 rounded-md px-2 py-1 transition-colors',
-      highlighted ? 'bg-accent/60 ring-1 ring-border' : ''
+      'grid gap-3 rounded-lg border border-border bg-background p-3 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center',
+      highlighted ? 'bg-accent/60 ring-1 ring-inset ring-border' : ''
     )}
   >
-    <div className="w-48 shrink-0">
-      <Label className="text-xs text-foreground">{definition.label}</Label>
+    <div className="min-w-0 space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label className="text-sm text-foreground">{definition.label}</Label>
+        <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {categoryTitles[definition.category] ?? definition.category}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground">{definition.description}</p>
     </div>
     <KeyRecorder
       value={value}
@@ -91,15 +97,13 @@ export const KeybindingsPane: React.FC<KeybindingsPaneProps> = ({
 
   const keybindings = preferences?.keybindings ?? DEFAULT_KEYBINDINGS
 
-  // Group keybindings by category
-  const groupedBindings = useMemo(() => {
-    const result: Record<string, KeybindingDefinition[]> = {}
-    for (const def of KEYBINDING_DEFINITIONS) {
-      const categoryDefs = result[def.category] ?? []
-      categoryDefs.push(def)
-      result[def.category] = categoryDefs
-    }
-    return result
+  const sortedBindings = useMemo(() => {
+    return [...KEYBINDING_DEFINITIONS].sort((a, b) => {
+      const categoryDelta =
+        categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category)
+      if (categoryDelta !== 0) return categoryDelta
+      return a.label.localeCompare(b.label)
+    })
   }, [])
 
   // Find conflicts for a given action and shortcut
@@ -168,34 +172,24 @@ export const KeybindingsPane: React.FC<KeybindingsPaneProps> = ({
 
   return (
     <div className="space-y-4">
-      {categoryOrder.map(category => {
-        const definitions = groupedBindings[category]
-        if (!definitions?.length) return null
-
-        return (
-          <SettingsSection
-            key={category}
-            title={categoryTitles[category] ?? category}
-          >
-            <div className="space-y-2">
-              {definitions.map(def => (
-                <KeybindingRow
-                  key={def.action}
-                  definition={def}
-                  value={keybindings[def.action] ?? def.default_shortcut}
-                  onChange={handleChange}
-                  checkConflict={(shortcut: string) =>
-                    findConflict(def.action, shortcut)
-                  }
-                  disabled={patchPreferences.isPending}
-                  rowId={getKeybindingRowId(def.action)}
-                  highlighted={highlightedAction === def.action}
-                />
-              ))}
-            </div>
-          </SettingsSection>
-        )
-      })}
+      <SettingsSection title="Keybindings">
+        <div className="grid gap-2 xl:grid-cols-2">
+          {sortedBindings.map(def => (
+            <KeybindingRow
+              key={def.action}
+              definition={def}
+              value={keybindings[def.action] ?? def.default_shortcut}
+              onChange={handleChange}
+              checkConflict={(shortcut: string) =>
+                findConflict(def.action, shortcut)
+              }
+              disabled={patchPreferences.isPending}
+              rowId={getKeybindingRowId(def.action)}
+              highlighted={highlightedAction === def.action}
+            />
+          ))}
+        </div>
+      </SettingsSection>
     </div>
   )
 }

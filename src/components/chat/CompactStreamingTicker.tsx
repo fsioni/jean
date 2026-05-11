@@ -12,6 +12,7 @@ import {
   TOOL_CALL_DETAIL_PILL_CLASS,
 } from './ToolCallInline'
 import { StreamingMessage } from './StreamingMessage'
+import { isDuplicatePlanTextBlock, resolvePlanContent } from './tool-call-utils'
 import type { ComponentProps } from 'react'
 
 type StreamingMessageProps = ComponentProps<typeof StreamingMessage>
@@ -75,6 +76,53 @@ function truncate(text: string, max: number): string {
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine
 }
 
+function isPlanToolBlock(block: ContentBlock, toolCalls: ToolCall[]): boolean {
+  if (block.type !== 'tool_use') return false
+  const tool = toolCalls.find(t => t.id === block.tool_call_id)
+  return tool ? isPlanToolCall(tool) : false
+}
+
+function filterPlanToolBlocks(
+  contentBlocks: ContentBlock[],
+  toolCalls: ToolCall[]
+): ContentBlock[] {
+  return contentBlocks.filter(block => isPlanToolBlock(block, toolCalls))
+}
+
+function filterActivityBlocks(
+  contentBlocks: ContentBlock[],
+  toolCalls: ToolCall[],
+  planContent: string | null
+): ContentBlock[] {
+  return contentBlocks.filter(block => {
+    if (isPlanToolBlock(block, toolCalls)) return false
+    if (
+      block.type === 'text' &&
+      planContent &&
+      isDuplicatePlanTextBlock(block.text, planContent)
+    ) {
+      return false
+    }
+    return true
+  })
+}
+
+function hasVisibleActivity(
+  contentBlocks: ContentBlock[],
+  toolCalls: ToolCall[],
+  streamingContent: string
+): boolean {
+  return (
+    contentBlocks.some(block => {
+      if (block.type === 'text') return block.text.trim().length > 0
+      if (block.type === 'thinking') return block.thinking.trim().length > 0
+      return true
+    }) ||
+    toolCalls.length > 0 ||
+    streamingContent.trim().length > 0
+  )
+}
+
 /**
  * Compact replacement for {@link StreamingMessage} when the
  * `compact_chat_view_enabled` preference is on.
@@ -82,8 +130,9 @@ function truncate(text: string, max: number): string {
  * Renders a single ticker line showing the latest content block or tool call,
  * with a click-to-expand affordance that swaps in the full
  * {@link StreamingMessage} so the user can watch the in-flight response in real
- * time. Falls through to the full {@link StreamingMessage} directly when the
- * response includes a plan, so the user can approve / read the plan as it forms.
+ * time. When the response includes a plan, keeps non-plan activity compact and
+ * renders the plan separately so plan-mode tool batches do not expand into
+ * multiple visible tool groups while streaming.
  */
 export const CompactStreamingTicker = memo(function CompactStreamingTicker(
   props: StreamingMessageProps
@@ -91,71 +140,109 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
   const { contentBlocks, toolCalls, streamingContent } = props
   const [isOpen, setIsOpen] = useState(false)
 
-  const containsPlan = useMemo(() => {
-    if (toolCalls.some(isPlanToolCall)) return true
-    return contentBlocks.some(b => {
-      if (b.type !== 'tool_use') return false
-      const tc = toolCalls.find(t => t.id === b.tool_call_id)
-      return tc ? isPlanToolCall(tc) : false
-    })
-  }, [contentBlocks, toolCalls])
+  const {
+    activityBlocks,
+    activityToolCalls,
+    planBlocks,
+    planToolCalls,
+    planStreamingContent,
+  } = useMemo(() => {
+    const plan = resolvePlanContent({
+      toolCalls,
+      messageContent: streamingContent,
+      contentBlocks,
+    }).content
+    const plans = toolCalls.filter(isPlanToolCall)
+    return {
+      activityBlocks: filterActivityBlocks(contentBlocks, toolCalls, plan),
+      activityToolCalls: toolCalls.filter(tc => !isPlanToolCall(tc)),
+      planBlocks: filterPlanToolBlocks(contentBlocks, toolCalls),
+      planToolCalls: plans,
+      planStreamingContent: plan ?? '',
+    }
+  }, [contentBlocks, toolCalls, streamingContent])
 
-  if (containsPlan) {
-    return <StreamingMessage {...props} />
+  const hasActivity = hasVisibleActivity(
+    activityBlocks,
+    activityToolCalls,
+    planToolCalls.length > 0 ? '' : streamingContent
+  )
+  const hasPlan = planToolCalls.length > 0
+
+  if (hasPlan && !hasActivity) {
+    return (
+      <StreamingMessage
+        {...props}
+        contentBlocks={planBlocks}
+        toolCalls={planToolCalls}
+        streamingContent={planStreamingContent}
+      />
+    )
   }
 
   const { label, detail } = summarizeLatest(
-    contentBlocks,
-    toolCalls,
-    streamingContent
+    activityBlocks,
+    activityToolCalls,
+    hasPlan ? '' : streamingContent
   )
-  const stepCount = toolCalls.length
+  const stepCount = activityToolCalls.length
 
   return (
-    <Collapsible
-      open={isOpen}
-      onOpenChange={setIsOpen}
-      className="min-w-0"
-    >
-      <div
-        className={
-          'rounded-md border border-border/50 bg-muted/30 min-w-0' +
-          (isOpen ? ' bg-muted/50' : '')
-        }
-      >
-        <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
-          {label === 'Thinking…' ? (
-            <Brain className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          ) : (
-            <Activity className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          )}
-          <span className="font-medium shrink-0 flex-none whitespace-nowrap">
-            {label}
-          </span>
-          {detail && (
-            <code className={TOOL_CALL_DETAIL_PILL_CLASS}>{detail}</code>
-          )}
-          <span className="ml-auto flex items-center gap-2 shrink-0">
-            {stepCount > 0 && (
-              <span className="text-muted-foreground/70 tabular-nums">
-                {stepCount} step{stepCount === 1 ? '' : 's'}
-              </span>
+    <div className="space-y-3">
+      <Collapsible open={isOpen} onOpenChange={setIsOpen} className="min-w-0">
+        <div
+          className={
+            'rounded-md border border-border/50 bg-muted/30 min-w-0' +
+            (isOpen ? ' bg-muted/50' : '')
+          }
+        >
+          <CollapsibleTrigger className={TOOL_CALL_ROW_CLASS}>
+            {label === 'Thinking…' ? (
+              <Brain className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            ) : (
+              <Activity className="h-3.5 w-3.5 shrink-0 opacity-70" />
             )}
-            <Loader2 className="h-3 w-3 animate-spin opacity-50" />
-            <ChevronRight
-              className={
-                'h-3.5 w-3.5 transition-transform duration-200' +
-                (isOpen ? ' rotate-90' : '')
-              }
-            />
-          </span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="border-t border-border/50 p-3">
-            <StreamingMessage {...props} />
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+            <span className="font-medium shrink-0 flex-none whitespace-nowrap">
+              {label}
+            </span>
+            {detail && (
+              <code className={TOOL_CALL_DETAIL_PILL_CLASS}>{detail}</code>
+            )}
+            <span className="ml-auto flex items-center gap-2 shrink-0">
+              {stepCount > 0 && (
+                <span className="text-muted-foreground/70 tabular-nums">
+                  {stepCount} step{stepCount === 1 ? '' : 's'}
+                </span>
+              )}
+              <Loader2 className="h-3 w-3 animate-spin opacity-50" />
+              <ChevronRight
+                className={
+                  'h-3.5 w-3.5 transition-transform duration-200' +
+                  (isOpen ? ' rotate-90' : '')
+                }
+              />
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border/50 p-3">
+              <StreamingMessage
+                {...props}
+                contentBlocks={activityBlocks}
+                toolCalls={activityToolCalls}
+                streamingContent={hasPlan ? '' : streamingContent}
+              />
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+      {hasPlan && (
+        <StreamingMessage
+          {...props}
+          contentBlocks={planBlocks}
+          toolCalls={planToolCalls}
+          streamingContent={planStreamingContent}
+        />
+      )}
+    </div>
   )
 })

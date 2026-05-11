@@ -11,10 +11,10 @@ import { ToolCallInline, TaskCallInline, StackedGroup } from './ToolCallInline'
 import {
   buildTimeline,
   findPlanFilePath,
+  getIntroTextBeforeDuplicatePlan,
   getPlanTextBlockIndicesToHide,
   isDuplicatePlanTextBlock,
   resolvePlanContent,
-  splitTextAroundPlan,
 } from './tool-call-utils'
 import { ToolCallsDisplay } from './ToolCallsDisplay'
 import { PlanDisplay } from './PlanFileDisplay'
@@ -82,13 +82,10 @@ export const StreamingMessage = memo(function StreamingMessage({
     contentBlocks,
     resolvedPlan.content
   )
-  const fallbackTextSplit = splitTextAroundPlan(streamingContent)
-  const fallbackPrePlanText = isDuplicatePlanTextBlock(
+  const fallbackPrePlanText = getIntroTextBeforeDuplicatePlan(
     streamingContent,
     resolvedPlan.content
   )
-    ? fallbackTextSplit.beforePlan
-    : null
 
   return (
     <div className="text-foreground/90">

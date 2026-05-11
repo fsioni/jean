@@ -9,6 +9,8 @@ describe('UIStore', () => {
       rightSidebarVisible: false,
       commandPaletteOpen: false,
       preferencesOpen: false,
+      autoOpenSessionWorktreeIds: new Set(),
+      pendingAutoOpenSessionIds: {},
     })
   })
 
@@ -58,5 +60,44 @@ describe('UIStore', () => {
 
     toggleCommandPalette()
     expect(useUIStore.getState().commandPaletteOpen).toBe(false)
+  })
+
+  it('queues and consumes explicit auto-open session requests', () => {
+    const store = useUIStore.getState()
+
+    store.markWorktreeForAutoOpenSession('worktree-1', 'session-1')
+
+    const queuedState = useUIStore.getState()
+    expect(queuedState.autoOpenSessionWorktreeIds.has('worktree-1')).toBe(true)
+    expect(queuedState.pendingAutoOpenSessionIds['worktree-1']).toBe(
+      'session-1'
+    )
+
+    expect(store.consumeAutoOpenSession('worktree-1')).toEqual({
+      shouldOpen: true,
+      sessionId: 'session-1',
+    })
+
+    const consumedState = useUIStore.getState()
+    expect(consumedState.autoOpenSessionWorktreeIds.has('worktree-1')).toBe(
+      false
+    )
+    expect(
+      consumedState.pendingAutoOpenSessionIds['worktree-1']
+    ).toBeUndefined()
+  })
+
+  it('does not notify subscribers for duplicate auto-open session requests', () => {
+    const store = useUIStore.getState()
+    let notifications = 0
+    const unsubscribe = useUIStore.subscribe(() => {
+      notifications += 1
+    })
+
+    store.markWorktreeForAutoOpenSession('worktree-1', 'session-1')
+    store.markWorktreeForAutoOpenSession('worktree-1', 'session-1')
+
+    unsubscribe()
+    expect(notifications).toBe(1)
   })
 })

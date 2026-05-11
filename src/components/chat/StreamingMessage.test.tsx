@@ -144,6 +144,29 @@ describe('StreamingMessage', () => {
     expect(screen.getByText('Inspect birds')).toBeVisible()
   })
 
+  it('does not render streaming content as intro when it exactly matches the Codex plan', () => {
+    render(
+      <StreamingMessage
+        {...baseProps}
+        streamingContent="Short answer: goal is separate from plan mode."
+        contentBlocks={[{ type: 'tool_use', tool_call_id: 'plan-1' }]}
+        toolCalls={[
+          {
+            id: 'plan-1',
+            name: 'CodexPlan',
+            input: {
+              plan: 'Short answer: goal is separate from plan mode.',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(
+      screen.getAllByText('Short answer: goal is separate from plan mode.')
+    ).toHaveLength(1)
+  })
+
   it('shows Codex explanation-only native plans', () => {
     render(
       <StreamingMessage

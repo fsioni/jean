@@ -569,20 +569,6 @@ function parseCodexFileChanges(input: unknown): CodexFileChange[] {
   return []
 }
 
-/** Map Codex file change kind to status color matching MemoizedFileDiff/FileDiffModal. */
-function codexChangeColor(kind: string | undefined): string {
-  switch (kind) {
-    case 'create':
-      return 'text-green-500'
-    case 'delete':
-      return 'text-red-500'
-    case 'rename':
-      return 'text-yellow-500'
-    default:
-      return 'text-blue-500'
-  }
-}
-
 /** Renders one or more Codex file changes with diffs */
 function FileChangeDiffView({ input }: { input: unknown }) {
   const changes = parseCodexFileChanges(input)
@@ -598,12 +584,11 @@ function FileChangeDiffView({ input }: { input: unknown }) {
           ? getFilename(change.path)
           : `file ${idx + 1}`
         const changeType = change.kind?.type ?? 'update'
-        const statusColor = codexChangeColor(change.kind?.type)
 
         return (
           <div key={change.path ?? idx}>
             <div className="flex items-center gap-1.5 mb-1">
-              <span className={cn('font-mono truncate', statusColor)}>
+              <span className="font-mono truncate text-muted-foreground">
                 {filename}
               </span>
               <span className="text-[0.625rem] uppercase tracking-wide font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
@@ -642,14 +627,17 @@ function formatWakeupDelay(seconds: number): string {
 
 /** Live-ticking remaining seconds for a pending ScheduleWakeup. */
 function useWakeupRemaining(fireAtUnix: number | undefined): number | null {
-  const [, setTick] = useState(0)
+  const [nowUnix, setNowUnix] = useState<number | null>(null)
   useEffect(() => {
     if (!fireAtUnix) return
-    const id = setInterval(() => setTick(t => t + 1), 1000)
+    const updateNow = () => setNowUnix(Math.floor(Date.now() / 1000))
+    updateNow()
+    const id = setInterval(updateNow, 1000)
     return () => clearInterval(id)
   }, [fireAtUnix])
   if (!fireAtUnix) return null
-  return Math.max(0, fireAtUnix - Math.floor(Date.now() / 1000))
+  if (nowUnix === null) return null
+  return Math.max(0, fireAtUnix - nowUnix)
 }
 
 interface ScheduleWakeupIndicatorProps {

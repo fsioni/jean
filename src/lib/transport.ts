@@ -146,6 +146,8 @@ export interface InitialData {
   preferences: unknown
   uiState: unknown
   appDataDir?: string
+  webBuildId?: string
+  appVersion?: string
 }
 
 let initialDataPromise: Promise<InitialData | null> | null = null
@@ -591,6 +593,8 @@ class WsTransport {
     'install_codex_cli',
     'install_opencode_cli',
     'install_gh_cli',
+    'install_coderabbit_cli',
+    'run_coderabbit_review',
   ])
   private static readonly LONG_TIMEOUT = 30 * 60_000
   private static readonly DEFAULT_TIMEOUT = 60_000

@@ -14,10 +14,10 @@ import { ToolCallInline, TaskCallInline, StackedGroup } from './ToolCallInline'
 import {
   buildTimeline,
   findPlanFilePath,
+  getIntroTextBeforeDuplicatePlan,
   getPlanTextBlockIndicesToHide,
   isDuplicatePlanTextBlock,
   resolvePlanContent,
-  splitTextAroundPlan,
 } from './tool-call-utils'
 import { PlanDisplay } from './PlanFileDisplay'
 import { ImageLightbox } from './ImageLightbox'
@@ -244,15 +244,21 @@ export const MessageItem = memo(function MessageItem({
     message.content_blocks,
     resolvedPlan.content
   )
-  const fallbackTextSplit =
-    message.role === 'assistant'
-      ? splitTextAroundPlan(displayContent)
-      : { beforePlan: null, plan: null }
   const fallbackPrePlanText =
+    message.role === 'assistant'
+      ? getIntroTextBeforeDuplicatePlan(displayContent, resolvedPlan.content)
+      : null
+  const isDuplicateAssistantPlanContent =
     message.role === 'assistant' &&
     isDuplicatePlanTextBlock(displayContent, resolvedPlan.content)
-      ? fallbackTextSplit.beforePlan
-      : null
+  const shouldRenderDisplayContent =
+    Boolean(showContent) && !isDuplicateAssistantPlanContent
+  const durationBadge =
+    message.role === 'assistant' && durationMs != null && durationMs > 0 ? (
+      <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
+        {formatDuration(durationMs)}
+      </span>
+    ) : null
 
   const messageBoxContent = (
     <>
@@ -377,16 +383,36 @@ export const MessageItem = memo(function MessageItem({
                       ? displayContent
                       : null))
                   : null
+              const lastVisibleTextKey = [...timeline].reverse().find(item => {
+                if (item.type !== 'text') return false
+                const textBlockIndex = message.content_blocks?.findIndex(
+                  block => block.type === 'text' && block.text === item.text
+                )
+                if (
+                  textBlockIndex !== undefined &&
+                  textBlockIndex >= 0 &&
+                  hiddenPlanTextBlockIndices.has(textBlockIndex)
+                ) {
+                  return false
+                }
+                return !isDuplicatePlanTextBlock(
+                  item.text,
+                  resolvedPlan.content
+                )
+              })?.key
               return (
                 <>
                   {fallbackAssistantIntro && (
-                    <Markdown
-                      streaming={message.cancelled ?? false}
-                      messageId={message.id}
-                      sessionId={sessionId}
-                    >
-                      {fallbackAssistantIntro}
-                    </Markdown>
+                    <>
+                      <Markdown
+                        streaming={message.cancelled ?? false}
+                        messageId={message.id}
+                        sessionId={sessionId}
+                      >
+                        {fallbackAssistantIntro}
+                      </Markdown>
+                      {!lastVisibleTextKey && durationBadge}
+                    </>
                   )}
                   {timeline.map(item => (
                     <ErrorBoundary
@@ -450,17 +476,23 @@ export const MessageItem = memo(function MessageItem({
                                       disabled={isSending}
                                     />
                                   )}
+                                  {item.key === lastVisibleTextKey &&
+                                    durationBadge}
                                 </div>
                               )
                             }
                             return (
-                              <Markdown
-                                streaming={message.cancelled ?? false}
-                                messageId={message.id}
-                                sessionId={sessionId}
-                              >
-                                {item.text}
-                              </Markdown>
+                              <>
+                                <Markdown
+                                  streaming={message.cancelled ?? false}
+                                  messageId={message.id}
+                                  sessionId={sessionId}
+                                >
+                                  {item.text}
+                                </Markdown>
+                                {item.key === lastVisibleTextKey &&
+                                  durationBadge}
+                              </>
                             )
                           }
                           case 'task':
@@ -630,13 +662,16 @@ export const MessageItem = memo(function MessageItem({
       ) : (
         <>
           {message.role === 'assistant' && fallbackPrePlanText && (
-            <Markdown
-              streaming={message.cancelled ?? false}
-              messageId={message.id}
-              sessionId={sessionId}
-            >
-              {fallbackPrePlanText}
-            </Markdown>
+            <>
+              <Markdown
+                streaming={message.cancelled ?? false}
+                messageId={message.id}
+                sessionId={sessionId}
+              >
+                {fallbackPrePlanText}
+              </Markdown>
+              {durationBadge}
+            </>
           )}
           {/* Fallback: Show tool calls first for assistant messages (old format) */}
           {message.role === 'assistant' &&
@@ -663,36 +698,34 @@ export const MessageItem = memo(function MessageItem({
               />
             )}
           {/* Show content after tool calls */}
-          {showContent &&
-            !(
-              message.role === 'assistant' &&
-              isDuplicatePlanTextBlock(displayContent, resolvedPlan.content)
-            ) && (
-              <div>
-                {message.role === 'assistant' &&
-                hasReviewFindings(displayContent) ? (
-                  <>
-                    <Markdown
-                      streaming={message.cancelled ?? false}
-                      messageId={message.id}
-                      sessionId={sessionId}
-                    >
-                      {stripFindingBlocks(displayContent)}
-                    </Markdown>
-                    <ReviewFindingsList
-                      findings={parseReviewFindings(displayContent)}
-                      sessionId={sessionId}
-                      onFix={onFixFinding}
-                      onFixAll={onFixAllFindings}
-                      isFixedFn={handleIsFindingFixed}
-                      disabled={isSending}
-                    />
-                  </>
-                ) : message.role === 'user' ? (
-                  <div className="whitespace-pre-wrap break-words">
-                    {displayContent}
-                  </div>
-                ) : (
+          {shouldRenderDisplayContent && (
+            <div>
+              {message.role === 'assistant' &&
+              hasReviewFindings(displayContent) ? (
+                <>
+                  <Markdown
+                    streaming={message.cancelled ?? false}
+                    messageId={message.id}
+                    sessionId={sessionId}
+                  >
+                    {stripFindingBlocks(displayContent)}
+                  </Markdown>
+                  <ReviewFindingsList
+                    findings={parseReviewFindings(displayContent)}
+                    sessionId={sessionId}
+                    onFix={onFixFinding}
+                    onFixAll={onFixAllFindings}
+                    isFixedFn={handleIsFindingFixed}
+                    disabled={isSending}
+                  />
+                  {!fallbackPrePlanText && durationBadge}
+                </>
+              ) : message.role === 'user' ? (
+                <div className="whitespace-pre-wrap break-words">
+                  {displayContent}
+                </div>
+              ) : (
+                <>
                   <Markdown
                     streaming={message.cancelled ?? false}
                     messageId={message.id}
@@ -700,9 +733,11 @@ export const MessageItem = memo(function MessageItem({
                   >
                     {displayContent}
                   </Markdown>
-                )}
-              </div>
-            )}
+                  {!fallbackPrePlanText && durationBadge}
+                </>
+              )}
+            </div>
+          )}
           {/* Show ExitPlanMode button after content */}
           {message.role === 'assistant' &&
             (message.tool_calls?.length ?? 0) > 0 &&
@@ -742,12 +777,6 @@ export const MessageItem = memo(function MessageItem({
       {message.cancelled && (
         <span className="text-xs text-muted-foreground/50 italic">
           (cancelled)
-        </span>
-      )}
-
-      {message.role === 'assistant' && durationMs != null && durationMs > 0 && (
-        <span className="mt-1 block min-h-4 text-xs leading-4 text-muted-foreground/40 tabular-nums font-mono">
-          {formatDuration(durationMs)}
         </span>
       )}
     </>

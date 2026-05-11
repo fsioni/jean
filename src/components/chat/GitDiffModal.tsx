@@ -60,7 +60,7 @@ import {
   triggerImmediateGitPoll,
 } from '@/services/git-status'
 import { invoke } from '@/lib/transport'
-import { toast } from 'sonner'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import { resolveMagicPromptProvider } from '@/types/preferences'
 import type { CreateCommitResponse } from '@/types/projects'
 import {
@@ -312,7 +312,7 @@ export function GitDiffModal({
       gitDiffSelectedFiles.size > 0 ? Array.from(gitDiffSelectedFiles) : null
 
     setIsCommitting(true)
-    const toastId = toast.loading(
+    const opToast = dismissibleToast.loading(
       specificFiles
         ? `Committing ${specificFiles.length} file${specificFiles.length !== 1 ? 's' : ''}...`
         : 'Committing all changes...'
@@ -343,9 +343,9 @@ export function GitDiffModal({
       setSelectedFileIndex(0)
       loadDiff({ ...diffRequest, type: 'uncommitted' }, true)
 
-      toast.success(result.message.split('\n')[0], { id: toastId })
+      opToast.success(result.message.split('\n')[0])
     } catch (error) {
-      toast.error(`Failed to commit: ${error}`, { id: toastId })
+      opToast.error(`Failed to commit: ${error}`)
     } finally {
       setIsCommitting(false)
     }
@@ -819,6 +819,12 @@ export function GitDiffModal({
     activeDiffType === 'uncommitted'
       ? 'Uncommitted Changes'
       : `Changes vs ${diffRequest?.baseBranch ?? 'main'}`
+  const selectedFileCount = gitDiffSelectedFiles.size
+  const commitButtonLabel = isCommitting
+    ? 'Committing…'
+    : selectedFileCount > 0
+      ? `Commit (${selectedFileCount})`
+      : 'Commit'
 
   return (
     <>
@@ -850,82 +856,83 @@ export function GitDiffModal({
             }
           }}
         >
-          <DialogTitle className="flex flex-wrap items-center gap-2 shrink-0 px-3 pt-3 sm:px-0 sm:pt-0">
-            {showSwitcher ? (
-              <div className="flex items-center bg-muted rounded-lg p-1">
-                <button
-                  type="button"
-                  onClick={() => handleSwitchDiffType('uncommitted')}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                    activeDiffType === 'uncommitted'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Uncommitted</span>
-                  <span className="text-green-500">+{uncommittedAdded}</span>
-                  <span className="text-red-500">-{uncommittedRemoved}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSwitchDiffType('branch')}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                    activeDiffType === 'branch'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Branch</span>
-                  <span className="text-green-500">+{branchAdded}</span>
-                  <span className="text-red-500">-{branchRemoved}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSwitchDiffType('commits')}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                    activeDiffType === 'commits'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <GitCommitHorizontal className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Commits</span>
-                </button>
-              </div>
-            ) : (
-              <>
-                <FileText className="h-4 w-4" />
-                {title}
-              </>
-            )}
-            <div className="flex items-center gap-2 sm:gap-3">
-              {activeDiffType === 'uncommitted' &&
-                gitDiffSelectedFiles.size > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {gitDiffSelectedFiles.size} file
-                    {gitDiffSelectedFiles.size !== 1 ? 's' : ''} selected
-                  </span>
-                )}
+          <DialogTitle className="flex shrink-0 flex-col gap-2 px-3 pt-3 sm:flex-row sm:items-center sm:px-0 sm:pt-0">
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+              {showSwitcher ? (
+                <div className="flex w-full min-w-0 items-center bg-muted rounded-lg p-1 sm:w-auto sm:shrink">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchDiffType('uncommitted')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3',
+                      activeDiffType === 'uncommitted'
+                        ? 'bg-background shadow-sm text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Pencil className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Uncommitted</span>
+                    <span className="text-green-500">+{uncommittedAdded}</span>
+                    <span className="text-red-500">-{uncommittedRemoved}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchDiffType('branch')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3',
+                      activeDiffType === 'branch'
+                        ? 'bg-background shadow-sm text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Branch</span>
+                    <span className="text-green-500">+{branchAdded}</span>
+                    <span className="text-red-500">-{branchRemoved}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchDiffType('commits')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3',
+                      activeDiffType === 'commits'
+                        ? 'bg-background shadow-sm text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Commits</span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <FileText className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{title}</span>
+                </>
+              )}
+            </div>
+
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-1.5 pb-0.5 sm:ml-auto sm:w-auto sm:flex-nowrap sm:justify-start sm:overflow-visible sm:pb-0">
+              {activeDiffType === 'uncommitted' && selectedFileCount > 0 && (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {selectedFileCount} selected
+                </span>
+              )}
               {/* View mode toggle */}
-              <div className="flex items-center bg-muted rounded-lg p-1">
+              <div className="flex min-w-0 flex-1 items-center bg-muted rounded-lg p-1 sm:flex-none sm:shrink-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       onClick={() => setDiffStyle('split')}
                       className={cn(
-                        'flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                        'flex flex-1 items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3',
                         diffStyle === 'split'
                           ? 'bg-background shadow-sm text-foreground'
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
-                      <Columns2 className="h-3.5 w-3.5" />
+                      <Columns2 className="h-3.5 w-3.5 shrink-0" />
                       <span className="hidden sm:inline">Split</span>
                     </button>
                   </TooltipTrigger>
@@ -937,13 +944,13 @@ export function GitDiffModal({
                       type="button"
                       onClick={() => setDiffStyle('unified')}
                       className={cn(
-                        'flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                        'flex flex-1 items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3',
                         diffStyle === 'unified'
                           ? 'bg-background shadow-sm text-foreground'
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
-                      <Rows3 className="h-3.5 w-3.5" />
+                      <Rows3 className="h-3.5 w-3.5 shrink-0" />
                       <span className="hidden sm:inline">Stacked</span>
                     </button>
                   </TooltipTrigger>
@@ -952,14 +959,14 @@ export function GitDiffModal({
               </div>
               {/* Execute and Edit buttons */}
               {comments.length > 0 && (onAddToPrompt || onExecutePrompt) && (
-                <div className="flex items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1">
                   {onExecutePrompt && (
                     <button
                       type="button"
                       onClick={handleExecutePrompt}
-                      className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
+                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
                     >
-                      <Play className="h-3.5 w-3.5" />
+                      <Play className="h-3.5 w-3.5 shrink-0" />
                       <span className="hidden sm:inline">Execute</span> (
                       {comments.length})
                     </button>
@@ -968,16 +975,14 @@ export function GitDiffModal({
                     <button
                       type="button"
                       onClick={handleAddToPrompt}
-                      className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
+                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <Pencil className="h-3.5 w-3.5 shrink-0" />
                       <span className="hidden sm:inline">Add to prompt</span>
                     </button>
                   )}
                 </div>
               )}
-            </div>
-            <div className="ml-auto flex items-center gap-2">
               {activeDiffType === 'uncommitted' &&
                 diff &&
                 filteredFiles.length > 0 && (
@@ -987,24 +992,19 @@ export function GitDiffModal({
                         type="button"
                         disabled={isCommitting}
                         onClick={handleCommitFromDiff}
-                        className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-md text-xs font-medium transition-colors"
+                        className="flex h-7 flex-1 items-center justify-center gap-1.5 px-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3"
                       >
                         {isCommitting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                         ) : (
-                          <GitCommitHorizontal className="h-3.5 w-3.5" />
+                          <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0" />
                         )}
-                        <span className="hidden sm:inline">
-                          Commit
-                          {gitDiffSelectedFiles.size > 0
-                            ? ` (${gitDiffSelectedFiles.size})`
-                            : ''}
-                        </span>
+                        <span>{commitButtonLabel}</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {gitDiffSelectedFiles.size > 0
-                        ? `Commit ${gitDiffSelectedFiles.size} selected file${gitDiffSelectedFiles.size !== 1 ? 's' : ''}`
+                      {selectedFileCount > 0
+                        ? `Commit ${selectedFileCount} selected file${selectedFileCount !== 1 ? 's' : ''}`
                         : 'Commit all changes'}
                     </TooltipContent>
                   </Tooltip>
@@ -1119,8 +1119,11 @@ export function GitDiffModal({
                 <div className="flex-1 min-h-0 mt-2 relative flex">
                   {/* Mobile: file selector overlay */}
                   {isMobile && showMobileSidebar && (
-                    <div className="absolute inset-0 z-20 bg-background flex flex-col">
-                      <div ref={fileListRef} className="flex-1 overflow-y-auto">
+                    <div className="absolute inset-0 z-20 bg-background flex min-h-0 flex-col">
+                      <div
+                        ref={fileListRef}
+                        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain touch-pan-y [-webkit-overflow-scrolling:touch]"
+                      >
                         {flattenedFiles.length > 0 && (
                           <div className="sticky top-0 z-10 bg-background border-b border-border pb-2">
                             <div className="relative">
@@ -1217,7 +1220,7 @@ export function GitDiffModal({
 
                   {/* Mobile: file name bar + full-width diff */}
                   {isMobile && (
-                    <div className="flex-1 min-w-0 flex flex-col">
+                    <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden">
                       {/* Current file indicator */}
                       {selectedFile && (
                         <button
@@ -1244,7 +1247,7 @@ export function GitDiffModal({
                       <div
                         ref={scrollContainerRef}
                         className={cn(
-                          'flex-1 min-h-0 overflow-y-auto transition-opacity duration-150',
+                          'flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y transition-opacity duration-150 [-webkit-overflow-scrolling:touch]',
                           (isSwitching || isLoading) && 'opacity-60'
                         )}
                       >

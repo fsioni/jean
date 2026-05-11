@@ -39,10 +39,10 @@ import type { ClaudeModel, CodexModel } from '@/types/preferences'
 export type { ClaudeModel, CodexModel }
 
 /** Default model to use when none is selected (fallback only - preferences take priority) */
-export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-4-7'
+export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-4-7[1m]'
 
 /** Default Codex model */
-export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.4'
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.5'
 
 /** Default thinking level */
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'off'
@@ -743,9 +743,13 @@ export const useChatStore = create<ChatUIState>()(
         )
 
         if (options?.markOpened !== false) {
-          invoke<void>('set_session_last_opened', { sessionId })
+          invoke('set_session_last_opened', { sessionId })
             .then(() => {
-              window.dispatchEvent(new CustomEvent('session-opened'))
+              window.dispatchEvent(
+                new CustomEvent('session-opened', {
+                  detail: { sessionIds: [sessionId] },
+                })
+              )
             })
             .catch(() => undefined)
         }
@@ -2839,6 +2843,10 @@ export const useChatStore = create<ChatUIState>()(
               pendingPermissionDenials,
               deniedMessageContext,
               sendStartedAt: sendStartedAtRest,
+              completedDurations:
+                sendStarted > 0
+                  ? { ...state.completedDurations, [sessionId]: elapsed }
+                  : state.completedDurations,
               reviewingSessions: {
                 ...state.reviewingSessions,
                 [sessionId]: true,
@@ -2882,6 +2890,8 @@ export const useChatStore = create<ChatUIState>()(
             const { [sessionId]: _mcp, ...restMcp } = state.enabledMcpServers
             const { [sessionId]: _label, ...restLabels } = state.sessionLabels
             const { [sessionId]: _goal, ...restCodexGoals } = state.codexGoals
+            const { [sessionId]: _duration, ...restDurations } =
+              state.completedDurations
 
             return {
               approvedTools: restApproved,
@@ -2901,6 +2911,7 @@ export const useChatStore = create<ChatUIState>()(
               enabledMcpServers: restMcp,
               sessionLabels: restLabels,
               codexGoals: restCodexGoals,
+              completedDurations: restDurations,
             }
           },
           undefined,

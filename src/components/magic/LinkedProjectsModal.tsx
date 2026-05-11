@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link2, X, Search, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -10,6 +10,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useProjects, useUpdateProjectSettings } from '@/services/projects'
 import { isFolder, type Project } from '@/types/projects'
+import { cn } from '@/lib/utils'
 
 interface LinkedProjectsModalProps {
   open: boolean
@@ -25,6 +26,7 @@ export function LinkedProjectsModal({
   const { data: projects } = useProjects()
   const updateSettings = useUpdateProjectSettings()
   const [search, setSearch] = useState('')
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
 
   const currentProject = useMemo(
@@ -53,6 +55,20 @@ export function LinkedProjectsModal({
     })
   }, [projects, projectId, linkedIds, search])
 
+  useEffect(() => {
+    if (!open) {
+      setSearch('')
+      setSelectedIndex(0)
+    }
+  }, [open])
+
+  useEffect(() => {
+    setSelectedIndex(index => {
+      if (availableProjects.length === 0) return 0
+      return Math.min(index, availableProjects.length - 1)
+    })
+  }, [availableProjects.length])
+
   const updateLinks = useCallback(
     (newIds: string[]) => {
       if (!projectId) return
@@ -73,9 +89,36 @@ export function LinkedProjectsModal({
       const newIds = [...(currentProject?.linked_project_ids ?? []), project.id]
       updateLinks(newIds)
       setSearch('')
+      setSelectedIndex(0)
     },
     [currentProject?.linked_project_ids, updateLinks]
   )
+
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (availableProjects.length === 0) return
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex(index => (index + 1) % availableProjects.length)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex(
+          index =>
+            (index - 1 + availableProjects.length) % availableProjects.length
+        )
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        const project = availableProjects[selectedIndex]
+        if (project) {
+          handleAdd(project)
+        }
+      }
+    },
+    [availableProjects, selectedIndex, handleAdd]
+  )
+
+  const selectedProjectId = availableProjects[selectedIndex]?.id
 
   const handleRemove = useCallback(
     (removeId: string) => {
@@ -140,8 +183,20 @@ export function LinkedProjectsModal({
               type="text"
               placeholder="Search projects..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring md:text-sm"
+              onChange={e => {
+                setSearch(e.target.value)
+                setSelectedIndex(0)
+              }}
+              onKeyDown={handleSearchKeyDown}
+              role="combobox"
+              aria-expanded={availableProjects.length > 0}
+              aria-controls="linked-projects-listbox"
+              aria-activedescendant={
+                selectedProjectId
+                  ? `linked-project-option-${selectedProjectId}`
+                  : undefined
+              }
+              className="w-full rounded-md border border-border bg-muted/40 pl-8 pr-3 py-2 text-base shadow-sm placeholder:text-muted-foreground focus:outline-none focus:border-ring focus:ring-2 focus:ring-ring/40 dark:bg-input/50 md:text-sm"
             />
           </div>
           <ScrollArea className="max-h-48">
@@ -152,17 +207,40 @@ export function LinkedProjectsModal({
                   : 'No projects available to link'}
               </p>
             ) : (
-              <div className="space-y-0.5 py-1">
-                {availableProjects.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleAdd(p)}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-left hover:bg-accent transition-colors cursor-pointer"
-                  >
-                    <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{p.name}</span>
-                  </button>
-                ))}
+              <div
+                id="linked-projects-listbox"
+                role="listbox"
+                className="space-y-0.5 py-1"
+              >
+                {availableProjects.map((p, index) => {
+                  const isSelected = index === selectedIndex
+
+                  return (
+                    <button
+                      key={p.id}
+                      id={`linked-project-option-${p.id}`}
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => handleAdd(p)}
+                      onMouseEnter={() => setSelectedIndex(index)}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-left transition-colors cursor-pointer',
+                        'hover:bg-accent hover:text-accent-foreground focus:outline-none',
+                        isSelected && 'bg-accent text-accent-foreground'
+                      )}
+                    >
+                      <Plus
+                        className={cn(
+                          'h-3.5 w-3.5 shrink-0',
+                          isSelected
+                            ? 'text-accent-foreground'
+                            : 'text-muted-foreground'
+                        )}
+                      />
+                      <span className="truncate">{p.name}</span>
+                    </button>
+                  )
+                })}
               </div>
             )}
           </ScrollArea>

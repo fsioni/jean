@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
 use crate::codex_cli::resolve_cli_binary;
-use crate::platform::silent_command;
+use crate::platform::{is_process_alive, silent_command};
 
 // =============================================================================
 // Types
@@ -79,10 +79,14 @@ static SERVER_GENERATION: AtomicU64 = AtomicU64::new(0);
 // PID file for crash-recovery
 // =============================================================================
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ServerPidRecord {
     jean_pid: u32,
     server_pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proxy_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    socket_path: Option<PathBuf>,
 }
 
 fn pid_file_path() -> Option<PathBuf> {
@@ -92,12 +96,8 @@ fn pid_file_path() -> Option<PathBuf> {
         .map(|d| d.join("codex-app-server.pid"))
 }
 
-fn write_pid_file(server_pid: u32) {
+fn write_pid_file(record: &ServerPidRecord) {
     let Some(path) = pid_file_path() else { return };
-    let record = ServerPidRecord {
-        jean_pid: std::process::id(),
-        server_pid,
-    };
     if let Ok(json) = serde_json::to_string(&record) {
         let _ = std::fs::write(&path, json);
     }
@@ -107,6 +107,35 @@ fn remove_pid_file() {
     if let Some(path) = pid_file_path() {
         let _ = std::fs::remove_file(path);
     }
+}
+
+fn remove_socket_file(path: Option<&PathBuf>) {
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn has_incomplete_codex_runs(app: &AppHandle) -> bool {
+    let Ok(session_ids) = super::storage::list_all_session_ids(app) else {
+        return false;
+    };
+
+    session_ids.into_iter().any(|session_id| {
+        let Ok(Some(metadata)) = super::storage::load_metadata(app, &session_id) else {
+            return false;
+        };
+
+        if metadata.backend != super::types::Backend::Codex {
+            return false;
+        }
+
+        metadata.runs.iter().any(|run| {
+            matches!(
+                run.status,
+                super::types::RunStatus::Running | super::types::RunStatus::Resumable
+            )
+        })
+    })
 }
 
 // =============================================================================
@@ -127,17 +156,46 @@ pub fn cleanup_orphaned_server(app: &AppHandle) {
         return;
     };
 
-    // Only kill if the PID file was written by a different Jean process
+    // Only clean up if the PID file was written by a different Jean process.
+    // If that Jean process is still alive, this is a second app instance — do
+    // not kill the server it owns.
     if record.jean_pid != std::process::id() {
+        if is_process_alive(record.jean_pid) {
+            log::info!(
+                "Preserving codex app-server (pid={}) owned by live Jean pid={}",
+                record.server_pid,
+                record.jean_pid
+            );
+            return;
+        }
+
+        // If Jean exited while Codex turns were in-flight, the orphaned
+        // app-server may still be the process doing the work. Killing it here is
+        // what made close/reopen turn active prompts into interrupted/crashed
+        // runs. Leave it alone until recovery can observe the thread state.
+        if has_incomplete_codex_runs(app) {
+            log::warn!(
+                "Preserving orphaned codex app-server (pid={}, from jean pid={}) because Codex runs are still incomplete",
+                record.server_pid,
+                record.jean_pid
+            );
+            return;
+        }
+
         log::info!(
             "Cleaning up orphaned codex app-server (pid={}, from jean pid={})",
             record.server_pid,
             record.jean_pid
         );
         use crate::platform::{kill_process, kill_process_tree};
+        if let Some(proxy_pid) = record.proxy_pid {
+            let _ = kill_process_tree(proxy_pid);
+            let _ = kill_process(proxy_pid);
+        }
         let _ = kill_process_tree(record.server_pid);
         let _ = kill_process(record.server_pid);
     }
+    remove_socket_file(record.socket_path.as_ref());
     let _ = std::fs::remove_file(&path);
 }
 
@@ -211,7 +269,12 @@ fn ensure_running_inner(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to spawn codex app-server: {e}"))?;
 
     let pid = child.id();
-    write_pid_file(pid);
+    write_pid_file(&ServerPidRecord {
+        jean_pid: std::process::id(),
+        server_pid: pid,
+        proxy_pid: None,
+        socket_path: None,
+    });
     SERVER_GENERATION.fetch_add(1, Ordering::SeqCst);
     log::info!("Codex app-server spawned with PID: {pid}");
 
@@ -355,6 +418,30 @@ fn write_message(writer: &Arc<Mutex<BufWriter<ChildStdin>>>, msg: &Value) -> Res
     Ok(())
 }
 
+fn request_debug_summary(method: &str, params: &Value) -> Option<Value> {
+    let keys: &[&str] = match method {
+        "thread/start" | "thread/resume" => &[
+            "threadId",
+            "model",
+            "serviceTier",
+            "cwd",
+            "sandbox",
+            "approvalPolicy",
+            "config",
+        ],
+        "turn/start" => &["threadId", "effort", "cwd", "sandboxPolicy"],
+        _ => return None,
+    };
+
+    let mut summary = serde_json::Map::new();
+    for key in keys {
+        if let Some(value) = params.get(*key) {
+            summary.insert((*key).to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(summary))
+}
+
 /// Send a JSON-RPC request and wait for the response.
 pub fn send_request(method: &str, params: Value) -> Result<Value, String> {
     let guard = CODEX_SERVER.lock().unwrap();
@@ -371,6 +458,10 @@ pub fn send_request(method: &str, params: Value) -> Result<Value, String> {
         "id": id,
         "params": params,
     });
+
+    if let Some(summary) = request_debug_summary(method, &request["params"]) {
+        log::debug!("Codex app-server request {method}: {summary}");
+    }
 
     // Register response handler BEFORE writing (prevent race with reader thread)
     let (tx, rx) = tokio::sync::oneshot::channel();

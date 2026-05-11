@@ -47,6 +47,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { invoke } from '@/lib/transport'
+import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
 import { openExternal } from '@/lib/platform'
 import { notify } from '@/lib/notifications'
@@ -86,6 +87,7 @@ import {
   OPENCODE_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import { ReviewMethodModal } from '@/components/chat/ReviewMethodModal'
 
 type MagicOption =
   | 'save-context'
@@ -365,6 +367,7 @@ export function MagicModal() {
   const [customInvestigateModel, setCustomInvestigateModel] =
     useState<string>('sonnet')
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false)
+  const [reviewMethodDialogOpen, setReviewMethodDialogOpen] = useState(false)
   const [resolveSelectionMode, setResolveSelectionMode] =
     useState<ResolveSelectionMode>('settings-default')
   const [customResolveBackend, setCustomResolveBackend] =
@@ -467,7 +470,7 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[modelKey] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
         : backend === 'opencode'
           ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
           : backend === 'cursor'
@@ -493,7 +496,7 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
         : backend === 'opencode'
           ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
           : backend === 'cursor'
@@ -788,7 +791,8 @@ export function MagicModal() {
   const executeGitDirectly = useCallback(
     async (
       option: MagicOption,
-      override?: { backend: CliBackend; model: string }
+      override?: { backend: CliBackend; model: string },
+      reviewSource: 'ai' | 'coderabbit' = 'ai'
     ) => {
       if (!selectedWorktreeId || !worktree?.path) return
 
@@ -804,7 +808,7 @@ export function MagicModal() {
           gitDiffSelectedFiles.size > 0
             ? Array.from(gitDiffSelectedFiles)
             : null
-        const toastId = toast.loading(
+        const opToast = dismissibleToast.loading(
           isPush
             ? `Committing and pushing on ${branch}...`
             : `Creating commit on ${branch}...`
@@ -835,22 +839,17 @@ export function MagicModal() {
           window.dispatchEvent(new CustomEvent('git-commit-completed'))
           if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
           if (result.push_fell_back) {
-            toast.warning(
-              'Could not push to PR branch, pushed to new branch instead',
-              {
-                id: toastId,
-              }
+            opToast.warning(
+              'Could not push to PR branch, pushed to new branch instead'
             )
           } else if (result.commit_hash) {
             const prefix = isPush ? 'Committed and pushed' : 'Committed'
-            toast.success(`${prefix}: ${result.message.split('\n')[0]}`, {
-              id: toastId,
-            })
+            opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
           } else {
-            toast.success('Pushed to remote', { id: toastId })
+            opToast.success('Pushed to remote')
           }
         } catch (error) {
-          toast.error(`Failed: ${error}`, { id: toastId })
+          opToast.error(`Failed: ${error}`)
         } finally {
           clearWorktreeLoading(selectedWorktreeId)
         }
@@ -902,7 +901,9 @@ export function MagicModal() {
         }
         case 'push': {
           const doPush = async (remote?: string) => {
-            const toastId = toast.loading(`Pushing ${worktree.branch}...`)
+            const opToast = dismissibleToast.loading(
+              `Pushing ${worktree.branch}...`
+            )
             try {
               const result = await gitPush(
                 worktree.path,
@@ -912,15 +913,14 @@ export function MagicModal() {
               triggerImmediateGitPoll()
               if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
               if (result.fellBack) {
-                toast.warning(
-                  'Could not push to PR branch, pushed to new branch instead',
-                  { id: toastId }
+                opToast.warning(
+                  'Could not push to PR branch, pushed to new branch instead'
                 )
               } else {
-                toast.success('Changes pushed', { id: toastId })
+                opToast.success('Changes pushed')
               }
             } catch (error) {
-              toast.error(`Push failed: ${error}`, { id: toastId })
+              opToast.error(`Push failed: ${error}`)
             }
           }
           if (worktree.pr_number) {
@@ -1096,7 +1096,7 @@ export function MagicModal() {
               override?.model ??
               preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
               (resolvedBackend === 'codex'
-                ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+                ? (preferences?.selected_codex_model ?? 'gpt-5.5')
                 : resolvedBackend === 'opencode'
                   ? (preferences?.selected_opencode_model ??
                     'opencode/gpt-5.3-codex')
@@ -1261,19 +1261,31 @@ ${resolveInstructions}`
           }
 
           try {
-            const result = await invoke<ReviewResponse>('run_review_with_ai', {
-              worktreePath: worktree.path,
-              customPrompt: preferences?.magic_prompts?.code_review,
-              model: preferences?.magic_prompt_models?.code_review_model,
-              customProfileName: resolveMagicPromptProvider(
-                preferences?.magic_prompt_providers,
-                'code_review_provider',
-                preferences?.default_provider
-              ),
-              reasoningEffort:
-                preferences?.magic_prompt_efforts?.code_review_effort ?? null,
-              reviewRunId,
-            })
+            const result = await invoke<ReviewResponse>(
+              reviewSource === 'coderabbit'
+                ? 'run_coderabbit_review'
+                : 'run_review_with_ai',
+              reviewSource === 'coderabbit'
+                ? {
+                    worktreePath: worktree.path,
+                    reviewRunId,
+                    reviewType: 'all',
+                  }
+                : {
+                    worktreePath: worktree.path,
+                    customPrompt: preferences?.magic_prompts?.code_review,
+                    model: preferences?.magic_prompt_models?.code_review_model,
+                    customProfileName: resolveMagicPromptProvider(
+                      preferences?.magic_prompt_providers,
+                      'code_review_provider',
+                      preferences?.default_provider
+                    ),
+                    reasoningEffort:
+                      preferences?.magic_prompt_efforts?.code_review_effort ??
+                      null,
+                    reviewRunId,
+                  }
+            )
 
             const newSession = await invoke<Session>('create_session', {
               worktreeId: selectedWorktreeId,
@@ -1318,7 +1330,7 @@ ${resolveInstructions}`
 
             const findingCount = result.findings.length
             toast.success(
-              `Review done on ${reviewTarget} (${findingCount} findings)`,
+              `${reviewSource === 'coderabbit' ? 'CodeRabbit review' : 'Review'} done on ${reviewTarget} (${findingCount} findings)`,
               {
                 id: toastId,
                 action: {
@@ -1412,6 +1424,17 @@ ${resolveInstructions}`
     async (option: MagicOption) => {
       // Block disabled options on canvas
       if (isOnCanvas && !CANVAS_ALLOWED_OPTIONS.has(option)) {
+        return
+      }
+
+      if (option === 'review') {
+        if (!selectedWorktreeId || !worktree?.path) {
+          notify('No worktree selected', undefined, { type: 'error' })
+          setMagicModalOpen(false)
+          return
+        }
+        setMagicModalOpen(false)
+        setReviewMethodDialogOpen(true)
         return
       }
 
@@ -1640,6 +1663,14 @@ ${resolveInstructions}`
 
   return (
     <>
+      <ReviewMethodModal
+        open={reviewMethodDialogOpen}
+        onOpenChange={setReviewMethodDialogOpen}
+        onAiReview={() => executeGitDirectly('review', undefined, 'ai')}
+        onCodeRabbitReview={() =>
+          executeGitDirectly('review', undefined, 'coderabbit')
+        }
+      />
       <Dialog open={magicModalOpen} onOpenChange={handleOpenChange}>
         <DialogContent
           ref={contentRef}
@@ -1822,6 +1853,11 @@ ${resolveInstructions}`
                     >
                       <SelectTrigger
                         size="sm"
+                        hideIcon={
+                          installedBackends.filter(backend =>
+                            ['claude', 'codex', 'opencode'].includes(backend)
+                          ).length <= 1
+                        }
                         onClick={() => setInvestigateSelectionMode('custom')}
                       >
                         <SelectValue />
@@ -1851,7 +1887,10 @@ ${resolveInstructions}`
                         setCustomInvestigateModel(value)
                       }}
                     >
-                      <SelectTrigger size="sm">
+                      <SelectTrigger
+                        size="sm"
+                        hideIcon={customInvestigateModelOptions.length <= 1}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1962,6 +2001,11 @@ ${resolveInstructions}`
                     >
                       <SelectTrigger
                         size="sm"
+                        hideIcon={
+                          installedBackends.filter(backend =>
+                            ['claude', 'codex', 'opencode'].includes(backend)
+                          ).length <= 1
+                        }
                         onClick={() => setResolveSelectionMode('custom')}
                       >
                         <SelectValue />
@@ -1991,7 +2035,10 @@ ${resolveInstructions}`
                         setCustomResolveModel(value)
                       }}
                     >
-                      <SelectTrigger size="sm">
+                      <SelectTrigger
+                        size="sm"
+                        hideIcon={customResolveModelOptions.length <= 1}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

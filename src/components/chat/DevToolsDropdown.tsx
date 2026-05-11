@@ -88,7 +88,7 @@ export function DevToolsDropdown({
       const model =
         session?.selected_model ??
         preferences?.selected_codex_model ??
-        'gpt-5.4'
+        'gpt-5.5'
       const executionMode = (store.executionModes[sessionId] ??
         session?.selected_execution_mode ??
         'plan') as ExecutionMode

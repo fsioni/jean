@@ -41,7 +41,6 @@ import {
   chatQueryKeys,
 } from '@/services/chat'
 import { useWorktree, useProjects, useRunScripts } from '@/services/projects'
-import { markWorktreeSilentReady } from '@/services/worktree-silent-ready'
 import { useProjectsStore } from '@/store/projects-store'
 import type {
   Worktree,
@@ -109,12 +108,17 @@ import { ChatInput } from './ChatInput'
 import { SessionDebugPanel } from './SessionDebugPanel'
 import { ChatToolbar } from './ChatToolbar'
 import { ReviewResultsPanel } from './ReviewResultsPanel'
+import { ReviewMethodModal } from './ReviewMethodModal'
 import { QueuedMessagesList } from './QueuedMessageItem'
 import { FloatingButtons } from './FloatingButtons'
 import { PlanDialog } from './PlanDialog'
 import { StreamingMessage } from './StreamingMessage'
 import { CompactStreamingTicker } from './CompactStreamingTicker'
 import { CompactMessageList } from './CompactMessageList'
+import {
+  getCurrentPromptWindow,
+  remapIndexForWindow,
+} from './compact-history-window'
 import { CodexGoalBanner } from './CodexGoalBanner'
 import { StreamingStatusBar } from './StreamingStatusBar'
 import { ChatErrorFallback } from './ChatErrorFallback'
@@ -127,10 +131,9 @@ import {
 } from './VirtualizedMessageList'
 import { RecentContexts } from './RecentContexts'
 import {
-  extractImagePaths,
-  extractTextFilePaths,
-  extractFileMentionPaths,
-  extractSkillPaths,
+  appendPromptMetadataToPlainText,
+  buildPromptAttachmentMetadata,
+  encodePromptAttachmentMetadata,
   stripAllMarkers,
 } from './message-content-utils'
 import { useUIStore } from '@/store/ui-store'
@@ -146,6 +149,7 @@ import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
 import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
 import { FileDiffModal } from './FileDiffModal'
+import { getEffectiveSessionWaiting } from './session-card-utils'
 
 // Lazy-loaded heavy modals (code splitting)
 const GitDiffModal = lazy(() =>
@@ -610,7 +614,7 @@ export function ChatWindow({
 
   // Per-session model selection, falls back to preferences default (backend-aware)
   const defaultModel: string = isCodexBackend
-    ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+    ? (preferences?.selected_codex_model ?? 'gpt-5.5')
     : isOpencodeBackend
       ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
       : isCursorBackend
@@ -644,8 +648,12 @@ export function ChatWindow({
   const sessionEffortLevel = useChatStore(state =>
     deferredSessionId ? state.effortLevels[deferredSessionId] : undefined
   )
-  const selectedEffortLevel: EffortLevel =
+  const rawSelectedEffortLevel: EffortLevel =
     sessionEffortLevel ?? defaultEffortLevel
+  const selectedEffortLevel: EffortLevel =
+    isCodexBackend && rawSelectedEffortLevel === 'max'
+      ? 'high'
+      : rawSelectedEffortLevel
 
   // MCP servers: resolve enabled servers cascade (session → project → global)
   // Fetches from ALL installed backends so toolbar shows grouped sections
@@ -718,11 +726,31 @@ export function ChatWindow({
   // Streaming execution mode - uses executing mode when sending, otherwise selected mode
   const streamingExecutionMode = executingMode ?? executionMode
   // Whether this session is waiting for user input (AskUserQuestion/ExitPlanMode)
-  const isWaitingForInput = useChatStore(state =>
+  const rawIsWaitingForInput = useChatStore(state =>
     activeSessionId
       ? (state.waitingForInputSessionIds[activeSessionId] ?? false)
       : false
   )
+  const rawIsReviewingActiveSession = useChatStore(state =>
+    activeSessionId
+      ? (state.reviewingSessions[activeSessionId] ?? false)
+      : false
+  )
+  const activeSessionForStatus = useMemo(() => {
+    if (!activeSessionId) return null
+    if (session?.id === activeSessionId) return session
+    return sessionsData?.sessions.find(s => s.id === activeSessionId) ?? null
+  }, [activeSessionId, session, sessionsData?.sessions])
+  const isWaitingForInput = activeSessionForStatus
+    ? getEffectiveSessionWaiting(activeSessionForStatus, {
+        waitingForInputSessionIds: rawIsWaitingForInput
+          ? { [activeSessionId as string]: true }
+          : {},
+        reviewingSessions: rawIsReviewingActiveSession
+          ? { [activeSessionId as string]: true }
+          : {},
+      })
+    : rawIsWaitingForInput
   // Per-session error state (uses deferredSessionId for content consistency)
   const currentError = useChatStore(state =>
     deferredSessionId ? (state.errors[deferredSessionId] ?? null) : null
@@ -1118,7 +1146,7 @@ export function ChatWindow({
       const yoloModel =
         yoloModelRef.current ??
         (yoloBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : yoloBackend === 'opencode'
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : yoloBackend === 'cursor'
@@ -1287,7 +1315,7 @@ export function ChatWindow({
       const buildModel =
         buildModelRef.current ??
         (buildBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : buildBackend === 'opencode'
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : buildBackend === 'cursor'
@@ -1452,8 +1480,6 @@ export function ChatWindow({
         toast.error(`Failed to create worktree: ${err}`)
         return
       }
-      markWorktreeSilentReady(pendingWorktree.id)
-
       // Wait for worktree to be ready
       let readyWorktree: Worktree
       try {
@@ -1537,7 +1563,7 @@ export function ChatWindow({
       const modeModel =
         modeModelRef.current ??
         (modeBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.4')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : modeBackend === 'opencode'
             ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
             : modeBackend === 'cursor'
@@ -1768,6 +1794,7 @@ export function ChatWindow({
     handlePush,
     handleOpenPr,
     handleReview,
+    handleCodeRabbitReview,
     handleMerge,
     handleMergePr,
     handleResolveConflicts,
@@ -1917,6 +1944,8 @@ export function ChatWindow({
     worktreeProjectId: worktree?.project_id,
   })
 
+  const [reviewMethodModalOpen, setReviewMethodModalOpen] = useState(false)
+
   // Linked projects modal state
   const linkedProjectsModalOpen = useUIStore(
     state => state.linkedProjectsModalOpen
@@ -2041,42 +2070,33 @@ export function ChatWindow({
     // Extract clean text (without attachment markers)
     const cleanText = stripAllMarkers(message.content)
 
-    // Extract attachment paths from the raw message content
-    const imagePaths = extractImagePaths(message.content)
-    const textFilePaths = extractTextFilePaths(message.content)
-    const fileMentionPaths = extractFileMentionPaths(message.content)
-    const skillPaths = extractSkillPaths(message.content)
-
-    // Build metadata for skill names
-    const skills = skillPaths.map(path => {
+    const metadata = buildPromptAttachmentMetadata(message.content, path => {
       const parts = normalizePath(path).split('/')
       const skillsIdx = parts.findIndex(p => p === 'skills')
-      const name =
-        skillsIdx >= 0 && parts[skillsIdx + 1]
-          ? (parts[skillsIdx + 1] ?? getFilename(path))
-          : getFilename(path)
-      return { name, path }
+      return skillsIdx >= 0 && parts[skillsIdx + 1]
+        ? (parts[skillsIdx + 1] ?? getFilename(path))
+        : getFilename(path)
     })
+    const encodedMetadata = encodePromptAttachmentMetadata(metadata)
+    const fallbackText = appendPromptMetadataToPlainText(cleanText, metadata)
 
-    // Build JSON metadata for attachments
-    const metadata = JSON.stringify({
-      images: imagePaths,
-      textFiles: textFilePaths,
-      files: fileMentionPaths,
-      skills,
-    })
-
-    // Write to clipboard: plain text + HTML with embedded metadata
-    // The HTML contains a hidden span with JSON so ChatInput can detect it on paste
-    const htmlContent = `<span data-jean-prompt="${encodeURIComponent(metadata)}">${cleanText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>`
+    // Write to clipboard: plain text + HTML with embedded metadata.
+    // The fallback plain text includes a trailing comment sentinel so HTTP web
+    // access (where rich clipboard APIs may be unavailable) preserves
+    // attachments when pasted back into Jean.
+    const escapedCleanText = cleanText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    const htmlContent = `<span data-jean-prompt="${encodedMetadata}">${escapedCleanText}</span>`
 
     try {
-      await copyHtmlToClipboard(htmlContent, cleanText)
+      await copyHtmlToClipboard(htmlContent, cleanText, fallbackText)
       toast.success('Prompt copied')
     } catch {
-      // Fallback to plain text
-      await copyToClipboard(cleanText)
-      toast.success('Text copied (without attachments)')
+      // Fallback to plain text with metadata so attachments still round-trip.
+      await copyToClipboard(fallbackText)
+      toast.success('Prompt copied')
     }
   }, [])
 
@@ -2243,6 +2263,31 @@ export function ChatWindow({
     ]
   )
 
+  const compactHistoryWindow = useMemo(
+    () => getCurrentPromptWindow(messages),
+    [messages]
+  )
+  const compactScopeKey = `${deferredSessionId ?? 'no-session'}:${
+    messages[compactHistoryWindow.startIndex]?.id ?? 'empty'
+  }`
+  const [expandedCompactScopeKey, setExpandedCompactScopeKey] = useState<
+    string | null
+  >(null)
+  const isCompactHistoryExpanded = expandedCompactScopeKey === compactScopeKey
+  const compactMessages = useMemo(
+    () =>
+      isCompactHistoryExpanded
+        ? messages
+        : messages.slice(compactHistoryWindow.startIndex),
+    [isCompactHistoryExpanded, messages, compactHistoryWindow.startIndex]
+  )
+  const compactLastPlanMessageIndex = isCompactHistoryExpanded
+    ? lastPlanMessageIndex
+    : remapIndexForWindow(lastPlanMessageIndex, compactHistoryWindow.startIndex)
+  const handleShowHiddenCompactPrompts = useCallback(() => {
+    setExpandedCompactScopeKey(compactScopeKey)
+  }, [compactScopeKey])
+
   // Virtualizer for message list - always use virtualization for consistent performance
   // Even small conversations benefit from virtualization when messages have heavy content
   // Note: MainWindowContent handles the case when no worktree is selected
@@ -2282,6 +2327,12 @@ export function ChatWindow({
       )}
     >
       <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+        <ReviewMethodModal
+          open={reviewMethodModalOpen}
+          onOpenChange={setReviewMethodModalOpen}
+          onAiReview={handleReview}
+          onCodeRabbitReview={handleCodeRabbitReview}
+        />
         {showReviewFullWidth && activeSessionId ? (
           <div className="flex-1 min-h-0">
             <ReviewResultsPanel
@@ -2389,10 +2440,12 @@ export function ChatWindow({
                                 {preferences?.compact_chat_view_enabled ? (
                                   <CompactMessageList
                                     ref={virtualizedListRef}
-                                    messages={messages}
+                                    messages={compactMessages}
                                     scrollContainerRef={scrollViewportRef}
-                                    totalMessages={messages.length}
-                                    lastPlanMessageIndex={lastPlanMessageIndex}
+                                    totalMessages={compactMessages.length}
+                                    lastPlanMessageIndex={
+                                      compactLastPlanMessageIndex
+                                    }
                                     sessionId={deferredSessionId ?? ''}
                                     worktreePath={activeWorktreePath ?? ''}
                                     approveShortcut={approveShortcut}
@@ -2451,6 +2504,14 @@ export function ChatWindow({
                                     isLoadingOlder={loadOlderMessages.isPending}
                                     onLoadOlderRuns={handleLoadOlderRuns}
                                     loadedRunStartIndex={loadedRunStartIndex}
+                                    hiddenPromptCount={
+                                      isCompactHistoryExpanded
+                                        ? 0
+                                        : compactHistoryWindow.hiddenPromptCount
+                                    }
+                                    onShowHiddenPrompts={
+                                      handleShowHiddenCompactPrompts
+                                    }
                                   />
                                 ) : (
                                   <VirtualizedMessageList
@@ -2938,7 +2999,7 @@ export function ChatWindow({
                                 onCommit={handleCommit}
                                 onCommitAndPush={handleCommitAndPushWithPicker}
                                 onOpenPr={handleOpenPr}
-                                onReview={() => handleReview()}
+                                onReview={() => setReviewMethodModalOpen(true)}
                                 onMerge={handleMerge}
                                 onMergePr={handleMergePr}
                                 onResolvePrConflicts={handleResolvePrConflicts}

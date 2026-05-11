@@ -437,8 +437,8 @@ ${c.body}`
 
   return (
     <Dialog open={reviewCommentsModalOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="w-[95vw] h-[90vh] max-w-none sm:max-w-none flex flex-col">
-        <DialogHeader>
+      <DialogContent className="!fixed !inset-0 !translate-x-0 !translate-y-0 !w-screen !h-dvh !max-w-screen !max-h-none !rounded-none flex flex-col overflow-hidden sm:!inset-auto sm:!top-[50%] sm:!left-[50%] sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!w-[95vw] sm:!h-[90vh] sm:!max-w-none sm:!rounded-lg">
+        <DialogHeader className="pr-10 sm:pr-0">
           <DialogTitle className="flex items-center gap-2">
             <MessageSquare className="size-4" />
             PR Comments {prNumber ? `#${prNumber}` : ''}
@@ -476,7 +476,7 @@ ${c.body}`
         {phase === 'select' && !error && hasAnyComments && (
           <>
             {/* Tab toggle */}
-            <div className="flex gap-1 px-1">
+            <div className="flex flex-wrap gap-1 px-1">
               <Button
                 variant={tab === 'inline' ? 'default' : 'outline'}
                 size="sm"
@@ -689,7 +689,7 @@ ${c.body}`
             )}
 
             {/* Footer actions */}
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex shrink-0 justify-end gap-2 pt-2 pb-[env(safe-area-inset-bottom)]">
               <Button
                 variant="outline"
                 size="sm"

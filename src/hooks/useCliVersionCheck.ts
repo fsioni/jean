@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/transport'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useClaudeCliStatus,
@@ -38,7 +38,7 @@ import {
 import { useUIStore } from '@/store/ui-store'
 import { isNewerVersion } from '@/lib/version-utils'
 import { logger } from '@/lib/logger'
-import { isNativeApp } from '@/lib/environment'
+import { hasBackend } from '@/lib/environment'
 import { usePreferences } from '@/services/preferences'
 import {
   CLI_DISPLAY_NAMES,
@@ -119,7 +119,7 @@ function resolveCliInfo(
  * Should be called once in App.tsx.
  */
 export function useCliVersionCheck() {
-  const shouldCheck = isNativeApp()
+  const shouldCheck = hasBackend()
   const queryClient = useQueryClient()
   const { data: preferences, isLoading: preferencesLoading } = usePreferences()
   const { data: claudePathInfo } = useClaudePathDetection({

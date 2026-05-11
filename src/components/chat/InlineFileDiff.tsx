@@ -8,6 +8,8 @@ import { usePreferences } from '@/services/preferences'
 interface InlineFileDiffBase {
   /** Tailwind max-height utility (e.g. "max-h-64", "max-h-none"). Default: "max-h-64". */
   maxHeightClass?: string
+  /** Render without red/green diff accents. Used for compact chat tool calls. */
+  neutral?: boolean
 }
 
 type InlineFileDiffProps = InlineFileDiffBase &
@@ -41,6 +43,7 @@ function ensurePatchHeaders(
 export function InlineFileDiff(props: InlineFileDiffProps) {
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
+  const neutral = props.neutral ?? false
 
   const resolvedThemeType = useMemo((): 'dark' | 'light' => {
     if (theme === 'system') {
@@ -94,12 +97,36 @@ export function InlineFileDiff(props: InlineFileDiffProps) {
       overflow: 'wrap' as const,
       enableLineSelection: false,
       disableFileHeader: true,
+      diffIndicators: neutral ? ('none' as const) : undefined,
+      disableBackground: neutral,
+      lineDiffType: neutral ? ('none' as const) : undefined,
       unsafeCSS: `
         pre { font-family: var(--font-family-mono) !important; font-size: calc(var(--ui-font-size) * 0.85) !important; line-height: var(--ui-line-height) !important; }
         * { user-select: text !important; -webkit-user-select: text !important; cursor: text !important; }
+        ${
+          neutral
+            ? `
+        [data-diffs],
+        [data-diffs-header] {
+          --diffs-deletion-color-override: var(--muted-foreground);
+          --diffs-addition-color-override: var(--muted-foreground);
+          --diffs-modified-color-override: var(--muted-foreground);
+          --diffs-fg-number-addition-override: var(--muted-foreground);
+          --diffs-fg-number-deletion-override: var(--muted-foreground);
+          --diffs-bg-deletion-emphasis-override: transparent;
+          --diffs-bg-addition-emphasis-override: transparent;
+          --diffs-bg-deletion-override: transparent;
+          --diffs-bg-addition-override: transparent;
+          --diffs-bg-deletion-number-override: transparent;
+          --diffs-bg-addition-number-override: transparent;
+        }
+        `
+            : ''
+        }
       `,
     }),
     [
+      neutral,
       resolvedThemeType,
       preferences?.syntax_theme_dark,
       preferences?.syntax_theme_light,

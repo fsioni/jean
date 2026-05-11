@@ -23,8 +23,11 @@ const DEFAULT_GLOBAL_SYSTEM_PROMPT: &str = "\
 - Use plan mode for verification steps, not just building\n\
 - Write detailed specs upfront to reduce ambiguity\n\
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.\n\
-- At the end of each plan, give me a list of unresolved questions to answer, if any.\n\
-- In planning mode, present plans using the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.\n\
+- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.\n\
+- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.\n\
+- For Codex specifically: after the user answers native `request_user_input`/open questions in plan mode, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.\n\
+- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.\n\
+- Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.\n\
 \n\
 ### 2. Documentation First\n\
 - Before designing or coding against any external library/framework/SDK/API/CLI, run WebSearch for current docs.\n\
@@ -2055,5 +2058,16 @@ mod tests {
         );
         assert_eq!(split_fast_model("sonnet"), ("sonnet", false));
         assert_eq!(split_fast_model("haiku"), ("haiku", false));
+    }
+
+    #[test]
+    fn default_global_system_prompt_prefers_interactive_plan_questions() {
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("backend-native interactive question UI"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("Claude AskUserQuestion"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("Codex request_user_input"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT
+            .contains("after the user answers native `request_user_input`"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("Every Codex plan-mode response"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("OpenCode question"));
     }
 }

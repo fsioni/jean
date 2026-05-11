@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Target, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { invoke } from '@/lib/transport'
 import { useChatStore } from '@/store/chat-store'
@@ -33,7 +33,6 @@ export function CodexGoalBanner({
         worktreePath,
         sessionId,
       })
-      toast.success('Goal cleared')
     } catch (err) {
       toast.error(`Failed to clear goal: ${err}`)
     } finally {
@@ -44,10 +43,9 @@ export function CodexGoalBanner({
   if (!isCodexBackend || !goal) return null
 
   return (
-    <div className="mb-2 flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm dark:border-blue-900 dark:bg-blue-950/40">
-      <Target className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+    <div className="mb-2 flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
       <div className="flex-1">
-        <div className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Goal
         </div>
         <div className="text-foreground">{goal}</div>

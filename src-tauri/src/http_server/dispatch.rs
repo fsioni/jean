@@ -342,6 +342,20 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+
+        "run_coderabbit_review" => {
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let review_run_id: Option<String> = field_opt(&args, "reviewRunId", "review_run_id")?;
+            let review_type: Option<String> = field_opt(&args, "reviewType", "review_type")?;
+            let result = crate::projects::run_coderabbit_review(
+                app.clone(),
+                worktree_path,
+                review_run_id,
+                review_type,
+            )
+            .await?;
+            to_value(result)
+        }
         "revert_last_local_commit" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let result = crate::projects::revert_last_local_commit(worktree_path).await?;
@@ -1929,6 +1943,31 @@ pub async fn dispatch_command(
             crate::gh_cli::uninstall_gh_cli(app.clone()).await?;
             Ok(Value::Null)
         }
+
+        "check_coderabbit_cli_installed" => {
+            let result = crate::coderabbit_cli::check_coderabbit_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_coderabbit_in_path" => {
+            let result = crate::coderabbit_cli::detect_coderabbit_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_coderabbit_cli_auth" => {
+            let result = crate::coderabbit_cli::check_coderabbit_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "install_coderabbit_cli" => {
+            crate::coderabbit_cli::install_coderabbit_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "uninstall_coderabbit_cli" => {
+            crate::coderabbit_cli::uninstall_coderabbit_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+        "update_coderabbit_cli" => {
+            crate::coderabbit_cli::update_coderabbit_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
         "run_cli_path_update" => {
             let command: String = from_field(&args, "command")?;
             let cli_args: Vec<String> = from_field(&args, "args")?;
@@ -1999,6 +2038,7 @@ pub async fn dispatch_command(
             crate::codex_cli::uninstall_codex_cli(app.clone()).await?;
             Ok(Value::Null)
         }
+
         "approve_codex_command" => {
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let rpc_id: u64 = field(&args, "rpcId", "rpc_id")?;
