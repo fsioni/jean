@@ -7,6 +7,11 @@ import {
   type NotificationSound,
   notificationSoundOptions,
 } from '../types/preferences'
+import { isNativeApp } from './environment'
+
+interface NotificationSoundPlaybackOptions {
+  webAccessSoundsEnabled?: boolean
+}
 
 const notificationSoundAssetMap: Partial<Record<NotificationSound, string>> = {
   workwork: '/sounds/work-work.mp3',
@@ -23,8 +28,12 @@ let audioContext: AudioContext | null = null
  * Play a notification sound. If a sound is already playing, it will be stopped first.
  * Falls back to a system beep if the audio file is not found or playback fails.
  */
-export function playNotificationSound(sound: NotificationSound): void {
+export function playNotificationSound(
+  sound: NotificationSound,
+  options: NotificationSoundPlaybackOptions = {}
+): void {
   if (sound === 'none') return
+  if (!isNativeApp() && options.webAccessSoundsEnabled === false) return
 
   const soundSrc = notificationSoundAssetMap[sound]
   if (!soundSrc) {
@@ -90,7 +99,11 @@ const audioCache = new Map<NotificationSound, HTMLAudioElement>()
  * Preload all sound files to ensure instant playback.
  * Call this on app startup.
  */
-export function preloadAllSounds(): void {
+export function preloadAllSounds(
+  options: NotificationSoundPlaybackOptions = {}
+): void {
+  if (!isNativeApp() && options.webAccessSoundsEnabled === false) return
+
   for (const option of notificationSoundOptions) {
     if (option.value === 'none') continue
     const soundSrc = notificationSoundAssetMap[option.value]

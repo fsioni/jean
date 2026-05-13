@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { Loader2, Check, ChevronsUpDown, Play } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { BackendLabel } from '@/components/ui/backend-label'
 import { Input } from '@/components/ui/input'
@@ -53,6 +54,7 @@ import {
   useCodeRabbitCliStatus,
   useCodeRabbitCliAuth,
   useCodeRabbitPathDetection,
+  useAvailableCodeRabbitVersions,
   useInstallCodeRabbitCli,
   useUpdateCodeRabbitCli,
   coderabbitCliQueryKeys,
@@ -191,6 +193,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const queryClient = useQueryClient()
   const { data: preferences } = usePreferences()
   const patchPreferences = usePatchPreferences()
+  const isWebAccessView = !isNativeApp()
+  const webAccessSoundsEnabled = preferences?.web_access_sounds_enabled ?? true
+  const soundsEnabledInCurrentView = !isWebAccessView || webAccessSoundsEnabled
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteCliTarget, setDeleteCliTarget] = useState<
@@ -241,6 +246,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const { data: coderabbitStatus, isLoading: isCodeRabbitLoading } =
     useCodeRabbitCliStatus()
   const isCodeRabbitPathSource = preferences?.coderabbit_cli_source === 'path'
+  const { data: coderabbitVersions, isLoading: isCodeRabbitVersionsLoading } =
+    useAvailableCodeRabbitVersions({
+      enabled: !!coderabbitStatus?.installed,
+    })
+  const coderabbitLatestStable = coderabbitVersions?.find(v => !v.prerelease)
+  const coderabbitHasUpdate =
+    !!coderabbitStatus?.version &&
+    !!coderabbitLatestStable &&
+    isNewerVersion(coderabbitLatestStable.version, coderabbitStatus.version)
   const installCodeRabbitCli = useInstallCodeRabbitCli()
   const updateCodeRabbitCli = useUpdateCodeRabbitCli()
   const { data: opencodeStatus, isLoading: isOpenCodeLoading } =
@@ -841,7 +855,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     if (preferences) {
       patchPreferences.mutate({ waiting_sound: value })
       // Play preview of the selected sound
-      playNotificationSound(value)
+      playNotificationSound(value, {
+        webAccessSoundsEnabled,
+      })
     }
   }
 
@@ -849,7 +865,17 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     if (preferences) {
       patchPreferences.mutate({ review_sound: value })
       // Play preview of the selected sound
-      playNotificationSound(value)
+      playNotificationSound(value, {
+        webAccessSoundsEnabled,
+      })
+    }
+  }
+
+  const handleWebAccessSoundsEnabledChange = (checked: boolean | string) => {
+    if (preferences) {
+      patchPreferences.mutate({
+        web_access_sounds_enabled: checked === true,
+      })
     }
   }
 
@@ -1441,39 +1467,52 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <span className="text-sm">
                     {coderabbitStatus.version ?? 'Installed'}
                   </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={updateCodeRabbitCli.isPending}
-                    onClick={() => {
-                      if (isCodeRabbitPathSource) {
-                        const action = getPathUpdateAction(
-                          coderabbitStatus.path,
-                          coderabbitPathDetection?.package_manager,
-                          'coderabbit',
-                          ['update']
-                        )
-                        if (action) {
-                          openCliLoginModal(
-                            'coderabbit',
-                            action[0],
-                            action[1],
-                            'update'
-                          )
-                          return
-                        }
+                  {isCodeRabbitVersionsLoading ? (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        updateCodeRabbitCli.isPending || !coderabbitHasUpdate
                       }
-                      updateCodeRabbitCli.mutate()
-                    }}
-                  >
-                    {updateCodeRabbitCli.isPending ? 'Updating...' : 'Update'}
-                  </Button>
+                      onClick={() => {
+                        if (!coderabbitHasUpdate) return
+                        if (isCodeRabbitPathSource) {
+                          const action = getPathUpdateAction(
+                            coderabbitStatus.path,
+                            coderabbitPathDetection?.package_manager,
+                            'coderabbit',
+                            ['update'],
+                            undefined,
+                            coderabbitLatestStable?.version
+                          )
+                          if (action) {
+                            openCliLoginModal(
+                              'coderabbit',
+                              action[0],
+                              action[1],
+                              'update'
+                            )
+                            return
+                          }
+                        }
+                        updateCodeRabbitCli.mutate()
+                      }}
+                    >
+                      {updateCodeRabbitCli.isPending
+                        ? 'Updating...'
+                        : coderabbitHasUpdate
+                          ? `Update to ${coderabbitLatestStable?.version}`
+                          : 'Up to date'}
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <Button
                   className="w-full sm:w-40"
                   disabled={installCodeRabbitCli.isPending}
-                  onClick={() => installCodeRabbitCli.mutate()}
+                  onClick={() => installCodeRabbitCli.mutate(undefined)}
                 >
                   {installCodeRabbitCli.isPending ? 'Installing...' : 'Install'}
                 </Button>
@@ -2385,7 +2424,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               <Switch
                 checked={preferences?.compact_chat_view_enabled ?? false}
                 onCheckedChange={checked => {
-                  patchPreferences.mutate({ compact_chat_view_enabled: checked })
+                  patchPreferences.mutate({
+                    compact_chat_view_enabled: checked,
+                  })
                 }}
               />
             </InlineField>
@@ -3049,6 +3090,25 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           >
             <div className="space-y-4">
               <InlineField
+                label="Web access sounds"
+                description="Applies only when using Jean in browser or mobile web access. Turn off to keep phone music uninterrupted."
+              >
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="web-access-sounds-enabled"
+                    checked={webAccessSoundsEnabled}
+                    onCheckedChange={handleWebAccessSoundsEnabledChange}
+                  />
+                  <Label
+                    htmlFor="web-access-sounds-enabled"
+                    className="cursor-pointer text-sm"
+                  >
+                    Play Jean sounds in web access
+                  </Label>
+                </div>
+              </InlineField>
+
+              <InlineField
                 label="Waiting sound"
                 description="Play when session needs your input"
               >
@@ -3073,11 +3133,13 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     size="icon"
                     disabled={
                       !preferences?.waiting_sound ||
-                      preferences.waiting_sound === 'none'
+                      preferences.waiting_sound === 'none' ||
+                      !soundsEnabledInCurrentView
                     }
                     onClick={() =>
                       playNotificationSound(
-                        preferences?.waiting_sound ?? 'none'
+                        preferences?.waiting_sound ?? 'none',
+                        { webAccessSoundsEnabled }
                       )
                     }
                   >
@@ -3111,10 +3173,16 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     size="icon"
                     disabled={
                       !preferences?.review_sound ||
-                      preferences.review_sound === 'none'
+                      preferences.review_sound === 'none' ||
+                      !soundsEnabledInCurrentView
                     }
                     onClick={() =>
-                      playNotificationSound(preferences?.review_sound ?? 'none')
+                      playNotificationSound(
+                        preferences?.review_sound ?? 'none',
+                        {
+                          webAccessSoundsEnabled,
+                        }
+                      )
                     }
                   >
                     <Play className="h-4 w-4" />

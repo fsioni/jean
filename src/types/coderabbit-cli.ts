@@ -18,6 +18,13 @@ export interface CodeRabbitPathDetection {
   package_manager: string | null
 }
 
+export interface CodeRabbitReleaseInfo {
+  version: string
+  tagName: string
+  publishedAt: string
+  prerelease: boolean
+}
+
 export interface CodeRabbitInstallProgress {
   stage: 'starting' | 'downloading' | 'installing' | 'verifying' | 'complete'
   message: string

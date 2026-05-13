@@ -777,6 +777,8 @@ function App() {
 
   // Kill all terminals on page refresh/close (backup for Rust-side cleanup)
   useEffect(() => {
+    if (!isNativeApp()) return
+
     const handleBeforeUnload = () => {
       // Best-effort sync cleanup for refresh scenarios
       // Note: async operations may not complete, but Rust-side RunEvent::Exit
@@ -848,20 +850,27 @@ function App() {
 
     const cancelIdleStartupWork = scheduleIdleWork(() => {
       // Preload notification sounds after the shell is interactive.
-      preloadAllSounds()
+      const prefs = queryClient.getQueryData<AppPreferences>(['preferences'])
+      preloadAllSounds({
+        webAccessSoundsEnabled: prefs?.web_access_sounds_enabled ?? true,
+      })
 
-      // Kill any orphaned terminals from previous session/reload.
-      invoke<number>('kill_all_terminals')
-        .then(killed => {
-          if (killed > 0) {
-            logger.info(
-              `Cleaned up ${killed} orphaned terminal(s) from previous session`
-            )
-          }
-        })
-        .catch(error => {
-          logger.warn('Failed to cleanup orphaned terminals', { error })
-        })
+      if (isNativeApp()) {
+        // Kill any orphaned terminals from previous native app session/reload.
+        // Web access clients must not kill server-owned terminals when their
+        // browser tab reloads, sleeps, or is discarded.
+        invoke<number>('kill_all_terminals')
+          .then(killed => {
+            if (killed > 0) {
+              logger.info(
+                `Cleaned up ${killed} orphaned terminal(s) from previous session`
+              )
+            }
+          })
+          .catch(error => {
+            logger.warn('Failed to cleanup orphaned terminals', { error })
+          })
+      }
 
       // Clean up old recovery files on startup.
       cleanupOldFiles().catch(error => {

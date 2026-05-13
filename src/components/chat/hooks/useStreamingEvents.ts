@@ -930,7 +930,10 @@ export default function useStreamingEvents({
           // Play waiting sound
           const waitingSound = (preferences?.waiting_sound ??
             'none') as NotificationSound
-          playNotificationSound(waitingSound)
+          playNotificationSound(waitingSound, {
+            webAccessSoundsEnabled:
+              preferences?.web_access_sounds_enabled ?? true,
+          })
         }
       } else if (event.payload.waiting_for_plan) {
         // Codex/Opencode plan-mode run completed with content — enter plan-waiting state.
@@ -1044,7 +1047,10 @@ export default function useStreamingEvents({
         // Play waiting sound
         const waitingSound = (preferences?.waiting_sound ??
           'none') as NotificationSound
-        playNotificationSound(waitingSound)
+        playNotificationSound(waitingSound, {
+          webAccessSoundsEnabled:
+            preferences?.web_access_sounds_enabled ?? true,
+        })
       } else {
         // No blocking tools — add optimistic message FIRST, then batch-clear state.
         // This eliminates the flicker gap where neither streaming nor persisted content is visible.
@@ -1144,7 +1150,10 @@ export default function useStreamingEvents({
         // Play review sound
         const reviewSound = (preferences?.review_sound ??
           'none') as NotificationSound
-        playNotificationSound(reviewSound)
+        playNotificationSound(reviewSound, {
+          webAccessSoundsEnabled:
+            preferences?.web_access_sounds_enabled ?? true,
+        })
 
         // Auto-save context (fire-and-forget, no blocking)
         if (preferences?.auto_save_context === true) {

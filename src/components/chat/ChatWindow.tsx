@@ -104,6 +104,7 @@ import { SkillBadge } from './SkillBadge'
 import { FileContentModal } from './FileContentModal'
 import { FileEditsDiffModal, type FileEdit } from './FileEditsDiffModal'
 import { FilePreview } from './FilePreview'
+import { ContextPreview } from './ContextPreview'
 import { ChatInput } from './ChatInput'
 import { SessionDebugPanel } from './SessionDebugPanel'
 import { ChatToolbar } from './ChatToolbar'
@@ -2308,43 +2309,8 @@ export function ChatWindow({
     )
   }
 
-  if (primarySurface === 'terminal' && activeSessionId && sessionTerminalId) {
-    return (
-      <ErrorBoundary
-        resetKeys={[activeWorktreeId, activeSessionId, primarySurface]}
-        onError={(error, errorInfo) => {
-          logger.error('ChatWindow terminal surface crashed', {
-            error: error.message,
-            stack: error.stack,
-          })
-          saveCrashState(
-            { activeWorktreeId, activeSessionId },
-            {
-              error: error.message,
-              stack: error.stack ?? '',
-              componentStack: errorInfo.componentStack ?? undefined,
-            }
-          ).catch(() => {
-            /* noop */
-          })
-        }}
-        fallbackRender={({ error, resetErrorBoundary }) => (
-          <ChatErrorFallback
-            error={error}
-            resetErrorBoundary={resetErrorBoundary}
-            activeWorktreeId={activeWorktreeId}
-          />
-        )}
-      >
-        <FullScreenTerminalSurface
-          worktreeId={activeWorktreeId}
-          worktreePath={activeWorktreePath}
-          sessionId={activeSessionId}
-          terminalId={sessionTerminalId}
-        />
-      </ErrorBoundary>
-    )
-  }
+  const isTerminalPrimarySurface =
+    primarySurface === 'terminal' && !!activeSessionId && !!sessionTerminalId
 
   return (
     <ErrorBoundary
@@ -2382,7 +2348,14 @@ export function ChatWindow({
           onCodeRabbitPrReview={handleCodeRabbitPrReview}
           codeRabbitPrAvailable={Boolean(worktree?.pr_number)}
         />
-        {showReviewFullWidth && activeSessionId ? (
+        {isTerminalPrimarySurface ? (
+          <FullScreenTerminalSurface
+            worktreeId={activeWorktreeId}
+            worktreePath={activeWorktreePath}
+            sessionId={activeSessionId}
+            terminalId={sessionTerminalId}
+          />
+        ) : showReviewFullWidth && activeSessionId ? (
           <div className="flex-1 min-h-0">
             <ReviewResultsPanel
               sessionId={activeSessionId}
@@ -2874,6 +2847,35 @@ export function ChatWindow({
                                 : undefined
                             }
                           >
+                            {/* Loaded context preview (# mentions) */}
+                            <ContextPreview
+                              sessionId={activeSessionId}
+                              worktreeId={null}
+                              worktreePath={activeWorktreePath}
+                              projectId={worktree?.project_id ?? null}
+                              disabled={isSending}
+                              excludeIssueNumber={
+                                worktree?.issue_number ?? null
+                              }
+                              excludePrNumber={
+                                worktree?.issue_number ||
+                                worktree?.security_alert_number ||
+                                worktree?.advisory_ghsa_id ||
+                                worktree?.linear_issue_identifier
+                                  ? null
+                                  : (worktree?.pr_number ?? null)
+                              }
+                              excludeSecurityAlertNumber={
+                                worktree?.security_alert_number ?? null
+                              }
+                              excludeAdvisoryGhsaId={
+                                worktree?.advisory_ghsa_id ?? null
+                              }
+                              excludeLinearIssueIdentifier={
+                                worktree?.linear_issue_identifier ?? null
+                              }
+                            />
+
                             {/* Pending file preview (@ mentions) */}
                             <FilePreview
                               files={currentPendingFiles}

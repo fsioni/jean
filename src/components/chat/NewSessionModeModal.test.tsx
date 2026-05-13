@@ -114,8 +114,12 @@ describe('NewSessionModeModal', () => {
     expect(screen.getByText('Codex')).toBeInTheDocument()
     expect(screen.getByText('Claude')).toBeInTheDocument()
     expect(screen.queryByText('OpenCode')).toBeNull()
+    expect(screen.getByText('Terminal')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('new-session-backend-separator')
+    ).toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: '1' })
+    fireEvent.keyDown(window, { key: '2' })
 
     expect(mutate).toHaveBeenCalledWith(
       {
@@ -153,6 +157,63 @@ describe('NewSessionModeModal', () => {
     expect(useChatStore.getState().selectedBackends['session-terminal-1']).toBe(
       'codex'
     )
+  })
+
+  it('opens a plain terminal session with shortcut 1', () => {
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: { onSuccess?: (session: { id: string; name: string }) => void }
+      ) => {
+        opts?.onSuccess?.({ id: 'session-plain-terminal-1', name: 'Terminal' })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    fireEvent.keyDown(window, { key: '1' })
+
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        worktreeId: 'worktree-1',
+        worktreePath: '/tmp/worktree-1',
+        name: 'Terminal',
+      },
+      expect.any(Object)
+    )
+    expect(useTerminalStore.getState().terminals['worktree-1']).toHaveLength(1)
+    expect(
+      useTerminalStore.getState().terminals['worktree-1']?.[0]
+    ).toMatchObject({
+      kind: 'session',
+      command: null,
+      commandArgs: [],
+      label: 'Terminal',
+    })
+    expect(
+      useTerminalStore.getState().activeTerminalIds['worktree-1']
+    ).toBeUndefined()
+    expect(
+      useTerminalStore.getState().terminalPanelOpen['worktree-1'] ?? false
+    ).toBe(false)
+    expect(useTerminalStore.getState().terminalVisible).toBe(false)
+    expect(
+      useUIStore.getState().sessionPrimarySurface['session-plain-terminal-1']
+    ).toBe('terminal')
+    expect(
+      useUIStore.getState().sessionTerminalIds['session-plain-terminal-1']
+    ).toEqual(expect.any(String))
+    expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
+      'session-plain-terminal-1'
+    )
+    expect(
+      useChatStore.getState().selectedBackends['session-plain-terminal-1']
+    ).toBeUndefined()
   })
 
   it('marks chat sessions as chat surfaces', () => {

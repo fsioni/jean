@@ -8,6 +8,7 @@ The General preferences pane exposes CodeRabbit CLI status, install, login, upda
 
 - Jean-managed binaries live in app data under `coderabbit-cli/`.
 - System PATH detection excludes the Jean-managed binary.
+- Latest-version checks read CodeRabbit's official release manifest at `https://cli.coderabbit.ai/releases/latest/VERSION` and cache the result under `coderabbit-cli/coderabbit-versions-cache.json`.
 - Login opens the terminal modal with `coderabbit auth login`.
 
 ## Review flow

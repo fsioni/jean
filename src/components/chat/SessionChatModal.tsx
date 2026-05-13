@@ -62,7 +62,6 @@ import { notify } from '@/lib/notifications'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { ChatWindow } from './ChatWindow'
-import { FullScreenTerminalSurface } from './FullScreenTerminalSurface'
 import { ModalTerminalDrawer } from './ModalTerminalDrawer'
 import { ModalBrowserDrawer } from '@/components/browser/ModalBrowserDrawer'
 import { OpenInButton } from '@/components/open-in/OpenInButton'
@@ -237,15 +236,6 @@ export function SessionChatModal({
   )
   const currentSessionId = activeSessionId ?? sessions[0]?.id ?? null
   const currentSession = sessions.find(s => s.id === currentSessionId) ?? null
-  const primarySurface = useUIStore(state =>
-    currentSessionId
-      ? (state.sessionPrimarySurface[currentSessionId] ?? 'chat')
-      : 'chat'
-  )
-  const currentTerminalId = useUIStore(state =>
-    currentSessionId ? state.sessionTerminalIds[currentSessionId] : undefined
-  )
-
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
   const planFilePaths = useChatStore(state => state.planFilePaths)
@@ -1239,21 +1229,7 @@ export function SessionChatModal({
           )}
 
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {primarySurface === 'terminal' &&
-            currentSessionId &&
-            currentTerminalId ? (
-              <div className="absolute inset-0 z-10 min-h-0 min-w-0">
-                <FullScreenTerminalSurface
-                  worktreeId={worktreeId}
-                  worktreePath={worktreePath}
-                  sessionId={currentSessionId}
-                  terminalId={currentTerminalId}
-                  isActive={isOpen}
-                />
-              </div>
-            ) : null}
-
-            {primarySurface !== 'terminal' && currentSessionId ? (
+            {currentSessionId ? (
               <div className="absolute inset-0 z-20 min-h-0 min-w-0">
                 <ChatWindow
                   key={currentSessionId}

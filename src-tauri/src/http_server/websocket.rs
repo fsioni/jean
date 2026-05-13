@@ -76,11 +76,18 @@ pub async fn handle_ws_connection(
     // responses are infrequent (user-initiated) and must never be dropped.
     let (resp_tx, mut resp_rx) = mpsc::unbounded_channel::<String>();
 
-    // Heartbeat: server-driven ping every PING_INTERVAL. If no inbound
-    // traffic (pong, text, ping) for PONG_TIMEOUT, treat connection as dead
-    // and break — onclose path on the client triggers reconnect + replay.
+    // Heartbeat: server-driven protocol ping every PING_INTERVAL. If no
+    // inbound traffic (pong, text, ping) for PONG_TIMEOUT, treat connection as
+    // dead and break — onclose path on the client triggers reconnect + replay.
+    //
+    // Also send an app-level heartbeat text frame. Browser JS does not expose
+    // protocol ping/pong frames to `WebSocket.onmessage`, so the frontend
+    // liveness watchdog needs a normal message during otherwise-idle terminal
+    // sessions. Without this, web access reconnects every ~50s of no app
+    // events, which makes embedded xterm sessions appear to time out.
     const PING_INTERVAL: Duration = Duration::from_secs(20);
     const PONG_TIMEOUT: Duration = Duration::from_secs(45);
+    const APP_HEARTBEAT_JSON: &str = r#"{"type":"heartbeat"}"#;
     let mut ping_interval = tokio::time::interval(PING_INTERVAL);
     ping_interval.tick().await; // skip immediate fire
     let mut last_inbound = Instant::now();
@@ -95,6 +102,13 @@ pub async fn handle_ws_connection(
                     break;
                 }
                 if ws_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+                if ws_tx
+                    .send(Message::Text(APP_HEARTBEAT_JSON.into()))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }

@@ -6,7 +6,7 @@
  * update toast notification so the two paths don't drift.
  */
 
-export type CliType = 'claude' | 'gh' | 'codex' | 'opencode'
+export type CliType = 'claude' | 'gh' | 'codex' | 'opencode' | 'coderabbit'
 
 /** Binary name used by the package manager (e.g. `brew upgrade <name>`). */
 export const CLI_BINARY_NAMES: Record<CliType, string> = {
@@ -14,6 +14,7 @@ export const CLI_BINARY_NAMES: Record<CliType, string> = {
   gh: 'gh',
   codex: 'codex',
   opencode: 'opencode',
+  coderabbit: 'coderabbit',
 }
 
 /** npm package name for CLIs that ship as npm/bun globals. */
@@ -25,6 +26,7 @@ export const NPM_PACKAGE_NAMES: Partial<Record<CliType, string>> = {
 export const CLI_SELF_UPDATE_ARGS: Record<CliType, string[] | null> = {
   claude: ['update'],
   opencode: ['upgrade'],
+  coderabbit: ['update'],
   gh: null,
   codex: null,
 }
@@ -34,6 +36,7 @@ export const CLI_DISPLAY_NAMES: Record<CliType, string> = {
   gh: 'GitHub CLI',
   codex: 'Codex CLI',
   opencode: 'OpenCode CLI',
+  coderabbit: 'CodeRabbit CLI',
 }
 
 /** Get [command, args] for updating a PATH-mode CLI, respecting package manager.

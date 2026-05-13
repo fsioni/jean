@@ -3,13 +3,16 @@
 use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
 
 use super::config::{
     ensure_coderabbit_cli_dir, find_system_coderabbit_binary, get_coderabbit_binary_path,
     get_coderabbit_cli_dir, resolve_coderabbit_binary,
 };
+
+const CODERABBIT_RELEASES_BASE_URL: &str = "https://cli.coderabbit.ai/releases";
+const CODERABBIT_VERSIONS_CACHE_FILE: &str = "coderabbit-versions-cache.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeRabbitCliStatus {
@@ -37,6 +40,20 @@ pub struct CodeRabbitInstallProgress {
     pub stage: String,
     pub message: String,
     pub percent: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeRabbitReleaseInfo {
+    pub version: String,
+    pub tag_name: String,
+    pub published_at: String,
+    pub prerelease: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedCodeRabbitVersions {
+    versions: Vec<CodeRabbitReleaseInfo>,
+    fetched_at: String,
 }
 
 fn emit_progress(app: &AppHandle, stage: &str, message: &str, percent: u8) {
@@ -68,6 +85,98 @@ fn get_version(binary: &std::path::Path) -> Option<String> {
         return None;
     }
     parse_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn sanitize_latest_version(raw: &str) -> Option<String> {
+    parse_version(raw).map(|version| version.trim_start_matches('v').to_string())
+}
+
+fn versions_cache_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(ensure_coderabbit_cli_dir(app)?.join(CODERABBIT_VERSIONS_CACHE_FILE))
+}
+
+fn save_versions_cache(app: &AppHandle, versions: &[CodeRabbitReleaseInfo]) {
+    let path = match versions_cache_path(app) {
+        Ok(path) => path,
+        Err(e) => {
+            log::warn!("Cannot resolve CodeRabbit versions cache path: {e}");
+            return;
+        }
+    };
+    let cached = CachedCodeRabbitVersions {
+        versions: versions.to_vec(),
+        fetched_at: SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default(),
+    };
+    match serde_json::to_string(&cached) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                log::warn!("Failed to write CodeRabbit versions cache: {e}");
+            }
+        }
+        Err(e) => log::warn!("Failed to serialize CodeRabbit versions cache: {e}"),
+    }
+}
+
+fn load_versions_cache(app: &AppHandle) -> Option<Vec<CodeRabbitReleaseInfo>> {
+    let path = get_coderabbit_cli_dir(app)
+        .ok()?
+        .join(CODERABBIT_VERSIONS_CACHE_FILE);
+    let contents = std::fs::read_to_string(path).ok()?;
+    let cached: CachedCodeRabbitVersions = serde_json::from_str(&contents).ok()?;
+    if cached.versions.is_empty() {
+        return None;
+    }
+    Some(cached.versions)
+}
+
+async fn fetch_latest_release_info() -> Result<CodeRabbitReleaseInfo, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Jean-App/1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let response = client
+        .get(format!("{CODERABBIT_RELEASES_BASE_URL}/latest/VERSION"))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch CodeRabbit latest version: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "CodeRabbit version endpoint returned status: {}",
+            response.status()
+        ));
+    }
+    let raw = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read CodeRabbit latest version: {e}"))?;
+    let version =
+        sanitize_latest_version(&raw).ok_or("CodeRabbit version endpoint returned no version")?;
+    Ok(CodeRabbitReleaseInfo {
+        tag_name: version.clone(),
+        version,
+        published_at: String::new(),
+        prerelease: false,
+    })
+}
+
+#[tauri::command]
+pub async fn get_available_coderabbit_versions(
+    app: AppHandle,
+) -> Result<Vec<CodeRabbitReleaseInfo>, String> {
+    match fetch_latest_release_info().await {
+        Ok(version) => {
+            let versions = vec![version];
+            save_versions_cache(&app, &versions);
+            Ok(versions)
+        }
+        Err(e) => {
+            log::warn!("CodeRabbit latest version request failed ({e}), falling back to cache");
+            Ok(load_versions_cache(&app).unwrap_or_default())
+        }
+    }
 }
 
 #[tauri::command]
@@ -163,7 +272,7 @@ pub async fn check_coderabbit_cli_auth(app: AppHandle) -> Result<CodeRabbitAuthS
 }
 
 #[tauri::command]
-pub async fn install_coderabbit_cli(app: AppHandle) -> Result<(), String> {
+pub async fn install_coderabbit_cli(app: AppHandle, version: Option<String>) -> Result<(), String> {
     if cfg!(target_os = "windows") {
         return Err("CodeRabbit CLI install script currently supports macOS and Linux. Install CodeRabbit in WSL or add it to PATH.".to_string());
     }
@@ -183,10 +292,15 @@ pub async fn install_coderabbit_cli(app: AppHandle) -> Result<(), String> {
     );
 
     let script = "curl -fsSL https://cli.coderabbit.ai/install.sh | sh";
-    let output = silent_command("sh")
+    let mut command = silent_command("sh");
+    command
         .arg("-c")
         .arg(script)
-        .env("CODERABBIT_INSTALL_DIR", &cli_dir)
+        .env("CODERABBIT_INSTALL_DIR", &cli_dir);
+    if let Some(version) = version.as_ref().filter(|v| !v.trim().is_empty()) {
+        command.env("CODERABBIT_VERSION", version.trim());
+    }
+    let output = command
         .output()
         .map_err(|e| format!("Failed to run CodeRabbit installer: {e}"))?;
 
@@ -249,5 +363,23 @@ pub async fn update_coderabbit_cli(app: AppHandle) -> Result<(), String> {
         } else {
             stderr
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_latest_version_strips_whitespace_and_v() {
+        assert_eq!(
+            sanitize_latest_version(" v0.4.5\n").as_deref(),
+            Some("0.4.5")
+        );
+    }
+
+    #[test]
+    fn sanitize_latest_version_accepts_plain_semver() {
+        assert_eq!(sanitize_latest_version("0.4.5").as_deref(), Some("0.4.5"));
     }
 }

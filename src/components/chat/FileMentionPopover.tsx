@@ -234,12 +234,25 @@ export function FileMentionPopover({
         align="start"
         collisionPadding={0}
         side="top"
-        sideOffset={12}
+        sideOffset={20}
         onOpenAutoFocus={e => e.preventDefault()}
         onCloseAutoFocus={e => e.preventDefault()}
       >
+        <div className="flex min-h-[41px] items-center justify-between border-b px-3 py-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            File links
+          </span>
+          {selectedScope && (
+            <span className="max-w-[60%] truncate text-xs text-muted-foreground">
+              Scope: {selectedScope.name}
+            </span>
+          )}
+        </div>
         <Command shouldFilter={false}>
-          <CommandList ref={listRef} className="max-h-[200px]">
+          <CommandList
+            ref={listRef}
+            className="min-h-[280px] max-h-[min(360px,60vh)]"
+          >
             {scopes.length === 0 && filteredFiles.length === 0 ? (
               <CommandEmpty>No files found</CommandEmpty>
             ) : (

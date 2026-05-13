@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react'
-import { MessageSquarePlus, Loader2 } from 'lucide-react'
+import { MessageSquarePlus, Loader2, Terminal } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -44,7 +44,7 @@ export function NewSessionModeModal() {
 
   const installedBackendChoices = useMemo(
     () =>
-      BACKEND_ORDER.map(backend => {
+      BACKEND_ORDER.map((backend, index) => {
         const status =
           backend === 'codex'
             ? codexStatus
@@ -55,7 +55,7 @@ export function NewSessionModeModal() {
                 : cursorStatus
         return {
           backend,
-          shortcut: String(BACKEND_ORDER.indexOf(backend) + 1),
+          shortcut: String(index + 2),
           installed: Boolean(status.data?.installed),
           command: status.data?.path ?? backendCommands[backend],
         }
@@ -78,9 +78,29 @@ export function NewSessionModeModal() {
     opencodeStatus.isLoading ||
     cursorStatus.isLoading
 
+  const openSessionModal = useCallback(
+    (sessionId: string, worktreeId: string, worktreePath: string) => {
+      if (!target) return
+      if (target.origin === 'canvas') {
+        window.dispatchEvent(
+          new CustomEvent('open-session-modal', {
+            detail: { sessionId, worktreeId, worktreePath },
+          })
+        )
+      } else if (target.origin === 'modal') {
+        window.dispatchEvent(
+          new CustomEvent('open-session-modal', {
+            detail: { sessionId },
+          })
+        )
+      }
+    },
+    [target]
+  )
+
   const chooseChat = useCallback(() => {
     if (!target) return
-    const { worktreeId, worktreePath, origin } = target
+    const { worktreeId, worktreePath } = target
     close()
     createSession.mutate(
       { worktreeId, worktreePath },
@@ -88,28 +108,43 @@ export function NewSessionModeModal() {
         onSuccess: session => {
           useChatStore.getState().setActiveSession(worktreeId, session.id)
           useUIStore.getState().setSessionPrimarySurface(session.id, 'chat')
-          if (origin === 'canvas') {
-            window.dispatchEvent(
-              new CustomEvent('open-session-modal', {
-                detail: { sessionId: session.id, worktreeId, worktreePath },
-              })
-            )
-          } else if (origin === 'modal') {
-            window.dispatchEvent(
-              new CustomEvent('open-session-modal', {
-                detail: { sessionId: session.id },
-              })
-            )
-          }
+          openSessionModal(session.id, worktreeId, worktreePath)
         },
       }
     )
-  }, [close, createSession, target])
+  }, [close, createSession, openSessionModal, target])
+
+  const choosePlainTerminal = useCallback(() => {
+    if (!target) return
+    const { worktreeId, worktreePath } = target
+    close()
+    createSession.mutate(
+      { worktreeId, worktreePath, name: 'Terminal' },
+      {
+        onSuccess: session => {
+          const terminalId = useTerminalStore
+            .getState()
+            .addTerminal(worktreeId, null, session.name, {
+              kind: 'session',
+              commandArgs: [],
+              activate: false,
+              openPanel: false,
+            })
+
+          const uiStore = useUIStore.getState()
+          uiStore.setSessionPrimarySurface(session.id, 'terminal')
+          uiStore.setSessionTerminalId(session.id, terminalId)
+          useChatStore.getState().setActiveSession(worktreeId, session.id)
+          openSessionModal(session.id, worktreeId, worktreePath)
+        },
+      }
+    )
+  }, [close, createSession, openSessionModal, target])
 
   const chooseBackendTerminal = useCallback(
     (backend: CliBackend) => {
       if (!target) return
-      const { worktreeId, worktreePath, origin } = target
+      const { worktreeId, worktreePath } = target
       const command =
         installedBackendChoices.find(choice => choice.backend === backend)
           ?.command ?? backendCommands[backend]
@@ -138,25 +173,12 @@ export function NewSessionModeModal() {
             const chatStore = useChatStore.getState()
             chatStore.setActiveSession(worktreeId, session.id)
             chatStore.setSelectedBackend(session.id, backend)
-
-            if (origin === 'canvas') {
-              window.dispatchEvent(
-                new CustomEvent('open-session-modal', {
-                  detail: { sessionId: session.id, worktreeId, worktreePath },
-                })
-              )
-            } else if (origin === 'modal') {
-              window.dispatchEvent(
-                new CustomEvent('open-session-modal', {
-                  detail: { sessionId: session.id },
-                })
-              )
-            }
+            openSessionModal(session.id, worktreeId, worktreePath)
           },
         }
       )
     },
-    [close, createSession, installedBackendChoices, target]
+    [close, createSession, installedBackendChoices, openSessionModal, target]
   )
 
   useEffect(() => {
@@ -174,6 +196,13 @@ export function NewSessionModeModal() {
         return
       }
 
+      if (event.key === '1') {
+        event.preventDefault()
+        event.stopPropagation()
+        choosePlainTerminal()
+        return
+      }
+
       const choice = installedBackendChoices.find(
         item => item.shortcut === event.key
       )
@@ -186,7 +215,13 @@ export function NewSessionModeModal() {
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [chooseBackendTerminal, chooseChat, installedBackendChoices, open])
+  }, [
+    chooseBackendTerminal,
+    chooseChat,
+    choosePlainTerminal,
+    installedBackendChoices,
+    open,
+  ])
 
   return (
     <Dialog open={open} onOpenChange={nextOpen => !nextOpen && close()}>
@@ -215,6 +250,21 @@ export function NewSessionModeModal() {
             shortcut="↵"
             disabled={createSession.isPending}
             onClick={chooseChat}
+          />
+
+          <NewSessionChoice
+            icon={<Terminal className="size-4" />}
+            title="Terminal"
+            subtitle="Open a plain terminal on this worktree"
+            shortcut="1"
+            disabled={createSession.isPending}
+            onClick={choosePlainTerminal}
+          />
+
+          <div
+            aria-hidden="true"
+            data-testid="new-session-backend-separator"
+            className="my-1 h-px bg-border/70"
           />
 
           {installedBackendChoices.map(choice => {

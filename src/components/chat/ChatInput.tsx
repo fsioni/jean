@@ -24,8 +24,21 @@ import {
 } from './FileMentionPopover'
 import { queryClient } from '@/lib/query-client'
 import { fileQueryKeys } from '@/services/files'
+import {
+  githubQueryKeys,
+  loadAdvisoryContext,
+  loadIssueContext,
+  loadPRContext,
+  loadSecurityContext,
+} from '@/services/github'
+import { linearQueryKeys, loadLinearIssueContext } from '@/services/linear'
 import type { WorktreeFile } from '@/types/chat'
 import { SlashPopover, type SlashPopoverHandle } from './SlashPopover'
+import {
+  ContextMentionPopover,
+  type ContextMentionPopoverHandle,
+} from './ContextMentionPopover'
+import type { ContextMentionItem } from './hooks/useContextMentionData'
 import { processAttachmentFile } from './attachment-processing'
 import { IMAGE_ATTACHMENT_ACCEPT, MAX_TEXT_SIZE } from './image-constants'
 import {
@@ -115,9 +128,22 @@ export const ChatInput = memo(function ChatInput({
     null
   )
 
+  // Context mention popover state (for # issues/PRs/security/Linear)
+  const [contextMentionOpen, setContextMentionOpen] = useState(false)
+  const [contextMentionQuery, setContextMentionQuery] = useState('')
+  const [contextMentionAnchor, setContextMentionAnchor] = useState<{
+    top: number
+    left: number
+    containerWidth: number
+  } | null>(null)
+  const [hashTriggerIndex, setHashTriggerIndex] = useState<number | null>(null)
+
   // Refs to expose navigation methods from popovers
   const fileMentionHandleRef = useRef<FileMentionPopoverHandle | null>(null)
   const slashPopoverHandleRef = useRef<SlashPopoverHandle | null>(null)
+  const contextMentionHandleRef = useRef<ContextMentionPopoverHandle | null>(
+    null
+  )
 
   // Stable ref for parent callback to avoid re-subscribing effects
   const onHasValueChangeRef = useRef(onHasValueChange)
@@ -352,8 +378,68 @@ export const ChatInput = memo(function ChatInput({
         }
       }
 
-      // Detect / trigger for slash commands and skills (only if @ popover not open)
+      // Detect # trigger for issue/PR/security/Linear context mentions
       if (!fileMentionOpen) {
+        if (prevChar === '#') {
+          const charBeforeHash = value[cursorPos - 2]
+          if (
+            cursorPos === 1 ||
+            charBeforeHash === ' ' ||
+            charBeforeHash === '\n'
+          ) {
+            setHashTriggerIndex(cursorPos - 1)
+            setContextMentionQuery('')
+            setContextMentionOpen(true)
+            setSlashPopoverOpen(false)
+            setContextMentionAnchor({
+              top: 0,
+              left: 0,
+              containerWidth: formRef.current?.offsetWidth ?? 0,
+            })
+          }
+        } else if (hashTriggerIndex !== null && contextMentionOpen) {
+          const query = value.slice(hashTriggerIndex + 1, cursorPos)
+
+          if (
+            query.includes(' ') ||
+            query.includes('\n') ||
+            cursorPos <= hashTriggerIndex
+          ) {
+            setContextMentionOpen(false)
+            setHashTriggerIndex(null)
+            setContextMentionQuery('')
+          } else {
+            setContextMentionQuery(query)
+          }
+        } else if (!contextMentionOpen && !slashPopoverOpen) {
+          let scanPos = cursorPos - 1
+          while (
+            scanPos >= 0 &&
+            value[scanPos] !== ' ' &&
+            value[scanPos] !== '\n'
+          ) {
+            if (value[scanPos] === '#') {
+              const charBefore = value[scanPos - 1]
+              if (scanPos === 0 || charBefore === ' ' || charBefore === '\n') {
+                const query = value.slice(scanPos + 1, cursorPos)
+                setHashTriggerIndex(scanPos)
+                setContextMentionQuery(query)
+                setContextMentionOpen(true)
+                setContextMentionAnchor({
+                  top: 0,
+                  left: 0,
+                  containerWidth: formRef.current?.offsetWidth ?? 0,
+                })
+              }
+              break
+            }
+            scanPos--
+          }
+        }
+      }
+
+      // Detect / trigger for slash commands and skills (only if @/# popovers not open)
+      if (!fileMentionOpen && !contextMentionOpen) {
         if (prevChar === '/') {
           // Check that it's at start or preceded by whitespace
           const charBeforeSlash = value[cursorPos - 2]
@@ -394,6 +480,9 @@ export const ChatInput = memo(function ChatInput({
       fileMentionOpen,
       slashTriggerIndex,
       slashPopoverOpen,
+      contextMentionOpen,
+      hashTriggerIndex,
+      formRef,
     ]
   )
 
@@ -420,6 +509,30 @@ export const ChatInput = memo(function ChatInput({
             e.preventDefault()
             setFileMentionOpen(false)
             setFileMentionQuery('')
+            return
+        }
+      }
+
+      // When context mention popover is open, handle navigation
+      if (contextMentionOpen) {
+        switch (e.key) {
+          case 'ArrowDown':
+            e.preventDefault()
+            contextMentionHandleRef.current?.moveDown()
+            return
+          case 'ArrowUp':
+            e.preventDefault()
+            contextMentionHandleRef.current?.moveUp()
+            return
+          case 'Enter':
+          case 'Tab':
+            e.preventDefault()
+            contextMentionHandleRef.current?.selectCurrent()
+            return
+          case 'Escape':
+            e.preventDefault()
+            setContextMentionOpen(false)
+            setContextMentionQuery('')
             return
         }
       }
@@ -504,6 +617,7 @@ export const ChatInput = memo(function ChatInput({
     [
       activeSessionId,
       fileMentionOpen,
+      contextMentionOpen,
       slashPopoverOpen,
       isSending,
       onCancel,
@@ -830,6 +944,123 @@ export const ChatInput = memo(function ChatInput({
     [activeSessionId, atTriggerIndex, inputRef, resizeTextarea]
   )
 
+  const contextMentionToken = useCallback((item: ContextMentionItem) => {
+    switch (item.type) {
+      case 'issue':
+        return item.issue ? `#${item.issue.number}` : item.label
+      case 'pr':
+        return item.pr ? `PR#${item.pr.number}` : item.label.replace(/\s+/g, '')
+      case 'security':
+        return item.securityAlert
+          ? `Security#${item.securityAlert.number}`
+          : item.label.replace(/\s+/g, '')
+      case 'advisory':
+        return item.advisory?.ghsaId ?? item.label
+      case 'linear':
+        return item.linearIssue?.identifier ?? item.label
+    }
+  }, [])
+
+  const handleContextSelect = useCallback(
+    async (item: ContextMentionItem) => {
+      if (!activeSessionId) return
+
+      const toastId = toast.loading(`Loading ${item.label} context...`)
+
+      try {
+        if (item.type === 'issue' && item.issue && activeWorktreePath) {
+          await loadIssueContext(
+            activeSessionId,
+            item.issue.number,
+            activeWorktreePath
+          )
+        } else if (item.type === 'pr' && item.pr && activeWorktreePath) {
+          await loadPRContext(
+            activeSessionId,
+            item.pr.number,
+            activeWorktreePath
+          )
+        } else if (
+          item.type === 'security' &&
+          item.securityAlert &&
+          activeWorktreePath
+        ) {
+          await loadSecurityContext(
+            activeSessionId,
+            item.securityAlert.number,
+            activeWorktreePath
+          )
+        } else if (
+          item.type === 'advisory' &&
+          item.advisory &&
+          activeWorktreePath
+        ) {
+          await loadAdvisoryContext(
+            activeSessionId,
+            item.advisory.ghsaId,
+            activeWorktreePath
+          )
+        } else if (
+          item.type === 'linear' &&
+          item.linearIssue &&
+          activeProjectId
+        ) {
+          await loadLinearIssueContext(
+            activeSessionId,
+            activeProjectId,
+            item.linearIssue.id
+          )
+        } else {
+          throw new Error('Missing context information')
+        }
+
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: githubQueryKeys.all }),
+          queryClient.invalidateQueries({ queryKey: linearQueryKeys.all }),
+        ])
+
+        const triggerIndex = hashTriggerIndex
+        if (triggerIndex !== null && inputRef.current) {
+          const currentValue = valueRef.current
+          const cursorPos =
+            inputRef.current.selectionStart ?? currentValue.length
+          const beforeHash = currentValue.slice(0, triggerIndex)
+          const afterQuery = currentValue.slice(cursorPos)
+          const token = contextMentionToken(item)
+          const newValue = `${beforeHash}${token} ${afterQuery}`
+
+          inputRef.current.value = newValue
+          valueRef.current = newValue
+          useChatStore.getState().setInputDraft(activeSessionId, newValue)
+          resizeTextarea()
+
+          requestAnimationFrame(() => {
+            const newCursorPos = triggerIndex + token.length + 1
+            inputRef.current?.setSelectionRange(newCursorPos, newCursorPos)
+          })
+        }
+
+        toast.success(`Loaded ${item.label} context`, { id: toastId })
+      } catch (error) {
+        toast.error(`Failed to load context: ${error}`, { id: toastId })
+      } finally {
+        setContextMentionOpen(false)
+        setHashTriggerIndex(null)
+        setContextMentionQuery('')
+        inputRef.current?.focus()
+      }
+    },
+    [
+      activeProjectId,
+      activeSessionId,
+      activeWorktreePath,
+      contextMentionToken,
+      hashTriggerIndex,
+      inputRef,
+      resizeTextarea,
+    ]
+  )
+
   // Handle skill selection from / mention popover
   const handleSkillSelect = useCallback(
     (skill: PendingSkill) => {
@@ -954,10 +1185,10 @@ export const ChatInput = memo(function ChatInput({
                 ? 'Plan: Type to queue next message...'
                 : 'Build: Type to queue next message...'
             : executionMode === 'plan'
-              ? 'Planning: Plan a task, @mention files...'
+              ? 'Planning: Plan a task, @ files or # issues...'
               : executionMode === 'yolo'
                 ? 'Yolo: No limits, only your imagination and tokens...'
-                : 'Build: Ask to make changes, @mention files...'
+                : 'Build: Ask, @ files or # issues...'
         }
         // PERFORMANCE: Uncontrolled input - no value prop
         // Value is managed via valueRef and direct DOM manipulation
@@ -988,6 +1219,19 @@ export const ChatInput = memo(function ChatInput({
         anchorPosition={fileMentionAnchor}
         containerWidth={fileMentionAnchor?.containerWidth}
         handleRef={fileMentionHandleRef}
+      />
+
+      {/* Context mention popover (# issues, PRs, security, Linear) */}
+      <ContextMentionPopover
+        projectPath={activeWorktreePath ?? null}
+        projectId={activeProjectId ?? null}
+        open={contextMentionOpen}
+        onOpenChange={setContextMentionOpen}
+        onSelectContext={handleContextSelect}
+        searchQuery={contextMentionQuery}
+        anchorPosition={contextMentionAnchor}
+        containerWidth={contextMentionAnchor?.containerWidth}
+        handleRef={contextMentionHandleRef}
       />
 
       {/* Slash popover (/ commands and skills) */}

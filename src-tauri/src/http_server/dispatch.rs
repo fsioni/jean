@@ -4,6 +4,77 @@ use tauri::Manager;
 
 use super::EmitExt;
 
+#[derive(Debug, PartialEq)]
+struct StartTerminalArgs {
+    terminal_id: String,
+    worktree_path: String,
+    cols: u16,
+    rows: u16,
+    command: Option<String>,
+    command_args: Option<Vec<String>>,
+}
+
+fn parse_start_terminal_args(args: &Value) -> Result<StartTerminalArgs, String> {
+    Ok(StartTerminalArgs {
+        terminal_id: field(args, "terminalId", "terminal_id")?,
+        worktree_path: field(args, "worktreePath", "worktree_path")?,
+        cols: from_field(args, "cols")?,
+        rows: from_field(args, "rows")?,
+        command: from_field_opt(args, "command")?,
+        command_args: field_opt(args, "commandArgs", "command_args")?,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct TerminalIdArgs {
+    terminal_id: String,
+}
+
+fn parse_terminal_id_args(args: &Value) -> Result<TerminalIdArgs, String> {
+    Ok(TerminalIdArgs {
+        terminal_id: field(args, "terminalId", "terminal_id")?,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct TerminalResizeArgs {
+    terminal_id: String,
+    cols: u16,
+    rows: u16,
+}
+
+fn parse_terminal_resize_args(args: &Value) -> Result<TerminalResizeArgs, String> {
+    Ok(TerminalResizeArgs {
+        terminal_id: field(args, "terminalId", "terminal_id")?,
+        cols: from_field(args, "cols")?,
+        rows: from_field(args, "rows")?,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct TerminalWriteArgs {
+    terminal_id: String,
+    data: String,
+}
+
+fn parse_terminal_write_args(args: &Value) -> Result<TerminalWriteArgs, String> {
+    Ok(TerminalWriteArgs {
+        terminal_id: field(args, "terminalId", "terminal_id")?,
+        data: from_field(args, "data")?,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct WorktreePathArgs {
+    worktree_path: String,
+}
+
+fn parse_worktree_path_args(args: &Value) -> Result<WorktreePathArgs, String> {
+    Ok(WorktreePathArgs {
+        worktree_path: field(args, "worktreePath", "worktree_path")?,
+    })
+}
+
 /// Dispatch a command by name to the corresponding Rust handler.
 /// This mirrors Tauri's invoke system but routes through WebSocket.
 ///
@@ -1519,41 +1590,32 @@ pub async fn dispatch_command(
         // Terminal
         // =====================================================================
         "start_terminal" => {
-            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
-            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
-            let cols: u16 = from_field(&args, "cols")?;
-            let rows: u16 = from_field(&args, "rows")?;
-            let command: Option<String> = from_field_opt(&args, "command")?;
-            let command_args: Option<Vec<String>> =
-                field_opt(&args, "commandArgs", "command_args")?;
+            let parsed = parse_start_terminal_args(&args)?;
             crate::terminal::start_terminal(
                 app.clone(),
-                terminal_id,
-                worktree_path,
-                cols,
-                rows,
-                command,
-                command_args,
+                parsed.terminal_id,
+                parsed.worktree_path,
+                parsed.cols,
+                parsed.rows,
+                parsed.command,
+                parsed.command_args,
             )
             .await?;
             Ok(Value::Null)
         }
         "terminal_write" => {
-            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
-            let data: String = from_field(&args, "data")?;
-            crate::terminal::terminal_write(terminal_id, data).await?;
+            let parsed = parse_terminal_write_args(&args)?;
+            crate::terminal::terminal_write(parsed.terminal_id, parsed.data).await?;
             Ok(Value::Null)
         }
         "terminal_resize" => {
-            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
-            let cols: u16 = from_field(&args, "cols")?;
-            let rows: u16 = from_field(&args, "rows")?;
-            crate::terminal::terminal_resize(terminal_id, cols, rows).await?;
+            let parsed = parse_terminal_resize_args(&args)?;
+            crate::terminal::terminal_resize(parsed.terminal_id, parsed.cols, parsed.rows).await?;
             Ok(Value::Null)
         }
         "stop_terminal" => {
-            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
-            let result = crate::terminal::stop_terminal(app.clone(), terminal_id).await?;
+            let parsed = parse_terminal_id_args(&args)?;
+            let result = crate::terminal::stop_terminal(app.clone(), parsed.terminal_id).await?;
             to_value(result)
         }
         "get_active_terminals" => {
@@ -1561,18 +1623,18 @@ pub async fn dispatch_command(
             to_value(result)
         }
         "has_active_terminal" => {
-            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
-            let result = crate::terminal::has_active_terminal(terminal_id).await;
+            let parsed = parse_terminal_id_args(&args)?;
+            let result = crate::terminal::has_active_terminal(parsed.terminal_id).await;
             to_value(result)
         }
         "get_run_scripts" => {
-            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
-            let result = crate::terminal::get_run_scripts(worktree_path).await;
+            let parsed = parse_worktree_path_args(&args)?;
+            let result = crate::terminal::get_run_scripts(parsed.worktree_path).await;
             to_value(result)
         }
         "get_ports" => {
-            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
-            let result = crate::terminal::get_ports(worktree_path).await;
+            let parsed = parse_worktree_path_args(&args)?;
+            let result = crate::terminal::get_ports(parsed.worktree_path).await;
             to_value(result)
         }
         "get_terminal_listening_ports" => {
@@ -1970,8 +2032,14 @@ pub async fn dispatch_command(
             let result = crate::coderabbit_cli::check_coderabbit_cli_auth(app.clone()).await?;
             to_value(result)
         }
+        "get_available_coderabbit_versions" => {
+            let result =
+                crate::coderabbit_cli::get_available_coderabbit_versions(app.clone()).await?;
+            to_value(result)
+        }
         "install_coderabbit_cli" => {
-            crate::coderabbit_cli::install_coderabbit_cli(app.clone()).await?;
+            let version: Option<String> = from_field_opt(&args, "version")?;
+            crate::coderabbit_cli::install_coderabbit_cli(app.clone(), version).await?;
             Ok(Value::Null)
         }
         "uninstall_coderabbit_cli" => {
@@ -2708,4 +2776,109 @@ fn field_opt<T: serde::de::DeserializeOwned>(
         return Ok(camel_result);
     }
     from_field_opt(args, snake)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_start_terminal_args_accepts_camel_case() {
+        let args = json!({
+            "terminalId": "term-1",
+            "worktreePath": "/tmp/worktree",
+            "cols": 120,
+            "rows": 40,
+            "command": "bun",
+            "commandArgs": ["run", "dev"]
+        });
+
+        assert_eq!(
+            parse_start_terminal_args(&args).unwrap(),
+            StartTerminalArgs {
+                terminal_id: "term-1".to_string(),
+                worktree_path: "/tmp/worktree".to_string(),
+                cols: 120,
+                rows: 40,
+                command: Some("bun".to_string()),
+                command_args: Some(vec!["run".to_string(), "dev".to_string()]),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_start_terminal_args_accepts_snake_case() {
+        let args = json!({
+            "terminal_id": "term-2",
+            "worktree_path": "/tmp/other",
+            "cols": 80,
+            "rows": 24,
+            "command_args": ["-lc", "echo ok"]
+        });
+
+        assert_eq!(
+            parse_start_terminal_args(&args).unwrap(),
+            StartTerminalArgs {
+                terminal_id: "term-2".to_string(),
+                worktree_path: "/tmp/other".to_string(),
+                cols: 80,
+                rows: 24,
+                command: None,
+                command_args: Some(vec!["-lc".to_string(), "echo ok".to_string()]),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_terminal_helpers_accept_dual_key_terminal_ids() {
+        assert_eq!(
+            parse_terminal_write_args(&json!({
+                "terminalId": "term-1",
+                "data": "ls\n"
+            }))
+            .unwrap(),
+            TerminalWriteArgs {
+                terminal_id: "term-1".to_string(),
+                data: "ls\n".to_string(),
+            }
+        );
+
+        assert_eq!(
+            parse_terminal_resize_args(&json!({
+                "terminal_id": "term-1",
+                "cols": 100,
+                "rows": 30
+            }))
+            .unwrap(),
+            TerminalResizeArgs {
+                terminal_id: "term-1".to_string(),
+                cols: 100,
+                rows: 30,
+            }
+        );
+
+        assert_eq!(
+            parse_terminal_id_args(&json!({ "terminal_id": "term-1" })).unwrap(),
+            TerminalIdArgs {
+                terminal_id: "term-1".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_worktree_path_args_accepts_camel_and_snake_case() {
+        assert_eq!(
+            parse_worktree_path_args(&json!({ "worktreePath": "/tmp/a" })).unwrap(),
+            WorktreePathArgs {
+                worktree_path: "/tmp/a".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_worktree_path_args(&json!({ "worktree_path": "/tmp/b" })).unwrap(),
+            WorktreePathArgs {
+                worktree_path: "/tmp/b".to_string(),
+            }
+        );
+    }
 }

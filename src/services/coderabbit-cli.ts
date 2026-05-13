@@ -11,6 +11,7 @@ import type {
   CodeRabbitCliStatus,
   CodeRabbitInstallProgress,
   CodeRabbitPathDetection,
+  CodeRabbitReleaseInfo,
 } from '@/types/coderabbit-cli'
 
 const isTauri = hasBackend
@@ -19,6 +20,7 @@ export const coderabbitCliQueryKeys = {
   all: ['coderabbit-cli'] as const,
   status: () => [...coderabbitCliQueryKeys.all, 'status'] as const,
   auth: () => [...coderabbitCliQueryKeys.all, 'auth'] as const,
+  versions: () => [...coderabbitCliQueryKeys.all, 'versions'] as const,
   pathDetection: () =>
     [...coderabbitCliQueryKeys.all, 'path-detection'] as const,
 }
@@ -91,11 +93,45 @@ export function useCodeRabbitCliAuth(options?: { enabled?: boolean }) {
   })
 }
 
+export function useAvailableCodeRabbitVersions(options?: {
+  enabled?: boolean
+}) {
+  return useQuery({
+    queryKey: coderabbitCliQueryKeys.versions(),
+    queryFn: async (): Promise<CodeRabbitReleaseInfo[]> => {
+      if (!isTauri()) return []
+      try {
+        const versions = await invoke<
+          {
+            version: string
+            tag_name: string
+            published_at: string
+            prerelease: boolean
+          }[]
+        >('get_available_coderabbit_versions')
+        return versions.map(v => ({
+          version: v.version,
+          tagName: v.tag_name,
+          publishedAt: v.published_at,
+          prerelease: v.prerelease,
+        }))
+      } catch (error) {
+        logger.error('Failed to fetch CodeRabbit CLI versions', { error })
+        return []
+      }
+    },
+    enabled: options?.enabled ?? true,
+    staleTime: 1000 * 60 * 15,
+    gcTime: 1000 * 60 * 30,
+    refetchInterval: 1000 * 60 * 60,
+  })
+}
+
 export function useInstallCodeRabbitCli() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async () => {
-      await invoke('install_coderabbit_cli')
+    mutationFn: async (version?: string) => {
+      await invoke('install_coderabbit_cli', { version: version ?? null })
     },
     retry: false,
     onSuccess: () => {
@@ -159,4 +195,53 @@ export function useCodeRabbitInstallProgress(): [
   }, [wsConnected])
 
   return [progress, resetProgress]
+}
+
+export function useCodeRabbitCliSetup() {
+  const status = useCodeRabbitCliStatus()
+  const versions = useAvailableCodeRabbitVersions()
+  const installMutation = useInstallCodeRabbitCli()
+  const [progress, resetProgress] = useCodeRabbitInstallProgress()
+
+  const needsSetup = !status.isLoading && !status.data?.installed
+
+  const install = (
+    version: string,
+    options?: { onSuccess?: () => void; onError?: (error: Error) => void }
+  ) => {
+    logger.info('[useCodeRabbitCliSetup] install() called', {
+      version,
+      isPending: installMutation.isPending,
+    })
+
+    resetProgress()
+
+    installMutation.mutate(version, {
+      onSuccess: () => {
+        logger.info('[useCodeRabbitCliSetup] mutate onSuccess callback')
+        options?.onSuccess?.()
+      },
+      onError: error => {
+        logger.error('[useCodeRabbitCliSetup] mutate onError callback', {
+          error,
+        })
+        options?.onError?.(error)
+      },
+    })
+  }
+
+  return {
+    status: status.data,
+    isStatusLoading: status.isLoading,
+    versions: versions.data ?? [],
+    isVersionsLoading: versions.isFetching,
+    isVersionsError: versions.isError,
+    refetchVersions: versions.refetch,
+    needsSetup,
+    isInstalling: installMutation.isPending,
+    installError: installMutation.error,
+    progress,
+    install,
+    refetchStatus: status.refetch,
+  }
 }

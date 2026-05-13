@@ -290,7 +290,7 @@ interface PendingRequest {
 }
 
 interface WsMessage {
-  type: 'response' | 'error' | 'event'
+  type: 'response' | 'error' | 'event' | 'heartbeat'
   id?: string
   data?: unknown
   error?: string
@@ -318,7 +318,8 @@ class WsTransport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private connectWatchdog: ReturnType<typeof setTimeout> | null = null
   /** Periodic check that we're seeing inbound traffic from the server.
-   *  Server pings every 20s, so a 50s gap means the connection is dead. */
+   *  The server sends app-level heartbeats every 20s because browser JS cannot
+   *  observe protocol ping/pong frames, so a 50s gap means the connection is dead. */
   private livenessTimer: ReturnType<typeof setInterval> | null = null
   private _lastInbound = 0
   private queue: { data: string; resolve: () => void }[] = []
@@ -597,8 +598,9 @@ class WsTransport {
     }
   }
 
-  // Commands that spawn CLI processes and can run for extended periods.
-  // These get a 10-minute timeout instead of the default 60s.
+  // Commands that spawn/attach to long-lived processes or are critical to
+  // terminal lifecycle. These get an extended timeout instead of the default
+  // 60s so idle/reconnect edges do not falsely fail terminal sessions.
   private static readonly LONG_RUNNING_COMMANDS: ReadonlySet<string> = new Set([
     'send_chat_message',
     'run_review_with_ai',
@@ -610,16 +612,24 @@ class WsTransport {
     'install_opencode_cli',
     'install_gh_cli',
     'install_coderabbit_cli',
+    'update_coderabbit_cli',
     'run_coderabbit_review',
     'trigger_coderabbit_pr_review',
+    'start_terminal',
+    'terminal_write',
+    'terminal_resize',
+    'stop_terminal',
+    'get_active_terminals',
+    'has_active_terminal',
+    'get_terminal_listening_ports',
   ])
   private static readonly LONG_TIMEOUT = 30 * 60_000
   private static readonly DEFAULT_TIMEOUT = 60_000
   private static readonly CONNECT_TIMEOUT = 12_000
   private static readonly MAX_QUEUE_SIZE = 500
   /** If no inbound traffic for this long, assume connection is dead.
-   *  Must exceed server PONG_TIMEOUT (45s) — browser auto-replies to
-   *  server pings, so any healthy connection sees inbound frames every 20s. */
+   *  Must exceed the server's app-level heartbeat interval (20s); protocol
+   *  ping/pong alone is not visible to browser JavaScript. */
   private static readonly INBOUND_TIMEOUT = 50_000
   private static readonly LIVENESS_CHECK_INTERVAL = 10_000
 
@@ -725,6 +735,11 @@ class WsTransport {
   }
 
   private handleMessage(msg: WsMessage): void {
+    if (msg.type === 'heartbeat') {
+      // onmessage already refreshed _lastInbound. No listener dispatch.
+      return
+    }
+
     if (msg.type === 'response' && msg.id) {
       const pending = this.pending.get(msg.id)
       if (pending) {

@@ -945,6 +945,7 @@ export interface AppPreferences {
   allow_web_tools_in_plan_mode: boolean // Allow WebFetch/WebSearch in plan mode without prompts
   waiting_sound: NotificationSound // Sound when session is waiting for input
   review_sound: NotificationSound // Sound when session finishes reviewing
+  web_access_sounds_enabled: boolean // Play notification sounds in browser/web access views
   http_server_enabled: boolean // Whether HTTP server is enabled
   http_server_port: number // HTTP server port (default 3456)
   http_server_token: string | null // Auth token for HTTP/WS access
@@ -1691,6 +1692,7 @@ export const defaultPreferences: AppPreferences = {
   allow_web_tools_in_plan_mode: true, // Default: enabled
   waiting_sound: 'none',
   review_sound: 'none',
+  web_access_sounds_enabled: true,
   http_server_enabled: false,
   http_server_port: 3456,
   http_server_token: null,

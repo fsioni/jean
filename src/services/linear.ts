@@ -280,3 +280,33 @@ export function filterLinearIssues(
     return false
   })
 }
+
+/**
+ * Load Linear issue context for a session (fetch from Linear and save).
+ */
+export async function loadLinearIssueContext(
+  sessionId: string,
+  projectId: string,
+  issueId: string
+): Promise<LoadedLinearIssueContext> {
+  return invoke<LoadedLinearIssueContext>('load_linear_issue_context', {
+    sessionId,
+    projectId,
+    issueId,
+  })
+}
+
+/**
+ * Remove a loaded Linear issue context from a session.
+ */
+export async function removeLinearIssueContext(
+  sessionId: string,
+  projectId: string,
+  identifier: string
+): Promise<void> {
+  return invoke('remove_linear_issue_context', {
+    sessionId,
+    projectId,
+    identifier,
+  })
+}

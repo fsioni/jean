@@ -1999,8 +1999,10 @@ pub async fn send_chat_message(
                 // Build combined instructions file (system prompt equivalent for Codex)
                 let codex_instructions_file = {
                     use crate::projects::github_issues::{
-                        get_github_contexts_dir, get_session_issue_refs, get_session_pr_refs,
+                        get_github_contexts_dir, get_session_advisory_refs, get_session_issue_refs,
+                        get_session_pr_refs, get_session_security_refs,
                     };
+                    use crate::projects::linear_issues::get_session_linear_refs;
                     use crate::projects::storage::load_projects_data;
 
                     const DEFAULT_GLOBAL_SYSTEM_PROMPT: &str = "\
@@ -2183,6 +2185,87 @@ pub async fn send_chat_message(
                         }
                     }
 
+                    let mut security_keys =
+                        get_session_security_refs(&thread_app, &thread_session_id)
+                            .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_security_refs(&thread_app, &thread_worktree_id)
+                    {
+                        for key in wt_keys {
+                            if !security_keys.contains(&key) {
+                                security_keys.push(key);
+                            }
+                        }
+                    }
+                    if !security_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &security_keys {
+                                let parts: Vec<&str> = key.rsplitn(2, '-').collect();
+                                if parts.len() == 2 {
+                                    let number = parts[0];
+                                    let repo_key = parts[1];
+                                    let file_path = contexts_dir
+                                        .join(format!("{repo_key}-security-{number}.md"));
+                                    if file_path.exists() {
+                                        all_context_paths.push(file_path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut advisory_keys =
+                        get_session_advisory_refs(&thread_app, &thread_session_id)
+                            .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_advisory_refs(&thread_app, &thread_worktree_id)
+                    {
+                        for key in wt_keys {
+                            if !advisory_keys.contains(&key) {
+                                advisory_keys.push(key);
+                            }
+                        }
+                    }
+                    if !advisory_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &advisory_keys {
+                                if let Some((repo_key, ghsa_id)) = key.split_once("::") {
+                                    let file_path = contexts_dir
+                                        .join(format!("{repo_key}-advisory-{ghsa_id}.md"));
+                                    if file_path.exists() {
+                                        all_context_paths.push(file_path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut linear_keys = get_session_linear_refs(&thread_app, &thread_session_id)
+                        .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_linear_refs(&thread_app, &thread_worktree_id) {
+                        for key in wt_keys {
+                            if !linear_keys.contains(&key) {
+                                linear_keys.push(key);
+                            }
+                        }
+                    }
+                    if !linear_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &linear_keys {
+                                let parts: Vec<&str> = key.rsplitn(3, '-').collect();
+                                if parts.len() == 3 {
+                                    let project_name_part = parts[2];
+                                    let identifier_lower =
+                                        format!("{}-{}", parts[1].to_lowercase(), parts[0]);
+                                    let file_path = contexts_dir.join(format!(
+                                        "{project_name_part}-linear-{identifier_lower}.md"
+                                    ));
+                                    if file_path.exists() {
+                                        all_context_paths.push(file_path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Saved context files
                     if let Ok(app_data_dir) = thread_app.path().app_data_dir() {
                         let saved_contexts_dir = app_data_dir.join("session-context");
@@ -2340,8 +2423,10 @@ pub async fn send_chat_message(
 
                 let system_prompt = {
                     use crate::projects::github_issues::{
-                        get_github_contexts_dir, get_session_issue_refs, get_session_pr_refs,
+                        get_github_contexts_dir, get_session_advisory_refs, get_session_issue_refs,
+                        get_session_pr_refs, get_session_security_refs,
                     };
+                    use crate::projects::linear_issues::get_session_linear_refs;
                     use crate::projects::storage::load_projects_data;
 
                     let mut system_prompt_parts: Vec<String> = Vec::new();
@@ -2488,6 +2573,90 @@ pub async fn send_chat_message(
                                     let repo_key = parts[1];
                                     let file_path =
                                         contexts_dir.join(format!("{repo_key}-pr-{number}.md"));
+                                    if let Ok(content) = std::fs::read_to_string(&file_path) {
+                                        context_content.push_str(&content);
+                                        context_content.push_str("\n\n---\n\n");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut security_keys =
+                        get_session_security_refs(&thread_app, &thread_session_id)
+                            .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_security_refs(&thread_app, &thread_worktree_id)
+                    {
+                        for key in wt_keys {
+                            if !security_keys.contains(&key) {
+                                security_keys.push(key);
+                            }
+                        }
+                    }
+                    if !security_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &security_keys {
+                                let parts: Vec<&str> = key.rsplitn(2, '-').collect();
+                                if parts.len() == 2 {
+                                    let number = parts[0];
+                                    let repo_key = parts[1];
+                                    let file_path = contexts_dir
+                                        .join(format!("{repo_key}-security-{number}.md"));
+                                    if let Ok(content) = std::fs::read_to_string(&file_path) {
+                                        context_content.push_str(&content);
+                                        context_content.push_str("\n\n---\n\n");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut advisory_keys =
+                        get_session_advisory_refs(&thread_app, &thread_session_id)
+                            .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_advisory_refs(&thread_app, &thread_worktree_id)
+                    {
+                        for key in wt_keys {
+                            if !advisory_keys.contains(&key) {
+                                advisory_keys.push(key);
+                            }
+                        }
+                    }
+                    if !advisory_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &advisory_keys {
+                                if let Some((repo_key, ghsa_id)) = key.split_once("::") {
+                                    let file_path = contexts_dir
+                                        .join(format!("{repo_key}-advisory-{ghsa_id}.md"));
+                                    if let Ok(content) = std::fs::read_to_string(&file_path) {
+                                        context_content.push_str(&content);
+                                        context_content.push_str("\n\n---\n\n");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut linear_keys = get_session_linear_refs(&thread_app, &thread_session_id)
+                        .unwrap_or_default();
+                    if let Ok(wt_keys) = get_session_linear_refs(&thread_app, &thread_worktree_id) {
+                        for key in wt_keys {
+                            if !linear_keys.contains(&key) {
+                                linear_keys.push(key);
+                            }
+                        }
+                    }
+                    if !linear_keys.is_empty() {
+                        if let Ok(contexts_dir) = get_github_contexts_dir(&thread_app) {
+                            for key in &linear_keys {
+                                let parts: Vec<&str> = key.rsplitn(3, '-').collect();
+                                if parts.len() == 3 {
+                                    let project_name_part = parts[2];
+                                    let identifier_lower =
+                                        format!("{}-{}", parts[1].to_lowercase(), parts[0]);
+                                    let file_path = contexts_dir.join(format!(
+                                        "{project_name_part}-linear-{identifier_lower}.md"
+                                    ));
                                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                                         context_content.push_str(&content);
                                         context_content.push_str("\n\n---\n\n");

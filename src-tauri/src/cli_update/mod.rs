@@ -10,8 +10,8 @@ pub struct CliPathUpdateOutput {
     pub exit_code: Option<i32>,
 }
 
-const ALLOWED_CLI_TYPES: &[&str] = &["claude", "codex", "opencode", "gh"];
-const ALLOWED_COMMANDS: &[&str] = &["brew", "npm", "bun", "claude", "opencode"];
+const ALLOWED_CLI_TYPES: &[&str] = &["claude", "codex", "opencode", "gh", "coderabbit"];
+const ALLOWED_COMMANDS: &[&str] = &["brew", "npm", "bun", "claude", "opencode", "coderabbit"];
 
 /// Run a CLI update command silently in the background.
 /// Captures stdout/stderr and returns the result without opening a terminal window.

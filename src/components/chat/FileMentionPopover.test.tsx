@@ -6,9 +6,32 @@ import type { WorktreeFile } from '@/types/chat'
 const filesByRoot: Record<string, WorktreeFile[]> = {
   '/tmp/current-worktree': [
     { relative_path: 'src/App.tsx', extension: 'tsx', is_dir: false },
+    { relative_path: 'src/main.tsx', extension: 'tsx', is_dir: false },
+    {
+      relative_path: 'src/store/chat-store.ts',
+      extension: 'ts',
+      is_dir: false,
+    },
+    {
+      relative_path: 'src/components/chat/ChatInput.tsx',
+      extension: 'tsx',
+      is_dir: false,
+    },
+    {
+      relative_path: 'src/components/chat/FileMentionPopover.tsx',
+      extension: 'tsx',
+      is_dir: false,
+    },
+    { relative_path: 'src/services/files.ts', extension: 'ts', is_dir: false },
   ],
   '/tmp/docs': [
     { relative_path: 'docs/intro.md', extension: 'md', is_dir: false },
+  ],
+  '/tmp/build': [
+    { relative_path: 'build/config.ts', extension: 'ts', is_dir: false },
+  ],
+  '/tmp/api': [
+    { relative_path: 'api/server.ts', extension: 'ts', is_dir: false },
   ],
 }
 
@@ -38,7 +61,7 @@ vi.mock('@/services/projects', async () => {
           default_branch: 'main',
           added_at: 0,
           order: 0,
-          linked_project_ids: ['docs'],
+          linked_project_ids: ['docs', 'build', 'api'],
         },
         {
           id: 'docs',
@@ -47,6 +70,24 @@ vi.mock('@/services/projects', async () => {
           default_branch: 'main',
           added_at: 0,
           order: 1,
+          linked_project_ids: ['current'],
+        },
+        {
+          id: 'build',
+          name: 'Build',
+          path: '/tmp/build',
+          default_branch: 'main',
+          added_at: 0,
+          order: 2,
+          linked_project_ids: ['current'],
+        },
+        {
+          id: 'api',
+          name: 'API',
+          path: '/tmp/api',
+          default_branch: 'main',
+          added_at: 0,
+          order: 3,
           linked_project_ids: ['current'],
         },
       ],
@@ -83,6 +124,8 @@ describe('FileMentionPopover linked project scopes', () => {
 
     expect(screen.getByText('Jean (current)')).toBeInTheDocument()
     expect(screen.getByText('Docs')).toBeInTheDocument()
+    expect(screen.getByText('Build')).toBeInTheDocument()
+    expect(screen.getByText('API')).toBeInTheDocument()
     expect(screen.getByText('src/App.tsx')).toBeInTheDocument()
     expect(screen.queryByText('docs/intro.md')).not.toBeInTheDocument()
 
@@ -105,5 +148,39 @@ describe('FileMentionPopover linked project scopes', () => {
         sourceProjectName: 'Docs',
       })
     )
+  })
+
+  it('keeps the file viewer prominent when several linked projects are shown', () => {
+    render(
+      <FileMentionPopover
+        worktreePath="/tmp/current-worktree"
+        currentProjectId="current"
+        open
+        onOpenChange={vi.fn()}
+        onSelectFile={vi.fn()}
+        searchQuery=""
+        anchorPosition={{ top: 0, left: 0 }}
+      />
+    )
+
+    const commandList = document.querySelector('[data-slot="command-list"]')
+    expect(commandList).toHaveClass('min-h-[280px]')
+    expect(commandList).toHaveClass('max-h-[min(360px,60vh)]')
+
+    expect(screen.getByText('Jean (current)')).toBeInTheDocument()
+    expect(screen.getByText('Docs')).toBeInTheDocument()
+    expect(screen.getByText('Build')).toBeInTheDocument()
+    expect(screen.getByText('API')).toBeInTheDocument()
+
+    expect(screen.getByText('src/App.tsx')).toBeInTheDocument()
+    expect(screen.getByText('src/main.tsx')).toBeInTheDocument()
+    expect(screen.getByText('src/store/chat-store.ts')).toBeInTheDocument()
+    expect(
+      screen.getByText('src/components/chat/ChatInput.tsx')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('src/components/chat/FileMentionPopover.tsx')
+    ).toBeInTheDocument()
+    expect(screen.getByText('src/services/files.ts')).toBeInTheDocument()
   })
 })

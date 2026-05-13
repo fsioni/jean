@@ -207,7 +207,13 @@ function clearFreshTerminalDisplay(instance: PersistentTerminal): void {
 }
 
 function scheduleAnimationFrame(callback: () => void): void {
-  if (typeof requestAnimationFrame === 'function') {
+  // requestAnimationFrame is paused when the document is hidden, and macOS
+  // App Nap / window minimization can suspend the webview for minutes at a
+  // time. Fall back to setTimeout while hidden so PTY output and echo keep
+  // flowing — otherwise terminals appear frozen after a few minutes idle.
+  const hidden =
+    typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  if (!hidden && typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(callback)
     return
   }
@@ -294,6 +300,39 @@ function ensureWakeHandler(): void {
   wakeHandlerRegistered = true
   const wake = () => {
     if (document.visibilityState !== 'visible') return
+
+    // Drain any output buffered while we were hidden: the scheduled flush
+    // (rAF or setTimeout) may not have fired yet, and we want the user to
+    // see current PTY state immediately on resume rather than after the
+    // next event arrives.
+    for (const [terminalId, buffer] of [...outputBuffers]) {
+      if (!buffer.data) {
+        outputBuffers.delete(terminalId)
+        continue
+      }
+      const inst = instances.get(terminalId)
+      if (!inst?.terminal) {
+        outputBuffers.delete(terminalId)
+        continue
+      }
+      if (inst.renderer === 'ghostty-web' && !inst.readyForOutput) {
+        inst.pendingOutput.push(buffer.data)
+      } else {
+        try {
+          inst.terminal.write(buffer.data)
+        } catch {
+          // ignore — terminal may be in mid-dispose
+        }
+      }
+      outputBuffers.delete(terminalId)
+    }
+
+    // Flush any input still sitting in the debounce window — characters
+    // typed (or queued) while hidden should land now so the prompt advances.
+    for (const terminalId of [...inputBuffers.keys()]) {
+      flushTerminalInput(terminalId)
+    }
+
     for (const inst of instances.values()) {
       if (!inst.terminal || inst.renderer !== 'xterm') continue
       try {
