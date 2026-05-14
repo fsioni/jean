@@ -218,7 +218,7 @@ fn attach_default_avatar(project: &mut Project) {
 
 /// Generate a unique name by appending 4 random alphanumeric chars,
 /// checking against both storage and git branches.
-fn generate_unique_suffix_name(
+pub fn generate_unique_suffix_name(
     name: &str,
     project_path: &str,
     project_id: &str,
@@ -249,7 +249,7 @@ fn now() -> u64 {
         .as_secs()
 }
 
-fn sanitize_folder_name(name: &str) -> String {
+pub fn sanitize_folder_name(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' {
@@ -849,8 +849,11 @@ pub async fn create_worktree(
     advisory_context: Option<AdvisoryContext>,
     linear_context: Option<LinearIssueContext>,
     custom_name: Option<String>,
+    auto_open_in_jean: Option<bool>,
 ) -> Result<Worktree, String> {
     log::trace!("Creating worktree for project: {project_id}");
+
+    let auto_open_in_jean = auto_open_in_jean.unwrap_or(true);
 
     let data = load_projects_data(&app)?;
 
@@ -987,6 +990,7 @@ pub async fn create_worktree(
         issue_number: issue_context.as_ref().map(|ctx| ctx.number as u64),
         security_alert_number: security_context.as_ref().map(|ctx| ctx.number as u64),
         advisory_ghsa_id: advisory_context.as_ref().map(|ctx| ctx.ghsa_id.clone()),
+        auto_open_in_jean,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
         log::error!("Failed to emit worktree:creating event: {e}");
@@ -1614,7 +1618,10 @@ pub async fn create_worktree(
                     "Background: Worktree created successfully: {}",
                     worktree.name
                 );
-                let created_event = WorktreeCreatedEvent { worktree };
+                let created_event = WorktreeCreatedEvent {
+                    worktree,
+                    auto_open_in_jean,
+                };
                 if let Err(e) = app_clone.emit_all("worktree:created", &created_event) {
                     log::error!("Failed to emit worktree:created event: {e}");
                 }
@@ -1747,6 +1754,7 @@ pub async fn create_worktree_from_existing_branch(
         issue_number: issue_context.as_ref().map(|ctx| ctx.number as u64),
         security_alert_number: security_context.as_ref().map(|ctx| ctx.number as u64),
         advisory_ghsa_id: advisory_context.as_ref().map(|ctx| ctx.ghsa_id.clone()),
+        auto_open_in_jean: true,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
         log::error!("Failed to emit worktree:creating event: {e}");
@@ -2206,7 +2214,10 @@ pub async fn create_worktree_from_existing_branch(
                     "Background: Worktree created successfully from existing branch: {}",
                     worktree.name
                 );
-                let created_event = WorktreeCreatedEvent { worktree };
+                let created_event = WorktreeCreatedEvent {
+                    worktree,
+                    auto_open_in_jean: true,
+                };
                 if let Err(e) = app_clone.emit_all("worktree:created", &created_event) {
                     log::error!("Failed to emit worktree:created event: {e}");
                 }
@@ -2369,6 +2380,7 @@ pub async fn checkout_pr(
         issue_number: None,
         security_alert_number: None,
         advisory_ghsa_id: None,
+        auto_open_in_jean: true,
     };
     if let Err(e) = app.emit_all("worktree:creating", &creating_event) {
         log::error!("Failed to emit worktree:creating event: {e}");
@@ -2762,7 +2774,10 @@ pub async fn checkout_pr(
                     pr_number,
                     worktree.name
                 );
-                let created_event = WorktreeCreatedEvent { worktree };
+                let created_event = WorktreeCreatedEvent {
+                    worktree,
+                    auto_open_in_jean: true,
+                };
                 if let Err(e) = app_clone.emit_all("worktree:created", &created_event) {
                     log::error!("Failed to emit worktree:created event: {e}");
                 }
@@ -3497,6 +3512,7 @@ pub async fn import_worktree(
     // Emit created event
     let event = WorktreeCreatedEvent {
         worktree: worktree.clone(),
+        auto_open_in_jean: true,
     };
     if let Err(e) = app.emit_all("worktree:created", &event) {
         log::error!("Failed to emit worktree:created event: {e}");

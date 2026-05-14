@@ -232,6 +232,7 @@ describe('preferences service', () => {
 
       expect(invoke).toHaveBeenCalledWith('load_preferences')
       expect(result.current.data?.theme).toBe('dark')
+      expect(result.current.data?.jean_mcp_enabled).toBe(false)
     })
 
     it('returns defaults when not in Tauri context', async () => {
@@ -246,6 +247,7 @@ describe('preferences service', () => {
 
       expect(result.current.data?.theme).toBe('system')
       expect(result.current.data?.selected_model).toBe('claude-opus-4-7[1m]')
+      expect(result.current.data?.jean_mcp_enabled).toBe(true)
     })
 
     it('returns defaults on backend error', async () => {
@@ -259,6 +261,7 @@ describe('preferences service', () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
       expect(result.current.data?.theme).toBe('system')
+      expect(result.current.data?.jean_mcp_enabled).toBe(true)
     })
 
     it('migrates old keybindings to new defaults', async () => {

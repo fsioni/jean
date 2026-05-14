@@ -1410,20 +1410,6 @@ pub async fn send_chat_message(
         return Err("Session already has an active request".to_string());
     }
 
-    // Merge Jean's own MCP server entry into the spawned CLI's mcp_config when
-    // the user has enabled it. No-op when prefs.jean_mcp_enabled is false or
-    // the HTTP server isn't running.
-    let mcp_config = match super::jean_mcp::merge_into_mcp_config(
-        &app,
-        &session_id,
-        mcp_config.as_deref(),
-    )
-    .await
-    {
-        Some(merged) => Some(merged),
-        None => mcp_config,
-    };
-
     // Load sessions
     let mut sessions = load_sessions(&app, &worktree_path, &worktree_id)?;
 

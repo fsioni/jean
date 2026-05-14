@@ -25,6 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "0.8"
+toml_edit = "0.23"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -49,7 +50,7 @@ portable-pty = "0.8"  # For terminal/PTY support
 which = "7"           # For cross-platform executable detection
 axum = { version = "0.8", features = ["ws"] }  # HTTP server + WebSocket
 tower-http = { version = "0.6", features = ["cors", "fs", "compression-br", "compression-gzip"] }  # CORS + static files + response compression
-tokio = { version = "1", features = ["sync", "macros"] }  # Channel for WS broadcast
+tokio = { version = "1", features = ["sync", "macros", "net", "io-util", "fs", "rt-multi-thread"] }  # Channel for WS broadcast
 futures-util = "0.3"  # Stream utilities for WebSocket split
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }  # Image resize/compression on paste
 arboard = { version = "3", features = ["wayland-data-control"] }  # Native clipboard image read (Linux WebKitGTK fallback)

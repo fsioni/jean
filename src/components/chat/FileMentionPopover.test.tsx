@@ -6,6 +6,8 @@ import {
   type FileMentionPopoverHandle,
 } from './FileMentionPopover'
 import type { WorktreeFile } from '@/types/chat'
+import type * as FilesService from '@/services/files'
+import type * as ProjectsService from '@/services/projects'
 
 const filesByRoot: Record<string, WorktreeFile[]> = {
   '/tmp/current-worktree': [
@@ -40,8 +42,7 @@ const filesByRoot: Record<string, WorktreeFile[]> = {
 }
 
 vi.mock('@/services/files', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/services/files')>('@/services/files')
+  const actual = await vi.importActual<typeof FilesService>('@/services/files')
   return {
     ...actual,
     useWorktreeFiles: (rootPath: string | null) => ({
@@ -51,7 +52,7 @@ vi.mock('@/services/files', async () => {
 })
 
 vi.mock('@/services/projects', async () => {
-  const actual = await vi.importActual<typeof import('@/services/projects')>(
+  const actual = await vi.importActual<typeof ProjectsService>(
     '@/services/projects'
   )
   return {

@@ -159,6 +159,7 @@ pub async fn dispatch_command(
             let advisory_context = field_opt(&args, "advisoryContext", "advisory_context")?;
             let linear_context = field_opt(&args, "linearContext", "linear_context")?;
             let custom_name = field_opt(&args, "customName", "custom_name")?;
+            let auto_open_in_jean = field_opt(&args, "autoOpenInJean", "auto_open_in_jean")?;
             let result = crate::projects::create_worktree(
                 app.clone(),
                 project_id,
@@ -169,6 +170,7 @@ pub async fn dispatch_command(
                 advisory_context,
                 linear_context,
                 custom_name,
+                auto_open_in_jean,
             )
             .await?;
             // No cache invalidation here — worktree creation uses event-based sync
@@ -852,6 +854,40 @@ pub async fn dispatch_command(
         }
         "list_all_sessions" => {
             let result = crate::chat::list_all_sessions(app.clone()).await?;
+            to_value(result)
+        }
+        "start_background_investigation" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let message: String = from_field(&args, "message")?;
+            let model: String = from_field(&args, "model")?;
+            let backend: String = from_field(&args, "backend")?;
+            let provider: Option<String> = from_field_opt(&args, "provider")?;
+            let effort_level: Option<String> = field_opt(&args, "effortLevel", "effort_level")?;
+            let custom_profile_name: Option<String> =
+                field_opt(&args, "customProfileName", "custom_profile_name")?;
+            let chrome_enabled: Option<bool> = field_opt(&args, "chromeEnabled", "chrome_enabled")?;
+            let ai_language: Option<String> = field_opt(&args, "aiLanguage", "ai_language")?;
+            let parallel_execution_prompt: Option<String> = field_opt(
+                &args,
+                "parallelExecutionPrompt",
+                "parallel_execution_prompt",
+            )?;
+            let result = crate::jean_mcp_core::start_background_investigation(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                message,
+                model,
+                backend,
+                provider,
+                effort_level,
+                custom_profile_name,
+                chrome_enabled,
+                ai_language,
+                parallel_execution_prompt,
+            )
+            .await?;
             to_value(result)
         }
         "list_native_cli_sessions" => {
@@ -2128,6 +2164,12 @@ pub async fn dispatch_command(
         }
         "get_jean_mcp_config_snippet" => {
             let result = crate::get_jean_mcp_config_snippet(app.clone()).await?;
+            to_value(result)
+        }
+        "install_jean_mcp_config" => {
+            let backends: Option<Vec<String>> = from_field_opt(&args, "backends")?;
+            let mode: Option<String> = from_field_opt(&args, "mode")?;
+            let result = crate::install_jean_mcp_config(app.clone(), backends, mode).await?;
             to_value(result)
         }
         "start_opencode_server" => {

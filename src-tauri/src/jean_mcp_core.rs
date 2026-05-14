@@ -1,0 +1,894 @@
+//! Shared Jean MCP tool registry/dispatch plus local stdio proxy helpers.
+//!
+//! Transport-specific frontends (HTTP and stdio) should keep protocol framing
+//! only. Business logic lives here and routes to existing Jean commands.
+
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
+
+use once_cell::sync::Lazy;
+use serde_json::{json, Value};
+use tauri::AppHandle;
+
+use crate::http_server::dispatch::dispatch_command;
+
+pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const JEAN_MCP_STDIO_ARG: &str = "--jean-mcp-stdio";
+pub const JEAN_MCP_SOCKET_ENV: &str = "JEAN_MCP_SOCKET";
+pub const JEAN_MCP_TOKEN_ENV: &str = "JEAN_MCP_TOKEN";
+pub const JEAN_MCP_SESSION_ENV: &str = "JEAN_MCP_SESSION";
+pub const JEAN_MCP_DEPTH_ENV: &str = "JEAN_MCP_DEPTH";
+
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+const RATE_LIMITED_TOOLS: &[&str] = &["create_session", "send_chat_message", "create_worktree"];
+
+static RATE_BUCKETS: Lazy<std::sync::Mutex<HashMap<String, VecDeque<Instant>>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+#[derive(Debug)]
+pub struct ToolError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl ToolError {
+    pub fn invalid_params(msg: impl Into<String>) -> Self {
+        Self {
+            code: -32602,
+            message: msg.into(),
+        }
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self {
+            code: -32000,
+            message: msg.into(),
+        }
+    }
+}
+
+pub fn current_depth() -> u32 {
+    std::env::var(JEAN_MCP_DEPTH_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn next_depth() -> u32 {
+    current_depth().saturating_add(1)
+}
+
+pub fn initialize_result() -> Value {
+    json!({
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "jean", "version": env!("CARGO_PKG_VERSION") },
+    })
+}
+
+pub fn tools_list_result() -> Value {
+    json!({ "tools": tool_registry() })
+}
+
+pub fn tool_registry() -> Value {
+    json!([
+        {"name":"list_projects","description":"List all Jean projects (id, name, path, default_branch).","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+        {"name":"list_worktrees","description":"List all worktrees for a project.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"get_worktree","description":"Get a single worktree by id (path, branch, status, etc.).","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"}},"required":["worktreeId"],"additionalProperties":false}},
+        {"name":"list_github_issues","description":"List GitHub issues for a project. Pass projectId; the server resolves the repo path.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"state":{"type":"string","enum":["open","closed","all"],"default":"open"}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"list_github_prs","description":"List GitHub pull requests for a project. Pass projectId; the server resolves the repo path.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"state":{"type":"string","enum":["open","closed","merged","all"],"default":"open"}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"create_worktree","description":"Create a new worktree for a project. If issueNumber or prNumber is provided, Jean fetches that context and attaches it to the worktree. Pass action=\"start_autoinvestigating\" to create a session and start investigating the issue/PR with the Magic Prompts settings default backend/model. This never switches/opens Jean's UI unless the user opens the worktree separately.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"baseBranch":{"type":"string"},"customName":{"type":"string"},"issueNumber":{"type":"integer","minimum":1},"prNumber":{"type":"integer","minimum":1},"action":{"type":"string","enum":["start_autoinvestigating"]}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"create_session","description":"Create a new chat session in an existing worktree. Returns the session id needed for send_chat_message.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"name":{"type":"string"},"backend":{"type":"string","enum":["claude","codex","cursor","opencode"]}},"required":["worktreeId"],"additionalProperties":false}},
+        {"name":"send_chat_message","description":"Send a message to an existing session. Fire-and-forget: returns immediately as the session begins processing. Use this to kick off investigations.","inputSchema":{"type":"object","properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"model":{"type":"string"},"executionMode":{"type":"string","enum":["plan","build","yolo"]}},"required":["sessionId","message"],"additionalProperties":false}},
+        {"name":"read_session_messages","description":"Read recent messages from a session (most recent first). Use limit to cap returned messages.","inputSchema":{"type":"object","properties":{"sessionId":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200,"default":50}},"required":["sessionId"],"additionalProperties":false}},
+        {"name":"get_current_context","description":"Return the calling session's context: sessionId, worktreeId, projectId, projectPath, projectName. Use this so the agent knows what 'this project' refers to without guessing.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}
+    ])
+}
+
+pub async fn call_tool(
+    app: &AppHandle,
+    name: &str,
+    arguments: Value,
+    source: &str,
+    depth: u32,
+) -> Result<Value, ToolError> {
+    let prefs = crate::load_preferences(app.clone())
+        .await
+        .map_err(ToolError::internal)?;
+    if !prefs.jean_mcp_enabled {
+        return Err(ToolError::internal(
+            "Jean MCP is disabled. Enable it in Preferences > MCP Servers.",
+        ));
+    }
+
+    if RATE_LIMITED_TOOLS.contains(&name) {
+        if depth > prefs.jean_mcp_max_depth {
+            return Err(ToolError::internal(format!(
+                "Jean MCP recursion depth {depth} exceeds limit {}",
+                prefs.jean_mcp_max_depth
+            )));
+        }
+        if !rate_check(source, prefs.jean_mcp_rate_limit_per_minute) {
+            return Err(ToolError::internal(format!(
+                "Jean MCP rate limit exceeded ({} calls/min for source {source})",
+                prefs.jean_mcp_rate_limit_per_minute
+            )));
+        }
+    }
+
+    let result_json = run_tool(app, name, arguments, source).await?;
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string_pretty(&result_json).unwrap_or_else(|_| "null".to_string()),
+        }],
+        "isError": false,
+    }))
+}
+
+async fn run_tool(
+    app: &AppHandle,
+    name: &str,
+    args: Value,
+    source: &str,
+) -> Result<Value, ToolError> {
+    match name {
+        "list_projects" => dispatch_command(app, "list_projects", json!({}))
+            .await
+            .map_err(ToolError::internal),
+        "list_worktrees" => {
+            let project_id = require_str(&args, "projectId")?;
+            dispatch_command(app, "list_worktrees", json!({ "projectId": project_id }))
+                .await
+                .map_err(ToolError::internal)
+        }
+        "get_worktree" => {
+            let worktree_id = require_str(&args, "worktreeId")?;
+            dispatch_command(app, "get_worktree", json!({ "worktreeId": worktree_id }))
+                .await
+                .map_err(ToolError::internal)
+        }
+        "list_github_issues" => {
+            let project_id = require_str(&args, "projectId")?;
+            let state = args.get("state").and_then(|v| v.as_str()).unwrap_or("open");
+            let project_path = resolve_project_path(app, &project_id)?;
+            dispatch_command(
+                app,
+                "list_github_issues",
+                json!({ "projectPath": project_path, "state": state }),
+            )
+            .await
+            .map_err(ToolError::internal)
+        }
+        "list_github_prs" => {
+            let project_id = require_str(&args, "projectId")?;
+            let state = args.get("state").and_then(|v| v.as_str()).unwrap_or("open");
+            let project_path = resolve_project_path(app, &project_id)?;
+            dispatch_command(
+                app,
+                "list_github_prs",
+                json!({ "projectPath": project_path, "state": state }),
+            )
+            .await
+            .map_err(ToolError::internal)
+        }
+        "create_worktree" => {
+            let project_id = require_str(&args, "projectId")?;
+            let action = args.get("action").and_then(|v| v.as_str());
+            if let Some(action) = action {
+                if action != "start_autoinvestigating" {
+                    return Err(ToolError::invalid_params(format!(
+                        "Unsupported create_worktree action: {action}"
+                    )));
+                }
+            }
+
+            let issue_number = args.get("issueNumber").and_then(|v| v.as_u64());
+            let pr_number = args.get("prNumber").and_then(|v| v.as_u64());
+            if issue_number.is_some() && pr_number.is_some() {
+                return Err(ToolError::invalid_params(
+                    "Pass either issueNumber or prNumber, not both",
+                ));
+            }
+            if action == Some("start_autoinvestigating")
+                && issue_number.is_none()
+                && pr_number.is_none()
+            {
+                return Err(ToolError::invalid_params(
+                    "action=start_autoinvestigating requires issueNumber or prNumber",
+                ));
+            }
+
+            let mut payload = serde_json::Map::new();
+            payload.insert("projectId".to_string(), Value::String(project_id.clone()));
+            if let Some(base) = args.get("baseBranch").and_then(|v| v.as_str()) {
+                payload.insert("baseBranch".to_string(), Value::String(base.to_string()));
+            }
+            let has_custom_name = args.get("customName").and_then(|v| v.as_str()).is_some();
+            if let Some(name) = args.get("customName").and_then(|v| v.as_str()) {
+                let resolved = resolve_non_conflicting_worktree_name(app, &project_id, name)?;
+                payload.insert("customName".to_string(), Value::String(resolved.clone()));
+            }
+            // Jean MCP must never auto-open/switch the Jean UI. Opening the worktree
+            // causes the normal UI path to create its default session in addition to
+            // the autoinvestigation session, so keep MCP-created worktrees background-only.
+            payload.insert("autoOpenInJean".to_string(), Value::Bool(false));
+            let project_path = if issue_number.is_some() || pr_number.is_some() {
+                Some(resolve_project_path(app, &project_id)?)
+            } else {
+                None
+            };
+            if let Some(issue_number) = issue_number {
+                let project_path = resolve_project_path(app, &project_id)?;
+                let detail = dispatch_command(
+                    app,
+                    "get_github_issue",
+                    json!({ "projectPath": project_path, "issueNumber": issue_number }),
+                )
+                .await
+                .map_err(ToolError::internal)?;
+                if !has_custom_name {
+                    let title = detail.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                    let issue_branch = crate::projects::generate_branch_name_from_issue(
+                        issue_number as u32,
+                        title,
+                    );
+                    let resolved =
+                        resolve_non_conflicting_worktree_name(app, &project_id, &issue_branch)?;
+                    if resolved != issue_branch {
+                        payload.insert("customName".to_string(), Value::String(resolved.clone()));
+                    }
+                }
+                payload.insert(
+                    "issueContext".to_string(),
+                    json!({
+                        "number": detail.get("number").cloned().unwrap_or(json!(issue_number)),
+                        "title": detail.get("title").cloned().unwrap_or(Value::Null),
+                        "body": detail.get("body").cloned().unwrap_or(Value::Null),
+                        "comments": detail.get("comments").cloned().unwrap_or(json!([])),
+                    }),
+                );
+            }
+            if let Some(pr_number) = pr_number {
+                let project_path = project_path.clone().unwrap_or_default();
+                let detail = dispatch_command(
+                    app,
+                    "get_github_pr",
+                    json!({ "projectPath": project_path, "prNumber": pr_number }),
+                )
+                .await
+                .map_err(ToolError::internal)?;
+                payload.insert(
+                    "prContext".to_string(),
+                    json!({
+                        "number": detail.get("number").cloned().unwrap_or(json!(pr_number)),
+                        "title": detail.get("title").cloned().unwrap_or(Value::Null),
+                        "body": detail.get("body").cloned().unwrap_or(Value::Null),
+                        "headRefName": detail.get("headRefName").cloned().unwrap_or(Value::Null),
+                        "baseRefName": detail.get("baseRefName").cloned().unwrap_or(Value::Null),
+                        "comments": detail.get("comments").cloned().unwrap_or(json!([])),
+                        "reviews": detail.get("reviews").cloned().unwrap_or(json!([])),
+                        "diff": Value::Null,
+                    }),
+                );
+            }
+            let worktree = dispatch_command(app, "create_worktree", Value::Object(payload))
+                .await
+                .map_err(ToolError::internal)?;
+            if action == Some("start_autoinvestigating") {
+                let kind = if issue_number.is_some() {
+                    InvestigationKind::Issue
+                } else {
+                    InvestigationKind::Pr
+                };
+                start_autoinvestigating(app, &worktree, kind, source).await
+            } else {
+                Ok(worktree)
+            }
+        }
+        "create_session" => {
+            let worktree_id = require_str(&args, "worktreeId")?;
+            let worktree_path = resolve_worktree_path(app, &worktree_id)?;
+            let mut payload = serde_json::Map::new();
+            payload.insert("worktreeId".to_string(), Value::String(worktree_id));
+            payload.insert("worktreePath".to_string(), Value::String(worktree_path));
+            if let Some(n) = args.get("name").and_then(|v| v.as_str()) {
+                payload.insert("name".to_string(), Value::String(n.to_string()));
+            }
+            if let Some(b) = args.get("backend").and_then(|v| v.as_str()) {
+                payload.insert("backend".to_string(), Value::String(b.to_string()));
+            }
+            dispatch_command(app, "create_session", Value::Object(payload))
+                .await
+                .map_err(ToolError::internal)
+        }
+        "send_chat_message" => {
+            let session_id = require_str(&args, "sessionId")?;
+            let message = require_str(&args, "message")?;
+            let (worktree_id, worktree_path) = resolve_session_worktree(app, &session_id)?;
+            let mut payload = serde_json::Map::new();
+            payload.insert("sessionId".to_string(), Value::String(session_id.clone()));
+            payload.insert("worktreeId".to_string(), Value::String(worktree_id));
+            payload.insert("worktreePath".to_string(), Value::String(worktree_path));
+            payload.insert("message".to_string(), Value::String(message));
+            if let Some(m) = args.get("model").and_then(|v| v.as_str()) {
+                payload.insert("model".to_string(), Value::String(m.to_string()));
+            }
+            if let Some(em) = args.get("executionMode").and_then(|v| v.as_str()) {
+                payload.insert("executionMode".to_string(), Value::String(em.to_string()));
+            }
+            let app_clone = app.clone();
+            let payload_clone = Value::Object(payload);
+            let source_clone = source.to_string();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    dispatch_command(&app_clone, "send_chat_message", payload_clone).await
+                {
+                    log::warn!("Jean MCP send_chat_message (source={source_clone}) failed: {e}");
+                }
+            });
+            Ok(json!({ "sessionId": session_id, "status": "started" }))
+        }
+        "read_session_messages" => {
+            let session_id = require_str(&args, "sessionId")?;
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .min(200) as usize;
+            let (worktree_id, worktree_path) = resolve_session_worktree(app, &session_id)?;
+            dispatch_command(app, "get_session", json!({ "sessionId": session_id, "worktreeId": worktree_id, "worktreePath": worktree_path, "limit": limit })).await.map_err(ToolError::internal)
+        }
+        "get_current_context" => {
+            if source == "anon" {
+                return Err(ToolError::internal("No Jean session context present. This tool only works for sessions spawned by Jean."));
+            }
+            let (worktree_id, worktree_path) = resolve_session_worktree(app, source)?;
+            let (project_id, project_name, project_path) =
+                resolve_worktree_project(app, &worktree_id)?;
+            Ok(
+                json!({ "sessionId": source, "worktreeId": worktree_id, "worktreePath": worktree_path, "projectId": project_id, "projectName": project_name, "projectPath": project_path }),
+            )
+        }
+        other => Err(ToolError::invalid_params(format!("Unknown tool: {other}"))),
+    }
+}
+
+fn require_str(args: &Value, key: &str) -> Result<String, ToolError> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| ToolError::invalid_params(format!("missing or non-string '{key}'")))
+}
+
+fn resolve_non_conflicting_worktree_name(
+    app: &AppHandle,
+    project_id: &str,
+    requested_name: &str,
+) -> Result<String, ToolError> {
+    let data = crate::projects::storage::load_projects_data(app)
+        .map_err(|e| ToolError::internal(format!("load_projects_data: {e}")))?;
+    let project = data
+        .find_project(project_id)
+        .ok_or_else(|| ToolError::invalid_params(format!("Unknown projectId: {project_id}")))?;
+    let worktrees_dir = crate::projects::storage::get_project_worktrees_dir(
+        &project.name,
+        project.worktrees_dir.as_deref(),
+    )
+    .map_err(ToolError::internal)?;
+    let folder_name = crate::projects::sanitize_folder_name(requested_name);
+    let path_exists = worktrees_dir.join(folder_name).exists();
+    let name_exists = data.worktree_name_exists(project_id, requested_name);
+    let branch_exists = crate::projects::git::branch_exists(&project.path, requested_name);
+
+    if path_exists || name_exists || branch_exists {
+        let resolved = crate::projects::generate_unique_suffix_name(
+            requested_name,
+            &project.path,
+            project_id,
+            Some(&data),
+        );
+        log::info!(
+            "Jean MCP resolved worktree name conflict: requested={requested_name}, resolved={resolved}, path_exists={path_exists}, name_exists={name_exists}, branch_exists={branch_exists}"
+        );
+        Ok(resolved)
+    } else {
+        Ok(requested_name.to_string())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum InvestigationKind {
+    Issue,
+    Pr,
+}
+
+#[derive(Debug)]
+struct InvestigationSelection {
+    backend: String,
+    model: String,
+    provider: Option<String>,
+    effort: Option<String>,
+}
+
+async fn start_autoinvestigating(
+    app: &AppHandle,
+    pending_worktree: &Value,
+    kind: InvestigationKind,
+    source: &str,
+) -> Result<Value, ToolError> {
+    let worktree_id = require_value_str(pending_worktree, "id")?;
+    let ready_worktree = wait_for_worktree_ready(app, &worktree_id).await?;
+    let worktree_path = require_value_str(&ready_worktree, "path")?;
+
+    let prefs = crate::load_preferences(app.clone())
+        .await
+        .map_err(ToolError::internal)?;
+    let selection = resolve_investigation_selection(app, &prefs, &ready_worktree, kind);
+    let prompt = build_investigation_prompt(&prefs, &ready_worktree, kind);
+    let parallel_execution_prompt = if prefs.parallel_execution_prompt_enabled {
+        Some(
+            prefs
+                .magic_prompts
+                .parallel_execution
+                .clone()
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(crate::default_parallel_execution_prompt),
+        )
+    } else {
+        None
+    };
+    let custom_profile_name = selection
+        .provider
+        .clone()
+        .filter(|p| p != "__anthropic__" && selection.backend == "claude");
+
+    let result = start_background_investigation_impl(
+        app,
+        worktree_id.clone(),
+        worktree_path.clone(),
+        prompt,
+        selection.model.clone(),
+        selection.backend.clone(),
+        selection.provider.clone(),
+        selection.effort.clone(),
+        custom_profile_name,
+        Some(prefs.chrome_enabled),
+        Some(prefs.ai_language.clone()),
+        parallel_execution_prompt,
+        Some(source.to_string()),
+    )
+    .await
+    .map_err(ToolError::internal)?;
+    let session_id = result.session_id;
+
+    Ok(json!({
+        "worktree": ready_worktree,
+        "sessionId": session_id,
+        "backend": selection.backend,
+        "model": selection.model,
+        "status": "investigation_started",
+    }))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundInvestigationResult {
+    pub session_id: String,
+    pub worktree_id: String,
+    pub status: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_background_investigation_impl(
+    app: &AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    message: String,
+    model: String,
+    backend: String,
+    provider: Option<String>,
+    effort_level: Option<String>,
+    custom_profile_name: Option<String>,
+    chrome_enabled: Option<bool>,
+    ai_language: Option<String>,
+    parallel_execution_prompt: Option<String>,
+    source: Option<String>,
+) -> Result<BackgroundInvestigationResult, String> {
+    let sessions = crate::chat::get_sessions(
+        app.clone(),
+        worktree_id.clone(),
+        worktree_path.clone(),
+        None,
+        Some(false),
+    )
+    .await?;
+    let session_id = sessions
+        .active_session_id
+        .clone()
+        .or_else(|| sessions.sessions.first().map(|session| session.id.clone()))
+        .ok_or_else(|| {
+            format!("Background investigation: no session found for worktree {worktree_id}")
+        })?;
+
+    crate::chat::set_session_model(
+        app.clone(),
+        worktree_id.clone(),
+        worktree_path.clone(),
+        session_id.clone(),
+        model.clone(),
+    )
+    .await?;
+    crate::chat::set_session_backend(
+        app.clone(),
+        worktree_id.clone(),
+        worktree_path.clone(),
+        session_id.clone(),
+        backend.clone(),
+    )
+    .await?;
+    crate::chat::set_session_provider(
+        app.clone(),
+        worktree_id.clone(),
+        worktree_path.clone(),
+        session_id.clone(),
+        provider.clone(),
+    )
+    .await?;
+
+    let thinking_level = Some(crate::chat::types::ThinkingLevel::Think);
+    let effort_level = effort_level.and_then(|effort| {
+        serde_json::from_value::<crate::chat::types::EffortLevel>(Value::String(effort)).ok()
+    });
+
+    let app_clone = app.clone();
+    let source_clone = source.unwrap_or_else(|| "ui".to_string());
+    let session_id_for_send = session_id.clone();
+    let worktree_id_for_send = worktree_id.clone();
+    let worktree_path_for_send = worktree_path.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::chat::send_chat_message(
+            app_clone,
+            session_id_for_send,
+            worktree_id_for_send,
+            worktree_path_for_send,
+            message,
+            Some(model),
+            Some("plan".to_string()),
+            thinking_level,
+            effort_level,
+            parallel_execution_prompt,
+            ai_language,
+            None,
+            None,
+            chrome_enabled,
+            custom_profile_name,
+            Some(backend),
+        )
+        .await
+        {
+            log::warn!(
+                "Background investigation send_chat_message (source={source_clone}) failed: {e}"
+            );
+        }
+    });
+
+    Ok(BackgroundInvestigationResult {
+        session_id,
+        worktree_id,
+        status: "investigation_started".to_string(),
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn start_background_investigation(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    message: String,
+    model: String,
+    backend: String,
+    provider: Option<String>,
+    effort_level: Option<String>,
+    custom_profile_name: Option<String>,
+    chrome_enabled: Option<bool>,
+    ai_language: Option<String>,
+    parallel_execution_prompt: Option<String>,
+) -> Result<BackgroundInvestigationResult, String> {
+    start_background_investigation_impl(
+        &app,
+        worktree_id,
+        worktree_path,
+        message,
+        model,
+        backend,
+        provider,
+        effort_level,
+        custom_profile_name,
+        chrome_enabled,
+        ai_language,
+        parallel_execution_prompt,
+        Some("ui".to_string()),
+    )
+    .await
+}
+
+async fn wait_for_worktree_ready(app: &AppHandle, worktree_id: &str) -> Result<Value, ToolError> {
+    let started = Instant::now();
+    loop {
+        match dispatch_command(app, "get_worktree", json!({ "worktreeId": worktree_id })).await {
+            Ok(worktree) => return Ok(worktree),
+            Err(err) if started.elapsed() < Duration::from_secs(15) => {
+                if started.elapsed().as_millis() % 1000 < 500 {
+                    log::debug!("Jean MCP waiting for worktree {worktree_id}: {err}");
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(err) => {
+                return Err(ToolError::internal(format!(
+                    "Timed out waiting for worktree {worktree_id} to be ready after 15s. Creation likely failed before persistence; check worktree:path_exists/worktree:branch_exists events or use a different customName. Last error: {err}"
+                )));
+            }
+        }
+    }
+}
+
+fn resolve_investigation_selection(
+    app: &AppHandle,
+    prefs: &crate::AppPreferences,
+    worktree: &Value,
+    kind: InvestigationKind,
+) -> InvestigationSelection {
+    let model = match kind {
+        InvestigationKind::Issue => prefs.magic_prompt_models.investigate_issue_model.clone(),
+        InvestigationKind::Pr => prefs.magic_prompt_models.investigate_pr_model.clone(),
+    };
+    let magic_backend = match kind {
+        InvestigationKind::Issue => prefs
+            .magic_prompt_backends
+            .investigate_issue_backend
+            .as_deref(),
+        InvestigationKind::Pr => prefs
+            .magic_prompt_backends
+            .investigate_pr_backend
+            .as_deref(),
+    };
+    let provider = match kind {
+        InvestigationKind::Issue => prefs
+            .magic_prompt_providers
+            .investigate_issue_provider
+            .clone()
+            .or_else(|| prefs.default_provider.clone()),
+        InvestigationKind::Pr => prefs
+            .magic_prompt_providers
+            .investigate_pr_provider
+            .clone()
+            .or_else(|| prefs.default_provider.clone()),
+    };
+    let effort = match kind {
+        InvestigationKind::Issue => prefs.magic_prompt_efforts.investigate_issue_effort.clone(),
+        InvestigationKind::Pr => prefs.magic_prompt_efforts.investigate_pr_effort.clone(),
+    }
+    .or_else(|| Some(prefs.default_codex_reasoning_effort.clone()));
+
+    let worktree_id = worktree.get("id").and_then(|v| v.as_str());
+    let default_backend = project_default_backend(app, worktree_id).unwrap_or_else(|| {
+        if !prefs.default_backend.trim().is_empty() {
+            prefs.default_backend.clone()
+        } else {
+            infer_backend_from_model(&model).to_string()
+        }
+    });
+    let backend = magic_backend
+        .filter(|b| !b.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or(default_backend);
+
+    InvestigationSelection {
+        backend,
+        model,
+        provider,
+        effort,
+    }
+}
+
+fn build_investigation_prompt(
+    prefs: &crate::AppPreferences,
+    worktree: &Value,
+    kind: InvestigationKind,
+) -> String {
+    match kind {
+        InvestigationKind::Issue => {
+            let number = worktree
+                .get("issue_number")
+                .or_else(|| worktree.get("issueNumber"))
+                .and_then(|v| v.as_u64())
+                .map(|n| format!("#{n}"))
+                .unwrap_or_else(|| "the loaded issue".to_string());
+            let template = prefs
+                .magic_prompts
+                .investigate_issue
+                .clone()
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(crate::default_investigate_issue_prompt);
+            template
+                .replace("{issueWord}", "issue")
+                .replace("{issueRefs}", &number)
+        }
+        InvestigationKind::Pr => {
+            let number = worktree
+                .get("pr_number")
+                .or_else(|| worktree.get("prNumber"))
+                .and_then(|v| v.as_u64())
+                .map(|n| format!("#{n}"))
+                .unwrap_or_else(|| "the loaded PR".to_string());
+            let template = prefs
+                .magic_prompts
+                .investigate_pr
+                .clone()
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(crate::default_investigate_pr_prompt);
+            template
+                .replace("{prWord}", "PR")
+                .replace("{prRefs}", &number)
+        }
+    }
+}
+
+fn project_default_backend(app: &AppHandle, worktree_id: Option<&str>) -> Option<String> {
+    let worktree_id = worktree_id?;
+    let data = crate::projects::storage::load_projects_data(app).ok()?;
+    let worktree = data.find_worktree(worktree_id)?;
+    let project = data.find_project(&worktree.project_id)?;
+    project.default_backend.clone()
+}
+
+fn infer_backend_from_model(model: &str) -> &'static str {
+    if crate::is_opencode_model(model) {
+        "opencode"
+    } else if crate::is_cursor_model(model) {
+        "cursor"
+    } else if crate::is_codex_model(model) {
+        "codex"
+    } else {
+        "claude"
+    }
+}
+
+fn require_value_str(value: &Value, key: &str) -> Result<String, ToolError> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| ToolError::internal(format!("missing string field '{key}' in result")))
+}
+
+fn resolve_project_path(app: &AppHandle, project_id: &str) -> Result<String, ToolError> {
+    let data = crate::projects::storage::load_projects_data(app)
+        .map_err(|e| ToolError::internal(format!("load_projects_data: {e}")))?;
+    data.find_project(project_id)
+        .map(|p| p.path.clone())
+        .ok_or_else(|| ToolError::invalid_params(format!("Unknown projectId: {project_id}")))
+}
+
+fn resolve_worktree_path(app: &AppHandle, worktree_id: &str) -> Result<String, ToolError> {
+    let data = crate::projects::storage::load_projects_data(app)
+        .map_err(|e| ToolError::internal(format!("load_projects_data: {e}")))?;
+    data.find_worktree(worktree_id)
+        .map(|w| w.path.clone())
+        .ok_or_else(|| ToolError::invalid_params(format!("Unknown worktreeId: {worktree_id}")))
+}
+
+fn resolve_worktree_project(
+    app: &AppHandle,
+    worktree_id: &str,
+) -> Result<(String, String, String), ToolError> {
+    let data = crate::projects::storage::load_projects_data(app)
+        .map_err(|e| ToolError::internal(format!("load_projects_data: {e}")))?;
+    let wt = data
+        .find_worktree(worktree_id)
+        .ok_or_else(|| ToolError::invalid_params(format!("Unknown worktreeId: {worktree_id}")))?;
+    let project = data.find_project(&wt.project_id).ok_or_else(|| {
+        ToolError::internal(format!("Worktree {worktree_id} has no parent project"))
+    })?;
+    Ok((
+        project.id.clone(),
+        project.name.clone(),
+        project.path.clone(),
+    ))
+}
+
+fn resolve_session_worktree(
+    app: &AppHandle,
+    session_id: &str,
+) -> Result<(String, String), ToolError> {
+    let metadata = crate::chat::storage::load_metadata(app, session_id)
+        .map_err(|e| ToolError::internal(format!("load_metadata: {e}")))?
+        .ok_or_else(|| ToolError::invalid_params(format!("Unknown sessionId: {session_id}")))?;
+    let worktree_path = resolve_worktree_path(app, &metadata.worktree_id)?;
+    Ok((metadata.worktree_id, worktree_path))
+}
+
+fn rate_check(source: &str, limit_per_minute: u32) -> bool {
+    if limit_per_minute == 0 {
+        return true;
+    }
+    let now = Instant::now();
+    let mut buckets = match RATE_BUCKETS.lock() {
+        Ok(b) => b,
+        Err(p) => p.into_inner(),
+    };
+    let bucket = buckets.entry(source.to_string()).or_default();
+    while let Some(t) = bucket.front() {
+        if now.duration_since(*t) > RATE_LIMIT_WINDOW {
+            bucket.pop_front();
+        } else {
+            break;
+        }
+    }
+    if bucket.len() as u32 >= limit_per_minute {
+        return false;
+    }
+    bucket.push_back(now);
+    true
+}
+
+pub fn jsonrpc_ok(id: Option<Value>, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "result": result })
+}
+
+pub fn jsonrpc_error(id: Option<Value>, code: i32, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "error": { "code": code, "message": message } })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_worktree_schema_documents_no_open_default() {
+        let tools = tool_registry();
+        let create_worktree = tools
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    item.get("name").and_then(|name| name.as_str()) == Some("create_worktree")
+                })
+            })
+            .expect("create_worktree tool exists");
+
+        assert!(
+            create_worktree["inputSchema"]["properties"]
+                .get("openInJean")
+                .is_none(),
+            "Jean MCP create_worktree must not expose an auto-open option"
+        );
+        assert!(
+            !create_worktree["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("openInJean"),
+            "Jean MCP create_worktree docs must not mention openInJean"
+        );
+        assert_eq!(
+            create_worktree["inputSchema"]["properties"]["action"]["enum"][0],
+            "start_autoinvestigating"
+        );
+        assert_eq!(
+            create_worktree["inputSchema"]["properties"]["prNumber"]["type"],
+            "integer"
+        );
+    }
+
+    #[test]
+    fn tool_registry_includes_pr_listing() {
+        let tools = tool_registry();
+        let has_pr_list = tools.as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("name").and_then(|name| name.as_str()) == Some("list_github_prs")
+            })
+        });
+
+        assert!(has_pr_list);
+    }
+}

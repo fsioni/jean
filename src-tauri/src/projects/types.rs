@@ -463,6 +463,8 @@ pub struct WorktreeCreatingEvent {
     pub security_alert_number: Option<u64>,
     /// Advisory GHSA ID (if created from an advisory)
     pub advisory_ghsa_id: Option<String>,
+    /// Whether Jean UI should auto-select/open this worktree when events arrive
+    pub auto_open_in_jean: bool,
 }
 
 /// Event emitted when worktree creation completes successfully
@@ -470,6 +472,8 @@ pub struct WorktreeCreatingEvent {
 pub struct WorktreeCreatedEvent {
     /// The fully created worktree
     pub worktree: Worktree,
+    /// Whether Jean UI should auto-select/open this worktree when events arrive
+    pub auto_open_in_jean: bool,
 }
 
 /// Event emitted when worktree setup script completes (after worktree:created)

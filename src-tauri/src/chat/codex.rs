@@ -1770,10 +1770,6 @@ fn process_server_notification(
             // Streaming text delta — emit immediately
             if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
                 if !delta.is_empty() {
-                    log::debug!(
-                        "[codex-text] delta {}B for session {session_id}",
-                        delta.len()
-                    );
                     full_content.push_str(delta);
                     let _ = app.emit_all(
                         "chat:chunk",

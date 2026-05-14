@@ -1,11 +1,28 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { CheckCircle, Copy, Loader2, ShieldAlert, XCircle } from 'lucide-react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  CheckCircle,
+  Copy,
+  Loader2,
+  PlugZap,
+  ShieldAlert,
+  XCircle,
+} from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Tooltip,
   TooltipTrigger,
@@ -35,6 +52,8 @@ import { SettingsSection } from '../SettingsSection'
 interface JeanMcpSnippet {
   enabled: boolean
   server_running: boolean
+  mode: 'dev' | 'prod'
+  server_name: string
   url: string | null
   token: string | null
   claude: string | null
@@ -43,10 +62,32 @@ interface JeanMcpSnippet {
   opencode_json: string | null
 }
 
+interface JeanMcpInstallResult {
+  backend: CliBackend
+  status: 'installed' | 'error'
+  path: string | null
+  backupPath: string | null
+  serverName: string
+  mode: 'dev' | 'prod'
+  message: string
+}
+
+interface InstallFeedback {
+  type: 'success' | 'error' | 'pending'
+  message: string
+}
+
 const JeanMcpSection: React.FC = () => {
   const { data: preferences } = usePreferences()
   const patchPreferences = usePatchPreferences()
+  const { installedBackends } = useInstalledBackends()
   const [snippet, setSnippet] = useState<JeanMcpSnippet | null>(null)
+  const [isInstalling, setIsInstalling] = useState(false)
+  const [installFeedback, setInstallFeedback] =
+    useState<InstallFeedback | null>(null)
+  const [showInstallChoice, setShowInstallChoice] = useState(false)
+  const [pendingAutoInstall, setPendingAutoInstall] = useState(false)
+  const installFeedbackTimeoutRef = useRef<number | null>(null)
 
   const refreshSnippet = useCallback(async () => {
     try {
@@ -59,45 +100,164 @@ const JeanMcpSection: React.FC = () => {
 
   useEffect(() => {
     refreshSnippet()
-  }, [refreshSnippet, preferences?.jean_mcp_enabled, preferences?.http_server_enabled])
+  }, [refreshSnippet, preferences?.jean_mcp_enabled])
+
+  useEffect(() => {
+    return () => {
+      if (installFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(installFeedbackTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const showInstallFeedback = useCallback((feedback: InstallFeedback) => {
+    if (installFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(installFeedbackTimeoutRef.current)
+    }
+    setInstallFeedback(feedback)
+    installFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setInstallFeedback(null)
+      installFeedbackTimeoutRef.current = null
+    }, 5000)
+  }, [])
 
   const enabled = preferences?.jean_mcp_enabled ?? false
   const serverRunning = snippet?.server_running ?? false
+  const mode = snippet?.mode ?? 'prod'
+  const modeLabel = mode === 'dev' ? 'Dev' : 'Prod'
+  const installableBackends = installedBackends.filter(
+    backend =>
+      backend === 'claude' ||
+      backend === 'codex' ||
+      backend === 'opencode' ||
+      backend === 'cursor'
+  )
+
+  useEffect(() => {
+    if (!enabled || serverRunning) return
+    const interval = window.setInterval(refreshSnippet, 1000)
+    return () => window.clearInterval(interval)
+  }, [enabled, refreshSnippet, serverRunning])
+
+  useEffect(() => {
+    if (!pendingAutoInstall || !enabled || !serverRunning || isInstalling) {
+      return
+    }
+
+    setPendingAutoInstall(false)
+    handleInstall()
+  }, [enabled, isInstalling, pendingAutoInstall, serverRunning]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCopy = (label: string, content: string | null) => {
     if (!content) {
-      toast.error(`No ${label} snippet available — start the HTTP server first`)
+      toast.error(`No ${label} snippet available — enable Jean MCP stdio first`)
       return
     }
     copyToClipboard(content)
     toast.success(`${label} snippet copied`)
   }
 
-  return (
-    <SettingsSection title="Jean MCP Server" anchorId="pref-mcp-section-jean">
-      <p className="text-sm text-muted-foreground">
-        Expose Jean&apos;s own commands as an MCP server so spawned CLIs can
-        call back into Jean (create worktrees, list GitHub issues, send chat
-        messages). Requires the HTTP server to be running. Claude is
-        auto-injected; Cursor / Codex / OpenCode need manual setup using the
-        snippets below.
-      </p>
+  const handleInstall = async (options?: { assumeEnabled?: boolean }) => {
+    setInstallFeedback(null)
+    setPendingAutoInstall(false)
 
+    if ((!enabled && !options?.assumeEnabled) || !serverRunning) {
+      showInstallFeedback({
+        type: 'error',
+        message: 'Enable Jean MCP first',
+      })
+      return
+    }
+    if (installableBackends.length === 0) {
+      showInstallFeedback({
+        type: 'error',
+        message: 'Install Claude, Codex, OpenCode, or Cursor first',
+      })
+      return
+    }
+
+    setIsInstalling(true)
+    try {
+      const results = await invoke<JeanMcpInstallResult[]>(
+        'install_jean_mcp_config',
+        {
+          backends: installableBackends,
+          mode: 'current',
+        }
+      )
+      const successes = results.filter(r => r.status === 'installed')
+      const failures = results.filter(r => r.status === 'error')
+      invalidateAllMcpServers(undefined, installableBackends)
+      await refreshSnippet()
+
+      if (failures.length > 0) {
+        showInstallFeedback({
+          type: 'error',
+          message: `Added ${successes.length}/${results.length}; ${failures.length} failed`,
+        })
+      } else {
+        showInstallFeedback({
+          type: 'success',
+          message: 'Added',
+        })
+      }
+    } catch (e) {
+      showInstallFeedback({
+        type: 'error',
+        message: 'Failed to add Jean MCP',
+      })
+      console.error('Failed to add Jean MCP config', e)
+    } finally {
+      setIsInstalling(false)
+    }
+  }
+
+  const handleEnabledChange = (checked: boolean) => {
+    patchPreferences.mutate({ jean_mcp_enabled: checked })
+    setInstallFeedback(null)
+    setPendingAutoInstall(false)
+    if (checked) {
+      setShowInstallChoice(true)
+    } else {
+      setShowInstallChoice(false)
+    }
+  }
+
+  const handleAddAutomatically = () => {
+    setShowInstallChoice(false)
+    if (serverRunning) {
+      handleInstall({ assumeEnabled: true })
+      return
+    }
+
+    setPendingAutoInstall(true)
+    showInstallFeedback({
+      type: 'pending',
+      message: 'Waiting for MCP...',
+    })
+  }
+
+  return (
+    <>
+      <SettingsSection title="Jean MCP Server" anchorId="pref-mcp-section-jean">
+      <p className="text-sm text-muted-foreground">
+        Expose Jean&apos;s own commands over MCP so spawned local CLIs can call
+        back into Jean (create worktrees, list GitHub issues, send chat
+        messages, etc).
+      </p>
       <div className="flex items-center gap-3 rounded-md border px-4 py-3">
         <Switch
           id="jean-mcp-enabled"
           checked={enabled}
-          onCheckedChange={checked =>
-            patchPreferences.mutate({ jean_mcp_enabled: checked })
-          }
+          onCheckedChange={handleEnabledChange}
         />
         <Label htmlFor="jean-mcp-enabled" className="flex-1 cursor-pointer">
-          Enable Jean MCP server
+          Enable Jean MCP stdio
         </Label>
         {!serverRunning && enabled && (
           <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-            <ShieldAlert className="size-3.5" />
-            HTTP server not running
+            <PlugZap className="size-3.5" />
+            MCP stdio socket not running
           </span>
         )}
       </div>
@@ -147,6 +307,61 @@ const JeanMcpSection: React.FC = () => {
             </div>
           </div>
 
+          <div className="space-y-2 rounded-md border px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">
+                  One-click config install
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Safely merges Jean MCP config into
+                  the CLI user configs.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => handleInstall()}
+                disabled={
+                  isInstalling ||
+                  installFeedback?.type === 'success' ||
+                  !serverRunning ||
+                  installableBackends.length === 0
+                }
+                className={cn(
+                  'min-w-[11rem] max-w-[18rem]',
+                  installFeedback?.type === 'success' &&
+                    'border-green-600 bg-green-600 text-white hover:bg-green-700'
+                )}
+                aria-live="polite"
+                title={installFeedback?.message}
+              >
+                {isInstalling ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>Adding...</span>
+                  </>
+                ) : installFeedback?.type === 'success' ? (
+                  <>
+                    <CheckCircle className="size-3.5" />
+                    <span className="truncate">{installFeedback.message}</span>
+                  </>
+                ) : installFeedback?.type === 'pending' ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span className="truncate">{installFeedback.message}</span>
+                  </>
+                ) : installFeedback?.type === 'error' ? (
+                  <>
+                    <XCircle className="size-3.5" />
+                    <span className="truncate">{installFeedback.message}</span>
+                  </>
+                ) : (
+                  <span>Add current Jean MCP ({modeLabel})</span>
+                )}
+              </Button>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label className="text-xs uppercase tracking-wider text-muted-foreground">
               Manual setup snippets
@@ -158,7 +373,7 @@ const JeanMcpSection: React.FC = () => {
                 onClick={() => handleCopy('Claude', snippet?.claude ?? null)}
               >
                 <Copy className="mr-2 size-3.5" />
-                Claude (.mcp.json)
+                Claude (~/.claude.json)
               </Button>
               <Button
                 variant="outline"
@@ -166,14 +381,12 @@ const JeanMcpSection: React.FC = () => {
                 onClick={() => handleCopy('Cursor', snippet?.cursor ?? null)}
               >
                 <Copy className="mr-2 size-3.5" />
-                Cursor (.cursor/mcp.json)
+                Cursor (~/.cursor/mcp.json)
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  handleCopy('Codex', snippet?.codex_toml ?? null)
-                }
+                onClick={() => handleCopy('Codex', snippet?.codex_toml ?? null)}
               >
                 <Copy className="mr-2 size-3.5" />
                 Codex (~/.codex/config.toml)
@@ -186,13 +399,33 @@ const JeanMcpSection: React.FC = () => {
                 }
               >
                 <Copy className="mr-2 size-3.5" />
-                OpenCode (opencode.json)
+                OpenCode (~/.config/opencode/opencode.json)
               </Button>
             </div>
           </div>
         </>
       )}
-    </SettingsSection>
+      </SettingsSection>
+
+      <AlertDialog open={showInstallChoice} onOpenChange={setShowInstallChoice}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add Jean MCP to your CLI configs?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Jean MCP is enabled. Jean can add it automatically to your
+              installed CLI config files, or you can copy the manual snippets
+              below.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Manual setup</AlertDialogCancel>
+            <AlertDialogAction onClick={handleAddAutomatically}>
+              Add automatically
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -273,6 +506,24 @@ function HealthIndicator({
     default:
       return null
   }
+}
+
+function jeanMcpMode(
+  serverName: string,
+  config: unknown
+): 'dev' | 'prod' | null {
+  if (serverName === 'jean-dev') return 'dev'
+  if (serverName === 'jean') return 'prod'
+  if (!config || typeof config !== 'object') return null
+  const record = config as Record<string, unknown>
+  const env =
+    record.env && typeof record.env === 'object'
+      ? (record.env as Record<string, unknown>)
+      : record.environment && typeof record.environment === 'object'
+        ? (record.environment as Record<string, unknown>)
+        : null
+  const mode = env?.JEAN_MCP_MODE
+  return mode === 'dev' || mode === 'prod' ? mode : null
 }
 
 export const McpServersPane: React.FC = () => {
@@ -413,6 +664,11 @@ export const McpServersPane: React.FC = () => {
                     >
                       {server.name}
                     </Label>
+                    {jeanMcpMode(server.name, server.config) && (
+                      <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                        {jeanMcpMode(server.name, server.config)}
+                      </span>
+                    )}
                     <HealthIndicator
                       status={healthStatuses[mcpKey(backend, server.name)]}
                       isChecking={isHealthChecking}

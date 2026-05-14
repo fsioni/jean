@@ -1,81 +1,54 @@
-//! Jean MCP server injection helper.
+//! Jean MCP runtime helper.
 //!
 //! Builds the `mcpServers.jean` entry and merges it into a CLI's MCP config
-//! so that spawned Claude/Cursor processes can call back into the running
-//! Jean app over HTTP at `/mcp`.
-
-use std::sync::Arc;
+//! for callers that explicitly opt into runtime config assembly. Normal Jean
+//! CLI sessions use the persistent config writers in `jean_mcp_config` so the
+//! server is visible to users. The stdio helper proxies over a Jean-owned local
+//! Unix socket; no HTTP listener/port is required.
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
-use tokio::sync::Mutex;
+use tauri::AppHandle;
 
-use crate::http_server::server::HttpServerHandle;
-
-/// Env var carrying the recursive depth from parent CLI to child CLI.
-/// Each Jean-spawned CLI bumps this by 1. Used to cap runaway recursion.
-pub const JEAN_MCP_DEPTH_ENV: &str = "JEAN_MCP_DEPTH";
-
-/// Current process's Jean MCP recursion depth (0 if not spawned by another Jean CLI).
-pub fn current_depth() -> u32 {
-    std::env::var(JEAN_MCP_DEPTH_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0)
-}
-
-/// Depth to set on a child CLI being spawned from the current process.
-pub fn next_depth() -> u32 {
-    current_depth().saturating_add(1)
-}
+use crate::jean_mcp_core::{
+    next_depth, JEAN_MCP_DEPTH_ENV, JEAN_MCP_SESSION_ENV, JEAN_MCP_SOCKET_ENV, JEAN_MCP_STDIO_ARG,
+    JEAN_MCP_TOKEN_ENV,
+};
 
 /// Build the `{"jean": {...}}` MCP server entry for injection.
-/// Returns None when the pref is off, the HTTP server isn't running,
-/// or required state is unavailable.
+/// Returns None when the pref is off or the stdio socket isn't running.
 pub async fn build_jean_mcp_entry(app: &AppHandle, session_id: &str) -> Option<Value> {
     let prefs = crate::load_preferences(app.clone()).await.ok()?;
     if !prefs.jean_mcp_enabled {
         return None;
     }
 
-    let handle_state = app.try_state::<Arc<Mutex<Option<HttpServerHandle>>>>()?;
-    let guard = handle_state.lock().await;
-    let handle = guard.as_ref()?;
-
-    let depth = next_depth();
-    let url = format!("http://127.0.0.1:{}/mcp", handle.port);
-
-    let mut headers = serde_json::Map::new();
-    if handle.token_required && !handle.token.is_empty() {
-        headers.insert(
-            "Authorization".to_string(),
-            Value::String(format!("Bearer {}", handle.token)),
-        );
+    let (running, socket_path, token) =
+        crate::jean_mcp_socket::get_socket_status(app.clone()).await;
+    if !running {
+        return None;
     }
-    headers.insert(
-        "X-Jean-Session".to_string(),
-        Value::String(session_id.to_string()),
-    );
-    headers.insert(
-        "X-Jean-Mcp-Depth".to_string(),
-        Value::String(depth.to_string()),
-    );
+
+    let command = std::env::current_exe().ok()?.to_string_lossy().to_string();
+    let depth = next_depth().to_string();
+    let socket_path = socket_path?;
+    let token = token?;
 
     Some(json!({
         "jean": {
-            "type": "http",
-            "url": url,
-            "headers": headers,
+            "type": "stdio",
+            "command": command,
+            "args": [JEAN_MCP_STDIO_ARG],
+            "env": {
+                JEAN_MCP_SOCKET_ENV: socket_path,
+                JEAN_MCP_TOKEN_ENV: token,
+                JEAN_MCP_SESSION_ENV: session_id,
+                JEAN_MCP_DEPTH_ENV: depth,
+            }
         }
     }))
 }
 
 /// Merge the Jean MCP entry into an existing `--mcp-config` JSON string.
-///
-/// Accepts the user's existing config (as a JSON string) — may be None or empty.
-/// Returns Some(new_json_string) when injection happened, or None when the
-/// pref is off / server isn't running, in which case the caller should keep
-/// the existing config unchanged.
 pub async fn merge_into_mcp_config(
     app: &AppHandle,
     session_id: &str,
@@ -112,8 +85,7 @@ pub async fn merge_into_mcp_config(
 }
 
 /// Return the env var pair (key, value) to set on a spawned child process so
-/// it knows its Jean MCP recursion depth. Always set when Jean MCP is enabled
-/// so the depth chain stays accurate even when the child doesn't itself spawn.
+/// it knows its Jean MCP recursion depth.
 pub fn child_depth_env() -> (String, String) {
     (JEAN_MCP_DEPTH_ENV.to_string(), next_depth().to_string())
 }

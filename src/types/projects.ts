@@ -184,11 +184,13 @@ export interface WorktreeCreatingEvent {
   issue_number?: number
   security_alert_number?: number
   advisory_ghsa_id?: string
+  auto_open_in_jean?: boolean
 }
 
 /** Event payload when worktree creation completes */
 export interface WorktreeCreatedEvent {
   worktree: Worktree
+  auto_open_in_jean?: boolean
 }
 
 /** Event payload when worktree setup script completes (after worktree:created) */
@@ -244,6 +246,7 @@ export interface WorktreeArchivedEvent {
 /** Event payload when worktree is unarchived (restored) */
 export interface WorktreeUnarchivedEvent {
   worktree: Worktree
+  auto_open_in_jean?: boolean
 }
 
 /** Event payload when worktree is permanently deleted */

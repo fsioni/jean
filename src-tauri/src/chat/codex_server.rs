@@ -622,9 +622,12 @@ fn reader_loop(
             }
         };
 
-        log::debug!("[codex-raw] {line}");
+        let method_name = msg.get("method").and_then(|v| v.as_str());
+        if method_name != Some("item/agentMessage/delta") {
+            log::debug!("[codex-raw] {line}");
+        }
 
-        let has_method = msg.get("method").is_some();
+        let has_method = method_name.is_some();
         let has_id = msg.get("id").is_some();
         let has_result = msg.get("result").is_some();
         let has_error = msg.get("error").is_some();
@@ -659,7 +662,7 @@ fn reader_loop(
             let params = msg.get("params").cloned().unwrap_or(Value::Null);
 
             route_server_request(&active_sessions, id, method, params);
-        } else {
+        } else if method_name != Some("item/agentMessage/delta") {
             log::debug!("[codex-raw] Unclassified message: {line}");
         }
     }

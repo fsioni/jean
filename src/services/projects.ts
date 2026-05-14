@@ -549,6 +549,7 @@ export function useCreateWorktree() {
       return worktree
     },
     onSuccess: (worktree, { projectId, background: isBackground }) => {
+      const shouldAutoOpen = !isBackground
       // Check if this worktree was already resolved by an event handler
       // (e.g. unarchive_worktree emits worktree:unarchived which sets status: 'ready')
       const existing = queryClient.getQueryData<Worktree[]>(
@@ -593,7 +594,7 @@ export function useCreateWorktree() {
       // Auto-expand the project and select the new worktree
       const { expandProject, selectWorktree } = useProjectsStore.getState()
       expandProject(projectId)
-      if (!isBackground) {
+      if (shouldAutoOpen) {
         selectWorktree(pendingWorktree.id)
         toast.loading('Setting up worktree...', {
           id: `worktree-creating-${pendingWorktree.id}`,
@@ -782,7 +783,8 @@ export function useCreateWorktreeKeybinding() {
 /** Shared post-ready logic for both new and unarchived worktrees */
 function handleWorktreeReady(
   worktree: Worktree,
-  queryClient: ReturnType<typeof useQueryClient>
+  queryClient: ReturnType<typeof useQueryClient>,
+  autoOpenInJean = true
 ) {
   // Update cache
   const readyWorktree = { ...worktree, status: 'ready' as const }
@@ -801,13 +803,19 @@ function handleWorktreeReady(
     readyWorktree
   )
 
-  // Skip auto-navigation for background-created worktrees (CMD+Click)
-  const isBackground = useUIStore.getState().consumePendingBackgroundCreation()
+  // Skip auto-navigation for MCP/background-created worktrees. Only consume the
+  // CMD+Click background counter for interactive worktree creations so unrelated
+  // MCP events cannot steal it.
+  const isBackground = autoOpenInJean
+    ? useUIStore.getState().consumePendingBackgroundCreation()
+    : true
+  const shouldAutoOpen = autoOpenInJean && !isBackground
 
-  // Select in sidebar
+  // Keep the project visible, but only select the new worktree for interactive
+  // creations. MCP create_worktree defaults to autoOpenInJean=false.
   const { expandProject, selectWorktree } = useProjectsStore.getState()
   expandProject(worktree.project_id)
-  if (!isBackground) {
+  if (shouldAutoOpen) {
     selectWorktree(worktree.id)
   }
 
@@ -836,7 +844,7 @@ function handleWorktreeReady(
       })
   }
 
-  if (!isBackground) {
+  if (shouldAutoOpen) {
     const uiStore = useUIStore.getState()
 
     // If a session modal is already open on the project canvas (for example the
@@ -968,7 +976,7 @@ export function useWorktreeEvents() {
     // Listen for successful creation (fires before setup script runs)
     unlistenPromises.push(
       listen<WorktreeCreatedEvent>('worktree:created', event => {
-        const { worktree } = event.payload
+        const { worktree, auto_open_in_jean } = event.payload
         logger.info('Worktree created (background complete)', {
           id: worktree.id,
           name: worktree.name,
@@ -977,7 +985,7 @@ export function useWorktreeEvents() {
         // Update cache FIRST, then clear timeout — ensures the safety timeout
         // survives if the cache update is a no-op (e.g. cache was invalidated
         // between worktree:creating and worktree:created events).
-        handleWorktreeReady(worktree, queryClient)
+        handleWorktreeReady(worktree, queryClient, auto_open_in_jean ?? true)
         clearPendingTimeout(worktree.id)
 
         toast.dismiss(`worktree-creating-${worktree.id}`)
@@ -1235,10 +1243,10 @@ export function useWorktreeEvents() {
     // Listen for successful unarchive
     unlistenPromises.push(
       listen<WorktreeUnarchivedEvent>('worktree:unarchived', event => {
-        const { worktree } = event.payload
+        const { worktree, auto_open_in_jean } = event.payload
         logger.info('Worktree unarchived', { id: worktree.id })
 
-        handleWorktreeReady(worktree, queryClient)
+        handleWorktreeReady(worktree, queryClient, auto_open_in_jean ?? true)
         queryClient.invalidateQueries({ queryKey: ['archived-worktrees'] })
       })
     )
