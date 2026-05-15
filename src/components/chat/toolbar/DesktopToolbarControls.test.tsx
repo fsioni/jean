@@ -127,6 +127,23 @@ describe('DesktopToolbarControls', () => {
     expect(onSetExecutionMode).toHaveBeenCalledWith('build')
   })
 
+  it('shows a desktop Magic button that opens the magic modal', async () => {
+    const user = userEvent.setup()
+    const onOpenMagicModal = vi.fn()
+
+    renderDesktopToolbarControls({ onOpenMagicModal })
+
+    await user.click(screen.getByRole('button', { name: /magic/i }))
+
+    expect(onOpenMagicModal).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the desktop Magic button while questions are pending', () => {
+    renderDesktopToolbarControls({ hasPendingQuestions: true })
+
+    expect(screen.getByRole('button', { name: /magic/i })).toBeDisabled()
+  })
+
   it('hides Claude-only Max effort for Codex', () => {
     renderDesktopToolbarControls({
       isCodex: true,
