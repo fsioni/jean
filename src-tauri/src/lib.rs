@@ -2104,9 +2104,7 @@ async fn patch_preferences(app: AppHandle, patch: Value) -> Result<(), String> {
 fn apply_macos_window_opacity(window: &tauri::WebviewWindow, opaque: bool) -> Result<(), String> {
     use objc2_app_kit::{NSColor, NSWindow};
 
-    let ns_window_ptr = window
-        .ns_window()
-        .map_err(|e| format!("ns_window: {e}"))?;
+    let ns_window_ptr = window.ns_window().map_err(|e| format!("ns_window: {e}"))?;
     if ns_window_ptr.is_null() {
         return Err("ns_window pointer is null".into());
     }
@@ -3342,6 +3340,10 @@ pub fn run() {
                         });
                         log::info!("Applied window vibrancy from saved preferences");
                     } else {
+                        // Match set_window_vibrancy(false): clear any effect
+                        // before going opaque so no NSVisualEffectView lingers
+                        // in the layer tree for the compositor to blend.
+                        let _ = window.set_effects(None);
                         let _ = apply_macos_window_opacity(&window, true);
                         log::info!("Window opaque (vibrancy disabled in preferences)");
                     }

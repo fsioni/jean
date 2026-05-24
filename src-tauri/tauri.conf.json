@@ -28,14 +28,7 @@
         "alwaysOnTop": false,
         "transparent": true,
         "shadow": true,
-        "dragDropEnabled": true,
-        "windowEffects": {
-          "effects": [
-            "sidebar"
-          ],
-          "radius": 12,
-          "state": "active"
-        }
+        "dragDropEnabled": true
       }
     ],
     "security": {
@@ -43,10 +36,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": [
-            "**/.jean/images/**",
-            "$APPDATA/**"
-          ],
+          "allow": ["**/.jean/images/**", "$APPDATA/**"],
           "requireLiteralLeadingDot": false
         }
       }

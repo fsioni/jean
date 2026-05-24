@@ -667,7 +667,11 @@ function ScheduleWakeupCountdown({ toolCallId }: ScheduleWakeupIndicatorProps) {
   if (status === 'pending') {
     if (remaining == null) return null
     return (
-      <span>{remaining <= 0 ? 'firing…' : `fires in ${formatWakeupDelay(remaining)}`}</span>
+      <span>
+        {remaining <= 0
+          ? 'firing…'
+          : `fires in ${formatWakeupDelay(remaining)}`}
+      </span>
     )
   }
   return <span>fired</span>

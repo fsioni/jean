@@ -642,7 +642,10 @@ kbd {
 }
 
 .window-blurred .animate-wave,
+.window-blurred .animate-blink,
+.window-blurred .animate-border-spin,
 .window-blurred .animate-icon-glow,
+.window-blurred .animate-dots,
 .window-blurred .card-border-spin::before,
 .window-blurred .square-spinner::before {
   animation-play-state: paused !important;
