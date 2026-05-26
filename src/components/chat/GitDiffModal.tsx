@@ -211,6 +211,21 @@ const DIFF_TYPE_SHORTCUTS: Record<DiffType, string> = {
   commits: '3',
 }
 
+const COMMIT_SHORTCUT_LABEL = '⌘C'
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.isContentEditable
+  )
+}
+
+function hasSelectedText(): boolean {
+  return (window.getSelection()?.toString().trim().length ?? 0) > 0
+}
+
 /**
  * Modal dialog for viewing GitHub-style git diffs using @pierre/diffs
  */
@@ -673,6 +688,39 @@ export function GitDiffModal({
   // Check if there are any files to display
   const hasFiles = flattenedFiles.length > 0
 
+  const canCommitFromDiff =
+    activeDiffType === 'uncommitted' &&
+    !!diff &&
+    filteredFiles.length > 0 &&
+    !isCommitting
+
+  // Commit selected (or all) uncommitted files with Cmd+C from the diff modal.
+  // Preserve normal copy behavior while typing or when any text is selected.
+  useEffect(() => {
+    if (!diffRequest || !canCommitFromDiff) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        !e.metaKey ||
+        e.ctrlKey ||
+        e.altKey ||
+        e.shiftKey ||
+        e.key.toLowerCase() !== 'c' ||
+        isEditableKeyboardTarget(e.target) ||
+        hasSelectedText()
+      ) {
+        return
+      }
+
+      e.preventDefault()
+      e.stopPropagation()
+      handleCommitFromDiff()
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [diffRequest, canCommitFromDiff, handleCommitFromDiff])
+
   // Handle file selection from sidebar
   // Use transition to keep sidebar responsive while diff renders
   const handleSelectFile = useCallback((index: number) => {
@@ -1055,12 +1103,20 @@ export function GitDiffModal({
                           <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0" />
                         )}
                         <span>{commitButtonLabel}</span>
+                        <Kbd className="hidden h-4 min-w-4 bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground/80 sm:inline-flex">
+                          {COMMIT_SHORTCUT_LABEL}
+                        </Kbd>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {selectedFileCount > 0
-                        ? `Commit ${selectedFileCount} selected file${selectedFileCount !== 1 ? 's' : ''}`
-                        : 'Commit all changes'}
+                      <div className="flex items-center gap-2">
+                        <span>
+                          {selectedFileCount > 0
+                            ? `Commit ${selectedFileCount} selected file${selectedFileCount !== 1 ? 's' : ''}`
+                            : 'Commit all changes'}
+                        </span>
+                        <Kbd>{COMMIT_SHORTCUT_LABEL}</Kbd>
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 )}

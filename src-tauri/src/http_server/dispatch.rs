@@ -376,6 +376,20 @@ pub async fn dispatch_command(
             }
             to_value(result)
         }
+        "link_worktree_pr" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
+            let result = crate::projects::link_worktree_pr(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                pr_number,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
         "detect_open_pr_for_branch" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let result =

@@ -5270,6 +5270,84 @@ pub struct DetectPrResponse {
     pub title: String,
 }
 
+/// Response from manually linking a PR to a worktree.
+#[derive(Serialize, Clone)]
+pub struct LinkWorktreePrResponse {
+    pub pr_number: u32,
+    pub pr_url: String,
+    pub title: String,
+}
+
+/// Validate and link a GitHub PR to a worktree by exact PR number.
+#[tauri::command]
+pub async fn link_worktree_pr(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    pr_number: u32,
+) -> Result<LinkWorktreePrResponse, String> {
+    if pr_number == 0 {
+        return Err("PR number must be greater than 0".to_string());
+    }
+
+    log::trace!("Linking PR #{pr_number} to worktree {worktree_id}");
+
+    let gh = resolve_gh_binary(&app);
+    let output = silent_command(&gh)
+        .args([
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--json",
+            "number,url,title",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("gh auth login") || stderr.contains("authentication") {
+            return Err("GitHub CLI not authenticated. Run 'gh auth login' first.".to_string());
+        }
+        if stderr.contains("Could not resolve") || stderr.contains("not found") {
+            return Err(format!("PR #{pr_number} not found"));
+        }
+        return Err(format!("Failed to load PR #{pr_number}: {stderr}"));
+    }
+
+    let view_json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse PR #{pr_number}: {e}"))?;
+    let viewed_pr_number = view_json["number"].as_u64().unwrap_or(0) as u32;
+    let pr_url = view_json["url"].as_str().unwrap_or("").to_string();
+    let title = view_json["title"].as_str().unwrap_or("").to_string();
+
+    if viewed_pr_number == 0 || pr_url.is_empty() {
+        return Err(format!("PR #{pr_number} did not return a valid URL"));
+    }
+
+    let mut data = load_projects_data(&app)?;
+    let worktree = data
+        .worktrees
+        .iter_mut()
+        .find(|w| w.id == worktree_id)
+        .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
+
+    worktree.pr_number = Some(viewed_pr_number);
+    worktree.pr_url = Some(pr_url.clone());
+    worktree.pr_push_remote = None;
+    worktree.pr_push_branch = None;
+
+    save_projects_data(&app, &data)?;
+
+    log::trace!("Successfully linked PR #{viewed_pr_number} to worktree {worktree_id}");
+    Ok(LinkWorktreePrResponse {
+        pr_number: viewed_pr_number,
+        pr_url,
+        title,
+    })
+}
+
 /// Detect an open PR for the current branch of a worktree without linking it.
 #[tauri::command]
 pub async fn detect_open_pr_for_branch(

@@ -9,6 +9,7 @@ import type {
   Project,
   Worktree,
   DetectPrResponse,
+  LinkWorktreePrResponse,
   WorktreeCreatingEvent,
   WorktreeCreatedEvent,
   WorktreeCreateErrorEvent,
@@ -2365,6 +2366,29 @@ export async function saveWorktreePr(
   logger.debug('Saving PR info', { worktreeId, prNumber, prUrl })
   await invoke('save_worktree_pr', { worktreeId, prNumber, prUrl })
   logger.info('PR info saved successfully', { worktreeId, prNumber })
+}
+
+/**
+ * Validate and link a GitHub PR to a worktree by number.
+ * Stores the same PR fields used by PR comments/review/push flows.
+ */
+export async function linkWorktreePr(
+  worktreeId: string,
+  worktreePath: string,
+  prNumber: number
+): Promise<LinkWorktreePrResponse> {
+  if (!isTauri()) {
+    throw new Error('Not in Tauri context')
+  }
+
+  logger.debug('Linking PR to worktree', { worktreeId, worktreePath, prNumber })
+  const result = await invoke<LinkWorktreePrResponse>('link_worktree_pr', {
+    worktreeId,
+    worktreePath,
+    prNumber,
+  })
+  logger.info('PR linked successfully', { worktreeId, prNumber })
+  return result
 }
 
 /**

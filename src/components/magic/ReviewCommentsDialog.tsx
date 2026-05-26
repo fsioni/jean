@@ -122,6 +122,33 @@ function reviewStateLabel(state: string): string {
   }
 }
 
+function formatInlineReviewComment(c: GitHubReviewComment): string {
+  const lineInfo = c.line ? `:${c.line}` : ''
+  return `### File: ${c.path}${lineInfo}
+**@${c.author.login}** (${c.createdAt}):
+${c.body}
+
+\`\`\`diff
+${c.diffHunk}
+\`\`\``
+}
+
+function formatConversationReviewItem(item: ConversationItem): string {
+  if (item.kind === 'review') {
+    const r = item.data
+    const date = r.submittedAt ?? ''
+    return `### Review (${reviewStateLabel(r.state)})
+**@${r.author.login}** — ${date}:
+${r.body}`
+  }
+
+  const c = item.data
+  const date = getCreatedAt(c as unknown as Record<string, unknown>)
+  return `### PR Comment
+**@${c.author.login}** — ${date}:
+${c.body}`
+}
+
 function ReviewStateBadge({ state }: { state: string }) {
   const upper = state.toUpperCase()
   const isApproved = upper === 'APPROVED'
@@ -337,78 +364,57 @@ export function ReviewCommentsDialog() {
     conversationItems.length,
   ])
 
-  const handleSendToChat = useCallback(() => {
-    if (!prNumber) return
+  const buildPrompt = useCallback(
+    (formattedComments: string) => {
+      if (!prNumber) return ''
 
-    const currentSelected = tab === 'inline' ? selected : conversationSelected
-    if (currentSelected.size === 0) return
+      const customPrompt = preferences?.magic_prompts?.review_comments
+      const template =
+        customPrompt && customPrompt.trim()
+          ? customPrompt
+          : DEFAULT_REVIEW_COMMENTS_PROMPT
+      return template
+        .replace(/\{prNumber\}/g, String(prNumber))
+        .replace(/\{reviewComments\}/g, formattedComments)
+    },
+    [prNumber, preferences?.magic_prompts?.review_comments]
+  )
 
-    setIsSending(true)
-
-    let formattedComments: string
-
+  const getSelectedFormattedComments = useCallback((): string[] => {
     if (tab === 'inline') {
-      formattedComments = comments
+      return comments
         .filter((_, i) => selected.has(i))
-        .map(c => {
-          const lineInfo = c.line ? `:${c.line}` : ''
-          return `### File: ${c.path}${lineInfo}
-**@${c.author.login}** (${c.createdAt}):
-${c.body}
-
-\`\`\`diff
-${c.diffHunk}
-\`\`\``
-        })
-        .join('\n\n---\n\n')
-    } else {
-      formattedComments = conversationItems
-        .filter((_, i) => conversationSelected.has(i))
-        .map(item => {
-          if (item.kind === 'review') {
-            const r = item.data
-            const date = r.submittedAt ?? ''
-            return `### Review (${reviewStateLabel(r.state)})
-**@${r.author.login}** — ${date}:
-${r.body}`
-          } else {
-            const c = item.data
-            const date = getCreatedAt(c as unknown as Record<string, unknown>)
-            return `### PR Comment
-**@${c.author.login}** — ${date}:
-${c.body}`
-          }
-        })
-        .join('\n\n---\n\n')
+        .map(formatInlineReviewComment)
     }
 
-    // Build prompt from magic prompt template
-    const customPrompt = preferences?.magic_prompts?.review_comments
-    const template =
-      customPrompt && customPrompt.trim()
-        ? customPrompt
-        : DEFAULT_REVIEW_COMMENTS_PROMPT
-    const prompt = template
-      .replace(/\{prNumber\}/g, String(prNumber))
-      .replace(/\{reviewComments\}/g, formattedComments)
+    return conversationItems
+      .filter((_, i) => conversationSelected.has(i))
+      .map(formatConversationReviewItem)
+  }, [tab, comments, selected, conversationItems, conversationSelected])
 
-    // Close dialog
-    setReviewCommentsModalOpen(false)
+  const dispatchReviewCommentsPrompts = useCallback(
+    (detail: {
+      prompt?: string
+      prompts?: string[]
+      executionMode?: 'plan' | 'build' | 'yolo'
+    }) => {
+      setReviewCommentsModalOpen(false)
 
-    // Dispatch to ChatWindow via magic-command event or pending command
-    const chatState = useChatStore.getState()
-    if (chatState.activeWorktreePath) {
-      window.dispatchEvent(
-        new CustomEvent('magic-command', {
-          detail: { command: 'review-comments', prompt },
-        })
-      )
-    } else {
+      const chatState = useChatStore.getState()
+      if (chatState.activeWorktreePath) {
+        window.dispatchEvent(
+          new CustomEvent('magic-command', {
+            detail: { command: 'review-comments', ...detail },
+          })
+        )
+        return
+      }
+
       const worktreeId = selectedWorktreeId
       if (worktreeId && worktree?.path) {
         useChatStore
           .getState()
-          .setPendingMagicCommand({ command: 'review-comments', prompt })
+          .setPendingMagicCommand({ command: 'review-comments', ...detail })
         window.dispatchEvent(
           new CustomEvent('open-session-modal', {
             detail: {
@@ -419,18 +425,43 @@ ${c.body}`
           })
         )
       }
-    }
+    },
+    [selectedWorktreeId, setReviewCommentsModalOpen, worktree?.path]
+  )
+
+  const handleSendToChat = useCallback(() => {
+    if (!prNumber) return
+
+    const formatted = getSelectedFormattedComments()
+    if (formatted.length === 0) return
+
+    setIsSending(true)
+    dispatchReviewCommentsPrompts({
+      prompt: buildPrompt(formatted.join('\n\n---\n\n')),
+    })
   }, [
-    tab,
-    selected,
-    comments,
-    conversationSelected,
-    conversationItems,
     prNumber,
-    preferences?.magic_prompts?.review_comments,
-    setReviewCommentsModalOpen,
-    selectedWorktreeId,
-    worktree?.path,
+    getSelectedFormattedComments,
+    dispatchReviewCommentsPrompts,
+    buildPrompt,
+  ])
+
+  const handleSendSeparately = useCallback(() => {
+    if (!prNumber) return
+
+    const formatted = getSelectedFormattedComments()
+    if (formatted.length === 0) return
+
+    setIsSending(true)
+    dispatchReviewCommentsPrompts({
+      prompts: formatted.map(buildPrompt),
+      executionMode: 'plan',
+    })
+  }, [
+    prNumber,
+    getSelectedFormattedComments,
+    dispatchReviewCommentsPrompts,
+    buildPrompt,
   ])
 
   const hasAnyComments = comments.length > 0 || conversationItems.length > 0
@@ -696,6 +727,19 @@ ${c.body}`
                 onClick={() => handleOpenChange(false)}
               >
                 Cancel
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={activeSelected.size === 0 || isSending}
+                onClick={handleSendSeparately}
+              >
+                {isSending ? (
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <MessagesSquare className="size-3.5 mr-1.5" />
+                )}
+                Send Separately ({activeSelected.size})
               </Button>
               <Button
                 size="sm"

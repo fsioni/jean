@@ -355,6 +355,13 @@ export interface DetectPrResponse {
   title: string
 }
 
+/** Response from manually linking a PR to a worktree */
+export interface LinkWorktreePrResponse {
+  pr_number: number
+  pr_url: string
+  title: string
+}
+
 // =============================================================================
 // GitHub PR Merge
 // =============================================================================
