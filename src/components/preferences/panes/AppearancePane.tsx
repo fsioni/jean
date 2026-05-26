@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import {
@@ -16,6 +16,7 @@ import {
   syntaxThemeDarkOptions,
   syntaxThemeLightOptions,
   fileEditModeOptions,
+  terminalBackgroundOptions,
   FONT_SIZE_DEFAULT,
   ZOOM_LEVEL_DEFAULT,
   uiFontScaleTicks,
@@ -25,8 +26,11 @@ import {
   type ChatFont,
   type SyntaxTheme,
   type FileEditMode,
+  type TerminalBackgroundMode,
 } from '@/types/preferences'
 import { isMacOS } from '@/lib/platform'
+import { Input } from '@/components/ui/input'
+import { isValidHex } from '@/lib/terminal-theme'
 import { SettingsSection } from '../SettingsSection'
 
 const InlineField: React.FC<{
@@ -113,6 +117,84 @@ export const AppearancePane: React.FC = () => {
     [patchPreferences]
   )
 
+  const handleTerminalBackgroundModeChange = useCallback(
+    (value: TerminalBackgroundMode) => {
+      patchPreferences.mutate({ terminal_background: value })
+    },
+    [patchPreferences]
+  )
+
+  // Custom terminal color: keep an uncommitted draft so the hex field can be
+  // typed into character by character, and debounce persistence so dragging
+  // the native color picker does not flood the backend with disk writes.
+  const terminalMode = preferences?.terminal_background ?? 'auto'
+  const savedCustomColor = preferences?.terminal_background_custom ?? null
+  const [customColorDraft, setCustomColorDraft] = useState<string | null>(null)
+  const customSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const customColorValue = customColorDraft ?? savedCustomColor ?? ''
+
+  // Drop the draft whenever the mode is no longer "custom" so the field
+  // re-syncs to the saved value next time it is shown.
+  useEffect(() => {
+    if (terminalMode !== 'custom') setCustomColorDraft(null)
+  }, [terminalMode])
+
+  useEffect(() => {
+    return () => {
+      if (customSaveTimer.current) clearTimeout(customSaveTimer.current)
+    }
+  }, [])
+
+  const scheduleCustomColorSave = useCallback(
+    (value: string | null) => {
+      if (customSaveTimer.current) clearTimeout(customSaveTimer.current)
+      customSaveTimer.current = setTimeout(() => {
+        customSaveTimer.current = null
+        patchPreferences.mutate({ terminal_background_custom: value })
+      }, 200)
+    },
+    [patchPreferences]
+  )
+
+  const handleCustomColorPick = useCallback(
+    (value: string) => {
+      setCustomColorDraft(value)
+      scheduleCustomColorSave(value)
+    },
+    [scheduleCustomColorSave]
+  )
+
+  const handleCustomColorText = useCallback(
+    (value: string) => {
+      setCustomColorDraft(value)
+      const trimmed = value.trim()
+      if (trimmed === '') {
+        scheduleCustomColorSave(null)
+      } else if (isValidHex(trimmed)) {
+        scheduleCustomColorSave(trimmed)
+      }
+    },
+    [scheduleCustomColorSave]
+  )
+
+  const handleCustomColorBlur = useCallback(() => {
+    if (customSaveTimer.current) {
+      clearTimeout(customSaveTimer.current)
+      customSaveTimer.current = null
+    }
+    const trimmed = (customColorDraft ?? '').trim()
+    if (customColorDraft !== null) {
+      if (trimmed === '') {
+        patchPreferences.mutate({ terminal_background_custom: null })
+      } else if (isValidHex(trimmed)) {
+        patchPreferences.mutate({ terminal_background_custom: trimmed })
+      }
+    }
+    // Resync the field to the persisted value (discards invalid drafts).
+    setCustomColorDraft(null)
+  }, [customColorDraft, patchPreferences])
+
   const handleFileEditModeChange = useCallback(
     (value: FileEditMode) => {
       patchPreferences.mutate({ file_edit_mode: value })
@@ -197,6 +279,59 @@ export const AppearancePane: React.FC = () => {
               </SelectContent>
             </Select>
           </InlineField>
+
+          <InlineField
+            label="Terminal background"
+            description="Pick a background color for the terminal panel"
+          >
+            <Select
+              value={terminalMode}
+              onValueChange={value =>
+                handleTerminalBackgroundModeChange(
+                  value as TerminalBackgroundMode
+                )
+              }
+              disabled={patchPreferences.isPending}
+            >
+              <SelectTrigger className="w-96">
+                <SelectValue placeholder="Select" />
+              </SelectTrigger>
+              <SelectContent>
+                {terminalBackgroundOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </InlineField>
+
+          {terminalMode === 'custom' && (
+            <InlineField
+              label="Custom terminal color"
+              description="Choose any color you like for the terminal background"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={
+                    isValidHex(customColorValue) ? customColorValue : '#101010'
+                  }
+                  onChange={e => handleCustomColorPick(e.target.value)}
+                  className="h-9 w-12 cursor-pointer rounded border"
+                  aria-label="Pick terminal background color"
+                />
+                <Input
+                  value={customColorValue}
+                  onChange={e => handleCustomColorText(e.target.value)}
+                  onBlur={handleCustomColorBlur}
+                  placeholder="#101010"
+                  className="w-40 font-mono"
+                  spellCheck={false}
+                />
+              </div>
+            </InlineField>
+          )}
         </div>
       </SettingsSection>
 

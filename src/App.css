@@ -615,16 +615,6 @@ kbd {
   scrollbar-color: var(--border) transparent;
 }
 
-.xterm,
-.xterm .xterm-viewport,
-.xterm .xterm-screen,
-.xterm .xterm-screen canvas,
-[data-terminal-emulator],
-[data-terminal-emulator] canvas {
-  background-color: var(--background) !important;
-}
-
 .xterm .composition-view {
-  background-color: var(--background) !important;
   color: var(--foreground) !important;
 }

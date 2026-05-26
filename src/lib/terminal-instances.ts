@@ -36,6 +36,10 @@ import type {
   TerminalStartedEvent,
   TerminalStoppedEvent,
 } from '@/types/terminal'
+import {
+  resolveTerminalTheme,
+  type ResolvedTerminalTheme,
+} from '@/lib/terminal-theme'
 
 type TerminalRenderer = 'xterm' | 'ghostty-web'
 type EmbeddedTerminal = XtermTerminal | GhosttyWebTerminal
@@ -104,7 +108,9 @@ function getConfiguredRenderer(): TerminalRenderer {
 }
 
 function ensureGhosttyWebReady(): Promise<void> {
-  ghosttyWebReady ??= initGhosttyWeb()
+  if (!ghosttyWebReady) {
+    ghosttyWebReady = initGhosttyWeb()
+  }
   return ghosttyWebReady
 }
 
@@ -380,6 +386,26 @@ function ensureTransportStatusBanner(): void {
 const FALLBACK_TERMINAL_BACKGROUND = '#101010'
 const FALLBACK_TERMINAL_FOREGROUND = '#fafafa'
 
+let cachedPrefs: Pick<
+  AppPreferences,
+  'terminal_background' | 'terminal_background_custom'
+> = {
+  terminal_background: 'auto',
+  terminal_background_custom: null,
+}
+
+export function setTerminalPreferences(
+  prefs: Pick<
+    AppPreferences,
+    'terminal_background' | 'terminal_background_custom'
+  >
+): void {
+  cachedPrefs = {
+    terminal_background: prefs.terminal_background,
+    terminal_background_custom: prefs.terminal_background_custom,
+  }
+}
+
 function getRootColorVariable(name: string, fallback: string): string {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return fallback
@@ -392,7 +418,7 @@ function getRootColorVariable(name: string, fallback: string): string {
   return value || fallback
 }
 
-function getTerminalTheme() {
+function getThemeFromCss(): ResolvedTerminalTheme {
   const foreground = getRootColorVariable(
     '--card-foreground',
     FALLBACK_TERMINAL_FOREGROUND
@@ -733,6 +759,23 @@ function handleTerminalStopped(event: TerminalStoppedEvent): void {
   } else if (isRunTerminal) {
     // Non-zero exit on a run terminal → mark as failed (red indicator in sidebar)
     useTerminalStore.getState().setTerminalFailed(terminalId, true)
+  }
+}
+
+function getTerminalTheme(): ResolvedTerminalTheme {
+  return resolveTerminalTheme(cachedPrefs, getThemeFromCss)
+}
+
+export function applyThemeToAllTerminals(): void {
+  const theme = getTerminalTheme()
+  for (const inst of instances.values()) {
+    if (!inst.terminal) continue
+    inst.terminal.options.theme = theme
+    try {
+      inst.terminal.refresh(0, Math.max(0, inst.terminal.rows - 1))
+    } catch {
+      // ignore — terminal may be in mid-dispose
+    }
   }
 }
 

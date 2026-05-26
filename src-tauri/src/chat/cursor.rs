@@ -1180,9 +1180,7 @@ pub fn execute_cursor(
         if let Some(id) = chat_id {
             response.chat_id = id;
         } else if is_new_chat {
-            log::warn!(
-                "Cursor new chat produced no chat_id; next message will start a fresh chat"
-            );
+            log::warn!("Cursor new chat produced no chat_id; next message will start a fresh chat");
         }
     }
 

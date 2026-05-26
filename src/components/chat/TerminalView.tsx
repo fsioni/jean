@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import { Plus, X, Minus, Terminal, ChevronUp } from 'lucide-react'
 import { invoke } from '@/lib/transport'
 import { useTerminal } from '@/hooks/useTerminal'
+import { useTerminalBackgroundColor } from '@/hooks/useTerminalThemeSync'
 import {
   isPanelTerminal,
   useTerminalStore,
@@ -46,6 +47,7 @@ const TerminalTabContent = memo(function TerminalTabContent({
   isWorktreeActive?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const terminalBg = useTerminalBackgroundColor()
   const { initTerminal, fit, focus } = useTerminal({
     terminalId: terminal.id,
     worktreeId,
@@ -99,7 +101,10 @@ const TerminalTabContent = memo(function TerminalTabContent({
   }, [canAttach, fit, focus])
 
   return (
-    <div className={cn('h-full w-full p-2', !isActive && 'hidden')}>
+    <div
+      className={cn('h-full w-full p-2', !isActive && 'hidden')}
+      style={{ backgroundColor: terminalBg }}
+    >
       <div ref={containerRef} className="h-full w-full overflow-hidden" />
     </div>
   )

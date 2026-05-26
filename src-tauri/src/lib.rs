@@ -263,6 +263,10 @@ pub struct AppPreferences {
     pub coderabbit_cli_source: String, // CodeRabbit CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default)]
     pub expand_tool_calls_by_default: bool, // Expand all tool call collapsibles by default (default: false)
+    #[serde(default = "default_terminal_background")]
+    pub terminal_background: String, // "auto" | "light" | "dark" | "custom"
+    #[serde(default)]
+    pub terminal_background_custom: Option<String>, // hex like "#101010"; only used when mode == "custom"
     #[serde(default = "default_auto_update_ai_backends")]
     pub auto_update_ai_backends: bool, // Automatically update AI backend CLIs when a new version is available
     #[serde(default = "default_jean_mcp_enabled")]
@@ -291,6 +295,10 @@ fn default_true() -> Option<bool> {
 
 fn default_restore_last_session() -> bool {
     true
+}
+
+fn default_terminal_background() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1659,6 +1667,8 @@ impl Default for AppPreferences {
             gh_cli_source: default_cli_source(),
             coderabbit_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
+            terminal_background: default_terminal_background(),
+            terminal_background_custom: None,
             auto_update_ai_backends: default_auto_update_ai_backends(),
             jean_mcp_enabled: default_jean_mcp_enabled(),
             jean_mcp_max_depth: default_jean_mcp_max_depth(),
