@@ -76,15 +76,29 @@ export function useAutoArchiveOnMerge() {
               return
             }
 
-            // Safety: never auto-archive/delete when worktree path matches project path
-            if (worktree.path === project.path) {
-              logger.debug(
-                'Worktree path matches project path, skipping auto-archive',
-                {
-                  worktreeId: status.worktree_id,
-                  worktreePath: worktree.path,
-                }
+            // Base sessions use the project path directly. When a linked PR is
+            // merged, clean up only the PR association so the base session stays open.
+            if (
+              worktree.session_type === 'base' ||
+              worktree.path === project.path
+            ) {
+              logger.info('Clearing merged PR from base session', {
+                worktreeId: status.worktree_id,
+                prNumber: status.pr_number,
+              })
+
+              await invoke('clear_worktree_pr', {
+                worktreeId: status.worktree_id,
+              })
+
+              queryClient.invalidateQueries({
+                queryKey: projectsQueryKeys.worktrees(project.id),
+              })
+
+              toast.success(
+                `Cleaned up PR #${status.pr_number} from base session "${worktree.name}"`
               )
+
               return
             }
 

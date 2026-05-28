@@ -15,6 +15,7 @@ import {
   MessageSquare,
   RefreshCw,
   Sparkles,
+  Undo2,
   Wand2,
 } from 'lucide-react'
 import {
@@ -38,6 +39,7 @@ interface MobileToolbarMenuProps {
   onLoadContext: () => void
   onCommit: () => void
   onCommitAndPush: () => void
+  onRevertLastCommit: () => void
   onOpenPr: () => void
   onReview: () => void
   onMerge: () => void
@@ -56,6 +58,7 @@ export function MobileToolbarMenu({
   onLoadContext,
   onCommit,
   onCommitAndPush,
+  onRevertLastCommit,
   onOpenPr,
   onReview,
   onMerge,
@@ -168,6 +171,23 @@ export function MobileToolbarMenu({
             )}
           >
             P
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            setMenuOpen(false)
+            onRevertLastCommit()
+          }}
+        >
+          <Undo2 className="h-4 w-4" />
+          Revert Commit
+          <span
+            className={cn(
+              'ml-auto text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded',
+              isMobile && 'hidden'
+            )}
+          >
+            Z
           </span>
         </DropdownMenuItem>
 

@@ -272,9 +272,19 @@ interface ChatUIState {
   codexGoals: Record<string, string>
 
   // Pending magic command to execute when ChatWindow mounts (from canvas navigation)
-  pendingMagicCommand: { command: string; prompt?: string } | null
+  pendingMagicCommand: {
+    command: string
+    prompt?: string
+    prompts?: string[]
+    executionMode?: ExecutionMode
+  } | null
   setPendingMagicCommand: (
-    cmd: { command: string; prompt?: string } | null
+    cmd: {
+      command: string
+      prompt?: string
+      prompts?: string[]
+      executionMode?: ExecutionMode
+    } | null
   ) => void
 
   // Actions - Session management

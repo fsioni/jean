@@ -32,6 +32,7 @@ interface UseToolbarHandlersParams {
         selected_opencode_model?: string
         selected_cursor_model?: string
         custom_cli_profiles?: { name: string }[]
+        default_execution_mode?: ExecutionMode
       }
     | undefined
   queryClient: QueryClient
@@ -77,9 +78,16 @@ export function useToolbarHandlers({
 }: UseToolbarHandlersParams) {
   const persistToolbarBackendAndModel = useCallback(
     (backend: 'claude' | 'codex' | 'opencode' | 'cursor', model: string) => {
+      const currentMode =
+        (activeSessionId
+          ? useChatStore.getState().executionModes[activeSessionId]
+          : undefined) ??
+        session?.selected_execution_mode ??
+        preferences?.default_execution_mode ??
+        'plan'
       const nextExecutionMode = normalizeExecutionModeForBackend(
         backend,
-        session?.selected_execution_mode ?? 'plan'
+        currentMode
       )
 
       if (activeSessionId && activeWorktreeId && activeWorktreePath) {
@@ -150,6 +158,7 @@ export function useToolbarHandlers({
       activeWorktreeId,
       activeWorktreePath,
       queryClient,
+      preferences?.default_execution_mode,
       session?.selected_execution_mode,
       setSessionBackend,
       setSessionModel,

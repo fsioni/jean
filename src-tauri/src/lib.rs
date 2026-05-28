@@ -265,6 +265,10 @@ pub struct AppPreferences {
     pub expand_tool_calls_by_default: bool, // Expand all tool call collapsibles by default (default: false)
     #[serde(default)]
     pub window_vibrancy: bool, // macOS window vibrancy effect (high GPU cost, default false)
+    #[serde(default = "default_terminal_background")]
+    pub terminal_background: String, // "auto" | "light" | "dark" | "custom"
+    #[serde(default)]
+    pub terminal_background_custom: Option<String>, // hex like "#101010"; only used when mode == "custom"
     #[serde(default = "default_auto_update_ai_backends")]
     pub auto_update_ai_backends: bool, // Automatically update AI backend CLIs when a new version is available
     #[serde(default = "default_jean_mcp_enabled")]
@@ -293,6 +297,10 @@ fn default_true() -> Option<bool> {
 
 fn default_restore_last_session() -> bool {
     true
+}
+
+fn default_terminal_background() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1662,6 +1670,8 @@ impl Default for AppPreferences {
             coderabbit_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
             window_vibrancy: false,
+            terminal_background: default_terminal_background(),
+            terminal_background_custom: None,
             auto_update_ai_backends: default_auto_update_ai_backends(),
             jean_mcp_enabled: default_jean_mcp_enabled(),
             jean_mcp_max_depth: default_jean_mcp_max_depth(),
@@ -3664,6 +3674,7 @@ pub fn run() {
             projects::get_pr_prompt,
             projects::get_review_prompt,
             projects::save_worktree_pr,
+            projects::link_worktree_pr,
             projects::detect_and_link_pr,
             projects::detect_open_pr_for_branch,
             projects::clear_worktree_pr,
@@ -3690,6 +3701,8 @@ pub fn run() {
             projects::list_claude_commands,
             projects::resolve_claude_command,
             projects::list_codex_skills,
+            projects::list_opencode_skills,
+            projects::list_cursor_skills,
             projects::list_plugin_skills,
             // GitHub issues commands
             projects::list_github_issues,

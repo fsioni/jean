@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Zap } from 'lucide-react'
 import { dismissibleToast } from '@/lib/dismissible-toast'
+import { invoke } from '@/lib/transport'
 import { useUIStore } from '@/store/ui-store'
 import {
   gitPush,
@@ -43,6 +44,7 @@ import {
   BackendLabel,
   getBackendPlainLabel,
 } from '@/components/ui/backend-label'
+import type { RevertCommitResponse } from '@/types/projects'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export {
@@ -301,6 +303,22 @@ export const ChatToolbar = memo(function ChatToolbar({
     })
   }, [activeWorktreePath, worktreeId, projectId, prNumber, pickRemoteOrRun])
 
+  const handleRevertLastCommit = useCallback(async () => {
+    if (!activeWorktreePath) return
+    const revertToast = dismissibleToast.loading('Reverting last commit...')
+    try {
+      const result = await invoke<RevertCommitResponse>(
+        'revert_last_local_commit',
+        { worktreePath: activeWorktreePath }
+      )
+      triggerImmediateGitPoll()
+      if (projectId) fetchWorktreesStatus(projectId)
+      revertToast.success(`Reverted: ${result.commit_message}`)
+    } catch (error) {
+      revertToast.error(`Failed to revert: ${error}`)
+    }
+  }, [activeWorktreePath, projectId])
+
   const canSend = hasInputValue || hasPendingAttachments
 
   return (
@@ -320,6 +338,7 @@ export const ChatToolbar = memo(function ChatToolbar({
           onLoadContext={onLoadContext}
           onCommit={onCommit}
           onCommitAndPush={onCommitAndPush}
+          onRevertLastCommit={handleRevertLastCommit}
           onOpenPr={onOpenPr}
           onReview={onReview}
           onMerge={onMerge}

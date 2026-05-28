@@ -23,6 +23,8 @@ export const skillQueryKeys = {
       worktreePath ?? 'global',
     ] as const,
   codexSkills: () => [...skillQueryKeys.all, 'codex', 'skills'] as const,
+  opencodeSkills: () => [...skillQueryKeys.all, 'opencode', 'skills'] as const,
+  cursorSkills: () => [...skillQueryKeys.all, 'cursor', 'skills'] as const,
   pluginSkills: () => [...skillQueryKeys.all, 'plugin', 'skills'] as const,
 }
 
@@ -74,25 +76,57 @@ export function useClaudeCommands(worktreePath?: string | null) {
   })
 }
 
-export function useCodexSkills() {
+function useBackendSkills(
+  backend: 'codex' | 'opencode' | 'cursor',
+  command: 'list_codex_skills' | 'list_opencode_skills' | 'list_cursor_skills',
+  queryKey: readonly unknown[],
+  label: string
+) {
   return useQuery({
-    queryKey: skillQueryKeys.codexSkills(),
+    queryKey,
     queryFn: async (): Promise<ClaudeSkill[]> => {
       if (!isTauri()) return []
 
       try {
-        logger.debug('Loading Codex CLI skills')
-        const skills = await invoke<ClaudeSkill[]>('list_codex_skills', {})
-        logger.info('Codex CLI skills loaded', { count: skills.length })
+        logger.debug(`Loading ${label} skills`)
+        const skills = await invoke<ClaudeSkill[]>(command, {})
+        logger.info(`${label} skills loaded`, { count: skills.length })
         return skills
       } catch (error) {
-        logger.error('Failed to load Codex CLI skills', { error })
+        logger.error(`Failed to load ${label} skills`, { error, backend })
         return []
       }
     },
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 10,
   })
+}
+
+export function useCodexSkills() {
+  return useBackendSkills(
+    'codex',
+    'list_codex_skills',
+    skillQueryKeys.codexSkills(),
+    'Codex CLI'
+  )
+}
+
+export function useOpenCodeSkills() {
+  return useBackendSkills(
+    'opencode',
+    'list_opencode_skills',
+    skillQueryKeys.opencodeSkills(),
+    'OpenCode'
+  )
+}
+
+export function useCursorSkills() {
+  return useBackendSkills(
+    'cursor',
+    'list_cursor_skills',
+    skillQueryKeys.cursorSkills(),
+    'Cursor'
+  )
 }
 
 export interface BackendSkillsGroup {
@@ -135,6 +169,8 @@ export function useAllBackendSkills(
   const claudeSkills = useClaudeSkills(worktreePath)
   const claudeCommands = useClaudeCommands(worktreePath)
   const codexSkills = useCodexSkills()
+  const opencodeSkills = useOpenCodeSkills()
+  const cursorSkills = useCursorSkills()
   const pluginSkillGroups = usePluginSkills()
 
   return useMemo(() => {
@@ -169,11 +205,37 @@ export function useAllBackendSkills(
       }
     }
 
+    if (installed.has('opencode')) {
+      const skills = opencodeSkills.data ?? []
+      if (skills.length > 0) {
+        groups.push({
+          backend: 'opencode',
+          label: 'OpenCode',
+          skills,
+          commands: [],
+        })
+      }
+    }
+
+    if (installed.has('cursor')) {
+      const skills = cursorSkills.data ?? []
+      if (skills.length > 0) {
+        groups.push({
+          backend: 'cursor',
+          label: 'Cursor',
+          skills,
+          commands: [],
+        })
+      }
+    }
+
     return groups
   }, [
     claudeSkills.data,
     claudeCommands.data,
     codexSkills.data,
+    opencodeSkills.data,
+    cursorSkills.data,
     pluginSkillGroups.data,
     installedBackends,
   ])

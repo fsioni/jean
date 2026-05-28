@@ -39,6 +39,26 @@ export function shouldLetPlanDialogHandleAction(
   return planDialogOpen && PLAN_DIALOG_APPROVAL_ACTIONS.has(action)
 }
 
+export function findKeybindingAction(
+  shortcut: string,
+  keybindings: KeybindingsMap
+): KeybindingAction | null {
+  for (const [action, binding] of Object.entries(keybindings)) {
+    if (binding === shortcut) return action as KeybindingAction
+  }
+
+  return null
+}
+
+export function shouldAllowKeybindingThroughOpenOverlay(
+  action: KeybindingAction | null,
+  uiState: ReturnType<typeof useUIStore.getState>
+): boolean {
+  // GitDiffModal is intentionally a full-screen workflow overlay, but users
+  // still need the global "Open in..." picker from there (Cmd/Ctrl+O).
+  return action === 'open_in_modal' && uiState.gitDiffModalOpen
+}
+
 function getFocusedTerminalElement(): HTMLElement | null {
   const activeElement = document.activeElement
   if (!(activeElement instanceof HTMLElement)) return null
@@ -577,8 +597,11 @@ export function useMainWindowEventListeners() {
       // Side/modal terminals still use the terminal-specific remapping below.
       if (isPlainSessionTerminalFocused()) return
 
+      const keybindings = keybindingsRef.current
+      const matchedAction = findKeybindingAction(shortcut, keybindings)
+
       // Cancel prompt should work even when modals are open
-      if (shortcut === keybindingsRef.current.cancel_prompt) {
+      if (matchedAction === 'cancel_prompt') {
         logger.debug('Cancel prompt shortcut matched', { shortcut })
         e.preventDefault()
         e.stopPropagation()
@@ -591,13 +614,19 @@ export function useMainWindowEventListeners() {
       // (including future modals) via their data-state attribute.
       // Also skip when a Radix DropdownMenu / Select is open so its built-in
       // arrow-key navigation isn't hijacked (e.g. by scroll_chat_*).
+      const uiState = useUIStore.getState()
       if (
+        !shouldAllowKeybindingThroughOpenOverlay(matchedAction, uiState) &&
         document.querySelector(
           '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"], [role="listbox"][data-state="open"]'
         )
       )
         return
-      if (useProjectsStore.getState().projectSettingsDialogOpen) return
+      if (
+        !shouldAllowKeybindingThroughOpenOverlay(matchedAction, uiState) &&
+        useProjectsStore.getState().projectSettingsDialogOpen
+      )
+        return
 
       // When terminal is focused, remap shortcuts for terminal-specific actions
       // and block all others so they don't interfere with terminal usage.
@@ -685,37 +714,31 @@ export function useMainWindowEventListeners() {
       }
 
       // Look up matching action in keybindings
-      const keybindings = keybindingsRef.current
-      for (const [action, binding] of Object.entries(keybindings)) {
-        if (binding === shortcut) {
-          if (
-            shouldLetPlanDialogHandleAction(
-              action as KeybindingAction,
-              useUIStore.getState().planDialogOpen
-            )
-          ) {
-            return
-          }
-          // Scope small-scroll arrow keys to ChatWindow context
-          // so canvas/list arrow navigation still works elsewhere
-          if (
-            action === 'scroll_chat_up_small' ||
-            action === 'scroll_chat_down_small'
-          ) {
-            const chatVisible =
-              !!useChatStore.getState().activeWorktreeId ||
-              useUIStore.getState().sessionChatModalOpen
-            if (!chatVisible) return
-          }
-          e.preventDefault()
-          e.stopPropagation()
-          executeKeybindingAction(
-            action as KeybindingAction,
-            commandContext,
-            queryClient
+      if (matchedAction) {
+        const action = matchedAction
+        if (
+          shouldLetPlanDialogHandleAction(
+            action,
+            useUIStore.getState().planDialogOpen
           )
+        ) {
           return
         }
+        // Scope small-scroll arrow keys to ChatWindow context
+        // so canvas/list arrow navigation still works elsewhere
+        if (
+          action === 'scroll_chat_up_small' ||
+          action === 'scroll_chat_down_small'
+        ) {
+          const chatVisible =
+            !!useChatStore.getState().activeWorktreeId ||
+            useUIStore.getState().sessionChatModalOpen
+          if (!chatVisible) return
+        }
+        e.preventDefault()
+        e.stopPropagation()
+        executeKeybindingAction(action, commandContext, queryClient)
+        return
       }
     }
 

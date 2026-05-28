@@ -7,7 +7,6 @@ export type CodexGoalExecutionMode = Extract<ExecutionMode, 'build' | 'yolo'>
 // =============================================================================
 // Notification Sounds
 // =============================================================================
-
 export type NotificationSound = 'none' | 'workwork' | 'jobsdone'
 export type TerminalRenderer = 'xterm' | 'ghostty-web'
 export type TerminalFont =
@@ -29,7 +28,6 @@ export const notificationSoundOptions: {
 // =============================================================================
 // Magic Prompts - Customizable prompts for AI-powered features
 // =============================================================================
-
 /**
  * Default prompts for magic commands. These can be customized in Settings.
  * Field names use snake_case to match Rust struct exactly.
@@ -1012,11 +1010,25 @@ export interface AppPreferences {
   coderabbit_cli_source?: 'jean' | 'path' // CodeRabbit CLI source: 'jean' (managed) or 'path' (system PATH)
   expand_tool_calls_by_default: boolean // Expand all tool call collapsibles by default
   window_vibrancy: boolean // macOS window vibrancy effect (high GPU cost, default false)
+  terminal_background: TerminalBackgroundMode // Override the terminal background independently of the app theme
+  terminal_background_custom: string | null // Hex color used when terminal_background === 'custom'
   auto_update_ai_backends: boolean // Auto-install CLI updates in background when a new version is detected
   jean_mcp_enabled: boolean // Expose Jean MCP server to spawned CLIs through explicit CLI config entries
   jean_mcp_max_depth: number // Max recursive spawn depth via Jean MCP (default 3)
   jean_mcp_rate_limit_per_minute: number // Per-source rate limit for session-spawning tools (default 20)
 }
+
+export type TerminalBackgroundMode = 'auto' | 'light' | 'dark' | 'custom'
+
+export const terminalBackgroundOptions: {
+  value: TerminalBackgroundMode
+  label: string
+}[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'custom', label: 'Custom color' },
+]
 
 export interface CustomCliProfile {
   name: string // Display name, e.g. "OpenRouter"
@@ -1112,6 +1124,7 @@ export type ClaudeModel =
   | 'claude-opus-4-6'
   | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-6[1m]'
+  | 'claude-opus-4-7[1m]-fast'
   | 'claude-opus-4-6-fast'
   | 'claude-opus-4-6[1m]-fast'
   | 'opus' // Legacy/provider-alias: resolved by CLI via ANTHROPIC_DEFAULT_OPUS_MODEL env
@@ -1136,6 +1149,7 @@ const legacyClaudeDefaultModelMap = {
 
 const knownClaudeModels = new Set<string>([
   ...modelOptions.map(option => option.value),
+  'claude-opus-4-7[1m]-fast',
   'claude-opus-4-6[1m]-fast',
   'opus',
 ])
@@ -1155,6 +1169,7 @@ export function normalizeClaudeModel(model: string): ClaudeModel {
 // Claude models that support fast service tier. Fast mode is exposed via a
 // separate UI toggle, not as standalone dropdown entries.
 export const CLAUDE_FAST_MODEL_MAP = {
+  'claude-opus-4-7[1m]': 'claude-opus-4-7[1m]-fast',
   'claude-opus-4-6[1m]': 'claude-opus-4-6[1m]-fast',
 } as const
 
@@ -1226,7 +1241,6 @@ export const effortLevelOptions: {
 // =============================================================================
 // Codex Types
 // =============================================================================
-
 export type CodexModel =
   | 'gpt-5.5'
   | 'gpt-5.5-fast'
@@ -1343,7 +1357,6 @@ export type MagicPromptReasoningEffort =
 // =============================================================================
 // Magic Prompt Model (unified type for both Claude and Codex)
 // =============================================================================
-
 export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
 export type MagicPromptModel =
@@ -1382,7 +1395,6 @@ export const codexReasoningOptions: {
 // =============================================================================
 // CLI Backend
 // =============================================================================
-
 export type CliBackend = 'claude' | 'codex' | 'opencode' | 'cursor'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
@@ -1785,6 +1797,8 @@ export const defaultPreferences: AppPreferences = {
   coderabbit_cli_source: 'jean', // Default: Jean-managed
   expand_tool_calls_by_default: false, // Default: collapsed
   window_vibrancy: false, // Default: disabled (high GPU cost)
+  terminal_background: 'auto',
+  terminal_background_custom: null,
   auto_update_ai_backends: true, // Default: auto-update AI backends in the background
   jean_mcp_enabled: true, // Default: enabled
   jean_mcp_max_depth: 3,

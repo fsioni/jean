@@ -164,6 +164,7 @@ import { BrowserPanel } from '@/components/browser/BrowserPanel'
 import { useBrowserEvents } from '@/hooks/useBrowserPane'
 import { useToasterOffset } from '@/hooks/useToasterOffset'
 import { useWindowMaximized } from '@/hooks/use-window-maximized'
+import { useTerminalThemeSync } from '@/hooks/useTerminalThemeSync'
 import { useUIStore } from '@/store/ui-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useMainWindowEventListeners } from '@/hooks/useMainWindowEventListeners'
@@ -207,6 +208,7 @@ function useRetainedMount(active: boolean) {
 }
 
 export function MainWindow() {
+  useTerminalThemeSync()
   const isMaximized = useWindowMaximized()
   const toasterOffset = useToasterOffset()
   const leftSidebarVisible = useUIStore(state => state.leftSidebarVisible)

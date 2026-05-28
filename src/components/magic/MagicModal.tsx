@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
@@ -79,7 +80,11 @@ import {
 import { useRemotePicker } from '@/hooks/useRemotePicker'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { chatQueryKeys } from '@/services/chat'
-import { saveWorktreePr, projectsQueryKeys } from '@/services/projects'
+import {
+  linkWorktreePr,
+  saveWorktreePr,
+  projectsQueryKeys,
+} from '@/services/projects'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CODEX_MODEL_OPTIONS,
@@ -99,6 +104,7 @@ type MagicOption =
   | 'pull'
   | 'push'
   | 'open-pr'
+  | 'link-pr'
   | 'update-pr'
   | 'review'
   | 'merge'
@@ -126,6 +132,7 @@ const CANVAS_ALLOWED_OPTIONS = new Set<MagicOption>([
   'pull',
   'push',
   'open-pr',
+  'link-pr',
   'update-pr',
   'review',
   'review-comments',
@@ -258,6 +265,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           icon: GitPullRequest,
           key: 'O',
         },
+        {
+          id: 'link-pr',
+          label: 'Link PR',
+          icon: Link2,
+          key: 'B',
+        },
         { id: 'review', label: 'Review', icon: Eye, key: 'R' },
         {
           id: 'review-comments',
@@ -331,6 +344,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   d: 'pull',
   u: 'push',
   o: 'open-pr',
+  b: 'link-pr',
   e: 'update-pr',
   r: 'review',
   v: 'review-comments',
@@ -374,6 +388,10 @@ export function MagicModal() {
     useState<string>('sonnet')
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false)
   const [reviewMethodDialogOpen, setReviewMethodDialogOpen] = useState(false)
+  const [linkPrDialogOpen, setLinkPrDialogOpen] = useState(false)
+  const [linkPrNumber, setLinkPrNumber] = useState('')
+  const [linkPrError, setLinkPrError] = useState<string | null>(null)
+  const [isLinkingPr, setIsLinkingPr] = useState(false)
   const [resolveSelectionMode, setResolveSelectionMode] =
     useState<ResolveSelectionMode>('settings-default')
   const [customResolveBackend, setCustomResolveBackend] =
@@ -1487,6 +1505,56 @@ ${resolveInstructions}`
     executeGitDirectly,
   ])
 
+  const handleLinkPrSubmit = useCallback(async () => {
+    if (!selectedWorktreeId || !worktree?.path) return
+
+    const prNumber = Number.parseInt(linkPrNumber.trim().replace(/^#/, ''), 10)
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      setLinkPrError('Enter a valid PR number')
+      return
+    }
+
+    setIsLinkingPr(true)
+    setLinkPrError(null)
+    try {
+      const result = await linkWorktreePr(
+        selectedWorktreeId,
+        worktree.path,
+        prNumber
+      )
+
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.worktrees(worktree.project_id),
+      })
+      queryClient.invalidateQueries({
+        queryKey: [...projectsQueryKeys.all, 'worktree', selectedWorktreeId],
+      })
+      triggerImmediateGitPoll()
+      if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
+
+      toast.success(`Linked PR #${result.pr_number}: ${result.title}`, {
+        action: {
+          label: 'Open',
+          onClick: () => openExternal(result.pr_url),
+        },
+      })
+      setLinkPrDialogOpen(false)
+      setLinkPrNumber('')
+    } catch (error) {
+      const message = `Failed to link PR: ${error}`
+      setLinkPrError(message)
+      toast.error(message)
+    } finally {
+      setIsLinkingPr(false)
+    }
+  }, [
+    linkPrNumber,
+    queryClient,
+    selectedWorktreeId,
+    worktree?.path,
+    worktree?.project_id,
+  ])
+
   const executeAction = useCallback(
     async (option: MagicOption) => {
       // Block disabled options on canvas
@@ -1532,6 +1600,19 @@ ${resolveInstructions}`
       if (!selectedWorktreeId) {
         notify('No worktree selected', undefined, { type: 'error' })
         setMagicModalOpen(false)
+        return
+      }
+
+      if (option === 'link-pr') {
+        if (!worktree?.path) {
+          notify('No worktree selected', undefined, { type: 'error' })
+          setMagicModalOpen(false)
+          return
+        }
+        setLinkPrNumber(worktree.pr_number ? String(worktree.pr_number) : '')
+        setLinkPrError(null)
+        setMagicModalOpen(false)
+        setLinkPrDialogOpen(true)
         return
       }
 
@@ -1823,6 +1904,57 @@ ${resolveInstructions}`
                 </div>
               )
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={linkPrDialogOpen} onOpenChange={setLinkPrDialogOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Link pull request</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="manual-pr-number">PR number</Label>
+              <Input
+                id="manual-pr-number"
+                inputMode="numeric"
+                placeholder="123"
+                value={linkPrNumber}
+                onChange={e => {
+                  setLinkPrNumber(e.target.value)
+                  setLinkPrError(null)
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleLinkPrSubmit()
+                  }
+                }}
+                autoFocus
+              />
+              {linkPrError && (
+                <p className="text-sm text-destructive">{linkPrError}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Jean will validate this PR with GitHub and store the link on the
+                current worktree.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setLinkPrDialogOpen(false)}
+                disabled={isLinkingPr}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleLinkPrSubmit} disabled={isLinkingPr}>
+                {isLinkingPr ? 'Linking…' : 'Link PR'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

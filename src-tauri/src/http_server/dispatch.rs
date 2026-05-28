@@ -381,6 +381,20 @@ pub async fn dispatch_command(
             }
             to_value(result)
         }
+        "link_worktree_pr" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
+            let result = crate::projects::link_worktree_pr(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                pr_number,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
         "detect_open_pr_for_branch" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let result =
@@ -1633,6 +1647,14 @@ pub async fn dispatch_command(
             let result = crate::projects::list_codex_skills().await?;
             to_value(result)
         }
+        "list_opencode_skills" => {
+            let result = crate::projects::list_opencode_skills().await?;
+            to_value(result)
+        }
+        "list_cursor_skills" => {
+            let result = crate::projects::list_cursor_skills().await?;
+            to_value(result)
+        }
         "list_plugin_skills" => {
             let result = crate::projects::list_plugin_skills().await?;
             to_value(result)
@@ -2846,7 +2868,9 @@ pub async fn dispatch_command(
         // =====================================================================
         "check_opinionated_plugin_status" => {
             let plugin_name: String = from_field(&args, "pluginName")?;
-            let result = crate::opinionated::check_opinionated_plugin_status(plugin_name).await?;
+            let result =
+                crate::opinionated::check_opinionated_plugin_status(app.clone(), plugin_name)
+                    .await?;
             to_value(result)
         }
         "install_opinionated_plugin" => {

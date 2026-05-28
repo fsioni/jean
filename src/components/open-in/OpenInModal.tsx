@@ -363,7 +363,7 @@ export function OpenInModal() {
         onClick={() => executeAction(option.id)}
         onMouseEnter={() => setSelectedOption(option.id)}
         className={cn(
-          'w-full flex items-center justify-between px-4 py-2 text-sm transition-colors',
+          'w-full min-w-0 flex items-center justify-between px-4 py-2 text-sm transition-colors',
           'hover:bg-accent focus:outline-none',
           isSelected && 'bg-accent'
         )}
@@ -400,10 +400,10 @@ export function OpenInModal() {
           <DialogTitle className="text-sm font-medium">Open in...</DialogTitle>
         </DialogHeader>
 
-        <div className="pb-2">{baseOptions.map(renderOption)}</div>
+        <div className="min-w-0 pb-2">{baseOptions.map(renderOption)}</div>
 
         {portOptions.length > 0 && (
-          <div className="border-t pb-2">
+          <div className="min-w-0 border-t pb-2">
             <div className="px-4 pt-2 pb-1">
               <span className="text-xs text-muted-foreground">Ports</span>
             </div>
@@ -412,7 +412,7 @@ export function OpenInModal() {
         )}
 
         {contextOptions.length > 0 && (
-          <div className="border-t pb-2">
+          <div className="min-w-0 border-t pb-2">
             <div className="px-4 pt-2 pb-1">
               <span className="text-xs text-muted-foreground">Contexts</span>
             </div>

@@ -352,13 +352,13 @@ fn build_claude_args(
     }
 
     // Model (strip "-fast" suffix: "opus-fast" → model="opus" + fastMode setting)
-    let is_fast = if let Some(m) = model {
+    let (is_fast, fast_base_model) = if let Some(m) = model {
         let (actual_model, fast) = split_fast_model(m);
         args.push("--model".to_string());
         args.push(actual_model.to_string());
-        fast
+        (fast, fast.then(|| actual_model.to_string()))
     } else {
-        false
+        (false, None)
     };
 
     // Permission mode
@@ -432,6 +432,16 @@ fn build_claude_args(
         if let Some(map) = obj.as_object_mut() {
             map.insert("fastMode".to_string(), serde_json::Value::Bool(true));
         }
+    }
+
+    // Fast mode picks the CLI's default fast Opus version (4.7 in Claude Code
+    // v2.1.142+), ignoring --model for the Opus version. Pin to 4.6 when the
+    // user explicitly selected the 4.6 fast variant.
+    if fast_base_model.as_deref() == Some("claude-opus-4-6[1m]") {
+        env_vars.push((
+            "CLAUDE_CODE_OPUS_4_6_FAST_MODE_OVERRIDE".to_string(),
+            "1".to_string(),
+        ));
     }
 
     // Emit --settings if we have any settings to pass

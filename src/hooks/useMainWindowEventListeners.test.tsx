@@ -6,8 +6,10 @@ import {
   addTerminalTabForShortcut,
   blurFocusedTerminalForShortcut,
   closeActiveTerminalTabForShortcut,
+  findKeybindingAction,
   getTerminalShortcutWorktreeId,
   isPlainSessionTerminalFocused,
+  shouldAllowKeybindingThroughOpenOverlay,
   shouldLetPlanDialogHandleAction,
   switchActiveTerminalTabByIndexForShortcut,
 } from './useMainWindowEventListeners'
@@ -364,5 +366,54 @@ describe('shouldLetPlanDialogHandleAction', () => {
   it('returns false for non-approve actions or when the dialog is closed', () => {
     expect(shouldLetPlanDialogHandleAction('open_plan', true)).toBe(false)
     expect(shouldLetPlanDialogHandleAction('approve_plan', false)).toBe(false)
+  })
+})
+
+describe('dialog overlay keybinding passthrough', () => {
+  beforeEach(() => {
+    useUIStore.setState({
+      gitDiffModalOpen: false,
+      openInModalOpen: false,
+    })
+  })
+
+  it('maps Cmd/Ctrl+O to the Open In action', () => {
+    expect(
+      findKeybindingAction('mod+o', {
+        open_in_modal: 'mod+o',
+        open_magic_modal: 'mod+m',
+      })
+    ).toBe('open_in_modal')
+  })
+
+  it('allows Open In through while the git diff modal is open', () => {
+    useUIStore.setState({ gitDiffModalOpen: true })
+
+    expect(
+      shouldAllowKeybindingThroughOpenOverlay(
+        'open_in_modal',
+        useUIStore.getState()
+      )
+    ).toBe(true)
+  })
+
+  it('keeps unrelated shortcuts blocked by an open git diff modal', () => {
+    useUIStore.setState({ gitDiffModalOpen: true })
+
+    expect(
+      shouldAllowKeybindingThroughOpenOverlay(
+        'open_magic_modal',
+        useUIStore.getState()
+      )
+    ).toBe(false)
+  })
+
+  it('does not allow Open In through other dialogs', () => {
+    expect(
+      shouldAllowKeybindingThroughOpenOverlay(
+        'open_in_modal',
+        useUIStore.getState()
+      )
+    ).toBe(false)
   })
 })

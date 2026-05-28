@@ -410,9 +410,19 @@ export function useMessageSending({
           queryClient.getQueryData<{ name: string }[]>(
             skillQueryKeys.codexSkills()
           ) ?? []
+        const opencodeSkills =
+          queryClient.getQueryData<{ name: string }[]>(
+            skillQueryKeys.opencodeSkills()
+          ) ?? []
+        const cursorSkills =
+          queryClient.getQueryData<{ name: string }[]>(
+            skillQueryKeys.cursorSkills()
+          ) ?? []
         const isSkill =
           claudeSkills.some(s => s.name === slashName) ||
-          codexSkills.some(s => s.name === slashName)
+          codexSkills.some(s => s.name === slashName) ||
+          opencodeSkills.some(s => s.name === slashName) ||
+          cursorSkills.some(s => s.name === slashName)
         if (!isSkill) {
           const claudeCommands =
             queryClient.getQueryData<{ name: string; path: string }[]>(

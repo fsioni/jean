@@ -348,6 +348,18 @@ class WsTransport {
   /** Terminals that were running when we (potentially) disconnected. */
   private _activeTerminals = new Set<string>()
 
+  constructor() {
+    // Reconnect instantly when the page returns to the foreground or the
+    // network comes back. Mobile browsers suspend background tabs and freeze
+    // JS timers, so the livenessTimer cannot detect a dead socket until it
+    // resumes — these listeners give us an immediate wake trigger.
+    if (typeof window !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleWake)
+      window.addEventListener('online', this.handleWake)
+      window.addEventListener('pageshow', this.handleWake)
+    }
+  }
+
   get connected(): boolean {
     return this._connected
   }
@@ -632,6 +644,9 @@ class WsTransport {
    *  ping/pong alone is not visible to browser JavaScript. */
   private static readonly INBOUND_TIMEOUT = 50_000
   private static readonly LIVENESS_CHECK_INTERVAL = 10_000
+  /** After a resume, wait this long for queued inbound frames to flush before
+   *  judging an OPEN socket stale (avoids false reconnects on a healthy socket). */
+  private static readonly WAKE_RECHECK_DELAY = 3_000
 
   /** Call a backend command over WebSocket. */
   async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -861,6 +876,47 @@ class WsTransport {
     if (!this.livenessTimer) return
     clearInterval(this.livenessTimer)
     this.livenessTimer = null
+  }
+
+  /** Re-check the connection when the page returns to the foreground or the
+   *  network comes back. Fires on visibilitychange / online / pageshow. */
+  private handleWake = (): void => {
+    if (!this._connectEnabled) return
+    // visibilitychange also fires on hide — only act when the page is visible.
+    if (typeof document !== 'undefined' && document.hidden) return
+
+    const state = this.ws?.readyState
+    if (state === WebSocket.CONNECTING) return // connectWatchdog covers this
+
+    if (state === WebSocket.OPEN) {
+      // Socket claims to be open. After a suspend it may be a zombie, but a
+      // healthy socket also looks stale until queued heartbeats are delivered.
+      // Re-check shortly, once any buffered inbound traffic has landed.
+      setTimeout(() => {
+        if (
+          this.ws?.readyState === WebSocket.OPEN &&
+          Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT
+        ) {
+          console.warn(
+            '[WsTransport] Stale socket after resume, forcing reconnect'
+          )
+          try {
+            this.ws.close()
+          } catch {
+            // Ignore close errors; onclose schedules the reconnect.
+          }
+        }
+      }, WsTransport.WAKE_RECHECK_DELAY)
+      return
+    }
+
+    // Disconnected — reconnect immediately instead of waiting out the backoff.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.reconnectAttempt = 0
+    this.connect()
   }
 
   private forceReconnect(): void {

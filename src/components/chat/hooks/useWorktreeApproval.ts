@@ -87,6 +87,21 @@ function getDefaultModelForBackend(
   return preferences?.selected_model ?? 'claude-opus-4-7[1m]'
 }
 
+
+function clearWorktreeApprovalUiState(
+  sessionId: string,
+  options: { preserveToolCalls: boolean }
+) {
+  const store = useChatStore.getState()
+  if (!options.preserveToolCalls) {
+    store.clearToolCalls(sessionId)
+    store.clearStreamingContentBlocks(sessionId)
+  }
+  store.setSessionReviewing(sessionId, false)
+  store.setWaitingForInput(sessionId, false)
+  store.setPendingPlanMessageId(sessionId, null)
+}
+
 interface UseWorktreeApprovalParams {
   worktreeId: string
   worktreePath: string
@@ -167,13 +182,11 @@ export function useWorktreeApproval({
         })
       }
 
-      // Clear waiting state on original session
-      const store = useChatStore.getState()
-      store.clearToolCalls(sessionId)
-      store.clearStreamingContentBlocks(sessionId)
-      store.setSessionReviewing(sessionId, false)
-      store.setWaitingForInput(sessionId, false)
-      store.setPendingPlanMessageId(sessionId, null)
+      // Clear waiting state on original session. Codex keeps plan tasks in its
+      // native update_plan/CodexPlan state, so preserve those tool calls.
+      clearWorktreeApprovalUiState(sessionId, {
+        preserveToolCalls: card.session.backend === 'codex',
+      })
 
       invoke('update_session_state', {
         worktreeId,
@@ -378,7 +391,7 @@ export function useWorktreeApproval({
         effortLevel = mapCodexReasoningToEffort(modeEffortPref)
       }
       const resolvedPlanFilePath =
-        card.planFilePath || store.getPlanFilePath(sessionId)
+        card.planFilePath || useChatStore.getState().getPlanFilePath(sessionId)
       const planFileLine = resolvedPlanFilePath
         ? `\nPlan file: ${resolvedPlanFilePath}\n`
         : ''

@@ -38,6 +38,7 @@ describe('MobileToolbarMenu', () => {
         onLoadContext={vi.fn()}
         onCommit={vi.fn()}
         onCommitAndPush={vi.fn()}
+        onRevertLastCommit={vi.fn()}
         onOpenPr={vi.fn()}
         onReview={vi.fn()}
         onMerge={vi.fn()}
@@ -77,6 +78,7 @@ describe('MobileToolbarMenu', () => {
         onLoadContext={vi.fn()}
         onCommit={vi.fn()}
         onCommitAndPush={vi.fn()}
+        onRevertLastCommit={vi.fn()}
         onOpenPr={vi.fn()}
         onReview={vi.fn()}
         onMerge={vi.fn()}
@@ -118,6 +120,7 @@ describe('MobileToolbarMenu', () => {
         onLoadContext={vi.fn()}
         onCommit={vi.fn()}
         onCommitAndPush={vi.fn()}
+        onRevertLastCommit={vi.fn()}
         onOpenPr={vi.fn()}
         onReview={vi.fn()}
         onMerge={vi.fn()}
@@ -142,5 +145,37 @@ describe('MobileToolbarMenu', () => {
     )
 
     dispatchSpy.mockRestore()
+  })
+
+  it('shows revert commit in the commit section and invokes its handler', async () => {
+    const user = userEvent.setup()
+    const onRevertLastCommit = vi.fn()
+
+    render(
+      <MobileToolbarMenu
+        isDisabled={false}
+        hasOpenPr={false}
+        hasIssueContexts={false}
+        hasPrContexts={false}
+        onSaveContext={vi.fn()}
+        onLoadContext={vi.fn()}
+        onCommit={vi.fn()}
+        onCommitAndPush={vi.fn()}
+        onRevertLastCommit={onRevertLastCommit}
+        onOpenPr={vi.fn()}
+        onReview={vi.fn()}
+        onMerge={vi.fn()}
+        onMergePr={vi.fn()}
+        handlePullClick={vi.fn()}
+        handlePushClick={vi.fn()}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+
+    expect(screen.getByText('Revert Commit')).toBeInTheDocument()
+    await user.click(screen.getByText('Revert Commit'))
+
+    expect(onRevertLastCommit).toHaveBeenCalledTimes(1)
   })
 })
