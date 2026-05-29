@@ -668,20 +668,20 @@ export interface MagicPromptReasoningEfforts {
 
 /** Default models for each magic prompt */
 export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'claude-opus-4-7[1m]',
-  investigate_pr_model: 'claude-opus-4-7[1m]',
-  investigate_workflow_run_model: 'claude-opus-4-7[1m]',
+  investigate_issue_model: 'claude-opus-4-8[1m]',
+  investigate_pr_model: 'claude-opus-4-8[1m]',
+  investigate_workflow_run_model: 'claude-opus-4-8[1m]',
   pr_content_model: 'sonnet',
   commit_message_model: 'sonnet',
-  code_review_model: 'claude-opus-4-7[1m]',
-  context_summary_model: 'claude-opus-4-7[1m]',
-  resolve_conflicts_model: 'claude-opus-4-7[1m]',
+  code_review_model: 'claude-opus-4-8[1m]',
+  context_summary_model: 'claude-opus-4-8[1m]',
+  resolve_conflicts_model: 'claude-opus-4-8[1m]',
   release_notes_model: 'sonnet',
   session_naming_model: 'sonnet',
-  investigate_security_alert_model: 'claude-opus-4-7[1m]',
-  investigate_advisory_model: 'claude-opus-4-7[1m]',
-  investigate_linear_issue_model: 'claude-opus-4-7[1m]',
-  review_comments_model: 'claude-opus-4-7[1m]',
+  investigate_security_alert_model: 'claude-opus-4-8[1m]',
+  investigate_advisory_model: 'claude-opus-4-8[1m]',
+  investigate_linear_issue_model: 'claude-opus-4-8[1m]',
+  review_comments_model: 'claude-opus-4-8[1m]',
 }
 
 function makeMagicPromptModelsPreset(
@@ -1119,11 +1119,14 @@ export const fileEditModeOptions: { value: FileEditMode; label: string }[] = [
 ]
 
 export type ClaudeModel =
+  | 'claude-opus-4-8'
+  | 'claude-opus-4-8[1m]'
   | 'claude-opus-4-7'
   | 'claude-opus-4-7[1m]'
   | 'claude-opus-4-6'
   | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-6[1m]'
+  | 'claude-opus-4-8[1m]-fast'
   | 'claude-opus-4-7[1m]-fast'
   | 'claude-opus-4-6-fast'
   | 'claude-opus-4-6[1m]-fast'
@@ -1133,6 +1136,7 @@ export type ClaudeModel =
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
+  { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
   { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
@@ -1141,6 +1145,7 @@ export const modelOptions: { value: ClaudeModel; label: string }[] = [
 ]
 
 const legacyClaudeDefaultModelMap = {
+  'claude-opus-4-8': 'claude-opus-4-8[1m]',
   'claude-opus-4-7': 'claude-opus-4-7[1m]',
   'claude-opus-4-6': 'claude-opus-4-6[1m]',
   'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
@@ -1149,6 +1154,7 @@ const legacyClaudeDefaultModelMap = {
 
 const knownClaudeModels = new Set<string>([
   ...modelOptions.map(option => option.value),
+  'claude-opus-4-8[1m]-fast',
   'claude-opus-4-7[1m]-fast',
   'claude-opus-4-6[1m]-fast',
   'opus',
@@ -1163,12 +1169,13 @@ export function normalizeClaudeModel(model: string): ClaudeModel {
 
   return knownClaudeModels.has(model)
     ? (model as ClaudeModel)
-    : 'claude-opus-4-7[1m]'
+    : 'claude-opus-4-8[1m]'
 }
 
 // Claude models that support fast service tier. Fast mode is exposed via a
 // separate UI toggle, not as standalone dropdown entries.
 export const CLAUDE_FAST_MODEL_MAP = {
+  'claude-opus-4-8[1m]': 'claude-opus-4-8[1m]-fast',
   'claude-opus-4-7[1m]': 'claude-opus-4-7[1m]-fast',
   'claude-opus-4-6[1m]': 'claude-opus-4-6[1m]-fast',
 } as const
@@ -1708,7 +1715,7 @@ export function getEditorLabel(editor: EditorApp | undefined): string {
 
 export const defaultPreferences: AppPreferences = {
   theme: 'system',
-  selected_model: 'claude-opus-4-7[1m]',
+  selected_model: 'claude-opus-4-8[1m]',
   thinking_level: 'ultrathink',
   default_effort_level: 'high',
   terminal: isWindows ? 'powershell' : 'terminal',

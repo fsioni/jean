@@ -86,7 +86,7 @@ fn greet(name: &str) -> String {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-opus-4-7[1m], claude-opus-4-6[1m], haiku
+    pub selected_model: String, // Claude model: claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -106,11 +106,11 @@ pub struct AppPreferences {
     #[serde(default = "default_auto_branch_naming")]
     pub auto_branch_naming: bool, // Automatically generate branch names from first message
     #[serde(default = "default_branch_naming_model")]
-    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-opus-4-7, claude-opus-4-6
+    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_auto_session_naming")]
     pub auto_session_naming: bool, // Automatically generate session names from first message
     #[serde(default = "default_session_naming_model")]
-    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-opus-4-7, claude-opus-4-6
+    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_font_size")]
     pub ui_font_size: u32, // Font size for UI text in pixels (10-24)
     #[serde(default = "default_font_size")]
@@ -363,12 +363,15 @@ fn default_chat_font() -> String {
 }
 
 fn default_model() -> String {
-    "claude-opus-4-7[1m]".to_string()
+    "claude-opus-4-8[1m]".to_string()
 }
 
 fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
     match model {
+        "claude-opus-4-8" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
+        "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
+        "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
         "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
         "sonnet" => Some("claude-sonnet-4-6[1m]"),
@@ -1373,10 +1376,9 @@ impl Default for MagicPromptModels {
 }
 
 impl MagicPromptModels {
-    /// Upgrade legacy default model values left on existing installs:
-    /// fields that previously defaulted to `"opus"` (Opus 4.6) are bumped to
-    /// the new default (`"claude-opus-4-7[1m]"`). Users who explicitly picked
-    /// other models are untouched. Returns true if any field changed.
+    /// Upgrade previous Opus defaults left on existing installs to the current
+    /// default (`"claude-opus-4-8[1m]"`). Users who explicitly picked non-Opus
+    /// default models are untouched. Returns true if any field changed.
     fn migrate_legacy_defaults(&mut self) -> bool {
         let new_opus = default_model();
         let opus_fields: [&mut String; 10] = [
@@ -1393,7 +1395,7 @@ impl MagicPromptModels {
         ];
         let mut changed = false;
         for field in opus_fields {
-            if field == "opus" {
+            if matches!(field.as_str(), "opus" | "claude-opus-4-7[1m]") {
                 *field = new_opus.clone();
                 changed = true;
             }
@@ -1945,7 +1947,7 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
         needs_resave = true;
     }
 
-    // Migrate legacy magic-prompt model names ("opus" → "claude-opus-4-7[1m]")
+    // Migrate legacy magic-prompt model names ("opus" → "claude-opus-4-8[1m]")
     // and legacy auto-naming models ("haiku" → "sonnet")
     needs_resave |= preferences.magic_prompt_models.migrate_legacy_defaults();
     if preferences.branch_naming_model == "haiku" {

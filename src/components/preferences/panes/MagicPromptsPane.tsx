@@ -118,7 +118,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_ISSUE_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'investigate_pr',
@@ -139,7 +139,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_PR_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'investigate_workflow_run',
@@ -166,7 +166,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'investigate_security_alert',
@@ -188,7 +188,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_SECURITY_ALERT_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'investigate_advisory',
@@ -208,7 +208,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'investigate_linear_issue',
@@ -233,7 +233,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
     ],
   },
@@ -260,7 +260,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_CODE_REVIEW_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'review_comments',
@@ -282,7 +282,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_REVIEW_COMMENTS_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'commit_message',
@@ -352,7 +352,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         description: 'Instructions appended to conflict resolution prompts.',
         variables: [],
         defaultValue: DEFAULT_RESOLVE_CONFLICTS_PROMPT,
-        defaultModel: 'claude-opus-4-7[1m]',
+        defaultModel: 'claude-opus-4-8[1m]',
       },
       {
         key: 'release_notes',
@@ -468,6 +468,7 @@ export function getMagicPromptItemId(key: keyof MagicPrompts): string {
 }
 
 const CLAUDE_MODEL_OPTIONS: { value: MagicPromptModel; label: string }[] = [
+  { value: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
   { value: 'claude-opus-4-7[1m]', label: 'Opus 4.7 (1M)' },
   { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
   { value: 'sonnet', label: 'Sonnet 4.6' },

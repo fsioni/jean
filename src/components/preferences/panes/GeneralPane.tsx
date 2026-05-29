@@ -2055,7 +2055,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               description="Claude model for AI assistance"
             >
               <Select
-                value={preferences?.selected_model ?? 'claude-opus-4-7[1m]'}
+                value={preferences?.selected_model ?? 'claude-opus-4-8[1m]'}
                 onValueChange={handleModelChange}
               >
                 <SelectTrigger className="w-full sm:min-w-96">

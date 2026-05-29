@@ -69,7 +69,7 @@ describe('BackendModelPickerContent', () => {
       <BackendModelPickerContent
         open
         selectedBackend="claude"
-        selectedModel="claude-opus-4-7[1m]"
+        selectedModel="claude-opus-4-8[1m]"
         selectedProvider={null}
         installedBackends={['claude']}
         customCliProfiles={[]}
@@ -79,6 +79,7 @@ describe('BackendModelPickerContent', () => {
       />
     )
 
+    expect(screen.getByText('Opus 4.8 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.7 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.6 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Sonnet 4.6 (1M)')).toBeInTheDocument()
@@ -273,7 +274,7 @@ describe('BackendModelPickerContent', () => {
       <BackendModelPickerContent
         open
         selectedBackend="claude"
-        selectedModel="claude-opus-4-7[1m]"
+        selectedModel="claude-opus-4-8[1m]"
         selectedProvider={null}
         installedBackends={['claude']}
         customCliProfiles={[]}
@@ -287,10 +288,10 @@ describe('BackendModelPickerContent', () => {
       .getAllByRole('option')
       .map(opt => opt.textContent ?? '')
     const opus46Index = labels.findIndex(t => t.includes('claude-opus-4-6[1m]'))
-    const opus47Index = labels.findIndex(t => t.includes('claude-opus-4-7[1m]'))
+    const opus48Index = labels.findIndex(t => t.includes('claude-opus-4-8[1m]'))
     expect(opus46Index).toBeGreaterThanOrEqual(0)
-    expect(opus47Index).toBeGreaterThanOrEqual(0)
-    expect(opus46Index).toBeLessThan(opus47Index)
+    expect(opus48Index).toBeGreaterThanOrEqual(0)
+    expect(opus46Index).toBeLessThan(opus48Index)
   })
 
   it('toggles favourite status via the star button', async () => {
@@ -300,7 +301,7 @@ describe('BackendModelPickerContent', () => {
       <BackendModelPickerContent
         open
         selectedBackend="claude"
-        selectedModel="claude-opus-4-7[1m]"
+        selectedModel="claude-opus-4-8[1m]"
         selectedProvider={null}
         installedBackends={['claude']}
         customCliProfiles={[]}
@@ -311,13 +312,13 @@ describe('BackendModelPickerContent', () => {
     )
 
     const starBtn = screen.getByRole('switch', {
-      name: /^favorite opus 4\.7 \(1m\)$/i,
+      name: /^favorite opus 4\.8 \(1m\)$/i,
     })
     expect(starBtn).toHaveAttribute('aria-checked', 'false')
 
     await user.click(starBtn)
     expect(patchPreferencesMutate).toHaveBeenCalledWith({
-      favorite_models: ['claude:claude-opus-4-7[1m]'],
+      favorite_models: ['claude:claude-opus-4-8[1m]'],
     })
   })
 
@@ -441,7 +442,7 @@ describe('BackendModelPickerContent', () => {
       <BackendModelPickerContent
         open
         selectedBackend="claude"
-        selectedModel="claude-opus-4-7[1m]"
+        selectedModel="claude-opus-4-8[1m]"
         selectedProvider={null}
         installedBackends={['claude', 'codex', 'opencode']}
         customCliProfiles={[]}
@@ -478,7 +479,7 @@ describe('BackendModelPickerContent', () => {
       <BackendModelPickerContent
         open
         selectedBackend="claude"
-        selectedModel="claude-opus-4-7[1m]"
+        selectedModel="claude-opus-4-8[1m]"
         selectedProvider={null}
         installedBackends={['claude', 'codex']}
         customCliProfiles={[]}

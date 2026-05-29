@@ -71,6 +71,10 @@ interface UseInvestigateHandlersParams {
         onError?: (error: unknown) => void
       }
     ) => void
+    mutateAsync: (args: {
+      worktreeId: string
+      worktreePath: string
+    }) => Promise<Session>
   }
   resolveCustomProfile: (
     model: string,
@@ -901,51 +905,49 @@ export function useInvestigateHandlers({
         )
       }
 
-      // Create a new session for each selected review comment prompt.
-      prompts.forEach(prompt => {
-        createSession.mutate(
-          { worktreeId, worktreePath },
-          {
-            onSuccess: session => {
-              const {
-                setActiveSession,
-                copySessionSettings,
-                activeSessionIds,
-              } = useChatStore.getState()
-              const currentSessionId = activeSessionIds[worktreeId]
-              if (currentSessionId) {
-                copySessionSettings(currentSessionId, session.id)
-              }
-              useChatStore
-                .getState()
-                .setSelectedBackend(session.id, reviewCommentsBackend)
-              useChatStore
-                .getState()
-                .setSelectedModel(session.id, reviewCommentsModel)
-              useChatStore
-                .getState()
-                .setSelectedProvider(session.id, reviewCommentsProvider)
-              primeSessionSelection(
-                session.id,
-                reviewCommentsBackend,
-                reviewCommentsModel,
-                reviewCommentsProvider
-              )
-              setActiveSession(worktreeId, session.id)
-              queryClient.invalidateQueries({
-                queryKey: chatQueryKeys.sessions(worktreeId),
-              })
-              sendInSession(session.id, prompt)
-            },
-            onError: error => {
-              console.error(
-                '[REVIEW-COMMENTS] Failed to create session:',
-                error
-              )
-            },
-          }
+      // Create one session per selected review comment prompt. Use mutateAsync
+      // instead of repeated mutate(..., { onSuccess }) calls because TanStack
+      // Query only guarantees per-call callbacks for the latest consecutive
+      // mutate observer, which can leave earlier/later sessions empty.
+      const baseSessionId = useChatStore.getState().activeSessionIds[worktreeId]
+      for (const prompt of prompts) {
+        let session: Session
+        try {
+          session = await createSession.mutateAsync({
+            worktreeId,
+            worktreePath,
+          })
+        } catch (error) {
+          console.error('[REVIEW-COMMENTS] Failed to create session:', error)
+          continue
+        }
+
+        const { setActiveSession, copySessionSettings } =
+          useChatStore.getState()
+        if (baseSessionId) {
+          copySessionSettings(baseSessionId, session.id)
+        }
+        useChatStore
+          .getState()
+          .setSelectedBackend(session.id, reviewCommentsBackend)
+        useChatStore
+          .getState()
+          .setSelectedModel(session.id, reviewCommentsModel)
+        useChatStore
+          .getState()
+          .setSelectedProvider(session.id, reviewCommentsProvider)
+        primeSessionSelection(
+          session.id,
+          reviewCommentsBackend,
+          reviewCommentsModel,
+          reviewCommentsProvider
         )
-      })
+        setActiveSession(worktreeId, session.id)
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.sessions(worktreeId),
+        })
+        sendInSession(session.id, prompt)
+      }
     },
     [
       sendMessage,

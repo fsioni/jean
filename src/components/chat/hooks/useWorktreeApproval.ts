@@ -84,9 +84,8 @@ function getDefaultModelForBackend(
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-7[1m]'
+  return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
 }
-
 
 function clearWorktreeApprovalUiState(
   sessionId: string,

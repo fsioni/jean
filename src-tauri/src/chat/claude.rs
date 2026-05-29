@@ -434,8 +434,8 @@ fn build_claude_args(
         }
     }
 
-    // Fast mode picks the CLI's default fast Opus version (4.7 in Claude Code
-    // v2.1.142+), ignoring --model for the Opus version. Pin to 4.6 when the
+    // Fast mode picks the CLI's default fast Opus version (4.8 in Claude Code
+    // v2.1.154+), ignoring --model for the Opus version. Pin to 4.6 when the
     // user explicitly selected the 4.6 fast variant.
     if fast_base_model.as_deref() == Some("claude-opus-4-6[1m]") {
         env_vars.push((

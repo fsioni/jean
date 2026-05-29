@@ -2730,8 +2730,7 @@ export function ChatWindow({
                                   onSubmit={(_toolCallId, answers) =>
                                     handleCodexUserInputAnswer(
                                       activeCodexUserInputRequest,
-                                      answers,
-                                      activeCodexUserInputQuestions
+                                      answers
                                     )
                                   }
                                   isSkipped={false}

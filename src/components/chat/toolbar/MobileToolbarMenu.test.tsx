@@ -43,6 +43,7 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
+        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -83,6 +84,7 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
+        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -125,6 +127,7 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
+        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -166,6 +169,7 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
+        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -177,5 +181,36 @@ describe('MobileToolbarMenu', () => {
     await user.click(screen.getByText('Revert Commit'))
 
     expect(onRevertLastCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens Magic from the mobile actions menu while enabled', async () => {
+    const user = userEvent.setup()
+    const onOpenMagicModal = vi.fn()
+
+    render(
+      <MobileToolbarMenu
+        isDisabled={false}
+        hasOpenPr={false}
+        hasIssueContexts={false}
+        hasPrContexts={false}
+        onSaveContext={vi.fn()}
+        onLoadContext={vi.fn()}
+        onCommit={vi.fn()}
+        onCommitAndPush={vi.fn()}
+        onRevertLastCommit={vi.fn()}
+        onOpenPr={vi.fn()}
+        onReview={vi.fn()}
+        onMerge={vi.fn()}
+        onMergePr={vi.fn()}
+        onOpenMagicModal={onOpenMagicModal}
+        handlePullClick={vi.fn()}
+        handlePushClick={vi.fn()}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+    await user.click(screen.getByText('Magic'))
+
+    expect(onOpenMagicModal).toHaveBeenCalledTimes(1)
   })
 })

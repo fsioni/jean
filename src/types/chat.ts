@@ -22,7 +22,7 @@ export type ThinkingLevel = 'off' | 'think' | 'megathink' | 'ultrathink'
  * - low: Minimal thinking, skips for simple tasks
  * - medium: Moderate thinking, may skip for very simple queries
  * - high: Deep reasoning (default), almost always thinks
- * - xhigh: Extra high effort (Opus 4.7 recommended default for coding/agentic)
+ * - xhigh: Extra high effort (Opus 4.8 recommended default for coding/agentic)
  * - max: No constraints on thinking depth
  */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -643,8 +643,8 @@ export interface CodexUserInputOption {
 }
 
 export interface CodexUserInputQuestion {
-  header: string
-  id: string
+  header?: string
+  id?: string
   question: string
   options?: CodexUserInputOption[] | null
   isOther?: boolean
@@ -760,6 +760,41 @@ export function normalizeCodexQuestions(questions: unknown): Question[] {
   })
 }
 
+export type CodexUserInputAnswerMap = Record<string, { answers: string[] }>
+
+export function buildCodexUserInputAnswerMap(
+  rawQuestions: unknown[],
+  answers: QuestionAnswer[]
+): CodexUserInputAnswerMap {
+  return Object.fromEntries(
+    rawQuestions.map((rawQuestion, index) => {
+      const question =
+        typeof rawQuestion === 'object' && rawQuestion !== null
+          ? (rawQuestion as Record<string, unknown>)
+          : {}
+      const rawOptions = Array.isArray(question.options) ? question.options : []
+      const answer = answers.find(item => item.questionIndex === index)
+      const selected = answer?.customText?.trim()
+        ? [answer.customText.trim()]
+        : (answer?.selectedOptions ?? [])
+            .map(optionIndex => {
+              const rawOption = rawOptions[optionIndex]
+              const option =
+                typeof rawOption === 'object' && rawOption !== null
+                  ? (rawOption as Record<string, unknown>)
+                  : {}
+              return typeof option.label === 'string' ? option.label : undefined
+            })
+            .filter((label): label is string => !!label)
+      const questionId =
+        typeof question.id === 'string' && question.id.length > 0
+          ? question.id
+          : String(index)
+      return [questionId, { answers: selected }]
+    })
+  )
+}
+
 /**
  * Input structure for AskUserQuestion tool
  */
@@ -775,7 +810,9 @@ export function isAskUserQuestion(
   toolCall: ToolCall
 ): toolCall is ToolCall & { input: AskUserQuestionInput } {
   return (
-    (toolCall.name === 'AskUserQuestion' || toolCall.name === 'question') &&
+    (toolCall.name === 'AskUserQuestion' ||
+      toolCall.name === 'question' ||
+      toolCall.name === 'request_user_input') &&
     typeof toolCall.input === 'object' &&
     toolCall.input !== null &&
     'questions' in toolCall.input &&

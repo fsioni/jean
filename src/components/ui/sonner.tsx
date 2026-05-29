@@ -11,6 +11,7 @@ import {
 const POINTER_DISMISS_THRESHOLD = 28
 const WHEEL_DISMISS_THRESHOLD = 32
 const WHEEL_DISMISS_RESET_MS = 180
+const TOASTER_Z_INDEX = 2147483647
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest('button, a'))
@@ -171,6 +172,7 @@ const Toaster = ({ position, style, ...props }: ToasterProps) => {
             '--normal-text': 'var(--popover-foreground)',
             '--normal-border': 'var(--toast-border, var(--border))',
             ...style,
+            zIndex: TOASTER_Z_INDEX,
           } as React.CSSProperties
         }
         {...props}

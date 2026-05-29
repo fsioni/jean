@@ -211,7 +211,7 @@ const DIFF_TYPE_SHORTCUTS: Record<DiffType, string> = {
   commits: '3',
 }
 
-const COMMIT_SHORTCUT_LABEL = '⌘C'
+const COMMIT_SHORTCUT_LABEL = '⌘↵'
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -694,7 +694,7 @@ export function GitDiffModal({
     filteredFiles.length > 0 &&
     !isCommitting
 
-  // Commit selected (or all) uncommitted files with Cmd+C from the diff modal.
+  // Commit selected (or all) uncommitted files with Cmd+Enter from the diff modal.
   // Preserve normal copy behavior while typing or when any text is selected.
   useEffect(() => {
     if (!diffRequest || !canCommitFromDiff) return
@@ -705,7 +705,7 @@ export function GitDiffModal({
         e.ctrlKey ||
         e.altKey ||
         e.shiftKey ||
-        e.key.toLowerCase() !== 'c' ||
+        e.key !== 'Enter' ||
         isEditableKeyboardTarget(e.target) ||
         hasSelectedText()
       ) {
@@ -717,8 +717,8 @@ export function GitDiffModal({
       handleCommitFromDiff()
     }
 
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [diffRequest, canCommitFromDiff, handleCommitFromDiff])
 
   // Handle file selection from sidebar

@@ -9,6 +9,7 @@ import {
   persistEnqueue,
 } from '@/services/chat'
 import { useChatStore } from '@/store/chat-store'
+import { buildCodexUserInputAnswerMap } from '@/types/chat'
 import type {
   ChatMessage,
   CodexCommandApprovalRequest,
@@ -158,8 +159,7 @@ interface MessageHandlers {
   handleCodexPermissionRequestDecline: (request: CodexPermissionRequest) => void
   handleCodexUserInputAnswer: (
     request: CodexUserInputRequest,
-    answers: QuestionAnswer[],
-    questions: Question[]
+    answers: QuestionAnswer[]
   ) => void
   handleCodexMcpElicitationAccept: (
     request: CodexMcpElicitationRequest,
@@ -228,7 +228,7 @@ function getDefaultModelForBackend(
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-7[1m]'
+  return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
 }
 
 /**
@@ -2844,11 +2844,7 @@ export function useMessageHandlers({
   )
 
   const handleCodexUserInputAnswer = useCallback(
-    (
-      request: CodexUserInputRequest,
-      answers: QuestionAnswer[],
-      questions: Question[]
-    ) => {
+    (request: CodexUserInputRequest, answers: QuestionAnswer[]) => {
       const sessionId = activeSessionIdRef.current
       const worktreeId = activeWorktreeIdRef.current
       const worktreePath = activeWorktreePathRef.current
@@ -2866,31 +2862,7 @@ export function useMessageHandlers({
       )
       store.setWaitingForInput(sessionId, false)
 
-      const answerMap = Object.fromEntries(
-        questions.map((question, index) => {
-          const answer = answers.find(item => item.questionIndex === index)
-          const selected = answer?.customText?.trim()
-            ? [answer.customText.trim()]
-            : (answer?.selectedOptions ?? [])
-                .map(optionIndex => question.options[optionIndex]?.label)
-                .filter((label): label is string => !!label)
-          const questionId =
-            typeof request.questions[index] === 'object' &&
-            request.questions[index] !== null &&
-            'id' in
-              (request.questions[index] as unknown as Record<string, unknown>)
-              ? String(
-                  (
-                    request.questions[index] as unknown as Record<
-                      string,
-                      unknown
-                    >
-                  ).id
-                )
-              : String(index)
-          return [questionId, { answers: selected }]
-        })
-      )
+      const answerMap = buildCodexUserInputAnswerMap(request.questions, answers)
 
       const persistAnsweredState = () => {
         persistCodexPendingState(sessionId, worktreeId, worktreePath)

@@ -110,6 +110,24 @@ describe('MobileSettingsMenu', () => {
     expect(onOpenBackendModelPicker).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps model settings usable while a session is running', async () => {
+    const user = userEvent.setup()
+    const onOpenBackendModelPicker = vi.fn()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        isDisabled={false}
+        onOpenBackendModelPicker={onOpenBackendModelPicker}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByText('Model'))
+
+    expect(onOpenBackendModelPicker).toHaveBeenCalledTimes(1)
+  })
+
   it('shows fast mode icon in the model row label', async () => {
     const user = userEvent.setup()
 

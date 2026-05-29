@@ -64,6 +64,7 @@ const createWrapper = (queryClient: QueryClient) => {
 describe('model option helpers', () => {
   it('uses 1M Claude variants where available and keeps no-1M-only models', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
+      'claude-opus-4-8[1m]',
       'claude-opus-4-7[1m]',
       'claude-opus-4-6[1m]',
       'claude-opus-4-5-20251101',
@@ -71,6 +72,7 @@ describe('model option helpers', () => {
       'haiku',
     ])
     expect(normalizeClaudeModel('sonnet')).toBe('claude-sonnet-4-6[1m]')
+    expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8[1m]')
     expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7[1m]')
   })
 
@@ -251,7 +253,7 @@ describe('preferences service', () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
       expect(result.current.data?.theme).toBe('system')
-      expect(result.current.data?.selected_model).toBe('claude-opus-4-7[1m]')
+      expect(result.current.data?.selected_model).toBe('claude-opus-4-8[1m]')
       expect(result.current.data?.jean_mcp_enabled).toBe(true)
     })
 

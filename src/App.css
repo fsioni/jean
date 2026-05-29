@@ -457,7 +457,7 @@
 
 /* Ensure toast notifications remain clickable above Radix modal overlays.
    Radix Dialog (modal mode) sets pointer-events:none on <body>;
-   Sonner already renders at z-index:999999999, we just restore pointer events. */
+   App Toaster sets an explicit topmost z-index, and this restores pointer events. */
 [data-sonner-toaster],
 [data-sonner-toaster] [data-sonner-toast] {
   pointer-events: auto !important;

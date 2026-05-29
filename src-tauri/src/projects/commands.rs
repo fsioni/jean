@@ -6982,6 +6982,14 @@ const COMMIT_MESSAGE_SCHEMA: &str = r#"{"type":"object","properties":{"message":
 /// Prompt template for commit message generation
 const COMMIT_MESSAGE_PROMPT: &str = r#"Generate a conventional commit message for these staged changes.
 
+Rules:
+- Output a commit message about the actual staged code changes only.
+- Do not describe this prompt, commit-message guidance, instructions, inspection, or the act of generating a commit message.
+- Avoid vague subjects like "update files", "inspect changes", "adjust code", or "misc changes".
+- Use a specific Conventional Commits subject: type(optional-scope): concrete behavior changed.
+- First line must be 72 characters or fewer.
+- If prompt/config files changed, name the product behavior affected, not "guidance".
+
 Files changed:
 {diff_stat}
 
@@ -6998,6 +7006,82 @@ Recent commits (style reference):
 #[derive(Debug, Deserialize)]
 struct CommitMessageResponse {
     message: String,
+}
+
+fn commit_message_subject(message: &str) -> &str {
+    message.lines().next().unwrap_or("").trim()
+}
+
+fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Result<(), String> {
+    let subject = commit_message_subject(message);
+    if subject.is_empty() {
+        return Err("commit message subject is empty".to_string());
+    }
+
+    if subject.chars().count() > 72 {
+        return Err("commit message subject exceeds 72 characters".to_string());
+    }
+
+    static CONVENTIONAL_COMMIT_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(feat|fix|docs|style|refactor|perf|test|chore)(\([a-z0-9._-]+\))?!?: .+")
+            .expect("valid conventional commit regex")
+    });
+    if !CONVENTIONAL_COMMIT_RE.is_match(subject) {
+        return Err("commit message must use Conventional Commits format".to_string());
+    }
+
+    let lower_subject = subject.to_lowercase();
+    let meta_terms = [
+        "commit message guidance",
+        "commit guidance",
+        "message guidance",
+        "commit message prompt",
+        "prompt instructions",
+        "inspect commit message",
+    ];
+    if meta_terms.iter().any(|term| lower_subject.contains(term)) {
+        return Err(
+            "commit message is meta/generic instead of describing staged changes".to_string(),
+        );
+    }
+
+    let prompt_like_terms = ["guidance", "prompt", "instructions"];
+    if prompt_like_terms
+        .iter()
+        .any(|term| lower_subject.contains(term))
+    {
+        return Err(
+            "commit message is meta/generic instead of describing staged changes".to_string(),
+        );
+    }
+
+    let generic_subjects = [
+        "chore: update files",
+        "chore: update changes",
+        "chore: inspect changes",
+        "chore: adjust files",
+        "chore: misc changes",
+        "fix: update files",
+        "fix: update changes",
+        "refactor: update files",
+    ];
+    if generic_subjects
+        .iter()
+        .any(|generic| lower_subject.trim() == *generic)
+    {
+        return Err("commit message is too generic for the staged changes".to_string());
+    }
+
+    Ok(())
+}
+
+fn build_commit_retry_prompt(original_prompt: &str, rejection_reason: &str) -> String {
+    format!(
+        "Previous generated commit message was rejected: {rejection_reason}\n\n\
+Generate a replacement commit message that describes the actual staged diff only. \
+Never mention commit-message guidance, prompts, instructions, or inspection unless those exact user-facing product concepts are the changed feature.\n\n\
+{original_prompt}"
+    )
 }
 
 /// Response from creating a commit with AI-generated message
@@ -7262,8 +7346,61 @@ fn push_for_commit(
     }
 }
 
-/// Generate commit message using Claude CLI with JSON schema
+/// Generate commit message using the configured magic backend and validate it.
+#[allow(clippy::too_many_arguments)]
 fn generate_commit_message(
+    app: &AppHandle,
+    prompt: &str,
+    model: Option<&str>,
+    custom_profile_name: Option<&str>,
+    working_dir: Option<&std::path::Path>,
+    worktree_id: Option<&str>,
+    magic_backend: Option<&str>,
+    reasoning_effort: Option<&str>,
+) -> Result<CommitMessageResponse, String> {
+    let response = generate_commit_message_once(
+        app,
+        prompt,
+        model,
+        custom_profile_name,
+        working_dir,
+        worktree_id,
+        magic_backend,
+        reasoning_effort,
+    )?;
+
+    match validate_commit_message(&response.message, prompt, prompt) {
+        Ok(()) => Ok(response),
+        Err(first_reason) => {
+            log::warn!(
+                "Generated commit message rejected, retrying once: {} ({first_reason})",
+                commit_message_subject(&response.message)
+            );
+            let retry_prompt = build_commit_retry_prompt(prompt, &first_reason);
+            let retry_response = generate_commit_message_once(
+                app,
+                &retry_prompt,
+                model,
+                custom_profile_name,
+                working_dir,
+                worktree_id,
+                magic_backend,
+                reasoning_effort,
+            )?;
+            validate_commit_message(&retry_response.message, prompt, prompt).map_err(|reason| {
+                format!(
+                    "AI generated invalid commit message twice. Last rejection: {reason}. Message: {}",
+                    commit_message_subject(&retry_response.message)
+                )
+            })?;
+            Ok(retry_response)
+        }
+    }
+}
+
+/// Generate commit message using Claude CLI with JSON schema
+#[allow(clippy::too_many_arguments)]
+fn generate_commit_message_once(
     app: &AppHandle,
     prompt: &str,
     model: Option<&str>,
@@ -11097,6 +11234,53 @@ Body
 
         let result = extract_structured_output(output);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_commit_guidance_meta_subject() {
+        let result = validate_commit_message(
+            "chore: inspect commit message guidance",
+            "src-tauri/src/projects/commands.rs | 12 ++++++------",
+            "M  src-tauri/src/projects/commands.rs",
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("meta"));
+    }
+
+    #[test]
+    fn validate_commit_message_rejects_generic_subjects() {
+        let result = validate_commit_message(
+            "chore: update files",
+            "src/components/chat/ChatToolbar.tsx | 8 +++++---",
+            "M  src/components/chat/ChatToolbar.tsx",
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("generic"));
+    }
+
+    #[test]
+    fn validate_commit_message_accepts_specific_conventional_commit() {
+        let result = validate_commit_message(
+            "fix(chat): preserve mobile toolbar actions",
+            "src/components/chat/toolbar/MobileToolbarMenu.tsx | 8 +++++---",
+            "M  src/components/chat/toolbar/MobileToolbarMenu.tsx",
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_commit_retry_prompt_includes_rejection_reason_and_original_context() {
+        let retry_prompt = build_commit_retry_prompt(
+            "Generate a conventional commit message.\nDiff:\n+new behavior",
+            "commit message is meta/generic",
+        );
+
+        assert!(retry_prompt.contains("Previous generated commit message was rejected"));
+        assert!(retry_prompt.contains("commit message is meta/generic"));
+        assert!(retry_prompt.contains("+new behavior"));
     }
 
     #[test]
