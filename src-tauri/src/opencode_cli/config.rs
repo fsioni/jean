@@ -62,49 +62,61 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
         Err(_) => false,
     };
 
-    if use_path {
-        let wsl = get_wsl_config();
-        if wsl.enabled {
-            if let Some(unix_path) = crate::platform::wsl_which(
-                &wsl.distro,
-                "opencode",
-                get_wsl_cli_binary_path(&wsl.distro).ok().as_deref(),
-            ) {
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        let jean_managed = get_wsl_cli_binary_path(&wsl.distro).ok();
+
+        if use_path {
+            if let Some(unix_path) =
+                crate::platform::wsl_which(&wsl.distro, "opencode", jean_managed.as_deref())
+            {
                 return PathBuf::from(unix_path);
             }
-        } else {
-            let which_cmd = if cfg!(target_os = "windows") {
-                "where"
-            } else {
-                "which"
-            };
+            log::warn!("opencode_cli_source is 'path' but could not find opencode in WSL PATH, falling back to Jean-managed binary");
+        }
 
-            if let Ok(output) = silent_command(which_cmd).arg("opencode").output() {
-                if output.status.success() {
-                    // On Windows, `where` can return multiple paths; take only the first line
-                    let path_str = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    if !path_str.is_empty() {
-                        let path = PathBuf::from(&path_str);
-                        if path.exists() {
-                            return path;
-                        }
+        if let Some(ref managed_path) = jean_managed {
+            if crate::platform::wsl_file_executable(&wsl.distro, managed_path) {
+                return PathBuf::from(managed_path);
+            }
+        }
+
+        if let Some(unix_path) =
+            crate::platform::wsl_which(&wsl.distro, "opencode", jean_managed.as_deref())
+        {
+            return PathBuf::from(unix_path);
+        }
+
+        return jean_managed
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(CLI_BINARY_NAME_UNIX));
+    }
+
+    if use_path {
+        let which_cmd = if cfg!(target_os = "windows") {
+            "where"
+        } else {
+            "which"
+        };
+
+        if let Ok(output) = silent_command(which_cmd).arg("opencode").output() {
+            if output.status.success() {
+                // On Windows, `where` can return multiple paths; take only the first line
+                let path_str = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !path_str.is_empty() {
+                    let path = PathBuf::from(&path_str);
+                    if path.exists() {
+                        return path;
                     }
                 }
             }
         }
         log::warn!("opencode_cli_source is 'path' but could not find opencode in PATH, falling back to Jean-managed binary");
-    }
-
-    let wsl = get_wsl_config();
-    if wsl.enabled {
-        return get_wsl_cli_binary_path(&wsl.distro)
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(CLI_BINARY_NAME_UNIX));
     }
 
     get_cli_binary_path(app).unwrap_or_else(|_| PathBuf::from(CLI_DIR_NAME).join(CLI_BINARY_NAME))

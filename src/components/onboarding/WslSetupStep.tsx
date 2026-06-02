@@ -115,13 +115,15 @@ export function WslSetupStep({ onComplete }: WslSetupStepProps) {
         })
       }
       // WSL mode affects where path-detection, status, and auth checks look
-      // for each CLI — invalidate cached results so downstream onboarding
+      // for each CLI. Invalidate cached results so downstream onboarding
       // steps re-fetch against the new target (WSL distro vs Windows host).
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['claude-cli'] }),
         queryClient.invalidateQueries({ queryKey: ['codex-cli'] }),
         queryClient.invalidateQueries({ queryKey: ['opencode-cli'] }),
         queryClient.invalidateQueries({ queryKey: ['gh-cli'] }),
+        queryClient.invalidateQueries({ queryKey: ['cursor-cli'] }),
+        queryClient.invalidateQueries({ queryKey: ['coderabbit-cli'] }),
       ])
       onComplete()
     } catch {

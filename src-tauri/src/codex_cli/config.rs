@@ -79,12 +79,13 @@ pub fn resolve_cli_binary(app: &AppHandle) -> Result<PathBuf, String> {
         }
     };
 
-    if use_path {
-        let wsl = get_wsl_config();
-        if wsl.enabled {
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        let jean_managed = get_wsl_cli_binary_path(&wsl.distro).ok();
+
+        if use_path {
             // Resolve absolute Unix path so downstream session/status probes
             // don't depend on a non-login-shell PATH.
-            let jean_managed = get_wsl_cli_binary_path(&wsl.distro).ok();
             if let Some(unix_path) =
                 crate::platform::wsl_which(&wsl.distro, "codex", jean_managed.as_deref())
             {
@@ -94,56 +95,75 @@ pub fn resolve_cli_binary(app: &AppHandle) -> Result<PathBuf, String> {
                 );
                 return Ok(PathBuf::from(unix_path));
             }
-        } else {
-            let which_cmd = if cfg!(target_os = "windows") {
-                "where"
-            } else {
-                "which"
-            };
+            log::warn!("codex_cli_source is 'path' but could not find codex in WSL PATH, falling back to Jean-managed binary");
+        }
 
-            match silent_command(which_cmd).arg("codex").output() {
-                Ok(output) => {
-                    log::debug!(
-                        "resolve_cli_binary: `{which_cmd} codex` exit_status={}, stdout={:?}",
-                        output.status,
-                        String::from_utf8_lossy(&output.stdout).trim()
-                    );
-                    if output.status.success() {
-                        // On Windows, `where` can return multiple paths; take only the first line
-                        let path_str = String::from_utf8_lossy(&output.stdout)
-                            .lines()
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        if !path_str.is_empty() {
-                            let path = PathBuf::from(&path_str);
-                            if path.exists() {
-                                log::debug!(
-                                    "resolve_cli_binary: resolved to PATH binary: {path_str}"
-                                );
-                                return Ok(path);
-                            } else {
-                                log::debug!("resolve_cli_binary: PATH binary does not exist on disk: {path_str}");
-                            }
+        if let Some(ref managed_path) = jean_managed {
+            if crate::platform::wsl_file_executable(&wsl.distro, managed_path) {
+                return Ok(PathBuf::from(managed_path));
+            }
+        }
+
+        if let Some(unix_path) =
+            crate::platform::wsl_which(&wsl.distro, "codex", jean_managed.as_deref())
+        {
+            log::debug!(
+                "resolve_cli_binary: found codex in WSL distro {} at {unix_path}",
+                wsl.distro
+            );
+            return Ok(PathBuf::from(unix_path));
+        }
+
+        return jean_managed.map(PathBuf::from).ok_or_else(|| {
+            format!(
+                "Failed to resolve Jean-managed Codex path in WSL distro {}",
+                wsl.distro
+            )
+        });
+    }
+
+    if use_path {
+        let which_cmd = if cfg!(target_os = "windows") {
+            "where"
+        } else {
+            "which"
+        };
+
+        match silent_command(which_cmd).arg("codex").output() {
+            Ok(output) => {
+                log::debug!(
+                    "resolve_cli_binary: `{which_cmd} codex` exit_status={}, stdout={:?}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout).trim()
+                );
+                if output.status.success() {
+                    // On Windows, `where` can return multiple paths; take only the first line
+                    let path_str = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !path_str.is_empty() {
+                        let path = PathBuf::from(&path_str);
+                        if path.exists() {
+                            log::debug!("resolve_cli_binary: resolved to PATH binary: {path_str}");
+                            return Ok(path);
                         } else {
-                            log::debug!(
-                                "resolve_cli_binary: `{which_cmd} codex` returned empty output"
-                            );
+                            log::debug!("resolve_cli_binary: PATH binary does not exist on disk: {path_str}");
                         }
+                    } else {
+                        log::debug!(
+                            "resolve_cli_binary: `{which_cmd} codex` returned empty output"
+                        );
                     }
                 }
-                Err(e) => {
-                    log::debug!("resolve_cli_binary: `{which_cmd} codex` failed to execute: {e}");
-                }
+            }
+            Err(e) => {
+                log::debug!("resolve_cli_binary: `{which_cmd} codex` failed to execute: {e}");
             }
         }
         log::warn!("codex_cli_source is 'path' but could not find codex in PATH, falling back to Jean-managed binary");
-    }
-
-    let wsl = get_wsl_config();
-    if wsl.enabled {
-        return get_wsl_cli_binary_path(&wsl.distro).map(PathBuf::from);
     }
 
     let fallback = get_cli_binary_path(app)
