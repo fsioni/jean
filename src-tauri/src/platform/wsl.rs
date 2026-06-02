@@ -256,21 +256,7 @@ fn select_wsl_which_candidate(output: &str, jean_managed: Option<&str>) -> Optio
 /// in a login shell, optionally excluding Jean's managed binary.
 #[cfg(windows)]
 pub fn wsl_which(distro: &str, tool: &str, jean_managed: Option<&str>) -> Option<String> {
-    let script = if let Some(jean_path) = jean_managed.map(str::trim).filter(|p| !p.is_empty()) {
-        format!(
-            "jean={jean}; \
-             jean_real=$(readlink -f -- \"$jean\" 2>/dev/null || printf '%s' \"$jean\"); \
-             while IFS= read -r candidate; do \
-               candidate_real=$(readlink -f -- \"$candidate\" 2>/dev/null || printf '%s' \"$candidate\"); \
-               if [ \"$candidate_real\" != \"$jean_real\" ]; then printf '%s\\n' \"$candidate\"; exit 0; fi; \
-             done < <(type -P -a {tool} 2>/dev/null); \
-             exit 1",
-            jean = shell_single_quote(jean_path),
-            tool = shell_single_quote(tool),
-        )
-    } else {
-        format!("type -P -a {}", shell_single_quote(tool))
-    };
+    let script = format!("type -P -a {}", shell_single_quote(tool));
     let output = silent_command("wsl.exe")
         .args(["-d", distro, "--", "bash", "-lc", &script])
         .output()
@@ -278,7 +264,7 @@ pub fn wsl_which(distro: &str, tool: &str, jean_managed: Option<&str>) -> Option
     if !output.status.success() {
         return None;
     }
-    select_wsl_which_candidate(&String::from_utf8_lossy(&output.stdout), None)
+    select_wsl_which_candidate(&String::from_utf8_lossy(&output.stdout), jean_managed)
 }
 
 #[cfg(not(windows))]
