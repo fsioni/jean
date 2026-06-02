@@ -225,6 +225,16 @@ export function TerminalView({
     [worktreeId, removeTerminal, setTerminalPanelOpen, setTerminalVisible]
   )
 
+  // Middle-click on a tab closes it, mirroring the session-tab behavior.
+  const handleTabAuxClick = useCallback(
+    (e: React.MouseEvent, terminalId: string) => {
+      if (e.button !== 1) return
+      e.preventDefault()
+      void handleCloseTerminal(e, terminalId)
+    },
+    [handleCloseTerminal]
+  )
+
   const handleSelectTerminal = useCallback(
     (terminalId: string) => {
       setActiveTerminal(worktreeId, terminalId)
@@ -298,6 +308,7 @@ export function TerminalView({
                 key={terminal.id}
                 type="button"
                 onClick={() => handleSelectTerminal(terminal.id)}
+                onAuxClick={e => handleTabAuxClick(e, terminal.id)}
                 className={cn(
                   'group flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors',
                   isActive

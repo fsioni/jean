@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, waitFor } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { useTerminalStore } from '@/store/terminal-store'
-import { SingleTerminalView } from './TerminalView'
+import { invoke } from '@/lib/transport'
+import { SingleTerminalView, TerminalView } from './TerminalView'
 
 const initTerminal = vi.fn().mockResolvedValue(undefined)
 const fit = vi.fn()
@@ -13,6 +14,16 @@ vi.mock('@/hooks/useTerminal', () => ({
     fit,
     focus,
   }),
+}))
+
+vi.mock('@/lib/transport', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  invoke: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/lib/terminal-instances', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  disposeTerminal: vi.fn().mockResolvedValue(undefined),
 }))
 
 class ResizeObserverMock {
@@ -118,5 +129,95 @@ describe('SingleTerminalView', () => {
     )
 
     await waitFor(() => expect(initTerminal).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('TerminalView tab middle-click', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.ResizeObserver =
+      ResizeObserverMock as unknown as typeof ResizeObserver
+    window.requestAnimationFrame =
+      window.requestAnimationFrame ??
+      ((callback: FrameRequestCallback) => {
+        callback(0)
+        return 0
+      })
+    useTerminalStore.setState({
+      terminals: {
+        'worktree-1': [
+          {
+            id: 'terminal-1',
+            worktreeId: 'worktree-1',
+            command: 'bash',
+            commandArgs: [],
+            label: 'Terminal 1',
+            kind: 'panel',
+          },
+          {
+            id: 'terminal-2',
+            worktreeId: 'worktree-1',
+            command: 'bash',
+            commandArgs: [],
+            label: 'Terminal 2',
+            kind: 'panel',
+          },
+        ],
+      },
+      activeTerminalIds: { 'worktree-1': 'terminal-1' },
+      runningTerminals: new Set(),
+      failedTerminals: new Set(),
+      terminalVisible: true,
+      terminalPanelOpen: { 'worktree-1': true },
+      modalTerminalOpen: {},
+    })
+  })
+
+  const renderTabBar = () =>
+    render(
+      <TerminalView worktreeId="worktree-1" worktreePath="/tmp/worktree-1" />
+    )
+
+  const getTab = (label: string) => {
+    const tab = screen.getByText(label).closest('button')
+    if (!tab) throw new Error(`Tab button for "${label}" not found`)
+    return tab
+  }
+
+  it('closes the tab on middle-click (button 1)', async () => {
+    renderTabBar()
+
+    fireEvent(
+      getTab('Terminal 1'),
+      new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
+    )
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('stop_terminal', {
+        terminalId: 'terminal-1',
+      })
+    )
+    await waitFor(() => {
+      const remaining =
+        useTerminalStore.getState().terminals['worktree-1'] ?? []
+      expect(remaining.some(t => t.id === 'terminal-1')).toBe(false)
+      expect(remaining.some(t => t.id === 'terminal-2')).toBe(true)
+    })
+  })
+
+  it('does not close on right-click (button 2)', async () => {
+    renderTabBar()
+
+    fireEvent(
+      getTab('Terminal 1'),
+      new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 })
+    )
+
+    await Promise.resolve()
+    expect(invoke).not.toHaveBeenCalledWith('stop_terminal', {
+      terminalId: 'terminal-1',
+    })
+    const remaining = useTerminalStore.getState().terminals['worktree-1'] ?? []
+    expect(remaining.some(t => t.id === 'terminal-1')).toBe(true)
   })
 })
