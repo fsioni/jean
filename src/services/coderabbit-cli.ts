@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { hasBackend } from '@/lib/environment'
 import { invoke, listen, useWsConnectionStatus } from '@/lib/transport'
 import { logger } from '@/lib/logger'
+import { usePreferences } from '@/services/preferences'
 import type {
   CodeRabbitAuthStatus,
   CodeRabbitCliStatus,
@@ -26,8 +27,14 @@ export const coderabbitCliQueryKeys = {
 }
 
 export function useCodeRabbitPathDetection(options?: { enabled?: boolean }) {
+  const { data: preferences } = usePreferences()
+
   return useQuery({
-    queryKey: coderabbitCliQueryKeys.pathDetection(),
+    queryKey: [
+      ...coderabbitCliQueryKeys.pathDetection(),
+      preferences?.wsl_enabled ?? false,
+      preferences?.wsl_distro ?? '',
+    ],
     queryFn: async (): Promise<CodeRabbitPathDetection> => {
       if (!isTauri()) {
         return {
@@ -50,6 +57,7 @@ export function useCodeRabbitPathDetection(options?: { enabled?: boolean }) {
       }
     },
     enabled: options?.enabled ?? true,
+    refetchOnMount: 'always',
     staleTime: 1000 * 60 * 30,
     gcTime: 1000 * 60 * 60,
   })

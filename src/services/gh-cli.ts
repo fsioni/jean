@@ -19,6 +19,7 @@ import type {
 } from '@/types/gh-cli'
 
 import { hasBackend } from '@/lib/environment'
+import { usePreferences } from '@/services/preferences'
 
 const isTauri = hasBackend
 
@@ -34,8 +35,15 @@ export const ghCliQueryKeys = {
  * Hook to detect GitHub CLI in system PATH
  */
 export function useGhPathDetection(options?: { enabled?: boolean }) {
+  const { data: preferences } = usePreferences()
+
   return useQuery({
-    queryKey: [...ghCliQueryKeys.all, 'path-detection'],
+    queryKey: [
+      ...ghCliQueryKeys.all,
+      'path-detection',
+      preferences?.wsl_enabled ?? false,
+      preferences?.wsl_distro ?? '',
+    ],
     queryFn: async (): Promise<{
       found: boolean
       path: string | null
@@ -70,6 +78,7 @@ export function useGhPathDetection(options?: { enabled?: boolean }) {
       }
     },
     enabled: options?.enabled ?? true,
+    refetchOnMount: 'always',
     staleTime: 1000 * 60 * 30,
     gcTime: 1000 * 60 * 60,
   })

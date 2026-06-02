@@ -20,6 +20,7 @@ import type {
 } from '@/types/claude-cli'
 
 import { hasBackend } from '@/lib/environment'
+import { usePreferences } from '@/services/preferences'
 
 const isTauri = hasBackend
 const USAGE_REFRESH_MS = 1000 * 60 * 5
@@ -37,8 +38,15 @@ export const claudeCliQueryKeys = {
  * Hook to detect Claude CLI in system PATH
  */
 export function useClaudePathDetection(options?: { enabled?: boolean }) {
+  const { data: preferences } = usePreferences()
+
   return useQuery({
-    queryKey: [...claudeCliQueryKeys.all, 'path-detection'],
+    queryKey: [
+      ...claudeCliQueryKeys.all,
+      'path-detection',
+      preferences?.wsl_enabled ?? false,
+      preferences?.wsl_distro ?? '',
+    ],
     queryFn: async (): Promise<{
       found: boolean
       path: string | null
@@ -73,6 +81,7 @@ export function useClaudePathDetection(options?: { enabled?: boolean }) {
       }
     },
     enabled: options?.enabled ?? true,
+    refetchOnMount: 'always',
     staleTime: 1000 * 60 * 30, // 30 min cache
     gcTime: 1000 * 60 * 60,
   })
