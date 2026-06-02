@@ -1,6 +1,6 @@
 //! Configuration and path resolution for Cursor Agent.
 
-use crate::platform::silent_command;
+use crate::platform::{get_wsl_config, silent_command};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
@@ -20,12 +20,26 @@ pub const LEGACY_CLI_BINARY_NAME: &str = "cursor-agent";
 
 pub const CLI_BINARY_CANDIDATES: [&str; 2] = [CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME];
 
+/// Bare tool name (without platform-specific extension) for WSL/Unix lookups.
+pub const CLI_TOOL_NAME: &str = "cursor-agent";
+
 /// Resolve the Cursor Agent binary from system PATH.
 ///
 /// Cursor's installer places the binary on PATH, so Jean resolves the
 /// discovered system binary when available and returns a non-existent fallback
 /// path otherwise.
 pub fn resolve_cli_binary(_app: &AppHandle) -> PathBuf {
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        // Resolve the absolute Unix path inside WSL via a login shell, so
+        // cursor-agent installed via nvm / bun / cursor.com's installer is
+        // found regardless of non-login-shell $PATH.
+        if let Some(unix_path) = crate::platform::wsl_which(&wsl.distro, CLI_TOOL_NAME) {
+            return PathBuf::from(unix_path);
+        }
+        return PathBuf::from(CLI_TOOL_NAME);
+    }
+
     let which_cmd = if cfg!(target_os = "windows") {
         "where"
     } else {

@@ -1,6 +1,6 @@
 //! Configuration and path management for the Codex CLI
 
-use crate::platform::{silent_command, get_wsl_config};
+use crate::platform::{silent_command, get_wsl_config, get_wsl_home_dir};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -12,6 +12,19 @@ pub const CLI_DIR_NAME: &str = "codex-cli";
 pub const CLI_BINARY_NAME: &str = "codex.exe";
 #[cfg(not(windows))]
 pub const CLI_BINARY_NAME: &str = "codex";
+
+/// Name of the Codex CLI binary when Jean manages it inside a WSL distro.
+pub const CLI_BINARY_NAME_UNIX: &str = "codex";
+
+/// Full Unix path to the (eventual) Jean-managed Codex CLI inside a WSL
+/// distro. Used so detection doesn't confuse a system-PATH `codex` with a
+/// Jean-managed one.
+pub fn get_wsl_cli_binary_path(distro: &str) -> Result<String, String> {
+    let home = get_wsl_home_dir(distro)?;
+    Ok(format!(
+        "{home}/.local/share/jean/{CLI_DIR_NAME}/{CLI_BINARY_NAME_UNIX}"
+    ))
+}
 
 /// Get the directory where Codex CLI is installed
 ///
@@ -69,9 +82,14 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
     if use_path {
         let wsl = get_wsl_config();
         if wsl.enabled {
-            if crate::platform::check_wsl_tool(&wsl.distro, "codex") {
-                log::debug!("resolve_cli_binary: found codex in WSL distro {}", wsl.distro);
-                return PathBuf::from("codex");
+            // Resolve absolute Unix path so downstream session/status probes
+            // don't depend on a non-login-shell PATH.
+            if let Some(unix_path) = crate::platform::wsl_which(&wsl.distro, "codex") {
+                log::debug!(
+                    "resolve_cli_binary: found codex in WSL distro {} at {unix_path}",
+                    wsl.distro
+                );
+                return PathBuf::from(unix_path);
             }
         } else {
             let which_cmd = if cfg!(target_os = "windows") {
@@ -116,6 +134,13 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
             }
         }
         log::warn!("codex_cli_source is 'path' but could not find codex in PATH, falling back to Jean-managed binary");
+    }
+
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        return get_wsl_cli_binary_path(&wsl.distro)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(CLI_BINARY_NAME_UNIX));
     }
 
     let fallback = get_cli_binary_path(app)

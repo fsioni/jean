@@ -1204,63 +1204,51 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Button>
               )}
             </InlineField>
-            {(cliStatus?.installed || pathDetection?.found) && (
-              <InlineField
-                label="Source"
-                description={
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() =>
-                          handleCopyPath(
-                            preferences?.claude_cli_source === 'path'
-                              ? pathDetection?.path
-                              : cliStatus?.path
-                          )
-                        }
-                        className="text-left hover:underline cursor-pointer"
-                      >
-                        {preferences?.claude_cli_source === 'path'
-                          ? (pathDetection?.path ?? 'System PATH')
-                          : (cliStatus?.path ?? 'Not installed')}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Click to copy path</TooltipContent>
-                  </Tooltip>
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={preferences?.claude_cli_source ?? 'jean'}
-                    onValueChange={handleClaudeSourceChange}
-                  >
-                    <SelectTrigger
-                      className="w-96"
-                      hideIcon={!pathDetection?.found}
+            <InlineField
+              label="Source"
+              description={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() =>
+                        handleCopyPath(
+                          preferences?.claude_cli_source === 'path'
+                            ? pathDetection?.path
+                            : cliStatus?.path
+                        )
+                      }
+                      className="text-left hover:underline cursor-pointer"
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="jean">Jean (managed)</SelectItem>
-                      <SelectItem value="path" disabled={!pathDetection?.found}>
-                        System PATH
-                        {!pathDetection?.found && ' (not found)'}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {preferences?.claude_cli_source === 'jean' &&
-                    cliStatus?.installed && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setDeleteCliTarget('claude')}
-                      >
-                        Delete managed install
-                      </Button>
-                    )}
-                </div>
-              </InlineField>
+                      {preferences?.claude_cli_source === 'path'
+                        ? (pathDetection?.path ?? 'System PATH')
+                        : (cliStatus?.path ?? 'Not installed')}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click to copy path</TooltipContent>
+                </Tooltip>
+              }
+            >
+              <Select
+                value={preferences?.claude_cli_source ?? 'jean'}
+                onValueChange={handleClaudeSourceChange}
+              >
+                <SelectTrigger className="w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jean">Jean (managed)</SelectItem>
+                  <SelectItem value="path" disabled={!pathDetection?.found}>
+                    System PATH
+                    {!pathDetection?.found && ' (not found)'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </InlineField>
+            {!cliStatus?.installed && !pathDetection?.found && (
+              <p className="text-xs text-muted-foreground px-1">
+                Install with Jean, or install <code>claude</code> yourself in
+                your environment — we&apos;ll detect it on your PATH.
+              </p>
             )}
           </div>
         </SettingsSection>
@@ -1363,66 +1351,51 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Button>
               )}
             </InlineField>
-            {(ghStatus?.installed || ghPathDetection?.found) && (
-              <InlineField
-                label="Source"
-                description={
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() =>
-                          handleCopyPath(
-                            preferences?.gh_cli_source === 'path'
-                              ? ghPathDetection?.path
-                              : ghStatus?.path
-                          )
-                        }
-                        className="text-left hover:underline cursor-pointer"
-                      >
-                        {preferences?.gh_cli_source === 'path'
-                          ? (ghPathDetection?.path ?? 'System PATH')
-                          : (ghStatus?.path ?? 'Not installed')}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Click to copy path</TooltipContent>
-                  </Tooltip>
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={preferences?.gh_cli_source ?? 'jean'}
-                    onValueChange={handleGhSourceChange}
-                  >
-                    <SelectTrigger
-                      className="w-96"
-                      hideIcon={!ghPathDetection?.found}
+            <InlineField
+              label="Source"
+              description={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() =>
+                        handleCopyPath(
+                          preferences?.gh_cli_source === 'path'
+                            ? ghPathDetection?.path
+                            : ghStatus?.path
+                        )
+                      }
+                      className="text-left hover:underline cursor-pointer"
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="jean">Jean (managed)</SelectItem>
-                      <SelectItem
-                        value="path"
-                        disabled={!ghPathDetection?.found}
-                      >
-                        System PATH
-                        {!ghPathDetection?.found && ' (not found)'}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {preferences?.gh_cli_source === 'jean' &&
-                    ghStatus?.installed && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setDeleteCliTarget('gh')}
-                      >
-                        Delete managed install
-                      </Button>
-                    )}
-                </div>
-              </InlineField>
+                      {preferences?.gh_cli_source === 'path'
+                        ? (ghPathDetection?.path ?? 'System PATH')
+                        : (ghStatus?.path ?? 'Not installed')}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click to copy path</TooltipContent>
+                </Tooltip>
+              }
+            >
+              <Select
+                value={preferences?.gh_cli_source ?? 'jean'}
+                onValueChange={handleGhSourceChange}
+              >
+                <SelectTrigger className="w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jean">Jean (managed)</SelectItem>
+                  <SelectItem value="path" disabled={!ghPathDetection?.found}>
+                    System PATH
+                    {!ghPathDetection?.found && ' (not found)'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </InlineField>
+            {!ghStatus?.installed && !ghPathDetection?.found && (
+              <p className="text-xs text-muted-foreground px-1">
+                Install with Jean, or install <code>gh</code> yourself in your
+                environment — we&apos;ll detect it on your PATH.
+              </p>
             )}
           </div>
         </SettingsSection>
@@ -1699,66 +1672,54 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Button>
               )}
             </InlineField>
-            {(codexStatus?.installed || codexPathDetection?.found) && (
-              <InlineField
-                label="Source"
-                description={
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() =>
-                          handleCopyPath(
-                            preferences?.codex_cli_source === 'path'
-                              ? codexPathDetection?.path
-                              : codexStatus?.path
-                          )
-                        }
-                        className="text-left hover:underline cursor-pointer"
-                      >
-                        {preferences?.codex_cli_source === 'path'
-                          ? (codexPathDetection?.path ?? 'System PATH')
-                          : (codexStatus?.path ?? 'Not installed')}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Click to copy path</TooltipContent>
-                  </Tooltip>
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={preferences?.codex_cli_source ?? 'jean'}
-                    onValueChange={handleCodexSourceChange}
-                  >
-                    <SelectTrigger
-                      className="w-96"
-                      hideIcon={!codexPathDetection?.found}
+            <InlineField
+              label="Source"
+              description={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() =>
+                        handleCopyPath(
+                          preferences?.codex_cli_source === 'path'
+                            ? codexPathDetection?.path
+                            : codexStatus?.path
+                        )
+                      }
+                      className="text-left hover:underline cursor-pointer"
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="jean">Jean (managed)</SelectItem>
-                      <SelectItem
-                        value="path"
-                        disabled={!codexPathDetection?.found}
-                      >
-                        System PATH
-                        {!codexPathDetection?.found && ' (not found)'}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {preferences?.codex_cli_source === 'jean' &&
-                    codexStatus?.installed && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setDeleteCliTarget('codex')}
-                      >
-                        Delete managed install
-                      </Button>
-                    )}
-                </div>
-              </InlineField>
+                      {preferences?.codex_cli_source === 'path'
+                        ? (codexPathDetection?.path ?? 'System PATH')
+                        : (codexStatus?.path ?? 'Not installed')}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click to copy path</TooltipContent>
+                </Tooltip>
+              }
+            >
+              <Select
+                value={preferences?.codex_cli_source ?? 'jean'}
+                onValueChange={handleCodexSourceChange}
+              >
+                <SelectTrigger className="w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jean">Jean (managed)</SelectItem>
+                  <SelectItem
+                    value="path"
+                    disabled={!codexPathDetection?.found}
+                  >
+                    System PATH
+                    {!codexPathDetection?.found && ' (not found)'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </InlineField>
+            {!codexStatus?.installed && !codexPathDetection?.found && (
+              <p className="text-xs text-muted-foreground px-1">
+                Install with Jean, or install <code>codex</code> yourself in
+                your environment — we&apos;ll detect it on your PATH.
+              </p>
             )}
           </div>
         </SettingsSection>
@@ -1869,66 +1830,54 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Button>
               )}
             </InlineField>
-            {(opencodeStatus?.installed || opencodePathDetection?.found) && (
-              <InlineField
-                label="Source"
-                description={
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() =>
-                          handleCopyPath(
-                            preferences?.opencode_cli_source === 'path'
-                              ? opencodePathDetection?.path
-                              : opencodeStatus?.path
-                          )
-                        }
-                        className="text-left hover:underline cursor-pointer"
-                      >
-                        {preferences?.opencode_cli_source === 'path'
-                          ? (opencodePathDetection?.path ?? 'System PATH')
-                          : (opencodeStatus?.path ?? 'Not installed')}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Click to copy path</TooltipContent>
-                  </Tooltip>
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={preferences?.opencode_cli_source ?? 'jean'}
-                    onValueChange={handleOpencodeSourceChange}
-                  >
-                    <SelectTrigger
-                      className="w-96"
-                      hideIcon={!opencodePathDetection?.found}
+            <InlineField
+              label="Source"
+              description={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() =>
+                        handleCopyPath(
+                          preferences?.opencode_cli_source === 'path'
+                            ? opencodePathDetection?.path
+                            : opencodeStatus?.path
+                        )
+                      }
+                      className="text-left hover:underline cursor-pointer"
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="jean">Jean (managed)</SelectItem>
-                      <SelectItem
-                        value="path"
-                        disabled={!opencodePathDetection?.found}
-                      >
-                        System PATH
-                        {!opencodePathDetection?.found && ' (not found)'}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {preferences?.opencode_cli_source === 'jean' &&
-                    opencodeStatus?.installed && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setDeleteCliTarget('opencode')}
-                      >
-                        Delete managed install
-                      </Button>
-                    )}
-                </div>
-              </InlineField>
+                      {preferences?.opencode_cli_source === 'path'
+                        ? (opencodePathDetection?.path ?? 'System PATH')
+                        : (opencodeStatus?.path ?? 'Not installed')}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click to copy path</TooltipContent>
+                </Tooltip>
+              }
+            >
+              <Select
+                value={preferences?.opencode_cli_source ?? 'jean'}
+                onValueChange={handleOpencodeSourceChange}
+              >
+                <SelectTrigger className="w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jean">Jean (managed)</SelectItem>
+                  <SelectItem
+                    value="path"
+                    disabled={!opencodePathDetection?.found}
+                  >
+                    System PATH
+                    {!opencodePathDetection?.found && ' (not found)'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </InlineField>
+            {!opencodeStatus?.installed && !opencodePathDetection?.found && (
+              <p className="text-xs text-muted-foreground px-1">
+                Install with Jean, or install <code>opencode</code> yourself in
+                your environment — we&apos;ll detect it on your PATH.
+              </p>
             )}
           </div>
         </SettingsSection>
@@ -1967,9 +1916,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Button>
               )
             ) : (
-              <Button variant="outline" size="sm" onClick={handleCursorInstall}>
-                Install
-              </Button>
+              <span className="text-sm text-muted-foreground">
+                Not installed
+              </span>
             )
           }
         >
@@ -1978,8 +1927,8 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               label={cursorStatus?.installed ? 'Version' : 'Status'}
               description={
                 cursorStatus?.installed
-                  ? 'Cursor Agent can be logged in and self-updated from Jean.'
-                  : 'Cursor Agent can be installed from Jean or discovered from your system PATH.'
+                  ? 'Enables Cursor AI sessions'
+                  : 'Optional — enables Cursor AI sessions'
               }
             >
               {isCursorLoading ? (
@@ -1998,18 +1947,12 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   </Button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    Not found in PATH
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCursorInstall}
-                  >
-                    Install now
-                  </Button>
-                </div>
+                <Button
+                  className="w-full sm:w-40"
+                  onClick={handleCursorInstall}
+                >
+                  Install
+                </Button>
               )}
             </InlineField>
             {cursorStatus?.installed &&
@@ -2019,33 +1962,47 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   {cursorAuthMessage}
                 </div>
               )}
-            {(cursorStatus?.installed || cursorPathDetection?.found) && (
-              <InlineField
-                label="Source"
-                description={
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() =>
-                          handleCopyPath(
-                            cursorPathDetection?.path ?? cursorStatus?.path
-                          )
-                        }
-                        className="text-left hover:underline cursor-pointer"
-                      >
-                        {cursorPathDetection?.path ??
-                          cursorStatus?.path ??
-                          'System PATH'}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Click to copy path</TooltipContent>
-                  </Tooltip>
-                }
-              >
-                <span className="text-sm text-muted-foreground">
-                  System PATH
-                </span>
-              </InlineField>
+            <InlineField
+              label="Source"
+              description={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() =>
+                        handleCopyPath(
+                          cursorPathDetection?.path ?? cursorStatus?.path
+                        )
+                      }
+                      className="text-left hover:underline cursor-pointer"
+                    >
+                      {cursorPathDetection?.path ??
+                        cursorStatus?.path ??
+                        'Not installed'}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Click to copy path</TooltipContent>
+                </Tooltip>
+              }
+            >
+              {/* Cursor has no Jean-managed binary — the installer runs
+                  Cursor's own script and the result lives on PATH. The
+                  Select is disabled but kept for visual parity with the
+                  other CLI rows. */}
+              <Select value="path" disabled>
+                <SelectTrigger className="w-96">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="path">System PATH</SelectItem>
+                </SelectContent>
+              </Select>
+            </InlineField>
+            {!cursorStatus?.installed && !cursorPathDetection?.found && (
+              <p className="text-xs text-muted-foreground px-1">
+                Install with Jean, or install <code>cursor-agent</code>{' '}
+                yourself in your environment — we&apos;ll detect it on your
+                PATH.
+              </p>
             )}
           </div>
         </SettingsSection>
@@ -3614,6 +3571,17 @@ const WslSettingsSection: FC<{
   const [distros, setDistros] = useState<string[]>([])
   const [loadingDistros, setLoadingDistros] = useState(false)
   const [toolStatus, setToolStatus] = useState<string>('')
+  const queryClient = useQueryClient()
+
+  // Toggling WSL mode changes where CLI detection, status, and auth checks
+  // look for binaries — bust the cached results so subsequent reads fetch
+  // against the new target (WSL distro vs Windows host).
+  const invalidateCliCaches = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['claude-cli'] })
+    void queryClient.invalidateQueries({ queryKey: ['codex-cli'] })
+    void queryClient.invalidateQueries({ queryKey: ['opencode-cli'] })
+    void queryClient.invalidateQueries({ queryKey: ['gh-cli'] })
+  }, [queryClient])
 
   // Load available distros
   useEffect(() => {
@@ -3648,10 +3616,13 @@ const WslSettingsSection: FC<{
           <Switch
             checked={preferences?.wsl_enabled ?? false}
             onCheckedChange={checked => {
-              patchPreferences.mutate({
-                wsl_enabled: checked,
-                wsl_mode_chosen: true,
-              })
+              patchPreferences.mutate(
+                {
+                  wsl_enabled: checked,
+                  wsl_mode_chosen: true,
+                },
+                { onSuccess: invalidateCliCaches }
+              )
             }}
           />
         </InlineField>
@@ -3671,7 +3642,10 @@ const WslSettingsSection: FC<{
                 <Select
                   value={preferences?.wsl_distro || ''}
                   onValueChange={value => {
-                    patchPreferences.mutate({ wsl_distro: value })
+                    patchPreferences.mutate(
+                      { wsl_distro: value },
+                      { onSuccess: invalidateCliCaches }
+                    )
                   }}
                 >
                   <SelectTrigger className="w-48">

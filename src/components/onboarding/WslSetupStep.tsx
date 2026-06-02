@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,6 +27,7 @@ type ValidationState = 'idle' | 'checking' | 'valid' | 'invalid'
 
 export function WslSetupStep({ onComplete }: WslSetupStepProps) {
   const patchPreferences = usePatchPreferences()
+  const queryClient = useQueryClient()
   const [mode, setMode] = useState<'native' | 'wsl'>('native')
   const [distros, setDistros] = useState<string[]>([])
   const [selectedDistro, setSelectedDistro] = useState('')
@@ -112,13 +114,22 @@ export function WslSetupStep({ onComplete }: WslSetupStepProps) {
           wsl_distro: selectedDistro,
         })
       }
+      // WSL mode affects where path-detection, status, and auth checks look
+      // for each CLI — invalidate cached results so downstream onboarding
+      // steps re-fetch against the new target (WSL distro vs Windows host).
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['claude-cli'] }),
+        queryClient.invalidateQueries({ queryKey: ['codex-cli'] }),
+        queryClient.invalidateQueries({ queryKey: ['opencode-cli'] }),
+        queryClient.invalidateQueries({ queryKey: ['gh-cli'] }),
+      ])
       onComplete()
     } catch {
       // Toast will show from mutation error
     } finally {
       setSaving(false)
     }
-  }, [mode, selectedDistro, patchPreferences, onComplete])
+  }, [mode, selectedDistro, patchPreferences, queryClient, onComplete])
 
   const canContinue =
     mode === 'native' || (mode === 'wsl' && validation === 'valid')

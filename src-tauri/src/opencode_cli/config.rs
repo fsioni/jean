@@ -1,6 +1,6 @@
 //! Configuration and path management for the OpenCode CLI
 
-use crate::platform::{silent_command, get_wsl_config};
+use crate::platform::{silent_command, get_wsl_config, get_wsl_home_dir};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -12,6 +12,19 @@ pub const CLI_DIR_NAME: &str = "opencode-cli";
 pub const CLI_BINARY_NAME: &str = "opencode.exe";
 #[cfg(not(windows))]
 pub const CLI_BINARY_NAME: &str = "opencode";
+
+/// Name of the OpenCode CLI binary when Jean manages it inside a WSL distro.
+pub const CLI_BINARY_NAME_UNIX: &str = "opencode";
+
+/// Full Unix path to the (eventual) Jean-managed OpenCode CLI inside a WSL
+/// distro. Used so detection doesn't confuse a system-PATH `opencode` with
+/// a Jean-managed one.
+pub fn get_wsl_cli_binary_path(distro: &str) -> Result<String, String> {
+    let home = get_wsl_home_dir(distro)?;
+    Ok(format!(
+        "{home}/.local/share/jean/{CLI_DIR_NAME}/{CLI_BINARY_NAME_UNIX}"
+    ))
+}
 
 /// Get the directory where OpenCode CLI is installed.
 pub fn get_cli_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -52,8 +65,8 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
     if use_path {
         let wsl = get_wsl_config();
         if wsl.enabled {
-            if crate::platform::check_wsl_tool(&wsl.distro, "opencode") {
-                return PathBuf::from("opencode");
+            if let Some(unix_path) = crate::platform::wsl_which(&wsl.distro, "opencode") {
+                return PathBuf::from(unix_path);
             }
         } else {
             let which_cmd = if cfg!(target_os = "windows") {
@@ -81,6 +94,13 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
             }
         }
         log::warn!("opencode_cli_source is 'path' but could not find opencode in PATH, falling back to Jean-managed binary");
+    }
+
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        return get_wsl_cli_binary_path(&wsl.distro)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(CLI_BINARY_NAME_UNIX));
     }
 
     get_cli_binary_path(app).unwrap_or_else(|_| PathBuf::from(CLI_DIR_NAME).join(CLI_BINARY_NAME))
