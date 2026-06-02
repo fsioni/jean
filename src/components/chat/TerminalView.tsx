@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import { Plus, X, Minus, Terminal, ChevronUp } from 'lucide-react'
 import { invoke } from '@/lib/transport'
+import { middleClickClose } from '@/lib/middle-click'
 import { useTerminal } from '@/hooks/useTerminal'
 import { useTerminalBackgroundColor } from '@/hooks/useTerminalThemeSync'
 import {
@@ -225,16 +226,6 @@ export function TerminalView({
     [worktreeId, removeTerminal, setTerminalPanelOpen, setTerminalVisible]
   )
 
-  // Middle-click on a tab closes it, mirroring the session-tab behavior.
-  const handleTabAuxClick = useCallback(
-    (e: React.MouseEvent, terminalId: string) => {
-      if (e.button !== 1) return
-      e.preventDefault()
-      void handleCloseTerminal(e, terminalId)
-    },
-    [handleCloseTerminal]
-  )
-
   const handleSelectTerminal = useCallback(
     (terminalId: string) => {
       setActiveTerminal(worktreeId, terminalId)
@@ -308,12 +299,7 @@ export function TerminalView({
                 key={terminal.id}
                 type="button"
                 onClick={() => handleSelectTerminal(terminal.id)}
-                onMouseDown={e => {
-                  // Suppress middle-click autoscroll (fires on mousedown,
-                  // before auxclick) — relevant in web-access/browser mode.
-                  if (e.button === 1) e.preventDefault()
-                }}
-                onAuxClick={e => handleTabAuxClick(e, terminal.id)}
+                {...middleClickClose(e => void handleCloseTerminal(e, terminal.id))}
                 className={cn(
                   'group flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors',
                   isActive
