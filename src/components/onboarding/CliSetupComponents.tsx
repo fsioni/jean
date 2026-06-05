@@ -438,18 +438,24 @@ export function AuthLoginState({
 
 export interface CliPathSelectorProps {
   cliName: string
+  pathFound: boolean
   pathVersion: string | null
   pathPath: string | null
   isLoading: boolean
+  currentSource?: 'path' | 'jean' | null
+  jeanInstalled?: boolean
   onSelectPath: () => void
   onSelectJean: () => void
 }
 
 export function CliPathSelector({
   cliName,
+  pathFound,
   pathVersion,
   pathPath,
   isLoading,
+  currentSource,
+  jeanInstalled,
   onSelectPath,
   onSelectJean,
 }: CliPathSelectorProps) {
@@ -457,6 +463,8 @@ export function CliPathSelector({
     dbg(
       'CliPathSelector MOUNTED:',
       cliName,
+      'pathFound:',
+      pathFound,
       'pathVersion:',
       pathVersion,
       'pathPath:',
@@ -465,28 +473,40 @@ export function CliPathSelector({
       isLoading
     )
     return () => dbg('CliPathSelector UNMOUNTED:', cliName)
-  }, [cliName, pathVersion, pathPath, isLoading])
+  }, [cliName, pathFound, pathVersion, pathPath, isLoading])
 
   return (
     <div className="space-y-4">
       <div className="text-center text-sm text-muted-foreground">
-        We detected {cliName} in your system PATH
+        {pathFound
+          ? `Choose how to run ${cliName}.`
+          : `No system ${cliName} detected — Jean will manage the installation.`}
       </div>
 
       <div className="space-y-3">
         <button
           onClick={() => {
+            if (!pathFound) return
             dbg('CliPathSelector: user selected PATH for', cliName)
             onSelectPath()
           }}
-          disabled={isLoading}
+          disabled={isLoading || !pathFound}
           className="w-full p-4 rounded-lg border-2 border-primary/50 hover:border-primary bg-primary/5 hover:bg-primary/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <div className="font-medium">Use system {cliName}</div>
-          <div className="text-sm text-muted-foreground">
-            Version: {pathVersion || 'unknown'}
+          <div className="flex items-center justify-between">
+            <div className="font-medium">Use system {cliName}</div>
+            {currentSource === 'path' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">
+                current
+              </span>
+            )}
           </div>
-          {pathPath && (
+          <div className="text-sm text-muted-foreground">
+            {pathFound
+              ? `Version: ${pathVersion || 'unknown'}`
+              : 'Not detected'}
+          </div>
+          {pathFound && pathPath && (
             <div className="text-xs text-muted-foreground mt-1 break-all">
               {pathPath}
             </div>
@@ -501,9 +521,22 @@ export function CliPathSelector({
           disabled={isLoading}
           className="w-full p-4 rounded-lg border-2 border-border hover:border-primary/50 hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <div className="font-medium">Install with Jean</div>
+          <div className="flex items-center justify-between">
+            <div className="font-medium">
+              {jeanInstalled
+                ? `Use Jean-managed ${cliName}`
+                : 'Install with Jean'}
+            </div>
+            {currentSource === 'jean' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">
+                current
+              </span>
+            )}
+          </div>
           <div className="text-sm text-muted-foreground">
-            Jean will manage the installation
+            {jeanInstalled
+              ? 'Continue with the version Jean manages (or pick another version next).'
+              : 'Jean will install and manage the CLI.'}
           </div>
         </button>
       </div>

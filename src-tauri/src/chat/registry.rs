@@ -264,6 +264,8 @@ pub fn is_session_actively_managed(session_id: &str) -> bool {
 mod tests {
     use super::*;
 
+    static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
     fn clear_registries() {
         lock_recover(&PROCESS_REGISTRY, "PROCESS_REGISTRY").clear();
         lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").clear();
@@ -273,6 +275,7 @@ mod tests {
 
     #[test]
     fn get_running_sessions_includes_all_backend_registries() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
         clear_registries();
 
         assert!(register_process("claude-session".to_string(), 4242));
@@ -301,6 +304,7 @@ mod tests {
 
     #[test]
     fn cleanup_session_registrations_clears_opencode_active_flag() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
         clear_registries();
 
         assert!(register_cancel_flag(

@@ -71,15 +71,27 @@ enum ArchiveFormat {
 /// List available OpenCode models by refreshing from the OpenCode CLI cache source.
 #[tauri::command]
 pub async fn list_opencode_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
-    if !binary_path.exists() {
+    let binary_str = binary_path.to_string_lossy().to_string();
+    if !wsl.enabled && !binary_path.exists() {
         return Err(format!(
             "OpenCode CLI not found at {}. Install it in Settings > General.",
             binary_path.display()
         ));
     }
+    if wsl.enabled {
+        let installed = if binary_str.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &binary_str)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &binary_str)
+        };
+        if !installed {
+            return Err("OpenCode CLI not installed inside WSL".to_string());
+        }
+    }
 
-    let output = silent_command(&binary_path)
+    let output = crate::platform::wsl_aware_command(&binary_str, None)
         .args(["models", "--refresh", "--verbose"])
         .output()
         .map_err(|e| format!("Failed to execute OpenCode CLI models command: {e}"))?;
@@ -125,7 +137,42 @@ fn emit_progress(app: &AppHandle, stage: &str, message: &str, percent: u8) {
 pub async fn check_opencode_cli_installed(app: AppHandle) -> Result<OpenCodeCliStatus, String> {
     log::trace!("Checking OpenCode CLI installation status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
+
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(OpenCodeCliStatus {
+                installed: false,
+                version: None,
+                path: None,
+            });
+        }
+        let version = crate::platform::wsl_tool_version(&wsl.distro, &tool).and_then(|v| {
+            let cleaned = v
+                .split_whitespace()
+                .last()
+                .unwrap_or(&v)
+                .trim_start_matches('v')
+                .to_string();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned)
+            }
+        });
+        return Ok(OpenCodeCliStatus {
+            installed: true,
+            version,
+            path: Some(tool),
+        });
+    }
 
     if !binary_path.exists() {
         return Ok(OpenCodeCliStatus {
@@ -177,35 +224,21 @@ pub async fn detect_opencode_in_path(app: AppHandle) -> Result<OpenCodePathDetec
     let jean_managed_path = get_cli_binary_path(&app)
         .ok()
         .and_then(|p| std::fs::canonicalize(&p).ok());
-
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
+    let wsl = crate::platform::get_wsl_config();
+    let jean_managed_wsl = if wsl.enabled {
+        super::config::get_wsl_cli_binary_path(&wsl.distro).ok()
     } else {
-        "which"
+        None
     };
 
-    let output = match silent_command(which_cmd).arg("opencode").output() {
-        Ok(output) if output.status.success() => {
-            // On Windows, `where` can return multiple paths; take only the first line
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        }
-        _ => {
-            log::trace!("OpenCode CLI not found in PATH");
-            return Ok(OpenCodePathDetection {
-                found: false,
-                path: None,
-                version: None,
-                package_manager: None,
-            });
-        }
-    };
+    let detection = crate::platform::detect_cli_in_path(
+        "opencode",
+        jean_managed_path.as_deref(),
+        jean_managed_wsl.as_deref(),
+    );
 
-    if output.is_empty() {
+    if !detection.found {
+        log::trace!("OpenCode CLI not found in PATH");
         return Ok(OpenCodePathDetection {
             found: false,
             path: None,
@@ -214,54 +247,32 @@ pub async fn detect_opencode_in_path(app: AppHandle) -> Result<OpenCodePathDetec
         });
     }
 
-    let found_path = std::path::PathBuf::from(&output);
-
-    // Exclude Jean-managed binary
-    if let Some(ref jean_path) = jean_managed_path {
-        if let Ok(canonical_found) = std::fs::canonicalize(&found_path) {
-            if canonical_found == *jean_path {
-                log::trace!("Found PATH opencode is the Jean-managed binary, excluding");
-                return Ok(OpenCodePathDetection {
-                    found: false,
-                    path: None,
-                    version: None,
-                    package_manager: None,
-                });
-            }
+    let version = detection.version.and_then(|v| {
+        let cleaned = v
+            .split_whitespace()
+            .last()
+            .unwrap_or(&v)
+            .trim_start_matches('v')
+            .to_string();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned)
         }
-    }
-
-    let version = match silent_command(&found_path).arg("--version").output() {
-        Ok(ver_output) if ver_output.status.success() => {
-            let ver_str = String::from_utf8_lossy(&ver_output.stdout)
-                .trim()
-                .to_string();
-            let cleaned = ver_str
-                .split_whitespace()
-                .last()
-                .unwrap_or(&ver_str)
-                .trim_start_matches('v')
-                .to_string();
-            if cleaned.is_empty() {
-                None
-            } else {
-                Some(cleaned)
-            }
-        }
-        _ => None,
-    };
-
-    let package_manager = crate::platform::detect_package_manager(&found_path);
+    });
 
     log::trace!(
-        "Found OpenCode CLI in PATH: {output} (version: {version:?}, pkg_mgr: {package_manager:?})"
+        "Found OpenCode CLI in PATH: {:?} (version: {:?}, pkg_mgr: {:?})",
+        detection.path,
+        version,
+        detection.package_manager
     );
 
     Ok(OpenCodePathDetection {
         found: true,
-        path: Some(output),
+        path: detection.path,
         version,
-        package_manager,
+        package_manager: detection.package_manager,
     })
 }
 
@@ -314,16 +325,32 @@ fn is_model_identifier(value: &str) -> bool {
 pub async fn check_opencode_cli_auth(app: AppHandle) -> Result<OpenCodeAuthStatus, String> {
     log::trace!("Checking OpenCode CLI authentication status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
 
-    if !binary_path.exists() {
+    if !wsl.enabled && !binary_path.exists() {
         return Ok(OpenCodeAuthStatus {
             authenticated: false,
             error: Some("OpenCode CLI not installed".to_string()),
         });
     }
+    let opencode_tool = binary_path.to_string_lossy().to_string();
+    let opencode_installed_in_wsl = if !wsl.enabled {
+        true
+    } else if opencode_tool.starts_with('/') {
+        crate::platform::wsl_file_executable(&wsl.distro, &opencode_tool)
+    } else {
+        crate::platform::check_wsl_tool(&wsl.distro, &opencode_tool)
+    };
+    if wsl.enabled && !opencode_installed_in_wsl {
+        return Ok(OpenCodeAuthStatus {
+            authenticated: false,
+            error: Some("OpenCode CLI not installed inside WSL".to_string()),
+        });
+    }
 
-    let output = silent_command(&binary_path)
+    let binary_str = binary_path.to_string_lossy().to_string();
+    let output = crate::platform::wsl_aware_command(&binary_str, None)
         .args(["auth", "list"])
         .output()
         .map_err(|e| format!("Failed to execute OpenCode CLI: {e}"))?;
@@ -534,15 +561,36 @@ async fn fetch_opencode_versions_from_api() -> Result<Vec<OpenCodeReleaseInfo>, 
     Ok(result)
 }
 
+/// Pick the platform asset name + archive format when installing into a
+/// WSL distro from a Windows host.
+fn wsl_opencode_platform_asset(distro: &str) -> Result<PlatformAsset, String> {
+    match crate::platform::wsl_detect_arch(distro) {
+        Some("linux-x64") => Ok(PlatformAsset {
+            asset_name: "opencode-linux-x64.tar.gz".to_string(),
+            format: ArchiveFormat::TarGz,
+        }),
+        Some("linux-arm64") => Ok(PlatformAsset {
+            asset_name: "opencode-linux-arm64.tar.gz".to_string(),
+            format: ArchiveFormat::TarGz,
+        }),
+        _ => Err("Unsupported WSL architecture (expected x86_64 or aarch64)".to_string()),
+    }
+}
+
 /// Install OpenCode CLI by downloading the binary from GitHub releases.
 #[tauri::command]
 pub async fn install_opencode_cli(app: AppHandle, version: Option<String>) -> Result<(), String> {
     log::trace!("Installing OpenCode CLI: {version:?}");
 
+    let wsl = crate::platform::get_wsl_config();
+
     emit_progress(&app, "starting", "Preparing OpenCode installation", 5);
 
-    let cli_dir = ensure_cli_dir(&app)?;
-    let platform_asset = get_platform_asset()?;
+    let platform_asset = if wsl.enabled {
+        wsl_opencode_platform_asset(&wsl.distro)?
+    } else {
+        get_platform_asset()?
+    };
 
     // Determine version
     let version = match version.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
@@ -583,7 +631,11 @@ pub async fn install_opencode_cli(app: AppHandle, version: Option<String>) -> Re
 
     emit_progress(&app, "extracting", "Extracting OpenCode binary", 60);
 
-    let binary_name = if cfg!(windows) {
+    // Target binary name follows the download target's OS, not the host OS.
+    // A Windows host installing into WSL extracts `opencode`, not `opencode.exe`.
+    let binary_name: &str = if wsl.enabled {
+        "opencode"
+    } else if cfg!(windows) {
         "opencode.exe"
     } else {
         "opencode"
@@ -594,6 +646,19 @@ pub async fn install_opencode_cli(app: AppHandle, version: Option<String>) -> Re
         ArchiveFormat::TarGz => extract_binary_from_tar_gz(&archive_bytes, binary_name)?,
     };
 
+    if wsl.enabled {
+        // WSL branch: stream the binary into the distro and make it executable.
+        let unix_path = super::config::get_wsl_cli_binary_path(&wsl.distro)?;
+        log::trace!("Writing opencode binary into WSL at {unix_path}");
+        crate::platform::wsl_write_bytes(&wsl.distro, &unix_path, &binary_data)
+            .map_err(|e| format!("Failed to write binary into WSL: {e}"))?;
+        crate::platform::wsl_chmod_exec(&wsl.distro, &unix_path)?;
+        emit_progress(&app, "complete", "OpenCode CLI installed", 100);
+        log::trace!("OpenCode CLI installed successfully at WSL:{unix_path}");
+        return Ok(());
+    }
+
+    let cli_dir = ensure_cli_dir(&app)?;
     let binary_path = cli_dir.join(binary_name);
     crate::platform::write_binary_file(&binary_path, &binary_data)
         .map_err(|e| format!("Failed to write binary: {e}"))?;
@@ -643,6 +708,15 @@ pub async fn uninstall_opencode_cli(app: AppHandle) -> Result<(), String> {
             count,
             if count == 1 { "session is" } else { "sessions are" }
         ));
+    }
+
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        let unix_path = super::config::get_wsl_cli_binary_path(&wsl.distro)?;
+        crate::platform::wsl_remove_file(&wsl.distro, &unix_path)
+            .map_err(|e| format!("Failed to remove OpenCode CLI from WSL: {e}"))?;
+        log::info!("Removed Jean-managed OpenCode CLI at WSL:{unix_path}");
+        return Ok(());
     }
 
     let cli_dir = get_cli_dir(&app)?;

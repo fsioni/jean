@@ -17,7 +17,6 @@ import {
   GitBranch,
   GitCommitHorizontal,
   MessageSquarePlus,
-  Play,
   Pencil,
   X,
   Search,
@@ -91,6 +90,7 @@ import {
   type DiffComment,
 } from './MemoizedFileDiff'
 import type { GitDiff, DiffRequest } from '@/types/git-diff'
+import { DEFAULT_KEYBINDINGS, eventMatchesShortcut } from '@/types/keybindings'
 
 // PERFORMANCE: Stable empty array reference for files without comments
 // This prevents unnecessary re-renders since the reference never changes
@@ -194,8 +194,6 @@ interface GitDiffModalProps {
   onClose: () => void
   /** Callback when user wants to add comments to input for editing */
   onAddToPrompt?: (reference: string) => void
-  /** Callback when user wants to execute comments immediately */
-  onExecutePrompt?: (reference: string) => void
   /** Uncommitted change stats (for switcher) */
   uncommittedStats?: DiffStats
   /** Branch diff stats (for switcher) */
@@ -233,7 +231,6 @@ export function GitDiffModal({
   diffRequest,
   onClose,
   onAddToPrompt,
-  onExecutePrompt,
   uncommittedStats,
   branchStats,
 }: GitDiffModalProps) {
@@ -289,6 +286,19 @@ export function GitDiffModal({
     fileStatus: string
   } | null>(null)
   const [isReverting, setIsReverting] = useState(false)
+
+  const scrollDiffViewer = useCallback((direction: 'up' | 'down') => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const delta = container.clientHeight * 0.5
+    const top =
+      direction === 'up'
+        ? Math.max(0, container.scrollTop - delta)
+        : container.scrollTop + delta
+
+    container.scrollTo({ top, behavior: 'smooth' })
+  }, [])
 
   // Resolve theme to actual dark/light value
   const resolvedThemeType = useMemo((): 'dark' | 'light' => {
@@ -527,14 +537,6 @@ export function GitDiffModal({
     onClose()
   }, [comments, onAddToPrompt, formatComments, onClose])
 
-  // Execute comments immediately
-  const handleExecutePrompt = useCallback(() => {
-    if (comments.length === 0 || !onExecutePrompt) return
-    onExecutePrompt(formatComments())
-    setComments([])
-    onClose()
-  }, [comments, onExecutePrompt, formatComments, onClose])
-
   // PERFORMANCE: Pre-compute annotations map for stable references
   // This ensures that files without comment changes don't re-render
   const annotationsByFile = useMemo(() => {
@@ -759,6 +761,45 @@ export function GitDiffModal({
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [diffRequest, canCommitFromDiff, handleCommitFromDiff])
+
+  // Scroll the active file diff while the full-screen diff modal owns focus.
+  // The global chat-scroll shortcuts are blocked by open dialogs, so handle
+  // the same bindings locally for the diff viewer.
+  useEffect(() => {
+    if (!diffRequest) return
+
+    const scrollUpShortcut =
+      preferences?.keybindings?.scroll_chat_up ??
+      DEFAULT_KEYBINDINGS.scroll_chat_up ??
+      'mod+arrowup'
+    const scrollDownShortcut =
+      preferences?.keybindings?.scroll_chat_down ??
+      DEFAULT_KEYBINDINGS.scroll_chat_down ??
+      'mod+arrowdown'
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isEditableKeyboardTarget(e.target) || hasSelectedText()) return
+
+      const direction = eventMatchesShortcut(e, scrollUpShortcut)
+        ? 'up'
+        : eventMatchesShortcut(e, scrollDownShortcut)
+          ? 'down'
+          : null
+      if (!direction) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      scrollDiffViewer(direction)
+    }
+
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [
+    diffRequest,
+    preferences?.keybindings?.scroll_chat_down,
+    preferences?.keybindings?.scroll_chat_up,
+    scrollDiffViewer,
+  ])
 
   // Handle file selection from sidebar
   // Use transition to keep sidebar responsive while diff renders
@@ -1099,30 +1140,17 @@ export function GitDiffModal({
                   <TooltipContent>Unified view</TooltipContent>
                 </Tooltip>
               </div>
-              {/* Execute and Edit buttons */}
-              {comments.length > 0 && (onAddToPrompt || onExecutePrompt) && (
+              {/* Add selected comments to a new prompt session */}
+              {comments.length > 0 && onAddToPrompt && (
                 <div className="flex shrink-0 items-center gap-1">
-                  {onExecutePrompt && (
-                    <button
-                      type="button"
-                      onClick={handleExecutePrompt}
-                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
-                    >
-                      <Play className="h-3.5 w-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Execute</span> (
-                      {comments.length})
-                    </button>
-                  )}
-                  {onAddToPrompt && (
-                    <button
-                      type="button"
-                      onClick={handleAddToPrompt}
-                      className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded-md text-xs font-medium transition-colors"
-                    >
-                      <Pencil className="h-3.5 w-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Add to prompt</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddToPrompt}
+                    className="flex h-7 shrink-0 items-center gap-1.5 px-2 sm:px-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Pencil className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Add to prompt</span>
+                  </button>
                 </div>
               )}
               {activeDiffType === 'uncommitted' &&
@@ -1207,7 +1235,7 @@ export function GitDiffModal({
               worktreePath={diffRequest.worktreePath}
               baseBranch={diffRequest.baseBranch}
               diffStyle={diffStyle}
-              onExecutePrompt={onExecutePrompt}
+              onAddToPrompt={onAddToPrompt}
               onClose={onClose}
             />
           )}

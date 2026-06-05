@@ -19,4 +19,22 @@ describe('SessionChatModal removal behavior', () => {
       /else\s*\{[\s\S]*?selectVisualNeighbor\(session\.id\)[\s\S]*?handleArchiveSession\(session\.id\)/
     )
   })
+
+  it('uses terminal-like square tab styling for session header tabs', () => {
+    const source = readSource('src/components/chat/SessionChatModal.tsx')
+
+    expect(source).toContain('flex min-w-max items-center gap-0 py-0 px-0')
+    expect(source).toContain(
+      'group/tab flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors whitespace-nowrap'
+    )
+    expect(source).not.toContain('group/tab flex rounded items-center')
+  })
+
+  it('keeps a yellow background on waiting session tabs', () => {
+    const source = readSource('src/components/chat/SessionChatModal.tsx')
+
+    expect(source).toContain(
+      "status === 'waiting' &&\n                                'bg-yellow-500/10"
+    )
+  })
 })

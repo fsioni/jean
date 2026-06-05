@@ -2405,8 +2405,11 @@ fn handle_approval_request(
             let session_id = session_id.to_string();
             let worktree_id = worktree_id.to_string();
             tauri::async_runtime::spawn(async move {
-                match crate::codex_cli::refresh_codex_app_server_auth_tokens(previous_account_id)
-                    .await
+                match crate::codex_cli::refresh_codex_app_server_auth_tokens(
+                    app.clone(),
+                    previous_account_id,
+                )
+                .await
                 {
                     Ok(tokens) => {
                         let payload = match serde_json::to_value(tokens) {
@@ -3744,7 +3747,7 @@ pub fn parse_codex_run_to_message(
 /// Execute a one-shot Codex CLI call with `--output-schema` for structured JSON output.
 ///
 /// Equivalent to Claude's `--json-schema` pattern but for Codex:
-///   `codex exec --json --model <model> --full-auto --output-schema <schema> -`
+///   `codex exec --json --model <model> --sandbox workspace-write --output-schema <schema> -`
 ///
 /// Returns the raw JSON string of the structured output.
 pub fn execute_one_shot_codex(
@@ -3755,7 +3758,7 @@ pub fn execute_one_shot_codex(
     working_dir: Option<&std::path::Path>,
     reasoning_effort: Option<&str>,
 ) -> Result<String, String> {
-    let cli_path = crate::codex_cli::resolve_cli_binary(app);
+    let cli_path = crate::codex_cli::resolve_cli_binary(app)?;
 
     if !cli_path.exists() {
         return Err("Codex CLI not installed".to_string());
@@ -3777,20 +3780,12 @@ pub fn execute_one_shot_codex(
         .map_err(|e| format!("Failed to write schema file: {e}"))?;
 
     let mut cmd = crate::platform::silent_command(&cli_path);
-    cmd.args(["exec", "--json", "--model", actual_model, "--full-auto"]);
-    if is_fast {
-        cmd.args(["-c", "service_tier=\"fast\""]);
-    }
-    cmd.arg("--output-schema");
-    cmd.arg(&schema_file);
-    if let Some(dir) = working_dir {
-        cmd.arg("--cd");
-        cmd.arg(dir);
-    } else {
-        // One-shot calls that don't know a repository path should still run.
-        cmd.arg("--skip-git-repo-check");
-    }
-    cmd.arg("-"); // Read prompt from stdin
+    cmd.args(build_one_shot_codex_args(
+        actual_model,
+        is_fast,
+        &schema_file,
+        working_dir,
+    ));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -3894,6 +3889,37 @@ pub fn execute_one_shot_codex(
     log::trace!("Codex one-shot stdout length: {} bytes", stdout.len());
 
     extract_codex_structured_output(&stdout)
+}
+
+fn build_one_shot_codex_args(
+    actual_model: &str,
+    is_fast: bool,
+    schema_file: &std::path::Path,
+    working_dir: Option<&std::path::Path>,
+) -> Vec<std::ffi::OsString> {
+    let mut args = vec![
+        "exec".into(),
+        "--json".into(),
+        "--model".into(),
+        actual_model.into(),
+        "--sandbox".into(),
+        "workspace-write".into(),
+        "--output-schema".into(),
+        schema_file.as_os_str().to_os_string(),
+    ];
+    if is_fast {
+        args.push("-c".into());
+        args.push("service_tier=\"fast\"".into());
+    }
+    if let Some(dir) = working_dir {
+        args.push("--cd".into());
+        args.push(dir.as_os_str().to_os_string());
+    } else {
+        // One-shot calls that don't know a repository path should still run.
+        args.push("--skip-git-repo-check".into());
+    }
+    args.push("-".into());
+    args
 }
 
 #[cfg(test)]
@@ -4092,6 +4118,34 @@ mod tests {
         assert_eq!(split_fast_model("gpt-5.4"), ("gpt-5.4", false));
         assert_eq!(split_fast_model("gpt-5.4-mini"), ("gpt-5.4-mini", false));
         assert_eq!(split_fast_model("o3"), ("o3", false));
+    }
+
+    #[test]
+    fn one_shot_codex_args_use_workspace_write_sandbox() {
+        let schema_file = std::path::Path::new("/tmp/jean-codex-schema.json");
+        let working_dir = std::path::Path::new("/tmp/project");
+
+        let args = build_one_shot_codex_args("gpt-5.4", false, schema_file, Some(working_dir));
+
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    std::ffi::OsString::from("--sandbox"),
+                    std::ffi::OsString::from("workspace-write"),
+                ]
+        }));
+        assert!(!args
+            .iter()
+            .any(|arg| arg == &std::ffi::OsString::from("--full-auto")));
+        let output_schema_position = args
+            .iter()
+            .position(|arg| arg == "--output-schema")
+            .expect("--output-schema arg is present");
+        assert_eq!(
+            args.get(output_schema_position + 1),
+            Some(&schema_file.as_os_str().to_os_string()),
+            "schema path must immediately follow --output-schema"
+        );
     }
 
     #[test]

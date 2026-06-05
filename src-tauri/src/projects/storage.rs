@@ -26,7 +26,33 @@ pub fn get_projects_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Get the base directory for all worktrees (~/jean)
+///
+/// When WSL mode is enabled, the base dir is inside WSL (e.g., `/home/<user>/jean/`)
+/// stored as a Windows UNC path: `\\wsl.localhost\<distro>\home\<user>\jean\`
 pub fn get_worktrees_base_dir() -> Result<PathBuf, String> {
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        // Get the WSL home directory and construct the base dir
+        let wsl_home = crate::platform::get_wsl_home_dir(&wsl.distro)?;
+        let wsl_jean_dir = format!("{wsl_home}/jean");
+        // Convert to Windows UNC path for std::fs operations
+        let win_path = crate::platform::wsl_to_win_path(&wsl_jean_dir, &wsl.distro);
+        let jean_dir = PathBuf::from(&win_path);
+
+        // Ensure the directory exists (via WSL since UNC mkdir can be unreliable)
+        let output = crate::platform::silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "mkdir", "-p", &wsl_jean_dir])
+            .output()
+            .map_err(|e| format!("Failed to create WSL worktrees base dir: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(format!("Failed to create WSL worktrees base dir: {stderr}"));
+        }
+
+        return Ok(jean_dir);
+    }
+
     let home_dir = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
 
     let jean_dir = home_dir.join("jean");

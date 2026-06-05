@@ -1219,12 +1219,14 @@ export async function removeAdvisoryContext(
 export async function getAdvisoryContextContent(
   sessionId: string,
   ghsaId: string,
-  projectPath: string
+  projectPath: string,
+  worktreeId?: string | null
 ): Promise<string> {
   return invoke<string>('get_advisory_context_content', {
     sessionId,
     ghsaId,
     projectPath,
+    worktreeId: worktreeId ?? undefined,
   })
 }
 

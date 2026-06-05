@@ -16,6 +16,11 @@ pub use crate::platform::is_process_alive;
 use crate::platform::shell_escape;
 use crate::platform::silent_command;
 
+#[cfg(any(windows, test))]
+fn wsl_shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Spawn Claude CLI as a detached process that survives Jean quitting (Unix).
 ///
 /// Uses `nohup` and shell backgrounding to fully detach the process.
@@ -168,7 +173,8 @@ pub fn spawn_detached_claude(
 /// Spawn Claude CLI as a detached native Windows process.
 ///
 /// Runs claude.exe directly with stdout/stderr redirected to the output file.
-/// Returns the Windows PID of the Claude CLI process.
+/// When WSL is enabled, routes through `wsl.exe` with proper path translation.
+/// Returns the PID of the detached process.
 #[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_detached_claude(
@@ -186,58 +192,149 @@ pub fn spawn_detached_claude(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    // Open output file in append mode (metadata header already written)
-    let out_file = OpenOptions::new()
-        .append(true)
-        .open(output_file)
-        .map_err(|e| format!("Failed to open output file: {e}"))?;
+    let wsl_config = crate::platform::get_wsl_config();
 
-    // Clone for stderr
-    let err_file = out_file
-        .try_clone()
-        .map_err(|e| format!("Failed to clone output file handle: {e}"))?;
+    if wsl_config.enabled {
+        // WSL mode: spawn via wsl.exe with shell backgrounding (similar to Unix)
+        use std::io::{BufRead, BufReader};
 
-    // Build command - run claude.exe directly
-    // NOTE: silent_command sets CREATE_NO_WINDOW, but creation_flags() replaces
-    // (doesn't merge), so we must re-specify both flags here.
-    let mut cmd = silent_command(cli_path);
-    cmd.args(args)
-        .current_dir(working_dir)
-        .stdin(Stdio::piped())
-        .stdout(out_file)
-        .stderr(err_file)
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        let unix_cwd = crate::platform::win_to_wsl_path(&working_dir.to_string_lossy());
+        // If the resolved path is a Unix absolute path (Jean-managed install
+        // inside the distro), invoke it by full path. Otherwise it's a bare
+        // tool name that should be looked up via the distro's $PATH.
+        let cli_path_str = cli_path.to_string_lossy();
+        let cli_name_owned = if cli_path_str.starts_with('/') {
+            cli_path_str.to_string()
+        } else {
+            cli_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("claude")
+                .to_string()
+        };
+        let cli_name = cli_name_owned.as_str();
 
-    // Set environment variables
-    for (key, value) in env_vars {
-        cmd.env(key, value);
+        // Input/output files are on the Windows side — convert to /mnt/c/... paths
+        let unix_input = crate::platform::win_to_wsl_path(&input_file.to_string_lossy());
+        let unix_output = crate::platform::win_to_wsl_path(&output_file.to_string_lossy());
+        let unix_input_escaped = wsl_shell_quote(&unix_input);
+        let unix_output_escaped = wsl_shell_quote(&unix_output);
+
+        // Build env exports
+        let env_exports = env_vars
+            .iter()
+            .map(|(k, v)| format!("{k}='{}'", v.replace('\'', "'\\''")))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let args_str = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "'\\''")))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let cli_quoted = format!("'{}'", cli_name.replace('\'', "'\\''"));
+        let shell_cmd = if env_exports.is_empty() {
+            format!(
+                "cat {unix_input_escaped} | nohup {cli_quoted} {args_str} >> {unix_output_escaped} 2>&1 & echo $!"
+            )
+        } else {
+            format!(
+                "cat {unix_input_escaped} | {env_exports} nohup {cli_quoted} {args_str} >> {unix_output_escaped} 2>&1 & echo $!"
+            )
+        };
+
+        log::trace!("Spawning detached Claude CLI via WSL");
+        log::trace!("WSL shell command: {shell_cmd}");
+
+        let mut child = silent_command("wsl.exe")
+            .args([
+                "-d",
+                &wsl_config.distro,
+                "--cd",
+                &unix_cwd,
+                "--",
+                "sh",
+                "-c",
+                &shell_cmd,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn WSL shell: {e}"))?;
+
+        let stdout = child.stdout.take().ok_or("Failed to capture WSL stdout")?;
+        let reader = BufReader::new(stdout);
+        let mut pid_str = String::new();
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                pid_str = l.trim().to_string();
+                break;
+            }
+        }
+
+        let status = child
+            .wait()
+            .map_err(|e| format!("Failed to wait for WSL shell: {e}"))?;
+        if !status.success() {
+            return Err(format!("WSL shell command failed with status: {status}"));
+        }
+
+        let pid: u32 = pid_str
+            .parse()
+            .map_err(|e| format!("Failed to parse WSL PID '{pid_str}': {e}"))?;
+
+        log::trace!("Detached Claude CLI spawned inside WSL with PID: {pid}");
+        Ok(pid)
+    } else {
+        // Native Windows mode
+        let out_file = OpenOptions::new()
+            .append(true)
+            .open(output_file)
+            .map_err(|e| format!("Failed to open output file: {e}"))?;
+
+        let err_file = out_file
+            .try_clone()
+            .map_err(|e| format!("Failed to clone output file handle: {e}"))?;
+
+        // NOTE: silent_command sets CREATE_NO_WINDOW, but creation_flags() replaces
+        // (doesn't merge), so we must re-specify both flags here.
+        let mut cmd = silent_command(cli_path);
+        cmd.args(args)
+            .current_dir(working_dir)
+            .stdin(Stdio::piped())
+            .stdout(out_file)
+            .stderr(err_file)
+            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+
+        log::trace!("Spawning detached Claude CLI natively on Windows");
+        log::trace!("CLI path: {cli_path:?}");
+        log::trace!("Working directory: {working_dir:?}");
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn Claude CLI: {e}"))?;
+
+        let pid = child.id();
+
+        let input_data =
+            std::fs::read(input_file).map_err(|e| format!("Failed to read input file: {e}"))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(&input_data)
+                .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        }
+
+        log::trace!("Detached Claude CLI spawned with Windows PID: {pid}");
+        Ok(pid)
     }
-
-    log::trace!("Spawning detached Claude CLI natively on Windows");
-    log::trace!("CLI path: {cli_path:?}");
-    log::trace!("Working directory: {working_dir:?}");
-
-    // Spawn the process
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn Claude CLI: {e}"))?;
-
-    let pid = child.id();
-
-    // Read input file and write to stdin, then close stdin to signal EOF
-    let input_data =
-        std::fs::read(input_file).map_err(|e| format!("Failed to read input file: {e}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(&input_data)
-            .map_err(|e| format!("Failed to write to stdin: {e}"))?;
-        // stdin dropped here, closing the pipe (signals EOF to Claude CLI)
-    }
-
-    log::trace!("Detached Claude CLI spawned with Windows PID: {pid}");
-
-    Ok(pid)
 }
 
 #[cfg(test)]
@@ -251,6 +348,14 @@ mod tests {
         assert_eq!(shell_escape("hello world"), "'hello world'");
         assert_eq!(shell_escape("it's"), "'it'\\''s'");
         assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn test_wsl_shell_quote_escapes_single_quotes() {
+        assert_eq!(
+            wsl_shell_quote("/mnt/c/Users/O'Brien/input.jsonl"),
+            "'/mnt/c/Users/O'\\''Brien/input.jsonl'"
+        );
     }
 
     #[test]

@@ -96,6 +96,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
   const [snapshotItems, setSnapshotItems] = useState<UnreadItem[] | null>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const isMobile = useIsMobile()
+  const showDesktopKeyboardAffordances = isNativeApp() && !isMobile
   const queryClient = useQueryClient()
   const unreadCount = useUnreadCount()
   const { data: allSessions, isLoading } = useAllSessions(open)
@@ -307,6 +308,9 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
           }
           break
         case 'Backspace':
+        case 'r':
+        case 'R':
+          if (!showDesktopKeyboardAffordances) break
           e.preventDefault()
           if (focusedIndex >= 0 && displayItems[focusedIndex]) {
             handleMarkOneRead(displayItems[focusedIndex])
@@ -314,7 +318,13 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
           break
       }
     },
-    [displayItems, focusedIndex, handleSelect, handleMarkOneRead]
+    [
+      displayItems,
+      focusedIndex,
+      handleSelect,
+      handleMarkOneRead,
+      showDesktopKeyboardAffordances,
+    ]
   )
 
   // Scroll focused item into view
@@ -355,7 +365,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
             <BellDot className="h-3.5 w-3.5 shrink-0 animate-[bell-ring_2s_ease-in-out_infinite]" />
             {displayCount} finished{' '}
             {displayCount === 1 ? 'session' : 'sessions'}
-            {isNativeApp() && !isMobile && (
+            {showDesktopKeyboardAffordances && (
               <Kbd className="ml-1 h-4 px-1 text-[10px] opacity-60">
                 {formatShortcutDisplay('mod+shift+f')}
               </Kbd>
@@ -429,6 +439,15 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
                       <span className="text-[11px] text-muted-foreground/40 shrink-0 ml-auto">
                         {formatRelativeTime(item.session.updated_at)}
                       </span>
+                      {showDesktopKeyboardAffordances &&
+                        focusedIndex === idx && (
+                          <Kbd
+                            className="h-4 min-w-4 px-1 text-[10px] opacity-70"
+                            title="Press R to mark read"
+                          >
+                            R
+                          </Kbd>
+                        )}
                     </div>
                     <span className="text-[13px] truncate block">
                       {item.session.name}

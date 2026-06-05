@@ -72,6 +72,10 @@ interface TerminalState {
     options?: AddTerminalOptions
   ) => string
   removeTerminal: (worktreeId: string, terminalId: string) => void
+  reorderPanelTerminals: (
+    worktreeId: string,
+    panelTerminalIds: string[]
+  ) => void
   setActiveTerminal: (worktreeId: string, terminalId: string) => void
   getTerminals: (worktreeId: string) => TerminalInstance[]
   getActiveTerminal: (worktreeId: string) => TerminalInstance | null
@@ -297,6 +301,37 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         },
         runningTerminals: newRunning,
         failedTerminals: newFailed,
+      }
+    }),
+
+  reorderPanelTerminals: (worktreeId, panelTerminalIds) =>
+    set(state => {
+      const existing = state.terminals[worktreeId] ?? []
+      const panelTerminals = existing.filter(isPanelTerminal)
+      if (panelTerminals.length !== panelTerminalIds.length) return state
+
+      const panelById = new Map(panelTerminals.map(t => [t.id, t]))
+      const reorderedPanels = panelTerminalIds.map(id => panelById.get(id))
+      if (reorderedPanels.some(t => !t)) return state
+
+      const nextPanels = reorderedPanels as TerminalInstance[]
+      let panelIndex = 0
+      const next = existing.map(terminal => {
+        if (!isPanelTerminal(terminal)) return terminal
+        const nextPanel = nextPanels[panelIndex]
+        panelIndex += 1
+        return nextPanel ?? terminal
+      })
+
+      if (next.every((terminal, index) => terminal === existing[index])) {
+        return state
+      }
+
+      return {
+        terminals: {
+          ...state.terminals,
+          [worktreeId]: next,
+        },
       }
     }),
 

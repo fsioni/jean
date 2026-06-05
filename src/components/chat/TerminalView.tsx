@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo, memo } from 'react'
+import { useEffect, useRef, useCallback, useMemo, memo, useState } from 'react'
 import { Plus, X, Minus, Terminal, ChevronUp } from 'lucide-react'
 import { invoke } from '@/lib/transport'
 import { useTerminal } from '@/hooks/useTerminal'
@@ -177,10 +177,14 @@ export function TerminalView({
   const {
     addTerminal,
     removeTerminal,
+    reorderPanelTerminals,
     setActiveTerminal,
     setTerminalVisible,
     setTerminalPanelOpen,
   } = useTerminalStore.getState()
+  const [draggedTerminalId, setDraggedTerminalId] = useState<string | null>(
+    null
+  )
 
   // Auto-create a terminal only on initial mount (not when tabs are closed)
   const mountedRef = useRef(false)
@@ -230,6 +234,44 @@ export function TerminalView({
       setActiveTerminal(worktreeId, terminalId)
     },
     [worktreeId, setActiveTerminal]
+  )
+
+  const handleTerminalDragStart = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>, terminalId: string) => {
+      setDraggedTerminalId(terminalId)
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', terminalId)
+    },
+    []
+  )
+
+  const handleTerminalDragOver = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>) => {
+      if (!draggedTerminalId) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+    },
+    [draggedTerminalId]
+  )
+
+  const handleTerminalDrop = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>, targetTerminalId: string) => {
+      e.preventDefault()
+      const sourceId =
+        draggedTerminalId || e.dataTransfer.getData('text/plain') || null
+      setDraggedTerminalId(null)
+      if (!sourceId || sourceId === targetTerminalId) return
+
+      const panelIds = terminals.map(terminal => terminal.id)
+      const fromIndex = panelIds.indexOf(sourceId)
+      const toIndex = panelIds.indexOf(targetTerminalId)
+      if (fromIndex === -1 || toIndex === -1) return
+
+      panelIds.splice(fromIndex, 1)
+      panelIds.splice(toIndex, 0, sourceId)
+      reorderPanelTerminals(worktreeId, panelIds)
+    },
+    [draggedTerminalId, reorderPanelTerminals, terminals, worktreeId]
   )
 
   const handleMinimize = useCallback(() => {
@@ -297,12 +339,18 @@ export function TerminalView({
               <button
                 key={terminal.id}
                 type="button"
+                draggable
+                onDragStart={e => handleTerminalDragStart(e, terminal.id)}
+                onDragOver={handleTerminalDragOver}
+                onDrop={e => handleTerminalDrop(e, terminal.id)}
+                onDragEnd={() => setDraggedTerminalId(null)}
                 onClick={() => handleSelectTerminal(terminal.id)}
                 className={cn(
                   'group flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors',
                   isActive
                     ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                  draggedTerminalId === terminal.id && 'opacity-60'
                 )}
               >
                 {/* Running indicator */}

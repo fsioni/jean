@@ -110,6 +110,8 @@ import { LabelModal } from '@/components/chat/LabelModal'
 import { getLabelTextColor } from '@/lib/label-colors'
 import {
   getWorktreeLabels,
+  getPinnedWorktreeLabelTabs,
+  type PinnedWorktreeLabelTab,
   updateWorktreeLabelsByName,
 } from '@/lib/worktree-labels'
 import {
@@ -184,6 +186,7 @@ import {
   type WorktreeDropSnapshot,
   type WorktreeReorderDragState,
 } from '@/lib/drag-and-drop/worktree-reorder-ux'
+import { openCanvasConflictResolution } from './conflict-resolution-navigation'
 
 interface ProjectCanvasViewProps {
   projectId: string
@@ -318,19 +321,48 @@ type ActiveStatus =
   | 'review'
   | null
 
-type CanvasFilterTab = 'all' | 'manual' | 'issues' | 'prs' | 'security'
+type CanvasPredefinedFilterTab =
+  | 'all'
+  | 'manual'
+  | 'issues'
+  | 'prs'
+  | 'security'
+type CanvasLabelFilterTab = `label:${string}`
+type CanvasFilterTab = CanvasPredefinedFilterTab | CanvasLabelFilterTab
 
-const CANVAS_FILTER_TABS: {
-  value: CanvasFilterTab
+interface CanvasPredefinedFilterTabItem {
+  value: CanvasPredefinedFilterTab
   label: string
   icon: LucideIcon
-}[] = [
+}
+
+interface CanvasLabelFilterTabItem extends PinnedWorktreeLabelTab {
+  icon: LucideIcon
+}
+
+type CanvasFilterTabItem =
+  | CanvasPredefinedFilterTabItem
+  | CanvasLabelFilterTabItem
+
+const CANVAS_FILTER_TABS: CanvasPredefinedFilterTabItem[] = [
   { value: 'all', label: 'All', icon: Home },
   { value: 'manual', label: 'Manual', icon: GitBranch },
   { value: 'issues', label: 'Issues', icon: CircleDot },
   { value: 'prs', label: 'PRs', icon: GitPullRequestArrow },
   { value: 'security', label: 'Security', icon: ShieldAlert },
 ]
+
+function isLabelFilterTab(
+  value: CanvasFilterTab
+): value is CanvasLabelFilterTab {
+  return value.startsWith('label:')
+}
+
+function isLabelFilterTabItem(
+  tab: CanvasFilterTabItem
+): tab is CanvasLabelFilterTabItem {
+  return isLabelFilterTab(tab.value)
+}
 
 function isIssueWorktree(worktree: Worktree): boolean {
   return (
@@ -362,6 +394,13 @@ function matchesCanvasFilterTab(
   worktree: Worktree,
   activeFilterTab: CanvasFilterTab
 ): boolean {
+  if (isLabelFilterTab(activeFilterTab)) {
+    const labelName = activeFilterTab.slice('label:'.length).toLowerCase()
+    return getWorktreeLabels(worktree).some(
+      label => label.name.toLowerCase() === labelName
+    )
+  }
+
   switch (activeFilterTab) {
     case 'all':
       return true
@@ -452,6 +491,7 @@ function WorktreeSectionHeader({
   onRowClick,
   onDiffClick,
   onSetLabels,
+  onResolveConflicts,
   disableTextSelection = false,
 }: {
   worktree: Worktree
@@ -469,6 +509,7 @@ function WorktreeSectionHeader({
     type: 'uncommitted' | 'branch'
   ) => void
   onSetLabels?: () => void
+  onResolveConflicts?: (worktree: Worktree) => void
   disableTextSelection?: boolean
 }) {
   const stackedOnPR =
@@ -509,9 +550,17 @@ function WorktreeSectionHeader({
         worktreePath: worktree.path,
         baseBranch: defaultBranch,
         projectId,
+        onMergeConflict: () => onResolveConflicts?.(worktree),
       })
     },
-    [worktree.id, worktree.path, defaultBranch, projectId]
+    [
+      worktree,
+      worktree.id,
+      worktree.path,
+      defaultBranch,
+      projectId,
+      onResolveConflicts,
+    ]
   )
 
   const handlePush = useCallback(
@@ -917,7 +966,9 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     return visibleWorktrees.filter(wt => wt.status === 'pending')
   }, [visibleWorktrees])
 
-  const filterTabCounts = useMemo<Record<CanvasFilterTab, number>>(() => {
+  const filterTabCounts = useMemo<
+    Record<CanvasPredefinedFilterTab, number>
+  >(() => {
     return {
       all: visibleWorktrees.length,
       manual: visibleWorktrees.filter(isManualWorktree).length,
@@ -926,6 +977,28 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       security: visibleWorktrees.filter(isSecurityWorktree).length,
     }
   }, [visibleWorktrees])
+
+  const pinnedLabelTabs = useMemo(
+    () => getPinnedWorktreeLabelTabs(visibleWorktrees),
+    [visibleWorktrees]
+  )
+
+  const canvasFilterTabs = useMemo<CanvasFilterTabItem[]>(
+    () => [
+      ...CANVAS_FILTER_TABS,
+      ...pinnedLabelTabs.map(tab => ({
+        ...tab,
+        icon: Tag,
+      })),
+    ],
+    [pinnedLabelTabs]
+  )
+
+  useEffect(() => {
+    if (!isLabelFilterTab(activeFilterTab)) return
+    if (pinnedLabelTabs.some(tab => tab.value === activeFilterTab)) return
+    setActiveFilterTab('all')
+  }, [activeFilterTab, pinnedLabelTabs])
 
   // All worktree labels (unfiltered by search) for the label modal
   const allWorktreeLabels = useMemo(() => {
@@ -1042,6 +1115,17 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       setSelectedWorktreeModal({ worktreeId, worktreePath })
     },
     [markWorktreeLastUsed]
+  )
+
+  const handleCanvasResolveConflicts = useCallback(
+    (worktree: Worktree) => {
+      openCanvasConflictResolution(worktree, {
+        setPendingMagicCommand: cmd =>
+          useChatStore.getState().setPendingMagicCommand(cmd),
+        openWorktreeModal,
+      })
+    },
+    [openWorktreeModal]
   )
 
   // Build worktree sections with computed card data
@@ -2036,20 +2120,20 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
 
   const handleFilterTabKeyboardNav = useCallback(
     (delta: -1 | 1) => {
-      const currentIndex = CANVAS_FILTER_TABS.findIndex(
+      const currentIndex = canvasFilterTabs.findIndex(
         tab => tab.value === activeFilterTab
       )
       const safeCurrentIndex = currentIndex === -1 ? 0 : currentIndex
       const nextIndex =
-        (safeCurrentIndex + delta + CANVAS_FILTER_TABS.length) %
-        CANVAS_FILTER_TABS.length
-      const nextTab = CANVAS_FILTER_TABS[nextIndex]
+        (safeCurrentIndex + delta + canvasFilterTabs.length) %
+        canvasFilterTabs.length
+      const nextTab = canvasFilterTabs[nextIndex]
 
       if (nextTab) {
         handleFilterTabChange(nextTab.value)
       }
     },
-    [activeFilterTab, handleFilterTabChange]
+    [activeFilterTab, canvasFilterTabs, handleFilterTabChange]
   )
   const handleNavigateFilterTabLeft = useCallback(() => {
     handleFilterTabKeyboardNav(-1)
@@ -2588,8 +2672,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   }
 
   const activeFilterLabel =
-    CANVAS_FILTER_TABS.find(tab => tab.value === activeFilterTab)?.label ??
-    'All'
+    canvasFilterTabs.find(tab => tab.value === activeFilterTab)?.label ?? 'All'
   const hasAnyVisibleWorktrees = filterTabCounts.all > 0
 
   // Track global card index for refs
@@ -2951,10 +3034,13 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
               aria-label="Worktree filters"
               className="flex gap-1 overflow-x-auto"
             >
-              {CANVAS_FILTER_TABS.map(tab => {
+              {canvasFilterTabs.map(tab => {
                 const Icon = tab.icon
                 const isActive = activeFilterTab === tab.value
-                const count = filterTabCounts[tab.value]
+                const isPinnedLabelTab = isLabelFilterTabItem(tab)
+                const count = isPinnedLabelTab
+                  ? tab.count
+                  : filterTabCounts[tab.value]
                 return (
                   <button
                     key={tab.value}
@@ -2969,7 +3055,12 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                     )}
                     onClick={() => handleFilterTabChange(tab.value)}
                   >
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon
+                      className="h-3.5 w-3.5"
+                      style={
+                        isPinnedLabelTab ? { color: tab.color } : undefined
+                      }
+                    />
                     <span>{tab.label}</span>
                     <span
                       className={cn(
@@ -3104,6 +3195,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                               ? () => openWorktreeLabelModal(section.worktree)
                               : undefined
                           }
+                          onResolveConflicts={handleCanvasResolveConflicts}
                           disableTextSelection={disableWorktreeTextSelection}
                         />
                       </div>

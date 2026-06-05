@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Tag, Check, Pencil } from 'lucide-react'
+import { Tag, Check, Pencil, Pin } from 'lucide-react'
 import { useChatStore } from '@/store/chat-store'
 import type { LabelData } from '@/types/chat'
 import { getLabelTextColor } from '@/lib/label-colors'
@@ -94,8 +94,17 @@ export function LabelModal({
   // Get the label data for current label (for preset labels, use default yellow)
   const getLabelData = useCallback(
     (name: string): LabelData => {
+      const selected =
+        mode === 'multi'
+          ? currentLabels?.find(l => l.name === name)
+          : currentLabel?.name === name
+            ? currentLabel
+            : undefined
       // Check local color overrides first (instant feedback before async refetch)
-      if (colorOverrides[name]) return { name, color: colorOverrides[name] }
+      if (colorOverrides[name]) {
+        return { ...(selected ?? { name }), color: colorOverrides[name] }
+      }
+      if (selected) return selected
       // Check if this label name exists in sessionLabels or extraLabels (has a color)
       const existing = Object.values(sessionLabels).find(l => l.name === name)
       if (existing) return existing
@@ -104,7 +113,14 @@ export function LabelModal({
       // Preset labels get yellow by default
       return { name, color: '#eab308' }
     },
-    [sessionLabels, colorOverrides, extraLabels]
+    [
+      sessionLabels,
+      colorOverrides,
+      extraLabels,
+      currentLabel,
+      currentLabels,
+      mode,
+    ]
   )
 
   // Update all sessions that use a given label name to use a new color
@@ -264,6 +280,21 @@ export function LabelModal({
     }
   }, [inputValue, selectedColor, applyLabel])
 
+  const togglePinned = useCallback(
+    (labelData: LabelData, e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (mode !== 'multi') return
+
+      const next = selectedLabels.map(label =>
+        label.name === labelData.name
+          ? { ...label, pinned: !label.pinned }
+          : label
+      )
+      onApplyLabels?.(next)
+    },
+    [mode, onApplyLabels, selectedLabels]
+  )
+
   // Are we in edit mode?
   const isEditing = isCreatingCustom || editingLabelName
 
@@ -383,6 +414,16 @@ export function LabelModal({
                       style={{ backgroundColor: labelData.color }}
                     />
                     <span className="flex-1 truncate">{labelName}</span>
+                    {mode === 'multi' && isSelected && (
+                      <Pin
+                        className={`h-3 w-3 transition-opacity mr-1 ${
+                          labelData.pinned
+                            ? 'opacity-100'
+                            : 'opacity-0 group-hover:opacity-50 hover:!opacity-100'
+                        }`}
+                        onClick={e => togglePinned(labelData, e)}
+                      />
+                    )}
                     {isSelected && <Check className="h-3 w-3 mr-1" />}
                     {isCustom && (
                       <Pencil

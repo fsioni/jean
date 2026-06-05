@@ -6,7 +6,7 @@ use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 use tauri::AppHandle;
 
-use super::config::{resolve_cli_binary, CLI_BINARY_CANDIDATES};
+use super::config::resolve_cli_binary;
 use crate::platform::silent_command;
 
 const AUTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -220,7 +220,32 @@ fn run_command_with_timeout(
 pub async fn check_cursor_cli_installed(app: AppHandle) -> Result<CursorCliStatus, String> {
     log::trace!("Checking Cursor CLI installation status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
+
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(CursorCliStatus {
+                installed: false,
+                version: None,
+                path: None,
+            });
+        }
+        let version = crate::platform::wsl_tool_version(&wsl.distro, &tool)
+            .and_then(|v| parse_version(v.as_bytes()));
+        return Ok(CursorCliStatus {
+            installed: true,
+            version,
+            path: Some(tool),
+        });
+    }
+
     if !binary_path.exists() {
         return Ok(CursorCliStatus {
             installed: false,
@@ -255,19 +280,36 @@ pub async fn check_cursor_cli_installed(app: AppHandle) -> Result<CursorCliStatu
 pub async fn check_cursor_cli_auth(app: AppHandle) -> Result<CursorAuthStatus, String> {
     log::trace!("Checking Cursor CLI authentication status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
-    if !binary_path.exists() {
+
+    let binary_str = binary_path.to_string_lossy().to_string();
+    if !wsl.enabled && !binary_path.exists() {
         return Ok(CursorAuthStatus {
             authenticated: false,
             error: Some("Cursor CLI not found in PATH".to_string()),
             timed_out: false,
         });
     }
+    if wsl.enabled {
+        let installed = if binary_str.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &binary_str)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &binary_str)
+        };
+        if !installed {
+            return Ok(CursorAuthStatus {
+                authenticated: false,
+                error: Some("Cursor CLI not installed inside WSL".to_string()),
+                timed_out: false,
+            });
+        }
+    }
 
     for args in [["status"].as_slice(), ["about"].as_slice()] {
         let output = match run_command_with_timeout(
             {
-                let mut command = silent_command(&binary_path);
+                let mut command = crate::platform::wsl_aware_command(&binary_str, None);
                 command.args(args);
                 command
             },
@@ -332,29 +374,9 @@ pub async fn check_cursor_cli_auth(app: AppHandle) -> Result<CursorAuthStatus, S
 pub async fn detect_cursor_in_path(_app: AppHandle) -> Result<CursorPathDetection, String> {
     log::trace!("Detecting Cursor CLI in system PATH");
 
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
+    let detection = crate::platform::detect_cli_in_path(super::config::CLI_TOOL_NAME, None, None);
 
-    let mut output = String::new();
-    for binary_name in CLI_BINARY_CANDIDATES {
-        output = match silent_command(which_cmd).arg(binary_name).output() {
-            Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-            _ => String::new(),
-        };
-        if !output.is_empty() {
-            break;
-        }
-    }
-
-    if output.is_empty() {
+    if !detection.found {
         return Ok(CursorPathDetection {
             found: false,
             path: None,
@@ -363,19 +385,13 @@ pub async fn detect_cursor_in_path(_app: AppHandle) -> Result<CursorPathDetectio
         });
     }
 
-    let found_path = std::path::PathBuf::from(&output);
-    let version = match silent_command(&found_path).arg("--version").output() {
-        Ok(ver_output) if ver_output.status.success() => parse_version(&ver_output.stdout),
-        _ => None,
-    };
-
-    let package_manager = crate::platform::detect_package_manager(&found_path);
+    let version = detection.version.and_then(|v| parse_version(v.as_bytes()));
 
     Ok(CursorPathDetection {
         found: true,
-        path: Some(output),
+        path: detection.path,
         version,
-        package_manager,
+        package_manager: detection.package_manager,
     })
 }
 
@@ -383,9 +399,14 @@ pub async fn detect_cursor_in_path(_app: AppHandle) -> Result<CursorPathDetectio
 pub async fn list_cursor_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, String> {
     log::trace!("Listing Cursor models");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_cli_binary(&app);
-    if !binary_path.exists() {
+    let binary_str = binary_path.to_string_lossy().to_string();
+    if !wsl.enabled && !binary_path.exists() {
         return Err("Cursor CLI not found in PATH".to_string());
+    }
+    if wsl.enabled && !crate::platform::check_wsl_tool(&wsl.distro, &binary_str) {
+        return Err("Cursor CLI not installed inside WSL".to_string());
     }
 
     let command_attempts: [&[&str]; 2] = [&["models"], &["--list-models"]];
@@ -393,7 +414,7 @@ pub async fn list_cursor_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, 
     let mut had_successful_listing = false;
 
     for args in command_attempts {
-        let output = silent_command(&binary_path)
+        let output = crate::platform::wsl_aware_command(&binary_str, None)
             .args(args)
             .output()
             .map_err(|e| format!("Failed to run Cursor models command {:?}: {e}", args))?;
@@ -435,6 +456,26 @@ pub async fn list_cursor_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, 
 
 #[tauri::command]
 pub async fn get_cursor_install_command(_app: AppHandle) -> Result<CursorInstallCommand, String> {
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        // Run Cursor's Linux installer inside the WSL distro so the binary
+        // ends up on the distro-side $PATH rather than on Windows.
+        return Ok(CursorInstallCommand {
+            command: "wsl.exe".to_string(),
+            args: vec![
+                "-d".to_string(),
+                wsl.distro,
+                "--".to_string(),
+                "bash".to_string(),
+                "-lc".to_string(),
+                "curl -fsSL https://cursor.com/install | bash".to_string(),
+            ],
+            description:
+                "Installs Cursor Agent inside your WSL distro using Cursor's official installer"
+                    .to_string(),
+        });
+    }
+
     #[cfg(target_os = "windows")]
     {
         Ok(CursorInstallCommand {

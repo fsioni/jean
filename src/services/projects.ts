@@ -5,6 +5,7 @@ import { listen, type UnlistenFn } from '@/lib/transport'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
 import { disposeAllWorktreeTerminals } from '@/lib/terminal-instances'
+import { toastActionLabel } from '@/lib/toast-action-label'
 import type {
   Project,
   Worktree,
@@ -1163,7 +1164,7 @@ export function useWorktreeEvents() {
                 ? teardown_output.slice(0, 200) + '…'
                 : teardown_output,
             action: {
-              label: 'View Output',
+              label: toastActionLabel('View Output'),
               onClick: () =>
                 window.dispatchEvent(
                   new CustomEvent('show-teardown-output', {
@@ -1197,7 +1198,7 @@ export function useWorktreeEvents() {
           description: error,
           duration: Infinity,
           action: {
-            label: 'View Output',
+            label: toastActionLabel('View Output'),
             onClick: () =>
               window.dispatchEvent(
                 new CustomEvent('show-teardown-output', {

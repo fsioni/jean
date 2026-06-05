@@ -85,8 +85,18 @@ export function PlanDialog({
       ? (state.selectedBackends[_approvalContext.sessionId] ?? null)
       : null
   )
-  const buildLabel = resolveApprovalLabel('build', preferences, sessionBackend)
-  const yoloLabel = resolveApprovalLabel('yolo', preferences, sessionBackend)
+  const buildNewContextLabel = resolveApprovalLabel(
+    'build',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
+  const yoloNewContextLabel = resolveApprovalLabel(
+    'yolo',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
 
   const { data: fetchedContent, isLoading } = useQuery({
     queryKey: ['planFile', filePath],
@@ -344,9 +354,9 @@ export function PlanDialog({
                   >
                     <span className="flex flex-col">
                       <span>New Session</span>
-                      {buildLabel && (
+                      {buildNewContextLabel && (
                         <span className="text-[10px] text-muted-foreground">
-                          {buildLabel}
+                          {buildNewContextLabel}
                         </span>
                       )}
                     </span>
@@ -364,9 +374,9 @@ export function PlanDialog({
                   >
                     <span className="flex flex-col">
                       <span>New Worktree</span>
-                      {buildLabel && (
+                      {buildNewContextLabel && (
                         <span className="text-[10px] text-muted-foreground">
-                          {buildLabel}
+                          {buildNewContextLabel}
                         </span>
                       )}
                     </span>
@@ -392,9 +402,9 @@ export function PlanDialog({
                   >
                     <span className="flex flex-col">
                       <span>New Session (YOLO)</span>
-                      {yoloLabel && (
+                      {yoloNewContextLabel && (
                         <span className="text-[10px] text-muted-foreground">
-                          {yoloLabel}
+                          {yoloNewContextLabel}
                         </span>
                       )}
                     </span>
@@ -412,9 +422,9 @@ export function PlanDialog({
                   >
                     <span className="flex flex-col">
                       <span>New Worktree (YOLO)</span>
-                      {yoloLabel && (
+                      {yoloNewContextLabel && (
                         <span className="text-[10px] text-muted-foreground">
-                          {yoloLabel}
+                          {yoloNewContextLabel}
                         </span>
                       )}
                     </span>

@@ -47,3 +47,30 @@ export function getFileManagerName(): string {
   if (isWindows) return 'Explorer'
   return 'Files'
 }
+
+/**
+ * Strip WSL UNC prefix from a path for display purposes.
+ * `\\wsl.localhost\Ubuntu\home\user\project` -> `/home/user/project`
+ * `\\wsl$\Ubuntu\home\user` -> `/home/user`
+ * Non-WSL paths are returned as-is.
+ */
+export function getDisplayPath(path: string, wslEnabled?: boolean): string {
+  if (!wslEnabled) return path
+
+  // Normalize backslashes for matching
+  const normalized = path.replace(/\\/g, '/')
+
+  // Match \\wsl.localhost\<distro>\... or \\wsl$\<distro>\...
+  for (const prefix of ['//wsl.localhost/', '//wsl$/']) {
+    if (normalized.startsWith(prefix)) {
+      const rest = normalized.slice(prefix.length)
+      const slashPos = rest.indexOf('/')
+      if (slashPos >= 0) {
+        return rest.slice(slashPos)
+      }
+      return '/'
+    }
+  }
+
+  return path
+}

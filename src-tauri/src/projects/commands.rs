@@ -52,6 +52,7 @@ use crate::codex_cli::resolve_cli_binary as resolve_codex_cli_binary;
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::http_server::EmitExt;
 use crate::platform::silent_command;
+use crate::platform::wsl_aware_command;
 
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\(([^)]*)\)").expect("valid release notes parenthetical regex"));
@@ -288,18 +289,16 @@ fn take_review_process_pid(review_run_id: &str) -> Option<u32> {
 /// Check if git global user identity is configured
 #[tauri::command]
 pub async fn check_git_identity() -> Result<GitIdentity, String> {
-    let name = silent_command("git")
+    let name = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.name"])
-        .current_dir(std::env::temp_dir())
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let email = silent_command("git")
+    let email = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.email"])
-        .current_dir(std::env::temp_dir())
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -312,9 +311,8 @@ pub async fn check_git_identity() -> Result<GitIdentity, String> {
 /// Set git global user identity
 #[tauri::command]
 pub async fn set_git_identity(name: String, email: String) -> Result<(), String> {
-    let name_output = silent_command("git")
+    let name_output = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.name", &name])
-        .current_dir(std::env::temp_dir())
         .output()
         .map_err(|e| format!("Failed to set git user.name: {e}"))?;
 
@@ -323,9 +321,8 @@ pub async fn set_git_identity(name: String, email: String) -> Result<(), String>
         return Err(format!("Failed to set git user.name: {stderr}"));
     }
 
-    let email_output = silent_command("git")
+    let email_output = wsl_aware_command("git", Some(&std::env::temp_dir()))
         .args(["config", "--global", "user.email", &email])
-        .current_dir(std::env::temp_dir())
         .output()
         .map_err(|e| format!("Failed to set git user.email: {e}"))?;
 
@@ -541,9 +538,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
 
     if already_git_repo {
         // Check if it has any commits (HEAD exists)
-        let has_commits = silent_command("git")
+        let has_commits = wsl_aware_command("git", Some(Path::new(&path)))
             .args(["rev-parse", "HEAD"])
-            .current_dir(&path)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -557,9 +553,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
 
     // Run git init (skip if already a git repo)
     if !already_git_repo {
-        let output = silent_command("git")
+        let output = wsl_aware_command("git", Some(Path::new(&path)))
             .args(["init"])
-            .current_dir(&path)
             .output()
             .map_err(|e| format!("Failed to run git init: {e}"))?;
 
@@ -570,9 +565,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
     }
 
     // Stage all files
-    let add_output = silent_command("git")
+    let add_output = wsl_aware_command("git", Some(Path::new(&path)))
         .args(["add", "."])
-        .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to run git add: {e}"))?;
 
@@ -582,9 +576,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
     }
 
     // Create initial commit
-    let commit_output = silent_command("git")
+    let commit_output = wsl_aware_command("git", Some(Path::new(&path)))
         .args(["commit", "-m", "Initial commit"])
-        .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to run git commit: {e}"))?;
 
@@ -596,9 +589,8 @@ pub async fn init_git_in_folder(path: String) -> Result<String, String> {
         if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
             log::warn!("No files to commit, creating empty initial commit");
             // Create an empty commit with --allow-empty
-            let empty_commit = silent_command("git")
+            let empty_commit = wsl_aware_command("git", Some(Path::new(&path)))
                 .args(["commit", "--allow-empty", "-m", "Initial commit"])
-                .current_dir(&path)
                 .output()
                 .map_err(|e| format!("Failed to create empty commit: {e}"))?;
 
@@ -5016,9 +5008,8 @@ pub async fn get_review_prompt(
     let current_branch = git::get_current_branch(&worktree_path)?;
 
     // Get the full git diff (origin/target...HEAD)
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", &format!("origin/{target_branch}...HEAD")])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff: {e}"))?;
 
@@ -5030,13 +5021,12 @@ pub async fn get_review_prompt(
     };
 
     // Get the commit history (origin/target..HEAD)
-    let log_output = silent_command("git")
+    let log_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args([
             "log",
             &format!("origin/{target_branch}..HEAD"),
             "--pretty=format:%h %s",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git log: {e}"))?;
 
@@ -5048,9 +5038,8 @@ pub async fn get_review_prompt(
     };
 
     // Get uncommitted changes (staged + unstaged for tracked files)
-    let uncommitted_output = silent_command("git")
+    let uncommitted_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff HEAD: {e}"))?;
 
@@ -5061,9 +5050,8 @@ pub async fn get_review_prompt(
     };
 
     // Get list of untracked files
-    let untracked_output = silent_command("git")
+    let untracked_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to list untracked files: {e}"))?;
 
@@ -5490,6 +5478,7 @@ fn append_coderabbit_review_label(labels: &mut Vec<LabelData>) {
     labels.push(LabelData {
         name: CODERABBIT_REVIEW_LABEL_NAME.to_string(),
         color: CODERABBIT_REVIEW_LABEL_COLOR.to_string(),
+        pinned: false,
     });
 }
 
@@ -5740,16 +5729,15 @@ pub async fn revert_file(
     file_path: String,
     file_status: String,
 ) -> Result<(), String> {
-    use crate::platform::silent_command;
+    use crate::platform::wsl_aware_command;
 
     log::trace!("Reverting file {file_path} (status: {file_status}) in {worktree_path}");
 
     match file_status.as_str() {
         "modified" | "deleted" => {
             // Restore file to HEAD state (unstage + restore working tree)
-            let output = silent_command("git")
+            let output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["checkout", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output()
                 .map_err(|e| format!("Failed to run git checkout: {e}"))?;
 
@@ -5760,9 +5748,8 @@ pub async fn revert_file(
         }
         "added" => {
             // Remove untracked/newly-added file; also unstage if staged
-            let _ = silent_command("git")
+            let _ = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["reset", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output();
 
             let target = std::path::Path::new(&worktree_path).join(&file_path);
@@ -5774,17 +5761,15 @@ pub async fn revert_file(
             // For renamed files, restore the old path and remove the new one
             // The file_path for renamed files is the new path
             // First, try to restore via checkout which handles the rename
-            let output = silent_command("git")
+            let output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                 .args(["checkout", "HEAD", "--", &file_path])
-                .current_dir(&worktree_path)
                 .output()
                 .map_err(|e| format!("Failed to run git checkout: {e}"))?;
 
             if !output.status.success() {
                 // If checkout fails (new name doesn't exist at HEAD), reset index
-                let _ = silent_command("git")
+                let _ = wsl_aware_command("git", Some(Path::new(&worktree_path)))
                     .args(["reset", "HEAD", "--", &file_path])
-                    .current_dir(&worktree_path)
                     .output();
 
                 let target = std::path::Path::new(&worktree_path).join(&file_path);
@@ -6014,13 +5999,12 @@ fn truncate_diff_at_file_boundaries(diff: &str, max_chars: usize) -> String {
 
 /// Get git diff between current branch and target branch
 fn get_branch_diff(repo_path: &str, target_branch: &str, head_ref: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "diff",
             "-U10",
             &format!("origin/{target_branch}...{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git diff: {e}"))?;
 
@@ -6040,13 +6024,12 @@ fn get_branch_commits(
     target_branch: &str,
     head_ref: &str,
 ) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "log",
             "--oneline",
             &format!("origin/{target_branch}..{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git log: {e}"))?;
 
@@ -6064,13 +6047,12 @@ fn count_branch_commits(
     target_branch: &str,
     head_ref: &str,
 ) -> Result<u32, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "rev-list",
             "--count",
             &format!("origin/{target_branch}..{head_ref}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to count commits: {e}"))?;
 
@@ -6247,9 +6229,8 @@ pub async fn create_pr_with_ai_content(
             }
         };
 
-        let commit_output = silent_command("git")
+        let commit_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
             .args(["commit", "-m", &commit_msg])
-            .current_dir(&worktree_path)
             .output()
             .map_err(|e| format!("Failed to commit: {e}"))?;
 
@@ -6264,9 +6245,8 @@ pub async fn create_pr_with_ai_content(
 
     // Push the branch
     log::trace!("Pushing branch to remote");
-    let push_output = silent_command("git")
+    let push_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["push", "-u", "origin", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -6861,9 +6841,8 @@ pub struct CreateCommitResponse {
 /// Check if there are unpushed commits (commits ahead of upstream).
 /// Returns true if there are unpushed commits OR if there's no upstream (safe fallback).
 fn has_unpushed_commits(repo_path: &str) -> Result<bool, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-list", "--count", "@{u}..HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to check unpushed commits: {e}"))?;
 
@@ -6879,9 +6858,8 @@ fn has_unpushed_commits(repo_path: &str) -> Result<bool, String> {
 
 /// Get git status output
 fn get_git_status(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["status", "--short"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git status: {e}"))?;
 
@@ -6890,9 +6868,8 @@ fn get_git_status(repo_path: &str) -> Result<String, String> {
 
 /// Get compact diff stat summary (e.g. "src/main.rs | 5 ++--")
 fn get_staged_diff_stat(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["diff", "--cached", "--stat"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get staged diff stat: {e}"))?;
 
@@ -6910,9 +6887,8 @@ const DIFF_MAX_CHARS: usize = 15_000;
 /// lines of hunk content per file, and stops adding files once DIFF_MAX_CHARS
 /// is reached.
 fn get_staged_diff(repo_path: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["diff", "--cached"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get staged diff: {e}"))?;
 
@@ -6986,9 +6962,8 @@ fn get_staged_diff(repo_path: &str) -> Result<String, String> {
 
 /// Get recent commit messages for style reference
 fn get_recent_commits(repo_path: &str, count: u32) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["log", "--oneline", &format!("-{count}")])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get recent commits: {e}"))?;
 
@@ -6998,9 +6973,8 @@ fn get_recent_commits(repo_path: &str, count: u32) -> Result<String, String> {
 /// Stage only specific files. Resets the index first to ensure a clean state.
 fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String> {
     // Reset staging area to ensure only the specified files are staged
-    let reset_output = silent_command("git")
+    let reset_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["reset", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to reset staging area: {e}"))?;
 
@@ -7018,9 +6992,8 @@ fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String>
         args.push(f.as_str());
     }
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(&args)
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to stage files: {e}"))?;
 
@@ -7034,9 +7007,8 @@ fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String>
 
 /// Stage all changes
 fn stage_all_changes(repo_path: &str) -> Result<(), String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["add", "-A"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to stage changes: {e}"))?;
 
@@ -7050,9 +7022,8 @@ fn stage_all_changes(repo_path: &str) -> Result<(), String> {
 
 /// Create a git commit with the given message
 fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["commit", "-m", message])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to create commit: {e}"))?;
 
@@ -7062,9 +7033,8 @@ fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
     }
 
     // Get the commit hash
-    let hash_output = silent_command("git")
+    let hash_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get commit hash: {e}"))?;
 
@@ -7076,9 +7046,8 @@ fn create_git_commit(repo_path: &str, message: &str) -> Result<String, String> {
 /// Push to remote
 fn push_to_remote(repo_path: &str, remote: Option<&str>) -> Result<(), String> {
     let remote = remote.unwrap_or("origin");
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "-u", remote, "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -7561,7 +7530,8 @@ fn build_codex_review_args(
         "--json".into(),
         "--model".into(),
         actual_model.into(),
-        "--full-auto".into(),
+        "--sandbox".into(),
+        "workspace-write".into(),
         "--output-schema".into(),
         schema_file.as_os_str().to_os_string(),
     ];
@@ -7586,7 +7556,7 @@ fn execute_codex_review(
     working_dir: Option<&std::path::Path>,
     review_run_id: Option<&str>,
 ) -> Result<String, String> {
-    let cli_path = resolve_codex_cli_binary(app);
+    let cli_path = resolve_codex_cli_binary(app)?;
     if !cli_path.exists() {
         return Err("Codex CLI not installed".to_string());
     }
@@ -7839,9 +7809,8 @@ pub async fn run_review_with_ai(
     let commits = get_branch_commits(&worktree_path, target_branch, "HEAD").unwrap_or_default();
 
     // Get uncommitted changes (staged + unstaged for tracked files)
-    let uncommitted_output = silent_command("git")
+    let uncommitted_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["diff", "HEAD"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to get uncommitted diff: {e}"))?;
 
@@ -7853,9 +7822,8 @@ pub async fn run_review_with_ai(
     };
 
     // Get untracked files
-    let untracked_output = silent_command("git")
+    let untracked_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to list untracked files: {e}"))?;
 
@@ -8374,6 +8342,14 @@ mod codex_review_args_tests {
                     working_dir.as_os_str().to_os_string(),
                 ]
         }));
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    OsString::from("--sandbox"),
+                    OsString::from("workspace-write"),
+                ]
+        }));
+        assert!(!args.iter().any(|arg| arg == "--full-auto"));
         assert_eq!(args.last(), Some(&OsString::from("-")));
     }
 }
@@ -8672,9 +8648,8 @@ fn generate_release_notes_content(
     reasoning_effort: Option<&str>,
 ) -> Result<ReleaseNotesResponse, String> {
     // Fetch tags to ensure we have the tag locally
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(project_path)))
         .args(["fetch", "--tags", "--force"])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to fetch tags: {e}"))?;
 
@@ -8684,14 +8659,13 @@ fn generate_release_notes_content(
     }
 
     // Get commits since the tag
-    let commits_output = silent_command("git")
+    let commits_output = wsl_aware_command("git", Some(Path::new(project_path)))
         .args([
             "log",
             &format!("{tag}..HEAD"),
             "--format=%h %s%n%b---",
             "--no-merges",
         ])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to get commits: {e}"))?;
 
@@ -9279,9 +9253,8 @@ pub async fn get_merge_conflicts(
         .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
 
     // Get list of files with unresolved conflicts (unmerged paths)
-    let conflict_output = silent_command("git")
+    let conflict_output = wsl_aware_command("git", Some(Path::new(&worktree.path)))
         .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(&worktree.path)
         .output()
         .map_err(|e| format!("Failed to check conflicts: {e}"))?;
 
@@ -9300,9 +9273,8 @@ pub async fn get_merge_conflicts(
     }
 
     // Get the diff with conflict markers
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(&worktree.path)))
         .args(["diff"])
-        .current_dir(&worktree.path)
         .output()
         .map_err(|e| format!("Failed to get conflict diff: {e}"))?;
 
@@ -9339,9 +9311,8 @@ pub async fn fetch_and_merge_base(
     let worktree_path = &worktree.path;
 
     // Fetch the latest base branch from origin
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["fetch", "origin", base_branch])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to fetch origin: {e}"))?;
 
@@ -9351,9 +9322,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Merge origin/<base_branch> into current branch
-    let merge_output = silent_command("git")
+    let merge_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["merge", &format!("origin/{base_branch}")])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to merge: {e}"))?;
 
@@ -9367,9 +9337,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Merge failed — check for conflict files
-    let conflict_output = silent_command("git")
+    let conflict_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to check conflicts: {e}"))?;
 
@@ -9386,9 +9355,8 @@ pub async fn fetch_and_merge_base(
     }
 
     // Get the diff with conflict markers
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["diff"])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to get conflict diff: {e}"))?;
 
@@ -10927,9 +10895,8 @@ pub async fn revert_last_local_commit(
     worktree_path: String,
 ) -> Result<RevertCommitResponse, String> {
     // Get the current HEAD commit hash and message before reverting
-    let log_output = silent_command("git")
+    let log_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["log", "-1", "--format=%H%n%s"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to get current commit: {e}"))?;
 
@@ -10948,9 +10915,8 @@ pub async fn revert_last_local_commit(
     }
 
     // Reset soft: undo the commit but keep changes staged
-    let reset_output = silent_command("git")
+    let reset_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
         .args(["reset", "--soft", "HEAD~1"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to revert commit: {e}"))?;
 

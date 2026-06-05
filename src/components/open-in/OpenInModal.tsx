@@ -8,6 +8,8 @@ import {
   GitPullRequest,
   CircleDot,
   Globe,
+  ShieldAlert,
+  Siren,
 } from 'lucide-react'
 import {
   Dialog,
@@ -28,7 +30,12 @@ import {
   useWorktree,
   usePorts,
 } from '@/services/projects'
-import { useLoadedIssueContexts, useLoadedPRContexts } from '@/services/github'
+import {
+  useLoadedIssueContexts,
+  useLoadedPRContexts,
+  useLoadedSecurityContexts,
+  useLoadedAdvisoryContexts,
+} from '@/services/github'
 import { usePreferences } from '@/services/preferences'
 import { getEditorLabel, getTerminalLabel } from '@/types/preferences'
 import { notify } from '@/lib/notifications'
@@ -77,8 +84,22 @@ export function OpenInModal() {
       ? (state.activeSessionIds[selectedWorktreeId] ?? null)
       : null
   )
-  const { data: loadedPRs } = useLoadedPRContexts(activeSessionId)
-  const { data: loadedIssues } = useLoadedIssueContexts(activeSessionId)
+  const { data: loadedPRs } = useLoadedPRContexts(
+    activeSessionId,
+    selectedWorktreeId
+  )
+  const { data: loadedIssues } = useLoadedIssueContexts(
+    activeSessionId,
+    selectedWorktreeId
+  )
+  const { data: loadedSecurityAlerts } = useLoadedSecurityContexts(
+    activeSessionId,
+    selectedWorktreeId
+  )
+  const { data: loadedAdvisories } = useLoadedAdvisoryContexts(
+    activeSessionId,
+    selectedWorktreeId
+  )
 
   const isNative = isNativeApp()
 
@@ -147,39 +168,100 @@ export function OpenInModal() {
     worktree?.pr_number,
   ])
 
-  // Context options (loaded PRs + issues, numbered 1-9)
+  // Context options (worktree + loaded GitHub contexts, numbered 1-9)
   const contextOptions = useMemo(() => {
     const items: ModalOption[] = []
+    const seenUrls = new Set<string>()
     let keyIndex = 1
+
+    const addOption = (option: Omit<ModalOption, 'key'>) => {
+      if (option.url && seenUrls.has(option.url)) return
+      if (option.url) seenUrls.add(option.url)
+      items.push({
+        ...option,
+        key: keyIndex <= 9 ? String(keyIndex) : undefined,
+      })
+      keyIndex++
+    }
+
+    if (worktree?.pr_url) {
+      seenUrls.add(worktree.pr_url)
+    }
+
+    if (worktree?.security_alert_url) {
+      addOption({
+        id: `worktree-security-${worktree.security_alert_number ?? 'current'}`,
+        label: worktree.security_alert_number
+          ? `Security #${worktree.security_alert_number}`
+          : 'Security Alert',
+        icon: ShieldAlert,
+        url: worktree.security_alert_url,
+      })
+    }
+
+    if (worktree?.advisory_url) {
+      addOption({
+        id: `worktree-advisory-${worktree.advisory_ghsa_id ?? 'current'}`,
+        label: worktree.advisory_ghsa_id
+          ? `Advisory ${worktree.advisory_ghsa_id}`
+          : 'Security Advisory',
+        icon: Siren,
+        url: worktree.advisory_url,
+      })
+    }
 
     if (loadedPRs) {
       for (const pr of loadedPRs) {
-        items.push({
+        addOption({
           id: `pr-${pr.number}`,
           label: `PR #${pr.number}`,
           icon: GitPullRequest,
-          key: keyIndex <= 9 ? String(keyIndex) : undefined,
           url: `https://github.com/${pr.repoOwner}/${pr.repoName}/pull/${pr.number}`,
         })
-        keyIndex++
       }
     }
 
     if (loadedIssues) {
       for (const issue of loadedIssues) {
-        items.push({
+        addOption({
           id: `issue-${issue.number}`,
           label: `Issue #${issue.number}`,
           icon: CircleDot,
-          key: keyIndex <= 9 ? String(keyIndex) : undefined,
           url: `https://github.com/${issue.repoOwner}/${issue.repoName}/issues/${issue.number}`,
         })
-        keyIndex++
+      }
+    }
+
+    if (loadedSecurityAlerts) {
+      for (const alert of loadedSecurityAlerts) {
+        addOption({
+          id: `security-${alert.number}`,
+          label: `Security #${alert.number}`,
+          icon: ShieldAlert,
+          url: `https://github.com/${alert.repoOwner}/${alert.repoName}/security/dependabot/${alert.number}`,
+        })
+      }
+    }
+
+    if (loadedAdvisories) {
+      for (const advisory of loadedAdvisories) {
+        addOption({
+          id: `advisory-${advisory.ghsaId}`,
+          label: `Advisory ${advisory.ghsaId}`,
+          icon: Siren,
+          url: `https://github.com/${advisory.repoOwner}/${advisory.repoName}/security/advisories/${advisory.ghsaId}`,
+        })
       }
     }
 
     return items
-  }, [loadedPRs, loadedIssues])
+  }, [
+    loadedPRs,
+    loadedIssues,
+    loadedSecurityAlerts,
+    loadedAdvisories,
+    worktree,
+  ])
 
   useEffect(() => {
     if (!openInModalOpen) {

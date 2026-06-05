@@ -132,7 +132,8 @@ export function useContextViewer({
         const content = await getAdvisoryContextContent(
           activeSessionId,
           ctx.ghsaId,
-          activeWorktreePath
+          activeWorktreePath,
+          worktreeId
         )
         setViewingContext({
           type: 'advisory',
@@ -144,7 +145,7 @@ export function useContextViewer({
         toast.error(`Failed to load context: ${error}`)
       }
     },
-    [activeSessionId, activeWorktreePath]
+    [activeSessionId, activeWorktreePath, worktreeId]
   )
 
   const handleViewLinear = useCallback(

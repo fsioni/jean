@@ -1,3 +1,29 @@
+#![allow(
+    dead_code,
+    clippy::cmp_owned,
+    clippy::derivable_impls,
+    clippy::explicit_counter_loop,
+    clippy::if_same_then_else,
+    clippy::into_iter_on_ref,
+    clippy::lines_filter_map_ok,
+    clippy::manual_flatten,
+    clippy::manual_is_multiple_of,
+    clippy::manual_map,
+    clippy::manual_range_patterns,
+    clippy::needless_question_mark,
+    clippy::nonminimal_bool,
+    clippy::redundant_closure,
+    clippy::redundant_closure_call,
+    clippy::result_large_err,
+    clippy::single_char_add_str,
+    clippy::single_match,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::unnecessary_cast,
+    clippy::unnecessary_map_or,
+    clippy::while_let_on_iterator
+)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,6 +105,28 @@ fn greet(name: &str) -> String {
 
     log::trace!("Greeting user: {name}");
     format!("Hello, {name}! You've been greeted from Rust!")
+}
+
+// ── WSL commands ────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_wsl_distros() -> Vec<String> {
+    platform::list_wsl_distros()
+}
+
+#[tauri::command]
+fn check_wsl_tool(distro: String, tool: String) -> bool {
+    platform::check_wsl_tool(&distro, &tool)
+}
+
+#[tauri::command]
+fn get_wsl_home_dir(distro: String) -> Result<String, String> {
+    platform::get_wsl_home_dir(&distro)
+}
+
+#[tauri::command]
+fn is_wsl_available() -> bool {
+    platform::is_wsl_available()
 }
 
 // Preferences data structure
@@ -262,6 +310,12 @@ pub struct AppPreferences {
     pub opencode_cli_source: String, // OpenCode CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub gh_cli_source: String, // GitHub CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default)]
+    pub wsl_mode_chosen: bool, // Whether WSL mode selection has been made (prevents re-asking)
+    #[serde(default)]
+    pub wsl_enabled: bool, // Route commands through WSL
+    #[serde(default)]
+    pub wsl_distro: String, // WSL distro name, e.g. "Ubuntu"
     #[serde(default = "default_cli_source")]
     pub commandcode_cli_source: String, // Command Code CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
@@ -611,6 +665,8 @@ mod tests {
         assert!(prompt.contains("Jean MCP/tools"));
         assert!(prompt.contains("VERY IMPORTANT: Keep Code Simple"));
         assert!(prompt.contains("Always implement the simplest maintainable solution"));
+        assert!(prompt.contains("Clickable References"));
+        assert!(prompt.contains("include clickable links when available"));
     }
 
     #[test]
@@ -1346,6 +1402,7 @@ fn default_global_system_prompt() -> String {
 ## Core Principles
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.
+- **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, or other external resources, include clickable links when available so users can open them directly.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
@@ -1713,6 +1770,9 @@ impl Default for AppPreferences {
             codex_cli_source: default_cli_source(),
             opencode_cli_source: default_cli_source(),
             gh_cli_source: default_cli_source(),
+            wsl_mode_chosen: false,
+            wsl_enabled: false,
+            wsl_distro: String::new(),
             commandcode_cli_source: default_cli_source(),
             coderabbit_cli_source: default_cli_source(),
             expand_tool_calls_by_default: false,
@@ -2120,6 +2180,12 @@ async fn save_preferences(app: AppHandle, preferences: AppPreferences) -> Result
     })?;
 
     log::trace!("Successfully saved preferences to {prefs_path:?}");
+
+    // Keep WSL config cache in sync with saved preferences
+    platform::update_wsl_config(
+        prefs_for_disk.wsl_enabled,
+        prefs_for_disk.wsl_distro.clone(),
+    );
 
     schedule_jean_mcp_socket_sync(app.clone());
 
@@ -3394,6 +3460,34 @@ pub fn run() {
 
             log::info!("Startup: projects loaded + asset scopes registered at {:?}", setup_start.elapsed());
 
+            // Initialize WSL config from preferences (Windows only — no-op on other platforms)
+            {
+                let prefs_handle = app.handle().clone();
+                match load_preferences_sync(&prefs_handle) {
+                    Ok(prefs) => {
+                        let distro = prefs.wsl_distro.trim().to_string();
+                        let wsl_enabled = prefs.wsl_enabled && !distro.is_empty();
+
+                        if prefs.wsl_enabled && distro.is_empty() {
+                            log::warn!(
+                                "WSL was enabled in preferences without a distro; disabling WSL routing until configured"
+                            );
+                        }
+
+                        platform::init_wsl_config(wsl_enabled, distro.clone());
+                        if wsl_enabled {
+                            log::info!("WSL mode enabled with distro: {distro}");
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load preferences for WSL config init: {e}");
+                        platform::init_wsl_config(false, String::new());
+                    }
+                }
+            }
+
+            log::info!("Startup: WSL config initialized at {:?}", setup_start.elapsed());
+
             // Apply window vibrancy / opacity from saved preferences (macOS only).
             // The bundled tauri.conf.json sets `transparent: true` so vibrancy is
             // possible at runtime, but the default preference is opaque. Without
@@ -4015,6 +4109,11 @@ pub fn run() {
             background_tasks::commands::set_remote_poll_interval,
             background_tasks::commands::get_remote_poll_interval,
             background_tasks::commands::trigger_immediate_remote_poll,
+            // WSL commands
+            list_wsl_distros,
+            check_wsl_tool,
+            get_wsl_home_dir,
+            is_wsl_available,
             // HTTP server commands
             start_http_server,
             stop_http_server,

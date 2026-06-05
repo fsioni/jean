@@ -90,6 +90,16 @@ pub fn is_process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 pub fn is_process_alive(pid: u32) -> bool {
+    // When WSL is enabled, PIDs are WSL-internal — check via wsl.exe
+    let wsl = super::wsl::get_wsl_config();
+    if wsl.enabled {
+        return silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "kill", "-0", &pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
+
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -128,6 +138,20 @@ pub fn kill_process(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn kill_process(pid: u32) -> Result<(), String> {
+    // When WSL is enabled, PIDs are WSL-internal — kill via wsl.exe
+    let wsl = super::wsl::get_wsl_config();
+    if wsl.enabled {
+        let output = silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "kill", "-9", &pid.to_string()])
+            .output()
+            .map_err(|e| format!("Failed to run wsl kill: {e}"))?;
+        return if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!("WSL kill failed for PID {pid}"))
+        };
+    }
+
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
@@ -173,6 +197,23 @@ pub fn kill_process_tree(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn kill_process_tree(pid: u32) -> Result<(), String> {
+    // When WSL is enabled, PIDs are WSL-internal — kill process group via wsl.exe
+    let wsl = super::wsl::get_wsl_config();
+    if wsl.enabled {
+        // Negative PID kills the process group inside WSL
+        let neg_pid = format!("-{pid}");
+        let output = silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "kill", "-9", &neg_pid])
+            .output()
+            .map_err(|e| format!("Failed to run wsl kill: {e}"))?;
+        return if output.status.success() {
+            Ok(())
+        } else {
+            // Fallback to killing just the process
+            kill_process(pid)
+        };
+    }
+
     // Use taskkill with /T flag for tree kill
     let output = silent_command("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
@@ -260,6 +301,19 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn terminate_process(pid: u32) -> Result<(), String> {
+    // When WSL is enabled, send SIGTERM via wsl.exe
+    let wsl = super::wsl::get_wsl_config();
+    if wsl.enabled {
+        let output = silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "kill", "-15", &pid.to_string()])
+            .output()
+            .map_err(|e| format!("Failed to run wsl kill: {e}"))?;
+        return if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!("WSL terminate failed for PID {pid}"))
+        };
+    }
     // Windows doesn't have SIGTERM, use TerminateProcess
     kill_process(pid)
 }

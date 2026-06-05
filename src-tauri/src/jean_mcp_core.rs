@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+use crate::chat::types::LabelData;
 use crate::http_server::dispatch::dispatch_command;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -28,6 +29,7 @@ const RATE_LIMITED_TOOLS: &[&str] = &[
 ];
 const DEFAULT_MCP_DIFF_MAX_BYTES: usize = 60_000;
 const MAX_MCP_DIFF_BYTES: usize = 200_000;
+const DEFAULT_LABEL_COLOR: &str = "#eab308";
 
 static RATE_BUCKETS: Lazy<std::sync::Mutex<HashMap<String, VecDeque<Instant>>>> =
     Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
@@ -97,7 +99,7 @@ pub fn extract_tool_call(params: Value) -> Result<ToolCallRequest, ToolError> {
 
 pub fn handle_protocol_message(
     body: Value,
-    mut call_tool: impl FnMut(ToolCallRequest) -> Result<Value, String>,
+    call_tool: impl FnMut(ToolCallRequest) -> Result<Value, String>,
 ) -> Option<Value> {
     let id = body.get("id").cloned();
     let method = body.get("method").and_then(|v| v.as_str()).unwrap_or("");
@@ -110,7 +112,7 @@ pub fn handle_protocol_message(
         "tools/call" => Some(
             match extract_tool_call(params)
                 .map_err(|e| e.message)
-                .and_then(|tool_call| call_tool(tool_call))
+                .and_then(call_tool)
             {
                 Ok(result) => jsonrpc_ok(id, result),
                 Err(e) => jsonrpc_error(id, -32000, &e),
@@ -137,6 +139,7 @@ pub fn tool_registry() -> Value {
         {"name":"list_security_advisories","description":"List repository security advisories for a project using the same backend command as the UI. Pass projectId; the server resolves the repo path.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"state":{"type":"string","enum":["draft","published","triage","closed","all"],"default":"all"}},"required":["projectId"],"additionalProperties":false}},
         {"name":"list_linear_issues","description":"List Linear issues for a project using the same backend command as the UI. Pass projectId; Linear API config is resolved from project/global settings.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"}},"required":["projectId"],"additionalProperties":false}},
         {"name":"create_worktree","description":"Create a new worktree for a project. If issueNumber or prNumber is provided, Jean fetches that context and attaches it to the worktree. Pass action=\"start_autoinvestigating\" to create a session and start investigating the issue/PR with the Magic Prompts settings default backend/model. This never switches/opens Jean's UI unless the user opens the worktree separately.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"baseBranch":{"type":"string"},"customName":{"type":"string"},"issueNumber":{"type":"integer","minimum":1},"prNumber":{"type":"integer","minimum":1},"action":{"type":"string","enum":["start_autoinvestigating"]}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"update_worktree_labels","description":"Update native Jean worktree labels. Use action=add/remove/set/clear. Returns the updated worktree.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"action":{"type":"string","enum":["add","remove","set","clear"]},"label":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string","description":"Hex color like #eab308. Optional for add; ignored by remove."},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name"],"additionalProperties":false},"labels":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string"},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name","color"],"additionalProperties":false}}},"required":["worktreeId","action"],"additionalProperties":false}},
         {"name":"list_sessions","description":"List chat sessions in a worktree without loading full message history. Use before creating a session to avoid duplicates.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"includeArchived":{"type":"boolean","default":false}},"required":["worktreeId"],"additionalProperties":false}},
         {"name":"create_session","description":"Create a new chat session in an existing worktree. Returns the session id needed for send_chat_message.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"name":{"type":"string"},"backend":{"type":"string","enum":["claude","codex","cursor","opencode"]}},"required":["worktreeId"],"additionalProperties":false}},
         {"name":"send_chat_message","description":"Send a message to an existing session. Fire-and-forget: returns immediately as the session begins processing. Use this to kick off investigations.","inputSchema":{"type":"object","properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"model":{"type":"string"},"executionMode":{"type":"string","enum":["plan","build","yolo"]}},"required":["sessionId","message"],"additionalProperties":false}},
@@ -402,6 +405,45 @@ async fn run_tool(
                 Ok(worktree)
             }
         }
+        "update_worktree_labels" => {
+            let worktree_id = require_str(&args, "worktreeId")?;
+            let action = require_str(&args, "action")?;
+            let worktree =
+                dispatch_command(app, "get_worktree", json!({ "worktreeId": worktree_id }))
+                    .await
+                    .map_err(ToolError::internal)?;
+            let current_labels: Vec<LabelData> =
+                serde_json::from_value(worktree.get("labels").cloned().unwrap_or(json!([])))
+                    .map_err(|e| {
+                        ToolError::internal(format!("parse current worktree labels: {e}"))
+                    })?;
+
+            let next_labels = match action.as_str() {
+                "add" => add_or_update_label(current_labels, parse_label_arg(&args)?),
+                "remove" => {
+                    let label = parse_label_arg(&args)?;
+                    remove_label_by_name(current_labels, &label.name)
+                }
+                "set" => parse_labels_arg(&args)?,
+                "clear" => Vec::new(),
+                other => {
+                    return Err(ToolError::invalid_params(format!(
+                        "Unsupported update_worktree_labels action: {other}"
+                    )))
+                }
+            };
+
+            dispatch_command(
+                app,
+                "update_worktree_labels",
+                json!({ "worktreeId": worktree_id, "labels": next_labels }),
+            )
+            .await
+            .map_err(ToolError::internal)?;
+            dispatch_command(app, "get_worktree", json!({ "worktreeId": worktree_id }))
+                .await
+                .map_err(ToolError::internal)
+        }
         "list_sessions" => {
             let worktree_id = require_str(&args, "worktreeId")?;
             let worktree_path = resolve_worktree_path(app, &worktree_id)?;
@@ -602,6 +644,130 @@ fn require_str(args: &Value, key: &str) -> Result<String, ToolError> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| ToolError::invalid_params(format!("missing or non-string '{key}'")))
+}
+
+fn parse_label_arg(args: &Value) -> Result<LabelData, ToolError> {
+    let label = args
+        .get("label")
+        .ok_or_else(|| ToolError::invalid_params("missing 'label'"))?;
+    let name = label
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err(ToolError::invalid_params(
+            "label.name must be a non-empty string",
+        ));
+    }
+    let color = label
+        .get("color")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_LABEL_COLOR)
+        .trim()
+        .to_string();
+    validate_label_color(&color, "label.color")?;
+    let pinned = label
+        .get("pinned")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(LabelData {
+        name,
+        color,
+        pinned,
+    })
+}
+
+fn parse_labels_arg(args: &Value) -> Result<Vec<LabelData>, ToolError> {
+    let labels = args
+        .get("labels")
+        .ok_or_else(|| ToolError::invalid_params("missing 'labels'"))?
+        .as_array()
+        .ok_or_else(|| ToolError::invalid_params("'labels' must be an array"))?;
+
+    let mut parsed = Vec::with_capacity(labels.len());
+    for (index, label) in labels.iter().enumerate() {
+        let name = label
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return Err(ToolError::invalid_params(format!(
+                "labels[{index}].name must be a non-empty string"
+            )));
+        }
+        let color = label
+            .get("color")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::invalid_params(format!("missing labels[{index}].color")))?
+            .trim()
+            .to_string();
+        validate_label_color(&color, &format!("labels[{index}].color"))?;
+        let pinned = label
+            .get("pinned")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        parsed.push(LabelData {
+            name,
+            color,
+            pinned,
+        });
+    }
+    normalize_mcp_labels(parsed)
+}
+
+fn normalize_mcp_labels(mut labels: Vec<LabelData>) -> Result<Vec<LabelData>, ToolError> {
+    for label in labels.iter_mut() {
+        label.name = label.name.trim().to_string();
+        label.color = label.color.trim().to_string();
+        if label.name.is_empty() {
+            return Err(ToolError::invalid_params(
+                "label.name must be a non-empty string",
+            ));
+        }
+        validate_label_color(&label.color, "label.color")?;
+    }
+    crate::projects::types::dedupe_labels_by_name(&mut labels);
+    Ok(labels)
+}
+
+fn add_or_update_label(mut labels: Vec<LabelData>, label: LabelData) -> Vec<LabelData> {
+    if let Some(existing) = labels
+        .iter_mut()
+        .find(|existing| labels_match(&existing.name, &label.name))
+    {
+        existing.color = label.color;
+        return labels;
+    }
+    labels.push(label);
+    labels
+}
+
+fn remove_label_by_name(labels: Vec<LabelData>, label_name: &str) -> Vec<LabelData> {
+    labels
+        .into_iter()
+        .filter(|label| !labels_match(&label.name, label_name))
+        .collect()
+}
+
+fn labels_match(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+fn validate_label_color(color: &str, field: &str) -> Result<(), ToolError> {
+    let hex = color.strip_prefix('#').ok_or_else(|| {
+        ToolError::invalid_params(format!("{field} must be a hex color like #eab308"))
+    })?;
+    if matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(ToolError::invalid_params(format!(
+            "{field} must be a hex color like #eab308"
+        )))
+    }
 }
 
 fn no_current_context_error(source: &str) -> ToolError {
@@ -1171,6 +1337,104 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
+    }
+
+    #[test]
+    fn tool_registry_includes_worktree_label_mutation_tool() {
+        let tools = tool_registry();
+        let update_worktree_labels = find_tool(&tools, "update_worktree_labels");
+
+        assert_eq!(
+            update_worktree_labels["inputSchema"]["properties"]["action"]["enum"],
+            json!(["add", "remove", "set", "clear"])
+        );
+        assert_eq!(
+            update_worktree_labels["inputSchema"]["required"],
+            json!(["worktreeId", "action"])
+        );
+    }
+
+    #[test]
+    fn add_worktree_label_upserts_case_insensitively() {
+        let current = vec![crate::chat::types::LabelData {
+            name: "Feature".to_string(),
+            color: "#22c55e".to_string(),
+            pinned: false,
+        }];
+        let label = crate::chat::types::LabelData {
+            name: "feature".to_string(),
+            color: "#ef4444".to_string(),
+            pinned: false,
+        };
+
+        let next = add_or_update_label(current, label);
+
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].name, "Feature");
+        assert_eq!(next[0].color, "#ef4444");
+    }
+
+    #[test]
+    fn remove_worktree_label_matches_case_insensitively() {
+        let current = vec![
+            crate::chat::types::LabelData {
+                name: "Feature".to_string(),
+                color: "#22c55e".to_string(),
+                pinned: false,
+            },
+            crate::chat::types::LabelData {
+                name: "Blocked".to_string(),
+                color: "#ef4444".to_string(),
+                pinned: false,
+            },
+        ];
+
+        let next = remove_label_by_name(current, "feature");
+
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].name, "Blocked");
+    }
+
+    #[test]
+    fn set_worktree_labels_dedupes_by_name() {
+        let labels = vec![
+            crate::chat::types::LabelData {
+                name: "Feature".to_string(),
+                color: "#22c55e".to_string(),
+                pinned: false,
+            },
+            crate::chat::types::LabelData {
+                name: "feature".to_string(),
+                color: "#ef4444".to_string(),
+                pinned: false,
+            },
+        ];
+
+        let next = normalize_mcp_labels(labels).expect("labels normalize");
+
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].name, "Feature");
+        assert_eq!(next[0].color, "#22c55e");
+    }
+
+    #[test]
+    fn parse_worktree_label_rejects_empty_name() {
+        let err = parse_label_arg(&json!({
+            "label": { "name": "   ", "color": "#ef4444" }
+        }))
+        .expect_err("empty label name should fail");
+
+        assert!(err.message.contains("label.name"));
+    }
+
+    #[test]
+    fn parse_worktree_label_rejects_invalid_color() {
+        let err = parse_label_arg(&json!({
+            "label": { "name": "Blocked", "color": "red" }
+        }))
+        .expect_err("invalid label color should fail");
+
+        assert!(err.message.contains("label.color"));
     }
 
     #[test]

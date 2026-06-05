@@ -818,6 +818,7 @@ export function useInvestigateHandlers({
           setError,
           setSelectedModel,
           setSelectedProvider,
+          setExecutionMode,
           setExecutingMode,
           setSelectedBackend: setZustandBackend,
         } = useChatStore.getState()
@@ -827,6 +828,7 @@ export function useInvestigateHandlers({
         addSendingSession(sessionId)
         setSelectedModel(sessionId, reviewCommentsModel)
         setSelectedProvider(sessionId, reviewCommentsProvider)
+        setExecutionMode(sessionId, requestedExecutionMode)
         setExecutingMode(sessionId, requestedExecutionMode)
         setZustandBackend(sessionId, reviewCommentsBackend)
 

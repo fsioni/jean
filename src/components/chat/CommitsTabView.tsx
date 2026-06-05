@@ -91,7 +91,7 @@ interface CommitsTabViewProps {
   worktreePath: string
   baseBranch: string
   diffStyle: 'split' | 'unified'
-  onExecutePrompt?: (reference: string) => void
+  onAddToPrompt?: (reference: string) => void
   onClose: () => void
 }
 
@@ -110,7 +110,7 @@ export function CommitsTabView({
   worktreePath,
   baseBranch,
   diffStyle,
-  onExecutePrompt,
+  onAddToPrompt,
   onClose,
 }: CommitsTabViewProps) {
   // Branch state
@@ -279,13 +279,13 @@ export function CommitsTabView({
 
   const handleReviewCommit = useCallback(
     (commit: CommitInfo) => {
-      if (!onExecutePrompt) return
-      onExecutePrompt(
+      if (!onAddToPrompt) return
+      onAddToPrompt(
         `Review and explain what was implemented in commit ${commit.shortSha}: ${commit.message}`
       )
       onClose()
     },
-    [onExecutePrompt, onClose]
+    [onAddToPrompt, onClose]
   )
 
   // Keyboard navigation in commit list
@@ -418,7 +418,7 @@ export function CommitsTabView({
                       <span className="text-sm truncate flex-1">
                         {commit.message}
                       </span>
-                      {onExecutePrompt && (
+                      {onAddToPrompt && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button

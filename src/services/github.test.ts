@@ -1,5 +1,20 @@
-import { describe, expect, it } from 'vitest'
-import { isGhAuthError, isUnsupportedGitHubRepoError } from './github'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mockInvoke = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/transport', () => ({
+  invoke: mockInvoke,
+}))
+
+vi.mock('./projects', () => ({
+  isTauri: () => true,
+}))
+
+import {
+  getAdvisoryContextContent,
+  isGhAuthError,
+  isUnsupportedGitHubRepoError,
+} from './github'
 
 describe('GitHub service error classification', () => {
   it('does not treat unknown GitHub host remotes as auth errors', () => {
@@ -28,5 +43,29 @@ describe('GitHub service error classification', () => {
     expect(
       isGhAuthError("GitHub CLI not authenticated. Run 'gh auth login' first.")
     ).toBe(true)
+  })
+})
+
+describe('github advisory context service', () => {
+  beforeEach(() => {
+    mockInvoke.mockReset()
+  })
+
+  it('passes worktreeId when fetching advisory context content', async () => {
+    mockInvoke.mockResolvedValueOnce('# Security Advisory GHSA-test')
+
+    await getAdvisoryContextContent(
+      'session-1',
+      'GHSA-892v-qq52-xprh',
+      '/repo/worktree',
+      'wt-1'
+    )
+
+    expect(mockInvoke).toHaveBeenCalledWith('get_advisory_context_content', {
+      sessionId: 'session-1',
+      ghsaId: 'GHSA-892v-qq52-xprh',
+      projectPath: '/repo/worktree',
+      worktreeId: 'wt-1',
+    })
   })
 })

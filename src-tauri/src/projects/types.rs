@@ -669,4 +669,30 @@ mod label_tests {
         assert_eq!(worktree.labels[0].name, "Keep");
         assert!(worktree.label.is_none());
     }
+
+    #[test]
+    fn label_pinned_defaults_false_and_serializes_when_true() {
+        let worktree: Worktree = serde_json::from_value(serde_json::json!({
+            "id": "wt", "project_id": "p", "name": "n", "path": "/tmp", "branch": "b",
+            "created_at": 1, "setup_output": null, "setup_script": null,
+            "order": 0,
+            "labels": [
+                { "name": "Default", "color": "#eab308" },
+                { "name": "Pinned", "color": "#22c55e", "pinned": true }
+            ]
+        }))
+        .expect("worktree");
+
+        assert!(!worktree.labels[0].pinned);
+        assert!(worktree.labels[1].pinned);
+
+        let serialized = serde_json::to_value(&worktree).expect("serialize");
+        assert_eq!(
+            serialized["labels"],
+            serde_json::json!([
+                { "name": "Default", "color": "#eab308" },
+                { "name": "Pinned", "color": "#22c55e", "pinned": true }
+            ])
+        );
+    }
 }

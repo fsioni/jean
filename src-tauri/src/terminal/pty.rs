@@ -56,8 +56,62 @@ pub fn spawn_terminal(
     let shell = get_user_shell();
     log::trace!("Using shell: {shell}");
 
+    // Resolve working directory: use requested path if it exists, else temp dir
+    let cwd = if std::path::Path::new(&worktree_path).is_dir() {
+        worktree_path.clone()
+    } else {
+        let fallback = std::env::temp_dir().to_string_lossy().to_string();
+        log::warn!(
+            "Worktree path '{}' does not exist, falling back to '{}'",
+            worktree_path,
+            fallback
+        );
+        fallback
+    };
+
+    // Check if we should route through WSL
+    #[cfg(windows)]
+    let wsl_config = crate::platform::get_wsl_config();
+    #[cfg(not(windows))]
+    let wsl_config = crate::platform::wsl::WslConfig::default();
+
     // Build command - either run a specific command or start interactive shell
-    let mut cmd = if let Some(ref run_command) = command {
+    let mut cmd = if wsl_config.enabled {
+        // WSL mode: route everything through wsl.exe
+        let unix_cwd = crate::platform::win_to_wsl_path(&cwd);
+        if let Some(ref run_command) = command {
+            if run_command.is_empty() {
+                return Err("Command is empty".to_string());
+            }
+            let mut c = CommandBuilder::new("wsl.exe");
+            c.arg("-d");
+            c.arg(&wsl_config.distro);
+            c.arg("--cd");
+            c.arg(&unix_cwd);
+            c.arg("--");
+            if let Some(ref args) = command_args {
+                // Direct binary invocation inside WSL
+                c.arg(run_command);
+                for arg in args {
+                    c.arg(arg);
+                }
+            } else {
+                // Shell-wrapped command inside WSL
+                c.arg("sh");
+                c.arg("-c");
+                c.arg(run_command);
+            }
+            c
+        } else {
+            // Interactive WSL shell
+            let mut c = CommandBuilder::new("wsl.exe");
+            c.arg("-d");
+            c.arg(&wsl_config.distro);
+            c.arg("--cd");
+            c.arg(&unix_cwd);
+            c
+        }
+    } else if let Some(ref run_command) = command {
         if run_command.is_empty() {
             return Err("Command is empty".to_string());
         }
@@ -92,26 +146,17 @@ pub fn spawn_terminal(
     } else {
         CommandBuilder::new(&shell)
     };
-    // Use the requested working directory if it exists, otherwise fall back to
-    // the system temp directory. This is critical on Windows where `/tmp` doesn't
-    // exist — CLI login terminals pass `/tmp` as a placeholder path.
-    let cwd = if std::path::Path::new(&worktree_path).is_dir() {
-        worktree_path.clone()
-    } else {
-        let fallback = std::env::temp_dir().to_string_lossy().to_string();
-        log::warn!(
-            "Worktree path '{}' does not exist, falling back to '{}'",
-            worktree_path,
-            fallback
-        );
-        fallback
-    };
+
     log::debug!(
-        "Terminal {terminal_id}: cwd={cwd}, command={:?}, args={:?}",
+        "Terminal {terminal_id}: cwd={cwd}, command={:?}, args={:?}, wsl={}",
         command,
-        command_args
+        command_args,
+        wsl_config.enabled
     );
-    cmd.cwd(&cwd);
+    // WSL mode handles cwd via --cd flag; native mode uses cwd() on the command
+    if !wsl_config.enabled {
+        cmd.cwd(&cwd);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("JEAN_WORKTREE_PATH", &worktree_path);

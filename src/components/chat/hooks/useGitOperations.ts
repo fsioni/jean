@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { invoke } from '@/lib/transport'
 import { openExternal } from '@/lib/platform'
 import { dismissibleToast } from '@/lib/dismissible-toast'
+import { toastActionLabel } from '@/lib/toast-action-label'
 import type { QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { generateId } from '@/lib/uuid'
@@ -336,7 +337,7 @@ export function useGitOperations({
             `${prefix}: No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
             {
               action: {
-                label: 'Open PR',
+                label: toastActionLabel('Open PR'),
                 onClick: () =>
                   window.dispatchEvent(
                     new CustomEvent('magic-command', {
@@ -426,7 +427,7 @@ export function useGitOperations({
             `No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
             {
               action: {
-                label: 'Open PR',
+                label: toastActionLabel('Open PR'),
                 onClick: () =>
                   window.dispatchEvent(
                     new CustomEvent('magic-command', {
@@ -504,7 +505,7 @@ export function useGitOperations({
         {
           id: toastId,
           action: {
-            label: 'Open',
+            label: toastActionLabel('Open'),
             onClick: () => openExternal(result.pr_url),
           },
         }
@@ -579,7 +580,7 @@ export function useGitOperations({
               id: toastId,
               action: result.pr_url
                 ? {
-                    label: 'Open',
+                    label: toastActionLabel('Open'),
                     onClick: () => openExternal(result.pr_url),
                   }
                 : undefined,
@@ -731,7 +732,7 @@ export function useGitOperations({
           {
             id: toastId,
             action: {
-              label: 'Open',
+              label: toastActionLabel('Open'),
               onClick: () => {
                 if (!activeWorktreePath) return
                 const { setActiveSession, clearActiveWorktree } =

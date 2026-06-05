@@ -34,6 +34,8 @@ interface MarkdownProps {
   /** Enable streaming mode with incomplete markdown handling */
   streaming?: boolean
   className?: string
+  /** Rendering context; tool-call markdown needs a wider ordered-list gutter. */
+  variant?: 'chat' | 'tool-call'
   /** Chat message ID — enables per-table checklist persistence when set */
   messageId?: string
   /** Owning session ID — required alongside messageId for checklist persistence */
@@ -406,7 +408,7 @@ const components: Components = {
   ul: ({ children, className, ...props }) => (
     <ul
       {...props}
-      className={cn('my-4 ml-6 list-disc list-outside space-y-2', className)}
+      className={cn('my-4 pl-6 list-disc list-outside space-y-2', className)}
     >
       {children}
     </ul>
@@ -414,7 +416,7 @@ const components: Components = {
   ol: ({ children, className, ...props }) => (
     <ol
       {...props}
-      className={cn('my-4 ml-6 list-decimal list-outside space-y-2', className)}
+      className={cn('my-4 pl-6 list-decimal list-outside space-y-2', className)}
     >
       {children}
     </ol>
@@ -477,6 +479,25 @@ const streamingComponents: Components = {
   ),
 }
 
+const toolCallComponents: Components = {
+  ...components,
+  ol: ({ children, className, ...props }) => (
+    <ol
+      {...props}
+      className={cn('my-4 pl-8 list-decimal list-outside space-y-2', className)}
+    >
+      {children}
+    </ol>
+  ),
+}
+
+const toolCallStreamingComponents: Components = {
+  ...toolCallComponents,
+  p: ({ children }) => (
+    <p className="my-0 leading-relaxed first:mt-0 last:mb-0">{children}</p>
+  ),
+}
+
 const compactComponents: Components = {
   ...components,
   h1: ({ children }) => (
@@ -519,6 +540,7 @@ const Markdown = memo(function Markdown({
   children,
   streaming = false,
   className,
+  variant = 'chat',
   messageId,
   sessionId,
   compact = false,
@@ -532,10 +554,14 @@ const Markdown = memo(function Markdown({
   )
 
   const componentsToUse = streaming
-    ? streamingComponents
+    ? variant === 'tool-call'
+      ? toolCallStreamingComponents
+      : streamingComponents
     : compact
       ? compactComponents
-      : components
+      : variant === 'tool-call'
+        ? toolCallComponents
+        : components
 
   return (
     <div className={cn('markdown leading-relaxed break-words', className)}>

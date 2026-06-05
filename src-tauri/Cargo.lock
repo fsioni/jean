@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "jean"
-version = "0.1.52"
+version = "0.1.54"
 dependencies = [
  "arboard",
  "axum",

@@ -1,4 +1,5 @@
 use crate::platform::silent_command;
+use crate::platform::wsl_aware_command;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -144,9 +145,8 @@ pub fn init_repo(path: &str) -> Result<(), String> {
     let git_path = path_obj.join(".git");
     if git_path.exists() {
         // Check if it has any commits
-        let has_commits = silent_command("git")
+        let has_commits = wsl_aware_command("git", Some(Path::new(path)))
             .args(["rev-parse", "HEAD"])
-            .current_dir(path)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -158,9 +158,8 @@ pub fn init_repo(path: &str) -> Result<(), String> {
         log::trace!("Git repo exists but has no commits, will create initial commit");
     } else {
         // Run git init
-        let output = silent_command("git")
+        let output = wsl_aware_command("git", Some(Path::new(path)))
             .args(["init"])
-            .current_dir(path)
             .output()
             .map_err(|e| format!("Failed to run git init: {e}"))?;
 
@@ -175,9 +174,8 @@ pub fn init_repo(path: &str) -> Result<(), String> {
     std::fs::write(&gitkeep_path, "").map_err(|e| format!("Failed to create .gitkeep: {e}"))?;
 
     // Stage the file
-    let add_output = silent_command("git")
+    let add_output = wsl_aware_command("git", Some(Path::new(path)))
         .args(["add", ".gitkeep"])
-        .current_dir(path)
         .output()
         .map_err(|e| format!("Failed to run git add: {e}"))?;
 
@@ -187,9 +185,8 @@ pub fn init_repo(path: &str) -> Result<(), String> {
     }
 
     // Create initial commit
-    let commit_output = silent_command("git")
+    let commit_output = wsl_aware_command("git", Some(Path::new(path)))
         .args(["commit", "-m", "jean's init vibe commit"])
-        .current_dir(path)
         .output()
         .map_err(|e| format!("Failed to run git commit: {e}"))?;
 
@@ -259,7 +256,7 @@ pub fn clone_repo(url: &str, destination: &str) -> Result<(), String> {
 
     log::info!("Cloning {url} into {destination}");
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", None)
         .args(["clone", url, destination])
         .output()
         .map_err(|e| format!("Failed to run git clone: {e}"))?;
@@ -320,9 +317,8 @@ fn normalize_github_url(remote_url: &str) -> Option<String> {
 
 /// Get the GitHub URL for a specific remote
 pub fn get_github_url_for_remote(repo_path: &str, remote: &str) -> Result<String, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote", "get-url", remote])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get remote URL: {e}"))?;
 
@@ -344,9 +340,8 @@ pub fn get_github_url(repo_path: &str) -> Result<String, String> {
 
 /// Get all GitHub remotes for a repository
 pub fn get_github_remotes(repo_path: &str) -> Result<Vec<GitHubRemote>, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to list remotes: {e}"))?;
 
@@ -364,9 +359,8 @@ pub fn get_github_remotes(repo_path: &str) -> Result<Vec<GitHubRemote>, String> 
     let mut result = Vec::new();
 
     for name in remote_names {
-        if let Ok(url_out) = silent_command("git")
+        if let Ok(url_out) = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["remote", "get-url", &name])
-            .current_dir(repo_path)
             .output()
         {
             if url_out.status.success() {
@@ -385,9 +379,8 @@ pub fn get_github_remotes(repo_path: &str) -> Result<Vec<GitHubRemote>, String> 
 
 /// Remove a git remote from a repository
 pub fn remove_git_remote(repo_path: &str, remote_name: &str) -> Result<(), String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote", "remove", remote_name])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to remove remote: {e}"))?;
 
@@ -401,9 +394,8 @@ pub fn remove_git_remote(repo_path: &str, remote_name: &str) -> Result<(), Strin
 
 /// Get all git remotes for a repository (not filtered to GitHub)
 pub fn get_git_remotes(repo_path: &str) -> Result<Vec<GitRemote>, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to list remotes: {e}"))?;
 
@@ -426,9 +418,8 @@ pub fn get_git_remotes(repo_path: &str) -> Result<Vec<GitRemote>, String> {
 /// Uses symbolic-ref first (works on repos with no commits), falls back to rev-parse
 pub fn get_current_branch(repo_path: &str) -> Result<String, String> {
     // Try symbolic-ref first — works even on empty repos (no commits yet)
-    let sym_output = silent_command("git")
+    let sym_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["symbolic-ref", "--short", "HEAD"])
-        .current_dir(repo_path)
         .output();
 
     if let Ok(ref o) = sym_output {
@@ -441,9 +432,8 @@ pub fn get_current_branch(repo_path: &str) -> Result<String, String> {
     }
 
     // Fall back to rev-parse (works when HEAD is detached)
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git command: {e}"))?;
 
@@ -458,13 +448,12 @@ pub fn get_current_branch(repo_path: &str) -> Result<String, String> {
 
 /// Check if a branch exists in a repository
 pub fn branch_exists(repo_path: &str, branch_name: &str) -> bool {
-    silent_command("git")
+    wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "rev-parse",
             "--verify",
             &format!("refs/heads/{branch_name}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -472,13 +461,12 @@ pub fn branch_exists(repo_path: &str, branch_name: &str) -> bool {
 
 /// Check if a remote-tracking branch exists (refs/remotes/origin/<branch>)
 pub fn remote_branch_exists(repo_path: &str, branch_name: &str) -> bool {
-    silent_command("git")
+    wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "rev-parse",
             "--verify",
             &format!("refs/remotes/origin/{branch_name}"),
         ])
-        .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -486,9 +474,8 @@ pub fn remote_branch_exists(repo_path: &str, branch_name: &str) -> bool {
 
 /// Check if a repository has any commits
 pub fn has_commits(repo_path: &str) -> bool {
-    silent_command("git")
+    wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -541,9 +528,8 @@ pub fn rename_branch(repo_path: &str, new_name: &str) -> Result<String, String> 
     log::trace!("Renaming current branch to {new_name} in {repo_path}");
 
     // First check if we're in detached HEAD state
-    let head_check = silent_command("git")
+    let head_check = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["symbolic-ref", "--short", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to check HEAD state: {e}"))?;
 
@@ -562,9 +548,8 @@ pub fn rename_branch(repo_path: &str, new_name: &str) -> Result<String, String> 
     }
 
     // Check if target branch name already exists
-    let branch_exists = silent_command("git")
+    let branch_exists = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "--verify", &format!("refs/heads/{}", new_name)])
-        .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -577,9 +562,8 @@ pub fn rename_branch(repo_path: &str, new_name: &str) -> Result<String, String> 
     };
 
     // Perform the rename
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["branch", "-m", &final_name])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to rename branch: {e}"))?;
 
@@ -605,9 +589,8 @@ fn find_unique_branch_name(repo_path: &str, base_name: &str) -> Result<String, S
             .collect();
 
         let candidate = format!("{base_name}-{suffix}");
-        let exists = silent_command("git")
+        let exists = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["rev-parse", "--verify", &format!("refs/heads/{candidate}")])
-            .current_dir(repo_path)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -622,9 +605,8 @@ fn find_unique_branch_name(repo_path: &str, base_name: &str) -> Result<String, S
 
 /// Get list of local branches for a repository
 pub fn get_branches(repo_path: &str) -> Result<Vec<String>, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["branch", "--format=%(refname:short)"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git command: {e}"))?;
 
@@ -647,9 +629,8 @@ pub fn git_fetch(repo_path: &str, branch: &str, remote: Option<&str>) -> Result<
     let remote = remote.unwrap_or("origin");
     log::trace!("Fetching {remote}/{branch} in {repo_path}");
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", remote, branch])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git fetch: {e}"))?;
 
@@ -675,9 +656,8 @@ pub fn git_pull(
     // Use explicit fetch + merge instead of `git pull` to avoid
     // "Cannot rebase onto multiple branches" when pull.rebase=true
     // is set in git config (common in worktree contexts)
-    let fetch = silent_command("git")
+    let fetch = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", remote, base_branch])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git fetch: {e}"))?;
 
@@ -687,9 +667,8 @@ pub fn git_pull(
         return Err(stderr);
     }
 
-    let merge = silent_command("git")
+    let merge = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["merge", &format!("{remote}/{base_branch}")])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git merge: {e}"))?;
 
@@ -703,9 +682,8 @@ pub fn git_pull(
 
         // Check for merge conflicts (git reports these on stdout)
         if stdout_str.contains("CONFLICT") || stdout_str.contains("Automatic merge failed") {
-            let conflicts = silent_command("git")
+            let conflicts = wsl_aware_command("git", Some(Path::new(repo_path)))
                 .args(["diff", "--name-only", "--diff-filter=U"])
-                .current_dir(repo_path)
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_default();
@@ -732,9 +710,8 @@ pub fn git_pull(
 pub fn git_stash(repo_path: &str) -> Result<String, String> {
     log::trace!("Stashing changes in {repo_path}");
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["stash", "--include-untracked"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git stash: {e}"))?;
 
@@ -755,9 +732,8 @@ pub fn git_stash(repo_path: &str) -> Result<String, String> {
 pub fn git_stash_pop(repo_path: &str) -> Result<String, String> {
     log::trace!("Popping stash in {repo_path}");
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["stash", "pop"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git stash pop: {e}"))?;
 
@@ -792,9 +768,8 @@ fn git_push_needs_upstream_retry(stderr: &str) -> bool {
 }
 
 fn current_upstream(repo_path: &str) -> Option<(String, String)> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .current_dir(repo_path)
         .output()
         .ok()?;
 
@@ -813,9 +788,8 @@ fn current_upstream(repo_path: &str) -> Option<(String, String)> {
 
 fn git_push_set_upstream(repo_path: &str, remote: &str) -> Result<String, String> {
     log::trace!("Publishing branch with upstream: git push -u {remote} HEAD");
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "-u", remote, "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git push -u: {e}"))?;
 
@@ -852,9 +826,8 @@ pub fn git_push(repo_path: &str, remote: Option<&str>) -> Result<String, String>
         return git_push_set_upstream(repo_path, remote);
     }
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", remote])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git push: {e}"))?;
 
@@ -953,9 +926,8 @@ pub fn git_push_to_pr(
         // Same-repo PR: push HEAD to origin/{head_ref_name} with --force-with-lease
         let refspec = format!("HEAD:{head_ref_name}");
         log::trace!("Same-repo PR, pushing {refspec} to origin");
-        let output = silent_command("git")
+        let output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["push", "--force-with-lease", "origin", &refspec])
-            .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to run git push: {e}"))?;
 
@@ -1008,9 +980,8 @@ pub fn git_push_to_pr(
     log::trace!("Fork PR from {fork_owner}/{fork_repo_name}, branch {head_ref_name}");
 
     // Determine URL scheme from origin
-    let origin_url_output = silent_command("git")
+    let origin_url_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote", "get-url", "origin"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get origin URL: {e}"))?;
 
@@ -1026,9 +997,8 @@ pub fn git_push_to_pr(
     log::trace!("Fork URL: {fork_url}");
 
     // Check if a remote for this fork already exists
-    let remotes_output = silent_command("git")
+    let remotes_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["remote", "-v"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to list remotes: {e}"))?;
 
@@ -1043,9 +1013,8 @@ pub fn git_push_to_pr(
         .unwrap_or_else(|| {
             // Add the fork remote
             log::trace!("Adding fork remote: {fork_owner} -> {fork_url}");
-            let add_output = silent_command("git")
+            let add_output = wsl_aware_command("git", Some(Path::new(repo_path)))
                 .args(["remote", "add", fork_owner, &fork_url])
-                .current_dir(repo_path)
                 .output();
 
             if let Err(e) = &add_output {
@@ -1062,9 +1031,8 @@ pub fn git_push_to_pr(
 
     // Fetch the branch from the fork remote
     log::trace!("Fetching {head_ref_name} from {remote_name}");
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", &remote_name, head_ref_name])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to fetch from fork: {e}"))?;
 
@@ -1076,9 +1044,8 @@ pub fn git_push_to_pr(
     // Push HEAD to the fork remote with --force-with-lease
     let refspec = format!("HEAD:{head_ref_name}");
     log::trace!("Pushing {refspec} to {remote_name} --force-with-lease");
-    let push_output = silent_command("git")
+    let push_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "--force-with-lease", &remote_name, &refspec])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to push to fork: {e}"))?;
 
@@ -1128,19 +1095,17 @@ pub fn set_upstream_tracking(
 ) -> Result<(), String> {
     log::trace!("Setting upstream for {local_branch} to origin/{remote_branch} in {repo_path}");
 
-    let _ = silent_command("git")
+    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["config", &format!("branch.{local_branch}.remote"), "origin"])
-        .current_dir(repo_path)
         .output();
 
     let merge_ref = format!("refs/heads/{remote_branch}");
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "config",
             &format!("branch.{local_branch}.merge"),
             &merge_ref,
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to set upstream config: {e}"))?;
 
@@ -1155,9 +1120,8 @@ pub fn set_upstream_tracking(
 pub fn fetch_origin(repo_path: &str) -> Result<(), String> {
     log::trace!("Fetching from origin in {repo_path}");
 
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", "origin"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git fetch: {e}"))?;
 
@@ -1181,9 +1145,8 @@ pub fn fetch_origin(repo_path: &str) -> Result<(), String> {
 
 /// Get list of remote branches for a repository (strips origin/ prefix)
 pub fn get_remote_branches(repo_path: &str) -> Result<Vec<String>, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["branch", "-r", "--format=%(refname:short)"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git command: {e}"))?;
 
@@ -1238,13 +1201,12 @@ pub fn create_worktree(
     }
 
     // Prune stale worktree entries (folders deleted outside the app)
-    let _ = silent_command("git")
+    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "prune"])
-        .current_dir(repo_path)
         .output();
 
     // git worktree add -b <new_branch> <path> <base_branch>
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args([
             "worktree",
             "add",
@@ -1253,7 +1215,6 @@ pub fn create_worktree(
             worktree_path,
             base_branch,
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git worktree add: {e}"))?;
 
@@ -1287,15 +1248,13 @@ pub fn create_worktree_from_existing_branch(
     }
 
     // Prune stale worktree entries (folders deleted outside the app)
-    let _ = silent_command("git")
+    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "prune"])
-        .current_dir(repo_path)
         .output();
 
     // git worktree add <path> <existing_branch> (no -b flag)
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "add", worktree_path, existing_branch])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git worktree add: {e}"))?;
 
@@ -1325,9 +1284,8 @@ pub fn fetch_pr_to_branch(
     local_branch: &str,
 ) -> Result<(), String> {
     let refspec = format!("pull/{pr_number}/head:{local_branch}");
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", "origin", &refspec])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to fetch PR #{pr_number}: {e}"))?;
 
@@ -1342,9 +1300,8 @@ pub fn fetch_pr_to_branch(
 
 /// Checkout an existing branch in a worktree
 pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<(), String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["checkout", branch])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to checkout branch {branch}: {e}"))?;
 
@@ -1385,9 +1342,8 @@ pub fn gh_pr_checkout(
     }
 
     // Get the current branch name after checkout
-    let branch_output = silent_command("git")
+    let branch_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to get branch name: {e}"))?;
 
@@ -1415,17 +1371,15 @@ pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), Strin
     }
 
     // Prune stale worktree entries (folders deleted outside the app)
-    let _ = silent_command("git")
+    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "prune"])
-        .current_dir(repo_path)
         .output();
 
     log::trace!("git worktree remove {worktree_path} --force (in {repo_path})");
 
     // git worktree remove <path>
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "remove", worktree_path, "--force"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git worktree remove: {e}"))?;
 
@@ -1449,9 +1403,8 @@ pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), Strin
                 "Worktree at {worktree_path} not found or not a working tree, proceeding with cleanup"
             );
             // Try to prune stale worktrees
-            let _ = silent_command("git")
+            let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
                 .args(["worktree", "prune"])
-                .current_dir(repo_path)
                 .output();
         } else {
             // git worktree remove failed (e.g. file locks on Windows)
@@ -1475,9 +1428,8 @@ pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), Strin
                 }
                 log::info!("Manually removed worktree directory at {worktree_path}");
                 // Prune the now-stale git worktree entry
-                let _ = silent_command("git")
+                let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
                     .args(["worktree", "prune"])
-                    .current_dir(repo_path)
                     .output();
             } else {
                 return Err(format!("Failed to remove worktree: {stderr}"));
@@ -1513,9 +1465,8 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
     log::trace!("git branch -D {branch_name} (in {repo_path})");
 
     // git branch -D <branch>
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["branch", "-D", branch_name])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git branch -D: {e}"))?;
 
@@ -1543,9 +1494,8 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
 /// Find which worktree (if any) has a given branch checked out.
 /// Parses `git worktree list --porcelain` output. Returns the worktree path or None.
 pub fn find_worktree_for_branch(repo_path: &str, branch: &str) -> Option<String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .ok()?;
 
@@ -1578,9 +1528,8 @@ pub fn cleanup_stale_branch(repo_path: &str, branch: &str) {
     log::trace!("Cleaning up stale branch '{branch}' in {repo_path}");
 
     // Prune worktrees whose directories no longer exist
-    let _ = silent_command("git")
+    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "prune"])
-        .current_dir(repo_path)
         .output();
 
     // If branch is checked out in a worktree, remove that worktree first
@@ -1629,9 +1578,8 @@ pub fn is_main_worktree(repo_path: &str, worktree_path: &str) -> bool {
 /// List existing worktrees for a repository
 #[allow(dead_code)]
 pub fn list_worktrees(repo_path: &str) -> Result<Vec<String>, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git worktree list: {e}"))?;
 
@@ -1663,9 +1611,8 @@ pub fn commit_changes(repo_path: &str, message: &str, stage_all: bool) -> Result
 
     // Optionally stage all changes
     if stage_all {
-        let add_output = silent_command("git")
+        let add_output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["add", "-A"])
-            .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to run git add: {e}"))?;
 
@@ -1676,9 +1623,8 @@ pub fn commit_changes(repo_path: &str, message: &str, stage_all: bool) -> Result
     }
 
     // Check if there are any changes in the working tree
-    let status_output = silent_command("git")
+    let status_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["status", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to check git status: {e}"))?;
 
@@ -1688,9 +1634,8 @@ pub fn commit_changes(repo_path: &str, message: &str, stage_all: bool) -> Result
     }
 
     // Check if there are staged changes
-    let diff_output = silent_command("git")
+    let diff_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["diff", "--cached", "--quiet"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to check staged changes: {e}"))?;
 
@@ -1703,9 +1648,8 @@ pub fn commit_changes(repo_path: &str, message: &str, stage_all: bool) -> Result
     }
 
     // Commit
-    let commit_output = silent_command("git")
+    let commit_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["commit", "-m", message])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git commit: {e}"))?;
 
@@ -1728,9 +1672,8 @@ pub fn commit_changes(repo_path: &str, message: &str, stage_all: bool) -> Result
     }
 
     // Get the commit hash
-    let hash_output = silent_command("git")
+    let hash_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get commit hash: {e}"))?;
 
@@ -1761,9 +1704,8 @@ pub fn open_pull_request(
 
     // Push current branch to remote first
     log::trace!("Pushing current branch to remote...");
-    let push_output = silent_command("git")
+    let push_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "-u", "origin", "HEAD"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to push to remote: {e}"))?;
 
@@ -1838,9 +1780,8 @@ pub struct PrContext {
 
 /// Get the number of uncommitted changes (staged + unstaged)
 pub fn get_uncommitted_count(repo_path: &str) -> Result<u32, String> {
-    let output = silent_command("git")
+    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["status", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to get git status: {e}"))?;
 
@@ -1851,9 +1792,8 @@ pub fn get_uncommitted_count(repo_path: &str) -> Result<u32, String> {
 
 /// Check if current branch has an upstream tracking branch
 pub fn has_upstream_branch(repo_path: &str) -> bool {
-    silent_command("git")
+    wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "--abbrev-ref", "@{upstream}"])
-        .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -2013,9 +1953,8 @@ fn run_jean_script(
 
 /// Check if there are uncommitted changes (staged or unstaged)
 pub fn has_uncommitted_changes(repo_path: &str) -> bool {
-    silent_command("git")
+    wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["status", "--porcelain"])
-        .current_dir(repo_path)
         .output()
         .map(|o| {
             if o.status.success() {
@@ -2049,9 +1988,8 @@ pub fn rebase_onto_base(
         log::trace!("Committing uncommitted changes: {message}");
 
         // Stage all changes
-        let add_output = silent_command("git")
+        let add_output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["add", "-A"])
-            .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to stage changes: {e}"))?;
 
@@ -2061,9 +1999,8 @@ pub fn rebase_onto_base(
         }
 
         // Commit
-        let commit_output = silent_command("git")
+        let commit_output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["commit", "-m", message])
-            .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to commit changes: {e}"))?;
 
@@ -2078,9 +2015,8 @@ pub fn rebase_onto_base(
 
     // Step 2: Fetch from origin
     log::trace!("Fetching from origin...");
-    let fetch_output = silent_command("git")
+    let fetch_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["fetch", "origin", base_branch])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to fetch from origin: {e}"))?;
 
@@ -2091,18 +2027,16 @@ pub fn rebase_onto_base(
 
     // Step 3: Rebase onto origin/{base_branch}
     log::trace!("Rebasing onto origin/{base_branch}...");
-    let rebase_output = silent_command("git")
+    let rebase_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rebase", &format!("origin/{base_branch}")])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to rebase: {e}"))?;
 
     if !rebase_output.status.success() {
         let stderr = String::from_utf8_lossy(&rebase_output.stderr);
         // Abort the rebase if it fails
-        let _ = silent_command("git")
+        let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["rebase", "--abort"])
-            .current_dir(repo_path)
             .output();
         return Err(format!(
             "Rebase failed (conflicts likely). Rebase has been aborted.\n{stderr}"
@@ -2111,9 +2045,8 @@ pub fn rebase_onto_base(
 
     // Step 4: Force push with lease
     log::trace!("Force pushing with lease...");
-    let push_output = silent_command("git")
+    let push_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["push", "--force-with-lease"])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -2123,9 +2056,8 @@ pub fn rebase_onto_base(
         // differently named branch (common for worktrees created from origin/main)
         if git_push_needs_upstream_retry(&stderr) {
             // Try regular push with -u
-            let push_u_output = silent_command("git")
+            let push_u_output = wsl_aware_command("git", Some(Path::new(repo_path)))
                 .args(["push", "-u", "origin", "HEAD"])
-                .current_dir(repo_path)
                 .output()
                 .map_err(|e| format!("Failed to push: {e}"))?;
 
@@ -2201,9 +2133,8 @@ pub fn merge_branch_to_base(
 
     // Step 2: Checkout base branch
     log::trace!("Checking out {base_branch}...");
-    let checkout_output = silent_command("git")
+    let checkout_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["checkout", base_branch])
-        .current_dir(repo_path)
         .output();
 
     match checkout_output {
@@ -2223,9 +2154,8 @@ pub fn merge_branch_to_base(
 
     // Step 3: Pull from origin (best effort - don't fail if no remote)
     log::trace!("Pulling latest from origin...");
-    let pull_output = silent_command("git")
+    let pull_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["pull", "origin", base_branch])
-        .current_dir(repo_path)
         .output();
 
     if let Ok(output) = &pull_output {
@@ -2270,15 +2200,13 @@ fn perform_merge(repo_path: &str, feature_branch: &str, squash: bool) -> MergeRe
 
     let merge_output = if squash {
         // --squash stages all changes but doesn't commit
-        silent_command("git")
+        wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["merge", "--squash", feature_branch])
-            .current_dir(repo_path)
             .output()
     } else {
         // --no-ff creates a merge commit preserving history
-        silent_command("git")
+        wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["merge", "--no-ff", feature_branch, "-m", &merge_message])
-            .current_dir(repo_path)
             .output()
     };
 
@@ -2287,9 +2215,8 @@ fn perform_merge(repo_path: &str, feature_branch: &str, squash: bool) -> MergeRe
             if output.status.success() {
                 // For squash merges, we need to commit the staged changes
                 if squash {
-                    let commit_output = silent_command("git")
+                    let commit_output = wsl_aware_command("git", Some(Path::new(repo_path)))
                         .args(["commit", "-m", &merge_message])
-                        .current_dir(repo_path)
                         .output();
 
                     match commit_output {
@@ -2338,9 +2265,8 @@ fn rebase_and_merge(
     log::trace!("Rebasing {feature_branch} onto {base_branch} in worktree {worktree_path}...");
 
     // Step 1: Rebase in worktree (feature branch is already checked out there)
-    let rebase_output = silent_command("git")
+    let rebase_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
         .args(["rebase", base_branch])
-        .current_dir(worktree_path)
         .output();
 
     match rebase_output {
@@ -2356,9 +2282,8 @@ fn rebase_and_merge(
                     || combined.contains("fix conflicts")
                 {
                     // Get list of conflicting files during rebase
-                    let conflict_output = silent_command("git")
+                    let conflict_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
                         .args(["diff", "--name-only", "--diff-filter=U"])
-                        .current_dir(worktree_path)
                         .output();
 
                     let conflicting_files: Vec<String> = conflict_output
@@ -2372,9 +2297,8 @@ fn rebase_and_merge(
                         .unwrap_or_default();
 
                     // Get the diff with conflict markers
-                    let diff_output = silent_command("git")
+                    let diff_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
                         .args(["diff"])
-                        .current_dir(worktree_path)
                         .output();
 
                     let conflict_diff = diff_output
@@ -2386,9 +2310,8 @@ fn rebase_and_merge(
                         "Rebase has conflicts in {} files, aborting...",
                         conflicting_files.len()
                     );
-                    let _ = silent_command("git")
+                    let _ = wsl_aware_command("git", Some(Path::new(worktree_path)))
                         .args(["rebase", "--abort"])
-                        .current_dir(worktree_path)
                         .output();
 
                     return MergeResult::Conflict {
@@ -2397,9 +2320,8 @@ fn rebase_and_merge(
                     };
                 } else {
                     // Abort any partial rebase state
-                    let _ = silent_command("git")
+                    let _ = wsl_aware_command("git", Some(Path::new(worktree_path)))
                         .args(["rebase", "--abort"])
-                        .current_dir(worktree_path)
                         .output();
 
                     let error_detail = if !stderr.trim().is_empty() {
@@ -2426,9 +2348,8 @@ fn rebase_and_merge(
     // Step 2: Fast-forward merge in main repo (base branch already checked out by caller)
     log::trace!("Rebase successful, fast-forward merging into {base_branch}...");
 
-    let ff_merge = silent_command("git")
+    let ff_merge = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["merge", "--ff-only", feature_branch])
-        .current_dir(repo_path)
         .output();
 
     match ff_merge {
@@ -2450,9 +2371,8 @@ fn rebase_and_merge(
 
 /// Helper function to get the current HEAD commit hash
 fn get_head_commit_hash(repo_path: &str) -> MergeResult {
-    let hash_output = silent_command("git")
+    let hash_output = wsl_aware_command("git", Some(Path::new(repo_path)))
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
         .output();
 
     let commit_hash = hash_output
@@ -2475,9 +2395,8 @@ fn handle_merge_failure(repo_path: &str, stdout: &[u8], stderr: &[u8]) -> MergeR
         || combined.contains("fix conflicts")
     {
         // Get list of conflicting files
-        let conflict_output = silent_command("git")
+        let conflict_output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["diff", "--name-only", "--diff-filter=U"])
-            .current_dir(repo_path)
             .output();
 
         let conflicting_files: Vec<String> = conflict_output
@@ -2491,9 +2410,8 @@ fn handle_merge_failure(repo_path: &str, stdout: &[u8], stderr: &[u8]) -> MergeR
             .unwrap_or_default();
 
         // Get the diff with conflict markers BEFORE aborting
-        let diff_output = silent_command("git")
+        let diff_output = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["diff"])
-            .current_dir(repo_path)
             .output();
 
         let conflict_diff = diff_output
@@ -2505,9 +2423,8 @@ fn handle_merge_failure(repo_path: &str, stdout: &[u8], stderr: &[u8]) -> MergeR
             "Merge has conflicts in {} files, aborting...",
             conflicting_files.len()
         );
-        let _ = silent_command("git")
+        let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["merge", "--abort"])
-            .current_dir(repo_path)
             .output();
 
         MergeResult::Conflict {
@@ -2516,9 +2433,8 @@ fn handle_merge_failure(repo_path: &str, stdout: &[u8], stderr: &[u8]) -> MergeR
         }
     } else {
         // Abort any partial merge state
-        let _ = silent_command("git")
+        let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
             .args(["merge", "--abort"])
-            .current_dir(repo_path)
             .output();
 
         // Create a human-friendly error message

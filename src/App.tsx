@@ -54,6 +54,7 @@ import {
   endSessionStateHydration,
 } from './lib/session-state-hydration'
 import { scheduleIdleWork } from './lib/idle'
+import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
 
 /** Loading screen shown while preloading initial data (browser mode only). */
@@ -724,6 +725,14 @@ function App() {
     const hasAiBackendReady = claudeReady || codexReady || opencodeReady
 
     if (useUIStore.getState().onboardingDismissed) return
+
+    // On Windows, show onboarding if WSL mode hasn't been chosen yet
+    const prefs = queryClient.getQueryData<AppPreferences>(['preferences'])
+    if (isWindows && prefs && !prefs.wsl_mode_chosen) {
+      logger.info('Windows WSL mode not chosen, showing onboarding')
+      useUIStore.getState().setOnboardingOpen(true)
+      return
+    }
 
     if (!ghReady || !hasAiBackendReady) {
       logger.info('CLI setup needed, showing onboarding', {

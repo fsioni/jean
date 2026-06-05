@@ -212,8 +212,8 @@ describe('ReviewCommentsDialog', () => {
       const detail = (magicCommand.mock.calls[0]?.[0] as CustomEvent).detail
       expect(detail).toMatchObject({
         command: 'review-comments',
-        executionMode: 'plan',
       })
+      expect(detail.executionMode).toBeUndefined()
       expect(detail.prompts).toHaveLength(2)
       expect(detail.prompts[0]).toContain('Please fix this')
       expect(detail.prompts[1]).toContain('Second comment body')

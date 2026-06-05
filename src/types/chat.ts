@@ -1414,4 +1414,6 @@ export interface LabelData {
   name: string
   /** Background color hex value (e.g. "#eab308") */
   color: string
+  /** Show this worktree label as a project-view filter tab when used in the current project */
+  pinned?: boolean
 }

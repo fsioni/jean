@@ -234,6 +234,30 @@ describe('TerminalStore', () => {
       )
     })
 
+    it('reorders panel terminals while preserving session terminals and active terminal', () => {
+      const { addTerminal, reorderPanelTerminals } = useTerminalStore.getState()
+
+      const panelA = addTerminal('worktree-1', null, 'A')
+      const sessionId = addTerminal('worktree-1', null, 'Session Terminal', {
+        kind: 'session',
+        activate: false,
+        openPanel: false,
+      })
+      const panelB = addTerminal('worktree-1', null, 'B')
+      const panelC = addTerminal('worktree-1', null, 'C')
+
+      reorderPanelTerminals('worktree-1', [panelC, panelA, panelB])
+
+      const state = useTerminalStore.getState()
+      expect(state.terminals['worktree-1']?.map(t => t.id)).toEqual([
+        panelC,
+        sessionId,
+        panelA,
+        panelB,
+      ])
+      expect(state.activeTerminalIds['worktree-1']).toBe(panelC)
+    })
+
     it('gets terminals for worktree', () => {
       const { addTerminal, getTerminals } = useTerminalStore.getState()
 

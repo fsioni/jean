@@ -36,7 +36,9 @@ export const ThinkingBlock = memo(function ThinkingBlock({
       </summary>
       <div className="border-t border-border/50 px-3 py-2">
         <div className="pl-4 border-l-2 border-purple-500/30 text-sm text-muted-foreground">
-          <Markdown streaming={isStreaming}>{thinking}</Markdown>
+          <Markdown streaming={isStreaming} variant="tool-call">
+            {thinking}
+          </Markdown>
         </div>
       </div>
     </details>

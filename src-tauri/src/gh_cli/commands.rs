@@ -76,7 +76,31 @@ struct GitHubAsset {
 pub async fn check_gh_cli_installed(app: AppHandle) -> Result<GhCliStatus, String> {
     log::trace!("Checking GitHub CLI installation status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_gh_binary(&app);
+
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(GhCliStatus {
+                installed: false,
+                version: None,
+                path: None,
+            });
+        }
+        let version = crate::platform::wsl_tool_version(&wsl.distro, &tool)
+            .and_then(|v| v.split_whitespace().nth(2).map(|s| s.to_string()));
+        return Ok(GhCliStatus {
+            installed: true,
+            version,
+            path: Some(tool),
+        });
+    }
 
     if !binary_path.exists() {
         log::trace!("GitHub CLI not found at {:?}", binary_path);
@@ -345,6 +369,16 @@ fn get_gh_platform() -> Result<(&'static str, &'static str), String> {
     Err("Unsupported platform".to_string())
 }
 
+/// Platform string + archive extension for gh's Linux releases, used when
+/// installing into WSL from a Windows host.
+fn wsl_gh_platform(distro: &str) -> Result<(&'static str, &'static str), String> {
+    match crate::platform::wsl_detect_arch(distro) {
+        Some("linux-x64") => Ok(("linux_amd64", "tar.gz")),
+        Some("linux-arm64") => Ok(("linux_arm64", "tar.gz")),
+        _ => Err("Unsupported WSL architecture (expected x86_64 or aarch64)".to_string()),
+    }
+}
+
 /// Install GitHub CLI by downloading from GitHub releases
 #[tauri::command]
 pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(), String> {
@@ -361,8 +395,7 @@ pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(
         ));
     }
 
-    let cli_dir = ensure_gh_cli_dir(&app)?;
-    let binary_path = get_gh_cli_binary_path(&app)?;
+    let wsl = crate::platform::get_wsl_config();
 
     // Emit progress: starting
     emit_progress(&app, "starting", "Preparing installation...", 0);
@@ -373,8 +406,12 @@ pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(
         None => fetch_latest_gh_version(&app).await?,
     };
 
-    // Detect platform
-    let (platform, archive_ext) = get_gh_platform()?;
+    // Detect platform — native host vs WSL distro.
+    let (platform, archive_ext) = if wsl.enabled {
+        wsl_gh_platform(&wsl.distro)?
+    } else {
+        get_gh_platform()?
+    };
     log::trace!("Installing version {version} for platform {platform}");
 
     // Build download URL
@@ -416,30 +453,35 @@ pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(
     // Emit progress: extracting
     emit_progress(&app, "extracting", "Extracting archive...", 40);
 
-    // Create temp directory for extraction
-    let temp_dir = cli_dir.join("temp");
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Failed to create temp directory: {e}"))?;
-
-    // Extract the archive
-    let extracted_binary_path = if archive_ext == "zip" {
-        extract_zip(&archive_content, &temp_dir, &version, platform)?
+    // Extract the `gh` binary bytes from the archive in-memory. Works for
+    // both native installs and WSL (target filesystem is decided below).
+    let binary_bytes = if archive_ext == "zip" {
+        extract_gh_binary_from_zip(&archive_content, &version, platform)?
     } else {
-        extract_tar_gz(&archive_content, &temp_dir, &version, platform)?
+        extract_gh_binary_from_tar_gz(&archive_content, &version, platform)?
     };
 
-    // Emit progress: installing
     emit_progress(&app, "installing", "Installing GitHub CLI...", 60);
 
-    // Move binary to final location
-    // Use write_binary_file to handle Windows file-locking (OS error 32)
-    let binary_content = std::fs::read(&extracted_binary_path)
-        .map_err(|e| format!("Failed to read extracted binary: {e}"))?;
-    crate::platform::write_binary_file(&binary_path, &binary_content)
-        .map_err(|e| format!("Failed to copy binary: {e}"))?;
+    if wsl.enabled {
+        // WSL branch: stream the binary into the distro and make it executable.
+        let unix_path = super::config::get_wsl_gh_binary_path(&wsl.distro)?;
+        log::trace!("Writing gh binary into WSL at {unix_path}");
+        crate::platform::wsl_write_bytes(&wsl.distro, &unix_path, &binary_bytes)
+            .map_err(|e| format!("Failed to write binary into WSL: {e}"))?;
+        crate::platform::wsl_chmod_exec(&wsl.distro, &unix_path)?;
+        emit_progress(&app, "complete", "Installation complete!", 100);
+        log::trace!("GitHub CLI installed successfully at WSL:{unix_path}");
+        return Ok(());
+    }
 
-    // Clean up temp directory
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _cli_dir = ensure_gh_cli_dir(&app)?;
+    let binary_path = get_gh_cli_binary_path(&app)?;
+
+    // Write the binary to the final location.
+    // Use write_binary_file to handle Windows file-locking (OS error 32).
+    crate::platform::write_binary_file(&binary_path, &binary_bytes)
+        .map_err(|e| format!("Failed to copy binary: {e}"))?;
 
     // Emit progress: verifying
     emit_progress(&app, "verifying", "Verifying installation...", 80);
@@ -552,107 +594,106 @@ async fn fetch_latest_gh_version(app: &AppHandle) -> Result<String, String> {
     Ok(FALLBACK_GH_VERSION.to_string())
 }
 
-/// Extract gh binary from a zip archive (macOS, Windows)
-fn extract_zip(
+/// Extract the `gh` binary bytes from a zip archive (macOS/Windows release).
+///
+/// The archive may place the binary under `gh_<version>_<platform>/bin/gh[.exe]`
+/// (macOS) or under `bin/gh.exe` (Windows) — match by final path segment.
+fn extract_gh_binary_from_zip(
     archive_content: &[u8],
-    temp_dir: &std::path::Path,
-    version: &str,
+    _version: &str,
     platform: &str,
-) -> Result<std::path::PathBuf, String> {
-    use std::io::Cursor;
+) -> Result<Vec<u8>, String> {
+    use std::io::{Cursor, Read};
+
+    let expected_name = if platform.starts_with("windows_") {
+        "gh.exe"
+    } else {
+        "gh"
+    };
 
     let cursor = Cursor::new(archive_content);
     let mut archive =
         zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to open zip archive: {e}"))?;
 
-    // Extract all files
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {e}"))?;
-
-        let outpath = match file.enclosed_name() {
-            Some(path) => temp_dir.join(path),
-            None => continue,
+        let Some(path) = file.enclosed_name() else {
+            continue;
         };
-
-        if file.is_dir() {
-            std::fs::create_dir_all(&outpath)
-                .map_err(|e| format!("Failed to create directory: {e}"))?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    std::fs::create_dir_all(p)
-                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
-                }
-            }
-            let mut outfile = std::fs::File::create(&outpath)
-                .map_err(|e| format!("Failed to create file: {e}"))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Failed to extract file: {e}"))?;
+        let is_match = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == expected_name)
+            .unwrap_or(false)
+            && path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| n == "bin")
+                .unwrap_or(false);
+        if is_match {
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)
+                .map_err(|e| format!("Failed to read binary from zip: {e}"))?;
+            return Ok(data);
         }
     }
 
-    // The binary is at gh_{version}_{platform}/bin/gh (or gh.exe on Windows)
-    // Some archives (e.g., Windows) don't have the version-platform prefix directory
-    #[cfg(not(target_os = "windows"))]
-    let binary_name = "gh";
-    #[cfg(target_os = "windows")]
-    let binary_name = "gh.exe";
-
-    // Try with version-platform prefix directory first (Linux/macOS archives)
-    let binary_path = temp_dir
-        .join(format!("gh_{version}_{platform}"))
-        .join("bin")
-        .join(binary_name);
-
-    if binary_path.exists() {
-        return Ok(binary_path);
-    }
-
-    // Try without prefix directory (Windows archives)
-    let binary_path_no_prefix = temp_dir.join("bin").join(binary_name);
-
-    if binary_path_no_prefix.exists() {
-        return Ok(binary_path_no_prefix);
-    }
-
     Err(format!(
-        "Binary not found in archive at {:?} or {:?}",
-        binary_path, binary_path_no_prefix
+        "Binary '{expected_name}' not found inside gh zip archive"
     ))
 }
 
-/// Extract gh binary from a tar.gz archive (Linux)
-fn extract_tar_gz(
+/// Extract the `gh` binary bytes from a tar.gz archive (Linux release).
+///
+/// The binary lives at `gh_<version>_<platform>/bin/gh`; match by final
+/// path segment so we don't depend on the version substring (and stay
+/// tolerant of any future layout tweaks).
+fn extract_gh_binary_from_tar_gz(
     archive_content: &[u8],
-    temp_dir: &std::path::Path,
-    version: &str,
-    platform: &str,
-) -> Result<std::path::PathBuf, String> {
+    _version: &str,
+    _platform: &str,
+) -> Result<Vec<u8>, String> {
     use flate2::read::GzDecoder;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     use tar::Archive;
 
     let cursor = Cursor::new(archive_content);
     let decoder = GzDecoder::new(cursor);
     let mut archive = Archive::new(decoder);
 
-    archive
-        .unpack(temp_dir)
-        .map_err(|e| format!("Failed to extract tar.gz archive: {e}"))?;
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("Failed to read tar entries: {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("Failed to read tar entry path: {e}"))?;
 
-    // The binary is at gh_{version}_{platform}/bin/gh
-    let binary_path = temp_dir
-        .join(format!("gh_{version}_{platform}"))
-        .join("bin")
-        .join("gh");
-
-    if !binary_path.exists() {
-        return Err(format!("Binary not found in archive at {:?}", binary_path));
+        let is_match = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == "gh")
+            .unwrap_or(false)
+            && path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| n == "bin")
+                .unwrap_or(false);
+        if is_match {
+            let mut data = Vec::new();
+            entry
+                .read_to_end(&mut data)
+                .map_err(|e| format!("Failed to read binary from tar.gz: {e}"))?;
+            return Ok(data);
+        }
     }
 
-    Ok(binary_path)
+    Err("Binary 'gh' not found inside gh tar.gz archive".to_string())
 }
 
 /// Result of checking GitHub CLI authentication status
@@ -669,19 +710,35 @@ pub struct GhAuthStatus {
 pub async fn check_gh_cli_auth(app: AppHandle) -> Result<GhAuthStatus, String> {
     log::trace!("Checking GitHub CLI authentication status");
 
+    let wsl = crate::platform::get_wsl_config();
     let binary_path = resolve_gh_binary(&app);
 
-    if !binary_path.exists() {
+    if !wsl.enabled && !binary_path.exists() {
         return Ok(GhAuthStatus {
             authenticated: false,
             error: Some("GitHub CLI not installed".to_string()),
         });
     }
+    if wsl.enabled {
+        let tool = binary_path.to_string_lossy().to_string();
+        let installed = if tool.starts_with('/') {
+            crate::platform::wsl_file_executable(&wsl.distro, &tool)
+        } else {
+            crate::platform::check_wsl_tool(&wsl.distro, &tool)
+        };
+        if !installed {
+            return Ok(GhAuthStatus {
+                authenticated: false,
+                error: Some("GitHub CLI not installed inside WSL".to_string()),
+            });
+        }
+    }
 
     // Run gh auth status to check authentication
     log::trace!("Running auth check: {:?} auth status --active", binary_path);
 
-    let output = silent_command(&binary_path)
+    let binary_str = binary_path.to_string_lossy().to_string();
+    let output = crate::platform::wsl_aware_command(&binary_str, None)
         .args(["auth", "status", "--active"])
         .output()
         .map_err(|e| format!("Failed to execute GitHub CLI: {e}"))?;
@@ -721,35 +778,21 @@ pub async fn detect_gh_in_path(app: AppHandle) -> Result<GhPathDetection, String
     let jean_managed_path = get_gh_cli_binary_path(&app)
         .ok()
         .and_then(|p| std::fs::canonicalize(&p).ok());
-
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
+    let wsl = crate::platform::get_wsl_config();
+    let jean_managed_wsl = if wsl.enabled {
+        super::config::get_wsl_gh_binary_path(&wsl.distro).ok()
     } else {
-        "which"
+        None
     };
 
-    let output = match silent_command(which_cmd).arg("gh").output() {
-        Ok(output) if output.status.success() => {
-            // On Windows, `where` can return multiple paths; take only the first line
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        }
-        _ => {
-            log::trace!("GitHub CLI not found in PATH");
-            return Ok(GhPathDetection {
-                found: false,
-                path: None,
-                version: None,
-                package_manager: None,
-            });
-        }
-    };
+    let detection = crate::platform::detect_cli_in_path(
+        "gh",
+        jean_managed_path.as_deref(),
+        jean_managed_wsl.as_deref(),
+    );
 
-    if output.is_empty() {
+    if !detection.found {
+        log::trace!("GitHub CLI not found in PATH");
         return Ok(GhPathDetection {
             found: false,
             path: None,
@@ -758,45 +801,22 @@ pub async fn detect_gh_in_path(app: AppHandle) -> Result<GhPathDetection, String
         });
     }
 
-    let found_path = std::path::PathBuf::from(&output);
-
-    // Exclude Jean-managed binary
-    if let Some(ref jean_path) = jean_managed_path {
-        if let Ok(canonical_found) = std::fs::canonicalize(&found_path) {
-            if canonical_found == *jean_path {
-                log::trace!("Found PATH gh is the Jean-managed binary, excluding");
-                return Ok(GhPathDetection {
-                    found: false,
-                    path: None,
-                    version: None,
-                    package_manager: None,
-                });
-            }
-        }
-    }
-
-    // gh --version returns "gh version 2.40.0 (2024-01-15)"
-    let version = match silent_command(&found_path).arg("--version").output() {
-        Ok(ver_output) if ver_output.status.success() => {
-            let ver_str = String::from_utf8_lossy(&ver_output.stdout)
-                .trim()
-                .to_string();
-            ver_str.split_whitespace().nth(2).map(|s| s.to_string())
-        }
-        _ => None,
-    };
-
-    let package_manager = crate::platform::detect_package_manager(&found_path);
+    let version = detection
+        .version
+        .and_then(|v| v.split_whitespace().nth(2).map(|s| s.to_string()));
 
     log::trace!(
-        "Found GitHub CLI in PATH: {output} (version: {version:?}, pkg_mgr: {package_manager:?})"
+        "Found GitHub CLI in PATH: {:?} (version: {:?}, pkg_mgr: {:?})",
+        detection.path,
+        version,
+        detection.package_manager
     );
 
     Ok(GhPathDetection {
         found: true,
-        path: Some(output),
+        path: detection.path,
         version,
-        package_manager,
+        package_manager: detection.package_manager,
     })
 }
 

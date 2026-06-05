@@ -3,7 +3,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from '@/store/chat-store'
 import { useMessageSending } from './useMessageSending'
-import type { ExecutionMode } from '@/types/chat'
+import type { ExecutionMode, Session } from '@/types/chat'
 import type * as ChatService from '@/services/chat'
 
 const { mockInvoke } = vi.hoisted(() => ({
@@ -32,8 +32,27 @@ vi.mock('@/services/chat', async importOriginal => {
 
 function renderUseMessageSending({
   goalMode,
+  createSession = {
+    mutateAsync: vi.fn(async () => ({
+      id: 'new-session',
+      name: 'New Session',
+      order: 2,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      messages: [],
+    })) as (args: {
+      worktreeId: string
+      worktreePath: string
+    }) => Promise<Session>,
+  },
 }: {
   goalMode?: 'build' | 'yolo'
+  createSession?: {
+    mutateAsync: (args: {
+      worktreeId: string
+      worktreePath: string
+    }) => Promise<Session>
+  }
 } = {}) {
   const sendMessage = { mutate: vi.fn() }
   const queryClient = new QueryClient({
@@ -64,16 +83,16 @@ function renderUseMessageSending({
         codex_goal_execution_mode: goalMode,
       },
       sendMessage,
+      createSession,
       queryClient,
       markAtBottom: vi.fn(),
       sessionsData: { sessions: [{ id: 'session-1' }] },
-      setInputDraft: vi.fn(),
       clearInputDraft: vi.fn(),
       clearChatInputState: vi.fn(),
     })
   )
 
-  return { ...hook, sendMessage, executionModeRef }
+  return { ...hook, sendMessage, executionModeRef, createSession }
 }
 
 describe('useMessageSending Codex /goal', () => {
@@ -150,5 +169,55 @@ describe('useMessageSending Codex /goal', () => {
       }),
       expect.any(Object)
     )
+  })
+})
+
+describe('useMessageSending git diff Add to prompt', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.setState({
+      activeSessionIds: { 'worktree-1': 'session-1' },
+      inputDrafts: { 'session-1': 'existing draft' },
+      pendingImages: {},
+      pendingFiles: {},
+      pendingTextFiles: {},
+      pendingSkills: {},
+      sendingSessionIds: { 'session-1': true },
+      executionModes: { 'session-1': 'yolo' },
+      selectedModels: { 'session-1': 'gpt-5.5' },
+      executingModes: {},
+      errors: {},
+      lastSentMessages: {},
+      reviewingSessions: {},
+      waitingForInputSessionIds: {},
+      messageQueues: {},
+      approvedTools: {},
+      streamingContents: {},
+      activeToolCalls: {},
+      streamingContentBlocks: {},
+      streamingThinkingContent: {},
+    })
+  })
+
+  it('creates a new current-worktree session and drafts diff comments without sending', async () => {
+    const { result, sendMessage, createSession } = renderUseMessageSending()
+
+    await act(async () => {
+      await result.current.handleGitDiffAddToPrompt('review this selected line')
+    })
+
+    expect(vi.mocked(createSession.mutateAsync)).toHaveBeenCalledWith({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree',
+    })
+    expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
+      'new-session'
+    )
+    expect(useChatStore.getState().inputDrafts['new-session']).toBe(
+      'existing draft\nreview this selected line'
+    )
+    expect(useChatStore.getState().executionModes['new-session']).toBe('yolo')
+    expect(sendMessage.mutate).not.toHaveBeenCalled()
   })
 })

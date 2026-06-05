@@ -773,6 +773,17 @@ fn parse_advisory_context_key(key: &str) -> Option<(String, String, String)> {
     Some((owner.to_string(), repo.to_string(), ghsa_id.to_string()))
 }
 
+fn advisory_refs_contain_expected_key(
+    session_refs: &[String],
+    worktree_refs: Option<&[String]>,
+    expected_key: &str,
+) -> bool {
+    session_refs.iter().any(|key| key == expected_key)
+        || worktree_refs
+            .map(|refs| refs.iter().any(|key| key == expected_key))
+            .unwrap_or(false)
+}
+
 /// Extract the number from a context ref key (format: "{owner}-{repo}-{number}")
 fn extract_number_from_ref_key(key: &str) -> Option<u32> {
     key.rsplit('-').next()?.parse().ok()
@@ -3074,13 +3085,18 @@ pub async fn get_advisory_context_content(
     session_id: String,
     ghsa_id: String,
     project_path: String,
+    worktree_id: Option<String>,
 ) -> Result<String, String> {
     let repo_id = get_repo_identifier(&project_path)?;
     let repo_key = repo_id.to_key();
 
     let refs = get_session_advisory_refs(&app, &session_id)?;
+    let worktree_refs = worktree_id
+        .as_deref()
+        .map(|id| get_session_advisory_refs(&app, id))
+        .transpose()?;
     let expected_key = format!("{repo_key}::{ghsa_id}");
-    if !refs.contains(&expected_key) {
+    if !advisory_refs_contain_expected_key(&refs, worktree_refs.as_deref(), &expected_key) {
         return Err(format!("Session does not have advisory {ghsa_id} loaded"));
     }
 
@@ -3253,6 +3269,28 @@ mod tests {
 
         assert!(!is_unsupported_github_repo_error(stderr));
         assert!(is_gh_cli_auth_error(stderr));
+    }
+
+    #[test]
+    fn test_advisory_refs_match_session_or_worktree_ref() {
+        let session_refs = vec!["owner-repo::GHSA-session-1111".to_string()];
+        let worktree_refs = vec!["owner-repo::GHSA-worktree-2222".to_string()];
+
+        assert!(advisory_refs_contain_expected_key(
+            &session_refs,
+            Some(&worktree_refs),
+            "owner-repo::GHSA-session-1111"
+        ));
+        assert!(advisory_refs_contain_expected_key(
+            &session_refs,
+            Some(&worktree_refs),
+            "owner-repo::GHSA-worktree-2222"
+        ));
+        assert!(!advisory_refs_contain_expected_key(
+            &session_refs,
+            Some(&worktree_refs),
+            "owner-repo::GHSA-missing-3333"
+        ));
     }
 
     #[test]

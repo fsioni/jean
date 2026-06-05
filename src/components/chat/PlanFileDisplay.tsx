@@ -168,15 +168,14 @@ export function PlanDisplay({
         <div className="border-t border-border/50 px-3 py-3">
           <div>
             <Markdown
+              variant="tool-call"
               className={cn(
                 'text-sm leading-7',
                 '[&_p]:my-0',
                 '[&_p+ul]:mt-3',
                 '[&_p+ol]:mt-3',
                 '[&_ul]:my-3',
-                '[&_ul]:pl-5',
                 '[&_ol]:my-3',
-                '[&_ol]:pl-5',
                 '[&_li]:my-1.5',
                 '[&_ul.contains-task-list]:list-none',
                 '[&_ul.contains-task-list]:pl-0',

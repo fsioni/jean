@@ -245,7 +245,7 @@ fn ensure_running_inner(app: &AppHandle) -> Result<(), String> {
     }
 
     // Spawn new server
-    let cli_path = resolve_cli_binary(app);
+    let cli_path = resolve_cli_binary(app)?;
     if !cli_path.exists() {
         return Err(format!(
             "Codex CLI not found at {}. Please install it in Settings > General.",

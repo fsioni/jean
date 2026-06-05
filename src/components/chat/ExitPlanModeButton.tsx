@@ -57,8 +57,18 @@ export function ExitPlanModeButton({
   const sessionBackend = useChatStore(state =>
     sessionId ? (state.selectedBackends[sessionId] ?? null) : null
   )
-  const buildLabel = resolveApprovalLabel('build', preferences, sessionBackend)
-  const yoloLabel = resolveApprovalLabel('yolo', preferences, sessionBackend)
+  const buildNewContextLabel = resolveApprovalLabel(
+    'build',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
+  const yoloNewContextLabel = resolveApprovalLabel(
+    'yolo',
+    preferences,
+    sessionBackend,
+    { forceModeOverride: true }
+  )
 
   if (!toolCalls) return null
 
@@ -101,9 +111,9 @@ export function ExitPlanModeButton({
           <DropdownMenuItem onClick={() => onClearContextBuildApproval?.()}>
             <span className="flex flex-col">
               <span>New Session</span>
-              {buildLabel && (
+              {buildNewContextLabel && (
                 <span className="text-[10px] text-muted-foreground">
-                  {buildLabel}
+                  {buildNewContextLabel}
                 </span>
               )}
             </span>
@@ -117,9 +127,9 @@ export function ExitPlanModeButton({
             <DropdownMenuItem onClick={() => onWorktreeBuildApproval()}>
               <span className="flex flex-col">
                 <span>New Worktree</span>
-                {buildLabel && (
+                {buildNewContextLabel && (
                   <span className="text-[10px] text-muted-foreground">
-                    {buildLabel}
+                    {buildNewContextLabel}
                   </span>
                 )}
               </span>
@@ -157,9 +167,9 @@ export function ExitPlanModeButton({
           <DropdownMenuItem onClick={() => onClearContextApproval?.()}>
             <span className="flex flex-col">
               <span>New Session (YOLO)</span>
-              {yoloLabel && (
+              {yoloNewContextLabel && (
                 <span className="text-[10px] text-muted-foreground">
-                  {yoloLabel}
+                  {yoloNewContextLabel}
                 </span>
               )}
             </span>
@@ -173,9 +183,9 @@ export function ExitPlanModeButton({
             <DropdownMenuItem onClick={() => onWorktreeYoloApproval()}>
               <span className="flex flex-col">
                 <span>New Worktree (YOLO)</span>
-                {yoloLabel && (
+                {yoloNewContextLabel && (
                   <span className="text-[10px] text-muted-foreground">
-                    {yoloLabel}
+                    {yoloNewContextLabel}
                   </span>
                 )}
               </span>

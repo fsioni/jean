@@ -821,11 +821,13 @@ pub async fn dispatch_command(
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let ghsa_id: String = field(&args, "ghsaId", "ghsa_id")?;
             let project_path: String = field(&args, "projectPath", "project_path")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let result = crate::projects::get_advisory_context_content(
                 app.clone(),
                 session_id,
                 ghsa_id,
                 project_path,
+                worktree_id,
             )
             .await?;
             to_value(result)
@@ -2320,7 +2322,7 @@ pub async fn dispatch_command(
             to_value(result)
         }
         "get_codex_usage" => {
-            let result = crate::codex_cli::get_codex_usage().await?;
+            let result = crate::codex_cli::get_codex_usage(app.clone()).await?;
             to_value(result)
         }
         "install_codex_cli" => {
@@ -2868,6 +2870,22 @@ pub async fn dispatch_command(
             )?;
             Ok(Value::Null)
         }
+
+        // =====================================================================
+        // WSL commands
+        // =====================================================================
+        "list_wsl_distros" => to_value(crate::list_wsl_distros()),
+        "check_wsl_tool" => {
+            let distro: String = from_field(&args, "distro")?;
+            let tool: String = from_field(&args, "tool")?;
+            to_value(crate::check_wsl_tool(distro, tool))
+        }
+        "get_wsl_home_dir" => {
+            let distro: String = from_field(&args, "distro")?;
+            let result = crate::get_wsl_home_dir(distro)?;
+            to_value(result)
+        }
+        "is_wsl_available" => to_value(crate::is_wsl_available()),
 
         // =====================================================================
         // Opinionated plugin commands

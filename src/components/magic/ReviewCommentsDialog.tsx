@@ -528,7 +528,6 @@ export function ReviewCommentsDialog() {
     setIsSending(true)
     dispatchReviewCommentsPrompts({
       prompts: formatted.map(buildPrompt),
-      executionMode: 'plan',
     })
   }, [
     prNumber,

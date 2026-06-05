@@ -14,6 +14,13 @@ pub struct LabelData {
     pub name: String,
     /// Background color hex value (e.g. "#eab308")
     pub color: String,
+    /// Show this worktree label as a project-view filter tab when used in the current project.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Deserializes label from either a plain string (old format) or a LabelData object (new format).
@@ -27,6 +34,7 @@ where
         Some(serde_json::Value::String(s)) => Ok(Some(LabelData {
             name: s,
             color: DEFAULT_LABEL_COLOR.to_string(),
+            pinned: false,
         })),
         Some(serde_json::Value::Object(_)) => {
             let label: LabelData =
@@ -75,7 +83,7 @@ pub struct UsageData {
 // ============================================================================
 
 /// Backend for a chat session (Claude CLI, Codex CLI, OpenCode, Cursor, or Command Code)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     #[default]
@@ -84,6 +92,32 @@ pub enum Backend {
     Opencode,
     Cursor,
     Commandcode,
+}
+
+impl<'de> Deserialize<'de> for Backend {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        let backend = match value
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "codex" => Backend::Codex,
+            "opencode" => Backend::Opencode,
+            "cursor" => Backend::Cursor,
+            "commandcode" => Backend::Commandcode,
+            "claude" | "" => Backend::Claude,
+            other => {
+                log::warn!("Unknown chat backend '{other}', falling back to claude");
+                Backend::Claude
+            }
+        };
+        Ok(backend)
+    }
 }
 
 /// Role of a chat message sender
@@ -1852,6 +1886,24 @@ mod tests {
         assert_eq!(metadata.order, 0);
         assert!(metadata.runs.is_empty());
         assert_eq!(metadata.version, 1);
+    }
+
+    #[test]
+    fn test_session_metadata_unknown_backend_falls_back_to_claude() {
+        let json = serde_json::json!({
+            "id": "sess-unknown-backend",
+            "worktree_id": "wt-456",
+            "name": "Legacy Backend",
+            "order": 0,
+            "created_at": 123,
+            "backend": "legacybackend",
+            "runs": [],
+            "version": 1
+        });
+
+        let metadata: SessionMetadata = serde_json::from_value(json).unwrap();
+
+        assert_eq!(metadata.backend, Backend::Claude);
     }
 
     #[test]

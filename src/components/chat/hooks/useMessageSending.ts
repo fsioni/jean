@@ -52,11 +52,16 @@ interface UseMessageSendingParams {
     | undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sendMessage: { mutate: (args: any, opts?: any) => void }
+  createSession: {
+    mutateAsync: (args: {
+      worktreeId: string
+      worktreePath: string
+    }) => Promise<Session>
+  }
   queryClient: QueryClient
   markAtBottom: () => void
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sessionsData: any
-  setInputDraft: (sessionId: string, draft: string) => void
   clearInputDraft: (sessionId: string) => void
   clearChatInputState: () => void
 }
@@ -82,10 +87,10 @@ export function useMessageSending({
   selectedBackendRef,
   preferences,
   sendMessage,
+  createSession,
   queryClient,
   markAtBottom,
   sessionsData,
-  setInputDraft,
   clearInputDraft,
   clearChatInputState,
 }: UseMessageSendingParams) {
@@ -196,95 +201,44 @@ export function useMessageSending({
     ]
   )
 
-  // GitDiffModal: add diff reference to input
+  // GitDiffModal: create a fresh current-worktree session with the diff
+  // reference drafted. This avoids sending/queueing into an already-running
+  // session while keeping the user in control of the prompt before submit.
   const handleGitDiffAddToPrompt = useCallback(
-    (reference: string) => {
-      if (activeSessionId) {
-        const { inputDrafts } = useChatStore.getState()
-        const currentInput = inputDrafts[activeSessionId] ?? ''
-        const separator = currentInput.length > 0 ? '\n' : ''
-        setInputDraft(
-          activeSessionId,
-          `${currentInput}${separator}${reference}`
-        )
-      }
-    },
-    [activeSessionId, setInputDraft]
-  )
+    async (reference: string) => {
+      if (!activeWorktreeId || !activeWorktreePath) return
 
-  // GitDiffModal: execute diff prompt immediately
-  const handleGitDiffExecutePrompt = useCallback(
-    (reference: string) => {
-      if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
-
-      const {
-        inputDrafts,
-        setLastSentMessage,
-        setError,
-        setSelectedModel,
-        setExecutingMode,
-        clearInputDraft: clearDraft,
-      } = useChatStore.getState()
-      const currentInput = inputDrafts[activeSessionId] ?? ''
-      const separator = currentInput.length > 0 ? '\n' : ''
-      const message = `${currentInput}${separator}${reference}`
-
-      const model = selectedModelRef.current
-      const thinkingLevel = selectedThinkingLevelRef.current
-
-      setLastSentMessage(activeSessionId, message)
-      setError(activeSessionId, null)
-      clearDraft(activeSessionId)
-      // NOTE: addSendingSession is called in onMutate (chat.ts) so it batches
-      // with the optimistic user message in a single React render pass.
-      setSelectedModel(activeSessionId, model)
-      setExecutingMode(activeSessionId, 'build')
-
-      const diffResolved = resolveCustomProfile(
-        model,
-        selectedProviderRef.current
-      )
-      sendMessage.mutate(
-        {
-          sessionId: activeSessionId,
+      let newSession: Session
+      try {
+        newSession = await createSession.mutateAsync({
           worktreeId: activeWorktreeId,
           worktreePath: activeWorktreePath,
-          message,
-          model: diffResolved.model,
-          customProfileName: diffResolved.customProfileName,
-          executionMode: 'build',
-          thinkingLevel,
-          effortLevel:
-            useAdaptiveThinkingRef.current || isCodexBackendRef.current
-              ? selectedEffortLevelRef.current
-              : undefined,
-          mcpConfig: buildMcpConfigJson(
-            mcpServersDataRef.current ?? [],
-            enabledMcpServersRef.current,
-            selectedBackendRef.current
-          ),
-          parallelExecutionPrompt:
-            preferences?.parallel_execution_prompt_enabled
-              ? (preferences.magic_prompts?.parallel_execution ??
-                DEFAULT_PARALLEL_EXECUTION_PROMPT)
-              : undefined,
-          chromeEnabled: preferences?.chrome_enabled ?? false,
-          aiLanguage: preferences?.ai_language,
-          backend:
-            selectedBackendRef.current !== 'claude'
-              ? selectedBackendRef.current
-              : undefined,
-        },
-        { onSettled: () => inputRef.current?.focus() }
-      )
+        })
+      } catch (err) {
+        toast.error(`Failed to create session: ${err}`)
+        return
+      }
+
+      const store = useChatStore.getState()
+      const currentInput = activeSessionId
+        ? (store.inputDrafts[activeSessionId] ?? '')
+        : ''
+      const separator = currentInput.length > 0 ? '\n' : ''
+      const draft = `${currentInput}${separator}${reference}`
+
+      if (activeSessionId) {
+        store.copySessionSettings(activeSessionId, newSession.id)
+      }
+      store.setActiveSession(activeWorktreeId, newSession.id)
+      store.setInputDraft(newSession.id, draft)
+      inputRef.current?.focus?.()
     },
     [
       activeSessionId,
       activeWorktreeId,
       activeWorktreePath,
-      preferences,
-      sendMessage,
-      resolveCustomProfile,
+      createSession,
+      inputRef,
     ]
   )
 
@@ -567,6 +521,5 @@ export function useMessageSending({
     handleSubmit,
     handleCancel,
     handleGitDiffAddToPrompt,
-    handleGitDiffExecutePrompt,
   }
 }

@@ -13,6 +13,7 @@ import {
   shouldLetPlanDialogHandleAction,
   switchActiveTerminalTabByIndexForShortcut,
 } from './useMainWindowEventListeners'
+import { DEFAULT_KEYBINDINGS } from '@/types/keybindings'
 
 const { mockInvoke, mockListen, mockDisposeTerminal } = vi.hoisted(() => ({
   mockInvoke: vi.fn().mockResolvedValue(undefined),
@@ -145,6 +146,15 @@ describe('useMainWindowEventListeners terminal shortcuts', () => {
       sessionTerminalIds: {},
       newSessionModeTarget: null,
     })
+  })
+
+  it('maps Option+Cmd arrow shortcuts to medium chat scroll actions', () => {
+    expect(findKeybindingAction('mod+alt+arrowup', DEFAULT_KEYBINDINGS)).toBe(
+      'scroll_chat_up_medium'
+    )
+    expect(findKeybindingAction('mod+alt+arrowdown', DEFAULT_KEYBINDINGS)).toBe(
+      'scroll_chat_down_medium'
+    )
   })
 
   it('does not resolve terminal shortcuts when the terminal is open but unfocused', () => {

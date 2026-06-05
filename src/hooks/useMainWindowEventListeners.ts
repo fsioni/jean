@@ -500,6 +500,20 @@ function executeKeybindingAction(
         new CustomEvent('scroll-chat', { detail: { direction: 'down' } })
       )
       break
+    case 'scroll_chat_up_medium':
+      window.dispatchEvent(
+        new CustomEvent('scroll-chat', {
+          detail: { direction: 'up', amount: 'medium' },
+        })
+      )
+      break
+    case 'scroll_chat_down_medium':
+      window.dispatchEvent(
+        new CustomEvent('scroll-chat', {
+          detail: { direction: 'down', amount: 'medium' },
+        })
+      )
+      break
     case 'scroll_chat_up_small':
       window.dispatchEvent(
         new CustomEvent('scroll-chat', {
@@ -751,7 +765,9 @@ export function useMainWindowEventListeners() {
         // so canvas/list arrow navigation still works elsewhere
         if (
           action === 'scroll_chat_up_small' ||
-          action === 'scroll_chat_down_small'
+          action === 'scroll_chat_down_small' ||
+          action === 'scroll_chat_up_medium' ||
+          action === 'scroll_chat_down_medium'
         ) {
           const chatVisible =
             !!useChatStore.getState().activeWorktreeId ||

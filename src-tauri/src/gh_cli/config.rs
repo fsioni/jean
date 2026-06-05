@@ -1,6 +1,6 @@
 //! Configuration and path management for the embedded GitHub CLI
 
-use crate::platform::silent_command;
+use crate::platform::{get_wsl_config, get_wsl_home_dir, silent_command};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -13,6 +13,19 @@ pub const GH_CLI_BINARY_NAME: &str = "gh";
 
 #[cfg(target_os = "windows")]
 pub const GH_CLI_BINARY_NAME: &str = "gh.exe";
+
+/// Name of the GitHub CLI binary when Jean manages it inside a WSL distro.
+pub const GH_CLI_BINARY_NAME_UNIX: &str = "gh";
+
+/// Get the full Unix path to the (eventual) Jean-managed GitHub CLI binary
+/// inside a WSL distro. Used so detection can distinguish "Jean installed
+/// nothing yet" from "a system `gh` exists on PATH".
+pub fn get_wsl_gh_binary_path(distro: &str) -> Result<String, String> {
+    let home = get_wsl_home_dir(distro)?;
+    Ok(format!(
+        "{home}/.local/share/jean/{GH_CLI_DIR_NAME}/{GH_CLI_BINARY_NAME_UNIX}"
+    ))
+}
 
 /// Get the directory where GitHub CLI is installed
 ///
@@ -56,30 +69,55 @@ pub fn resolve_gh_binary(app: &AppHandle) -> PathBuf {
     };
 
     if use_path {
-        let which_cmd = if cfg!(target_os = "windows") {
-            "where"
+        let wsl = get_wsl_config();
+        if wsl.enabled {
+            // Resolve absolute Unix path so the session/status checks don't
+            // depend on a non-login-shell PATH.
+            if let Some(unix_path) = crate::platform::wsl_which(
+                &wsl.distro,
+                "gh",
+                get_wsl_gh_binary_path(&wsl.distro).ok().as_deref(),
+            ) {
+                return PathBuf::from(unix_path);
+            }
         } else {
-            "which"
-        };
+            let which_cmd = if cfg!(target_os = "windows") {
+                "where"
+            } else {
+                "which"
+            };
 
-        if let Ok(output) = silent_command(which_cmd).arg("gh").output() {
-            if output.status.success() {
-                // On Windows, `where` can return multiple paths; take only the first line
-                let path_str = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                if !path_str.is_empty() {
-                    let path = PathBuf::from(&path_str);
-                    if path.exists() {
-                        return path;
+            if let Ok(output) = silent_command(which_cmd).arg("gh").output() {
+                if output.status.success() {
+                    // On Windows, `where` can return multiple paths; take only the first line
+                    let path_str = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !path_str.is_empty() {
+                        let path = PathBuf::from(&path_str);
+                        if path.exists() {
+                            return path;
+                        }
                     }
                 }
             }
         }
         log::warn!("gh_cli_source is 'path' but could not find gh in PATH, falling back to Jean-managed binary");
+    }
+
+    // In WSL mode the Jean-managed install (when it exists) lives inside
+    // the distro. Return the designated Unix path so `check_gh_cli_installed`
+    // can distinguish "Jean hasn't installed anything" from "system gh is on
+    // PATH". Until Jean-managed installs are supported in WSL for gh, this
+    // path will not exist and the check correctly reports not-installed.
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        return get_wsl_gh_binary_path(&wsl.distro)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(GH_CLI_BINARY_NAME_UNIX));
     }
 
     get_gh_cli_binary_path(app)

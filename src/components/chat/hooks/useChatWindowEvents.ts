@@ -413,7 +413,7 @@ export function useChatWindowEvents({
     const handler = (
       e: CustomEvent<{
         direction: 'up' | 'down'
-        amount?: 'small' | 'page'
+        amount?: 'small' | 'medium' | 'page'
       }>
     ) => {
       const viewport = scrollViewportRef.current
@@ -428,7 +428,12 @@ export function useChatWindowEvents({
       if (e.detail.direction === 'up' && scrollTop < 2) return
       beginKeyboardScroll()
       const isSmall = e.detail.amount === 'small'
-      const magnitude = isSmall ? 100 : viewport.clientHeight * 0.75
+      const isMedium = e.detail.amount === 'medium'
+      const magnitude = isSmall
+        ? 100
+        : isMedium
+          ? viewport.clientHeight * 0.35
+          : viewport.clientHeight * 0.75
       const delta = e.detail.direction === 'up' ? -magnitude : magnitude
       const now = performance.now()
       // Held-key repeat: previous press very recent → jump instantly so
@@ -444,7 +449,7 @@ export function useChatWindowEvents({
         endKeyboardScroll()
         return
       }
-      const duration = isSmall ? 120 : 250
+      const duration = isSmall ? 120 : isMedium ? 180 : 250
       const start = viewport.scrollTop
       const startTime = now
       const step = (t: number) => {

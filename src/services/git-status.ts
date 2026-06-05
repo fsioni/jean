@@ -21,6 +21,7 @@ import type {
   Worktree,
 } from '@/types/projects'
 import type { GitDiff, CommitHistoryResult } from '@/types/git-diff'
+import { toastActionLabel } from '@/lib/toast-action-label'
 
 // ============================================================================
 // Types
@@ -270,8 +271,12 @@ export async function performGitPull(opts: GitPullOptions): Promise<void> {
             id: toastId,
             duration: Infinity,
             action: {
-              label: 'Resolve Conflicts',
+              label: toastActionLabel('Resolve Conflicts'),
               onClick: () => {
+                if (onMergeConflict) {
+                  onMergeConflict()
+                  return
+                }
                 window.dispatchEvent(
                   new CustomEvent('magic-command', {
                     detail: { command: 'resolve-conflicts' },
@@ -280,7 +285,6 @@ export async function performGitPull(opts: GitPullOptions): Promise<void> {
               },
             },
           })
-          onMergeConflict?.()
         } else {
           toast.error('Auto-stash failed', {
             id: toastId,
@@ -301,8 +305,12 @@ export async function performGitPull(opts: GitPullOptions): Promise<void> {
         id: toastId,
         duration: Infinity,
         action: {
-          label: 'Resolve Conflicts',
+          label: toastActionLabel('Resolve Conflicts'),
           onClick: () => {
+            if (onMergeConflict) {
+              onMergeConflict()
+              return
+            }
             window.dispatchEvent(
               new CustomEvent('magic-command', {
                 detail: { command: 'resolve-conflicts' },
@@ -311,7 +319,6 @@ export async function performGitPull(opts: GitPullOptions): Promise<void> {
           },
         },
       })
-      onMergeConflict?.()
       return
     }
 

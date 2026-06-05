@@ -605,16 +605,19 @@ async fn uninstall_superpowers(_app: &AppHandle) -> Result<String, String> {
 }
 
 fn detected_jean_backends(app: &AppHandle) -> Vec<&'static str> {
-    let candidates = [
-        ("claude", crate::claude_cli::resolve_cli_binary(app)),
-        ("codex", crate::codex_cli::resolve_cli_binary(app)),
-        ("opencode", crate::opencode_cli::resolve_cli_binary(app)),
-        ("cursor", crate::cursor_cli::resolve_cli_binary(app)),
+    let candidates: Vec<(&'static str, Option<PathBuf>)> = vec![
+        ("claude", Some(crate::claude_cli::resolve_cli_binary(app))),
+        ("codex", crate::codex_cli::resolve_cli_binary(app).ok()),
+        (
+            "opencode",
+            Some(crate::opencode_cli::resolve_cli_binary(app)),
+        ),
+        ("cursor", Some(crate::cursor_cli::resolve_cli_binary(app))),
     ];
 
     candidates
         .into_iter()
-        .filter_map(|(backend, path)| path.exists().then_some(backend))
+        .filter_map(|(backend, path)| path.filter(|p| p.exists()).map(|_| backend))
         .collect()
 }
 

@@ -1,6 +1,6 @@
 //! Configuration and path resolution for Cursor Agent.
 
-use crate::platform::silent_command;
+use crate::platform::{get_wsl_config, silent_command};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
@@ -20,12 +20,30 @@ pub const LEGACY_CLI_BINARY_NAME: &str = "cursor-agent";
 
 pub const CLI_BINARY_CANDIDATES: [&str; 2] = [CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME];
 
+/// Bare tool names (without platform-specific extension) for WSL/Unix lookups.
+pub const CLI_TOOL_NAME: &str = "agent";
+pub const LEGACY_CLI_TOOL_NAME: &str = "cursor-agent";
+pub const CLI_TOOL_CANDIDATES: [&str; 2] = [CLI_TOOL_NAME, LEGACY_CLI_TOOL_NAME];
+
 /// Resolve the Cursor Agent binary from system PATH.
 ///
 /// Cursor's installer places the binary on PATH, so Jean resolves the
 /// discovered system binary when available and returns a non-existent fallback
 /// path otherwise.
 pub fn resolve_cli_binary(_app: &AppHandle) -> PathBuf {
+    let wsl = get_wsl_config();
+    if wsl.enabled {
+        // Resolve the absolute Unix path inside WSL via a login shell, so
+        // Cursor CLI installed via nvm / bun / cursor.com's installer is
+        // found regardless of non-login-shell $PATH.
+        for tool_name in CLI_TOOL_CANDIDATES {
+            if let Some(unix_path) = crate::platform::wsl_which(&wsl.distro, tool_name, None) {
+                return PathBuf::from(unix_path);
+            }
+        }
+        return PathBuf::from(CLI_TOOL_NAME);
+    }
+
     let which_cmd = if cfg!(target_os = "windows") {
         "where"
     } else {
@@ -68,5 +86,12 @@ mod tests {
     fn candidates_prefer_agent_before_legacy_cursor_agent() {
         assert_eq!(CLI_BINARY_CANDIDATES[0], CLI_BINARY_NAME);
         assert_eq!(CLI_BINARY_CANDIDATES[1], LEGACY_CLI_BINARY_NAME);
+    }
+
+    #[test]
+    fn wsl_tool_candidates_prefer_agent_before_legacy_cursor_agent() {
+        assert_eq!(CLI_TOOL_NAME, "agent");
+        assert_eq!(CLI_TOOL_CANDIDATES[0], CLI_TOOL_NAME);
+        assert_eq!(CLI_TOOL_CANDIDATES[1], LEGACY_CLI_TOOL_NAME);
     }
 }

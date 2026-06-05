@@ -1,5 +1,9 @@
 import { getMessageModelLabel } from '@/components/chat/message-settings-labels'
 
+interface ResolveApprovalLabelOptions {
+  forceModeOverride?: boolean
+}
+
 /**
  * Resolves a human-readable label for the backend + model that will be used
  * when approving a plan in build or yolo mode.
@@ -20,13 +24,17 @@ export function resolveApprovalLabel(
         default_backend?: string | null
       }
     | undefined,
-  sessionBackend?: string | null
+  sessionBackend?: string | null,
+  options: ResolveApprovalLabelOptions = {}
 ): string | null {
   if (!preferences) return null
   const modeBackend =
     mode === 'yolo' ? preferences.yolo_backend : preferences.build_backend
   const overridesApply =
-    !modeBackend || !sessionBackend || modeBackend === sessionBackend
+    options.forceModeOverride ||
+    !modeBackend ||
+    !sessionBackend ||
+    modeBackend === sessionBackend
   const model = overridesApply
     ? mode === 'yolo'
       ? preferences.yolo_model

@@ -49,6 +49,9 @@ import {
 } from './CliSetupComponents'
 import { toast } from 'sonner'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
+import { isWindows } from '@/lib/platform'
+import { WslSetupStep } from './WslSetupStep'
+import { ArrowLeft } from 'lucide-react'
 
 type AIBackend = 'claude' | 'codex' | 'opencode'
 type CliType = AIBackend | 'gh'
@@ -56,6 +59,7 @@ type CliType = AIBackend | 'gh'
 const AI_BACKENDS: AIBackend[] = ['claude', 'codex', 'opencode']
 
 type OnboardingStep =
+  | 'wsl-setup'
   | 'backend-select'
   | 'claude-setup'
   | 'claude-installing'
@@ -74,6 +78,25 @@ type OnboardingStep =
   | 'gh-auth-checking'
   | 'gh-auth-login'
   | 'complete'
+
+/**
+ * Steps that represent meaningful user-facing screens. Transitioning AWAY from
+ * one of these via setStep() pushes it onto the back-history stack.
+ * Transient/auto-advancing steps (*-installing, *-auth-checking) are excluded so
+ * they never appear as a Back destination.
+ */
+const BACK_NAVIGABLE_STEPS: readonly OnboardingStep[] = [
+  'wsl-setup',
+  'backend-select',
+  'claude-setup',
+  'codex-setup',
+  'opencode-setup',
+  'claude-auth-login',
+  'codex-auth-login',
+  'opencode-auth-login',
+  'gh-setup',
+  'gh-auth-login',
+] as const
 
 interface VersionOption {
   version: string
@@ -159,11 +182,25 @@ function OnboardingDialogContent() {
 
   const [step, _setStepRaw] = useState<OnboardingStep>('backend-select')
   const stepRef = useRef<OnboardingStep>('backend-select')
-  const setStep = useCallback((next: OnboardingStep) => {
-    dbg('step:', stepRef.current, '→', next)
-    stepRef.current = next
-    _setStepRaw(next)
-  }, [])
+  const [historyStack, setHistoryStack] = useState<OnboardingStep[]>([])
+  const setStep = useCallback(
+    (next: OnboardingStep, opts?: { replace?: boolean }) => {
+      const current = stepRef.current
+      dbg('step:', current, '→', next, opts?.replace ? '(replace)' : '')
+      if (
+        !opts?.replace &&
+        current !== next &&
+        BACK_NAVIGABLE_STEPS.includes(current)
+      ) {
+        setHistoryStack(h =>
+          h[h.length - 1] === current ? h : [...h, current]
+        )
+      }
+      stepRef.current = next
+      _setStepRaw(next)
+    },
+    []
+  )
   const [selectedBackends, setSelectedBackends] = useState<AIBackend[]>([])
   const [, setActiveBackendIndex] = useState(0)
 
@@ -184,6 +221,78 @@ function OnboardingDialogContent() {
   const [codexLoginAttempt, setCodexLoginAttempt] = useState(0)
   const [opencodeLoginAttempt, setOpencodeLoginAttempt] = useState(0)
   const [ghLoginAttempt, setGhLoginAttempt] = useState(0)
+
+  const goBack = useCallback(() => {
+    const current = stepRef.current
+    // Sub-state back-out: on a *-setup step, the source picker and the
+    // version installer are both rendered — "Back" from the installer should
+    // first return to the picker, not pop step history.
+    if (current === 'claude-setup' && claudePathSelected) {
+      dbg('step: BACK (sub-state) claude-setup installer → picker')
+      setClaudePathSelected(false)
+      setClaudeInstallFailed(false)
+      return
+    }
+    if (current === 'codex-setup' && codexPathSelected) {
+      dbg('step: BACK (sub-state) codex-setup installer → picker')
+      setCodexPathSelected(false)
+      setCodexInstallFailed(false)
+      return
+    }
+    if (current === 'opencode-setup' && opencodePathSelected) {
+      dbg('step: BACK (sub-state) opencode-setup installer → picker')
+      setOpencodePathSelected(false)
+      setOpencodeInstallFailed(false)
+      return
+    }
+    if (current === 'gh-setup' && ghPathSelected) {
+      dbg('step: BACK (sub-state) gh-setup installer → picker')
+      setGhPathSelected(false)
+      setGhInstallFailed(false)
+      return
+    }
+
+    setHistoryStack(h => {
+      const prev = h.at(-1)
+      if (!prev) return h
+      dbg('step: BACK', stepRef.current, '→', prev)
+      // Reset transient per-CLI state so the user lands on a fresh screen
+      // (re-shows the path/Jean-managed picker, clears any prior install error).
+      if (prev === 'claude-setup') {
+        setClaudePathSelected(false)
+        setClaudeInstallFailed(false)
+      } else if (prev === 'codex-setup') {
+        setCodexPathSelected(false)
+        setCodexInstallFailed(false)
+      } else if (prev === 'opencode-setup') {
+        setOpencodePathSelected(false)
+        setOpencodeInstallFailed(false)
+      } else if (prev === 'gh-setup') {
+        setGhPathSelected(false)
+        setGhInstallFailed(false)
+      }
+      stepRef.current = prev
+      _setStepRaw(prev)
+      return h.slice(0, -1)
+    })
+  }, [
+    claudePathSelected,
+    codexPathSelected,
+    opencodePathSelected,
+    ghPathSelected,
+  ])
+
+  const isTransientStep =
+    step.endsWith('-installing') || step.endsWith('-auth-checking')
+  const hasSubStateBack =
+    (step === 'claude-setup' && claudePathSelected) ||
+    (step === 'codex-setup' && codexPathSelected) ||
+    (step === 'opencode-setup' && opencodePathSelected) ||
+    (step === 'gh-setup' && ghPathSelected)
+  const canGoBack =
+    (historyStack.length > 0 || hasSubStateBack) &&
+    step !== 'complete' &&
+    !isTransientStep
 
   const initializedFlowRef = useRef(false)
 
@@ -263,51 +372,22 @@ function OnboardingDialogContent() {
   )
 
   const getNextStepForBackend = useCallback(
-    (backend: AIBackend): OnboardingStep | null => {
-      let result: OnboardingStep | null = null
-      if (backend === 'claude') {
-        if (!claudeSetup.status?.installed) result = 'claude-setup'
-        else if (!claudeAuth.data?.authenticated)
-          result = 'claude-auth-checking'
-      } else if (backend === 'codex') {
-        if (!codexSetup.status?.installed) result = 'codex-setup'
-        else if (!codexAuth.data?.authenticated) result = 'codex-auth-checking'
-      } else {
-        if (!opencodeSetup.status?.installed) result = 'opencode-setup'
-        else if (!opencodeAuth.data?.authenticated)
-          result = 'opencode-auth-checking'
-      }
-      dbg('getNextStepForBackend:', backend, '→', result, {
-        installed:
-          backend === 'claude'
-            ? claudeSetup.status?.installed
-            : backend === 'codex'
-              ? codexSetup.status?.installed
-              : opencodeSetup.status?.installed,
-        authenticated:
-          backend === 'claude'
-            ? claudeAuth.data?.authenticated
-            : backend === 'codex'
-              ? codexAuth.data?.authenticated
-              : opencodeAuth.data?.authenticated,
-      })
+    (backend: AIBackend): OnboardingStep => {
+      // Always route user through the *-setup step so they can confirm/change
+      // the source (Jean-managed vs system PATH) and version. The picker
+      // auto-advances to auth-checking when the user picks an already-ready
+      // configuration, so this adds no friction for the happy path.
+      const result = `${backend}-setup` as OnboardingStep
+      dbg('getNextStepForBackend:', backend, '→', result)
       return result
     },
-    [
-      claudeSetup.status?.installed,
-      claudeAuth.data?.authenticated,
-      codexSetup.status?.installed,
-      codexAuth.data?.authenticated,
-      opencodeSetup.status?.installed,
-      opencodeAuth.data?.authenticated,
-    ]
+    []
   )
 
   const getNextStepAfterBackends = useCallback((): OnboardingStep => {
-    if (!ghSetup.status?.installed) return 'gh-setup'
-    if (!ghAuth.data?.authenticated) return 'gh-auth-checking'
-    return 'complete'
-  }, [ghSetup.status?.installed, ghAuth.data?.authenticated])
+    // Always show gh-setup so the user can confirm source + auth.
+    return 'gh-setup'
+  }, [])
 
   const moveToNextBackendOrGh = useCallback(
     (currentBackend: AIBackend) => {
@@ -373,10 +453,11 @@ function OnboardingDialogContent() {
   useEffect(() => {
     if (!onboardingOpen) {
       initializedFlowRef.current = false
+      setHistoryStack([])
       return
     }
 
-    if (loadingInitialState || initializedFlowRef.current) {
+    if (loadingInitialState || initializedFlowRef.current || !preferences) {
       dbg(
         'init effect: skipped (loading:',
         loadingInitialState,
@@ -405,10 +486,22 @@ function OnboardingDialogContent() {
       setGhLoginAttempt(0)
     })
 
+    // On Windows, show WSL mode selection first if not yet chosen
+    if (
+      isWindows &&
+      preferences &&
+      !preferences.wsl_mode_chosen &&
+      !onboardingStartStep
+    ) {
+      dbg('init effect: Windows + WSL not chosen → wsl-setup')
+      queueMicrotask(() => setStep('wsl-setup', { replace: true }))
+      return
+    }
+
     if (onboardingStartStep === 'gh') {
       dbg('init effect: startStep=gh → gh-setup')
       queueMicrotask(() => {
-        setStep('gh-setup')
+        setStep('gh-setup', { replace: true })
         setOnboardingStartStep(null)
       })
       return
@@ -419,7 +512,7 @@ function OnboardingDialogContent() {
       queueMicrotask(() => {
         setSelectedBackends(['claude'])
         setActiveBackendIndex(0)
-        setStep('claude-setup')
+        setStep('claude-setup', { replace: true })
         setOnboardingStartStep(null)
       })
       return
@@ -436,24 +529,21 @@ function OnboardingDialogContent() {
       onboardingManuallyTriggered
     )
 
-    // When manually triggered, start at backend-select so users can
-    // install additional CLIs (e.g. Codex) even if minimum requirements are met.
-    // But if ALL backends are already installed, skip to GH or complete.
+    // When manually triggered, always start at wsl-setup on Windows so users
+    // can change their WSL/native choice, then backend-select (via Continue
+    // on the WSL step). Non-Windows goes straight to backend-select.
     if (onboardingManuallyTriggered) {
-      const uninstalledBackends = AI_BACKENDS.filter(b => !isBackendReady(b))
-      dbg('init effect: manual trigger, uninstalled:', uninstalledBackends)
-      if (uninstalledBackends.length > 0) {
-        queueMicrotask(() => setStep('backend-select'))
-        return
-      }
-      // All backends installed — skip to GH check or complete
-      queueMicrotask(() => setStep(getNextStepAfterBackends()))
+      const firstStep: OnboardingStep = isWindows
+        ? 'wsl-setup'
+        : 'backend-select'
+      dbg('init effect: manual trigger →', firstStep)
+      queueMicrotask(() => setStep(firstStep, { replace: true }))
       return
     }
 
     if (ghReady && readyBackends.length > 0) {
       dbg('init effect: all ready → complete')
-      queueMicrotask(() => setStep('complete'))
+      queueMicrotask(() => setStep('complete', { replace: true }))
       return
     }
 
@@ -461,13 +551,13 @@ function OnboardingDialogContent() {
       dbg('init effect: some backends ready → skip to after backends')
       queueMicrotask(() => {
         setSelectedBackends(readyBackends)
-        setStep(getNextStepAfterBackends())
+        setStep(getNextStepAfterBackends(), { replace: true })
       })
       return
     }
 
     dbg('init effect: nothing ready → backend-select')
-    queueMicrotask(() => setStep('backend-select'))
+    queueMicrotask(() => setStep('backend-select', { replace: true }))
   }, [
     onboardingOpen,
     onboardingStartStep,
@@ -478,6 +568,7 @@ function OnboardingDialogContent() {
     ghSetup.status?.installed,
     ghAuth.data?.authenticated,
     getNextStepAfterBackends,
+    preferences,
   ])
 
   // Handle AI backend auth check steps
@@ -680,6 +771,38 @@ function OnboardingDialogContent() {
     })
   }, [claudeVersion, claudeSetup, claudeAuth])
 
+  const handleClaudeJeanSelect = useCallback(() => {
+    dbg('handleClaudeJeanSelect: saving claude_cli_source=jean')
+    setClaudePathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { claude_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          // If Claude is already installed via Jean, skip the reinstall step
+          // and jump straight to authentication.
+          if (claudeSetup.status?.installed) {
+            setStep('claude-auth-checking')
+            claudeAuth.refetch()
+          }
+          // Otherwise the conditional in the JSX falls through to SetupState
+          // (the version installer) since claudePathSelected is now true.
+        },
+        onError: err => {
+          dbg('handleClaudeJeanSelect: FAILED to save preference', err)
+          setClaudePathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    claudeSetup.status?.installed,
+    claudeAuth,
+    setStep,
+  ])
+
   const handleClaudePathSelect = useCallback(() => {
     dbg('handleClaudePathSelect: saving claude_cli_source=path')
     setClaudePathSelected(true)
@@ -701,6 +824,90 @@ function OnboardingDialogContent() {
       )
     }
   }, [preferences, patchPreferences, claudeAuth, setStep])
+
+  const handleCodexJeanSelect = useCallback(() => {
+    dbg('handleCodexJeanSelect: saving codex_cli_source=jean')
+    setCodexPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { codex_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (codexSetup.status?.installed) {
+            setStep('codex-auth-checking')
+            codexAuth.refetch()
+          }
+        },
+        onError: err => {
+          dbg('handleCodexJeanSelect: FAILED to save preference', err)
+          setCodexPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    codexSetup.status?.installed,
+    codexAuth,
+    setStep,
+  ])
+
+  const handleOpencodeJeanSelect = useCallback(() => {
+    dbg('handleOpencodeJeanSelect: saving opencode_cli_source=jean')
+    setOpencodePathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { opencode_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (opencodeSetup.status?.installed) {
+            setStep('opencode-auth-checking')
+            opencodeAuth.refetch()
+          }
+        },
+        onError: err => {
+          dbg('handleOpencodeJeanSelect: FAILED to save preference', err)
+          setOpencodePathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    opencodeSetup.status?.installed,
+    opencodeAuth,
+    setStep,
+  ])
+
+  const handleGhJeanSelect = useCallback(() => {
+    dbg('handleGhJeanSelect: saving gh_cli_source=jean')
+    setGhPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { gh_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (ghSetup.status?.installed) {
+            setStep('gh-auth-checking')
+            ghAuth.refetch()
+          }
+        },
+        onError: err => {
+          dbg('handleGhJeanSelect: FAILED to save preference', err)
+          setGhPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    ghSetup.status?.installed,
+    ghAuth,
+    setStep,
+  ])
 
   const handleCodexPathSelect = useCallback(() => {
     dbg('handleCodexPathSelect: saving codex_cli_source=path')
@@ -1049,6 +1256,13 @@ function OnboardingDialogContent() {
   })
 
   const getDialogContent = () => {
+    if (step === 'wsl-setup') {
+      return {
+        title: 'Welcome to Jean',
+        description: 'Choose your development environment.',
+      }
+    }
+
     if (step === 'backend-select') {
       return {
         title: onboardingManuallyTriggered
@@ -1226,17 +1440,27 @@ function OnboardingDialogContent() {
 
   return (
     <Dialog open={onboardingOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg flex flex-col" preventClose>
+      <DialogContent
+        className="sm:max-w-2xl max-h-[85vh] flex flex-col"
+        preventClose
+      >
         <DialogHeader>
           <DialogTitle className="text-xl">{dialogContent.title}</DialogTitle>
           <DialogDescription>{dialogContent.description}</DialogDescription>
         </DialogHeader>
 
         <div className="overflow-y-auto py-4 flex flex-col">
-          {renderStepIndicator()}
+          {step !== 'wsl-setup' && renderStepIndicator()}
 
           <div className="w-full">
-            {step === 'backend-select' ? (
+            {step === 'wsl-setup' ? (
+              <WslSetupStep
+                onComplete={() => {
+                  dbg('WSL setup complete → backend-select')
+                  setStep('backend-select')
+                }}
+              />
+            ) : step === 'backend-select' ? (
               <BackendSelectionState
                 selectedBackends={selectedBackends}
                 onToggle={handleBackendToggle}
@@ -1283,44 +1507,41 @@ function OnboardingDialogContent() {
               <AuthCheckingState cliName="OpenCode CLI" />
             ) : step === 'gh-auth-checking' ? (
               <AuthCheckingState cliName="GitHub CLI" />
-            ) : step === 'claude-setup' &&
-              pathDetection.data?.found &&
-              !claudePathSelected ? (
+            ) : step === 'claude-setup' && !claudePathSelected ? (
               <CliPathSelector
                 cliName="Claude CLI"
-                pathVersion={pathDetection.data.version}
-                pathPath={pathDetection.data.path}
+                pathFound={!!pathDetection.data?.found}
+                pathVersion={pathDetection.data?.version ?? null}
+                pathPath={pathDetection.data?.path ?? null}
                 isLoading={claudePathSelected}
+                currentSource={preferences?.claude_cli_source ?? null}
+                jeanInstalled={!!claudeSetup.status?.installed}
                 onSelectPath={handleClaudePathSelect}
-                onSelectJean={() => {
-                  setClaudePathSelected(true)
-                }}
+                onSelectJean={handleClaudeJeanSelect}
               />
-            ) : step === 'codex-setup' &&
-              codexPathDetection.data?.found &&
-              !codexPathSelected ? (
+            ) : step === 'codex-setup' && !codexPathSelected ? (
               <CliPathSelector
                 cliName="Codex CLI"
-                pathVersion={codexPathDetection.data.version}
-                pathPath={codexPathDetection.data.path}
+                pathFound={!!codexPathDetection.data?.found}
+                pathVersion={codexPathDetection.data?.version ?? null}
+                pathPath={codexPathDetection.data?.path ?? null}
                 isLoading={codexPathSelected}
+                currentSource={preferences?.codex_cli_source ?? null}
+                jeanInstalled={!!codexSetup.status?.installed}
                 onSelectPath={handleCodexPathSelect}
-                onSelectJean={() => {
-                  setCodexPathSelected(true)
-                }}
+                onSelectJean={handleCodexJeanSelect}
               />
-            ) : step === 'opencode-setup' &&
-              opencodePathDetection.data?.found &&
-              !opencodePathSelected ? (
+            ) : step === 'opencode-setup' && !opencodePathSelected ? (
               <CliPathSelector
                 cliName="OpenCode CLI"
-                pathVersion={opencodePathDetection.data.version}
-                pathPath={opencodePathDetection.data.path}
+                pathFound={!!opencodePathDetection.data?.found}
+                pathVersion={opencodePathDetection.data?.version ?? null}
+                pathPath={opencodePathDetection.data?.path ?? null}
                 isLoading={opencodePathSelected}
+                currentSource={preferences?.opencode_cli_source ?? null}
+                jeanInstalled={!!opencodeSetup.status?.installed}
                 onSelectPath={handleOpencodePathSelect}
-                onSelectJean={() => {
-                  setOpencodePathSelected(true)
-                }}
+                onSelectJean={handleOpencodeJeanSelect}
               />
             ) : step === 'claude-auth-login' ? (
               claudeLoginCommand ? (
@@ -1364,18 +1585,17 @@ function OnboardingDialogContent() {
               ) : (
                 <AuthCheckingState cliName="OpenCode CLI" />
               )
-            ) : step === 'gh-setup' &&
-              ghPathDetection.data?.found &&
-              !ghPathSelected ? (
+            ) : step === 'gh-setup' && !ghPathSelected ? (
               <CliPathSelector
                 cliName="GitHub CLI"
-                pathVersion={ghPathDetection.data.version}
-                pathPath={ghPathDetection.data.path}
+                pathFound={!!ghPathDetection.data?.found}
+                pathVersion={ghPathDetection.data?.version ?? null}
+                pathPath={ghPathDetection.data?.path ?? null}
                 isLoading={ghPathSelected}
+                currentSource={preferences?.gh_cli_source ?? null}
+                jeanInstalled={!!ghSetup.status?.installed}
                 onSelectPath={handleGhPathSelect}
-                onSelectJean={() => {
-                  setGhPathSelected(true)
-                }}
+                onSelectJean={handleGhJeanSelect}
               />
             ) : step === 'gh-auth-login' ? (
               ghLoginCommand ? (
@@ -1459,6 +1679,21 @@ function OnboardingDialogContent() {
             )}
           </div>
         </div>
+
+        <div className="flex items-center justify-between border-t pt-3 mt-auto">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={goBack}
+            disabled={!canGoBack}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {isTransientStep ? 'Working...' : ''}
+          </span>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -1477,54 +1712,51 @@ function BackendSelectionState({
   onContinue,
   readyBackends = [],
 }: BackendSelectionStateProps) {
-  const availableBackends = AI_BACKENDS.filter(b => !readyBackends.includes(b))
-
   return (
     <div className="space-y-6">
-      {availableBackends.length === 0 ? (
-        <div className="text-center py-4">
-          <p className="font-medium">All AI backends are installed</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            You can manage versions in Settings.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="space-y-3">
-            {availableBackends.map(backend => {
-              const id = `backend-${backend}`
-              const checked = selectedBackends.includes(backend)
-              const label = backendLabel[backend]
+      <div className="space-y-3">
+        {AI_BACKENDS.map(backend => {
+          const id = `backend-${backend}`
+          const checked = selectedBackends.includes(backend)
+          const label = backendLabel[backend]
+          const isReady = readyBackends.includes(backend)
 
-              return (
-                <label
-                  key={backend}
-                  htmlFor={id}
-                  className="flex items-center gap-3 rounded-lg border border-border p-3 cursor-pointer hover:bg-accent/40"
-                >
-                  <Checkbox
-                    id={id}
-                    checked={checked}
-                    onCheckedChange={value => onToggle(backend, value === true)}
-                  />
-                  <div>
-                    <p className="text-sm font-medium">{label}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Install and authenticate {label}.
-                    </p>
-                  </div>
-                </label>
-              )
-            })}
-          </div>
+          return (
+            <label
+              key={backend}
+              htmlFor={id}
+              className="flex items-center gap-3 rounded-lg border border-border p-3 cursor-pointer hover:bg-accent/40"
+            >
+              <Checkbox
+                id={id}
+                checked={checked}
+                onCheckedChange={value => onToggle(backend, value === true)}
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{label}</p>
+                  {isReady && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+                      installed
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {isReady
+                    ? `Reconfigure ${label} (change source or version).`
+                    : `Install and authenticate ${label}.`}
+                </p>
+              </div>
+            </label>
+          )
+        })}
+      </div>
 
-          <p className="text-xs text-muted-foreground">
-            {readyBackends.length > 0
-              ? 'Select the backends you want to add.'
-              : 'You must install at least one AI backend. You can install more later in Settings.'}
-          </p>
-        </>
-      )}
+      <p className="text-xs text-muted-foreground">
+        You must have at least one AI backend installed. Selecting an installed
+        backend lets you switch between Jean-managed and system PATH or change
+        versions.
+      </p>
 
       <Button onClick={onContinue} className="w-full" size="lg">
         Continue

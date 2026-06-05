@@ -97,6 +97,48 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
     return params
   }
 
+  it('smooth-scrolls a medium amount for Option+Cmd arrow scroll events', () => {
+    const viewport = document.createElement('div')
+    Object.defineProperty(viewport, 'clientHeight', {
+      configurable: true,
+      value: 1000,
+    })
+    Object.defineProperty(viewport, 'scrollHeight', {
+      configurable: true,
+      value: 3000,
+    })
+    viewport.scrollTop = 1000
+
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(180)
+        return 1
+      })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+
+    const beginKeyboardScroll = vi.fn()
+    const endKeyboardScroll = vi.fn()
+    renderUseChatWindowEvents({
+      isAtBottom: false,
+      scrollViewportRef: { current: viewport },
+      beginKeyboardScroll,
+      endKeyboardScroll,
+    })
+
+    window.dispatchEvent(
+      new CustomEvent('scroll-chat', {
+        detail: { direction: 'down', amount: 'medium' },
+      })
+    )
+
+    expect(beginKeyboardScroll).toHaveBeenCalled()
+    expect(viewport.scrollTop).toBe(1350)
+    expect(endKeyboardScroll).toHaveBeenCalled()
+    expect(requestAnimationFrameSpy).toHaveBeenCalled()
+  })
+
   it('re-focuses chat input after terminal steals focus on worktree open', () => {
     vi.useFakeTimers()
 

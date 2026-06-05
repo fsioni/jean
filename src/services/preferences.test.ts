@@ -141,6 +141,10 @@ describe('model option helpers', () => {
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
       'Always implement the simplest maintainable solution'
     )
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain('Clickable References')
+    expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
+      'include clickable links when available'
+    )
   })
 })
 
@@ -265,6 +269,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -408,6 +416,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -521,6 +533,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -634,6 +650,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -749,6 +769,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -906,6 +930,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',
@@ -1019,6 +1047,10 @@ describe('preferences service', () => {
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
         gh_cli_source: 'jean',
+        wsl_mode_chosen: false,
+        wsl_enabled: false,
+        wsl_distro: '',
+        coderabbit_cli_source: 'jean',
         expand_tool_calls_by_default: false,
         window_vibrancy: false,
         terminal_background: 'auto',

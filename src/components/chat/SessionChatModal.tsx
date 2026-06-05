@@ -48,6 +48,7 @@ import { useUIStore } from '@/store/ui-store'
 import {
   useSessions,
   useRenameSession,
+  useReorderSessions,
   reconnectNativeCliSession,
   canReconnectSession,
 } from '@/services/chat'
@@ -85,6 +86,10 @@ import {
   statusConfig,
   type SessionCardData,
 } from './session-card-utils'
+import {
+  buildReorderedSessionIdsWithinStatus,
+  sortSessionCardsForTabs,
+} from './session-tab-order'
 import { useCanvasStoreState } from './hooks/useCanvasStoreState'
 import {
   ContextMenu,
@@ -540,6 +545,9 @@ export function SessionChatModal({
     [worktreeId]
   )
 
+  const reorderSessions = useReorderSessions()
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null)
+
   const handleCreateSession = useCallback(() => {
     useUIStore.getState().openNewSessionModeModal({
       worktreeId,
@@ -571,27 +579,56 @@ export function SessionChatModal({
   }, [isOpen, worktreeId, worktreePath])
 
   // Sorted tab order: attention and active sessions first, review next,
-  // idle/new empty sessions last.
-  // Within each tier, oldest first so click never reorders.
+  // idle/new empty sessions last. Within each tier, manual tab order wins.
   const sortedCards = useMemo(() => {
-    const priority: Record<string, number> = {
-      waiting: 0,
-      permission: 0,
-      planning: 1,
-      vibing: 2,
-      yoloing: 3,
-      review: 4,
-      completed: 4,
-      idle: 5,
-    }
-    return [...cards].sort((a, b) => {
-      const pa = priority[a.status] ?? 1
-      const pb = priority[b.status] ?? 1
-      if (pa !== pb) return pa - pb
-      // Stable secondary sort: oldest first (consistent across refetches)
-      return a.session.created_at - b.session.created_at
-    })
+    return sortSessionCardsForTabs(cards)
   }, [cards])
+
+  const handleSessionDragStart = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>, sessionId: string) => {
+      setDraggedSessionId(sessionId)
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', sessionId)
+    },
+    []
+  )
+
+  const handleSessionDragOver = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>, targetSessionId: string) => {
+      if (
+        draggedSessionId &&
+        buildReorderedSessionIdsWithinStatus(
+          sortedCards,
+          draggedSessionId,
+          targetSessionId
+        )
+      ) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }
+    },
+    [draggedSessionId, sortedCards]
+  )
+
+  const handleSessionDrop = useCallback(
+    (e: React.DragEvent<HTMLButtonElement>, targetSessionId: string) => {
+      e.preventDefault()
+      const sourceId =
+        draggedSessionId || e.dataTransfer.getData('text/plain') || null
+      if (!sourceId) return
+
+      const sessionIds = buildReorderedSessionIdsWithinStatus(
+        sortedCards,
+        sourceId,
+        targetSessionId
+      )
+      setDraggedSessionId(null)
+      if (!sessionIds) return
+
+      reorderSessions.mutate({ worktreeId, worktreePath, sessionIds })
+    },
+    [draggedSessionId, reorderSessions, sortedCards, worktreeId, worktreePath]
+  )
 
   const sortedSessions = useMemo(
     () => sortedCards.map(c => c.session),
@@ -1062,7 +1099,7 @@ export function SessionChatModal({
                 viewportClassName="overflow-x-auto overflow-y-hidden overscroll-x-contain overscroll-y-none touch-pan-x scrollbar-hide [-webkit-overflow-scrolling:touch]"
                 viewportRef={modalTabScrollRef}
               >
-                <div className="flex min-w-max items-center gap-1.5 py-1 px-3">
+                <div className="flex min-w-max items-center gap-0 py-0 px-0">
                   {sortedCards.map((card, idx) => {
                     const session = card.session
                     const isActive = session.id === currentSessionId
@@ -1076,6 +1113,15 @@ export function SessionChatModal({
                         <ContextMenuTrigger asChild>
                           <button
                             data-session-id={session.id}
+                            draggable={renamingSessionId !== session.id}
+                            onDragStart={e =>
+                              handleSessionDragStart(e, session.id)
+                            }
+                            onDragOver={e =>
+                              handleSessionDragOver(e, session.id)
+                            }
+                            onDrop={e => handleSessionDrop(e, session.id)}
+                            onDragEnd={() => setDraggedSessionId(null)}
                             onClick={() => handleTabClick(session.id)}
                             onAuxClick={e => handleTabAuxClick(e, session)}
                             onDoubleClick={() =>
@@ -1085,12 +1131,13 @@ export function SessionChatModal({
                               )
                             }
                             className={cn(
-                              'group/tab flex rounded items-center gap-2 px-2.5 py-1.5 text-xs transition-colors whitespace-nowrap border border-transparent',
+                              'group/tab flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors whitespace-nowrap',
                               isActive
                                 ? 'bg-muted text-foreground'
                                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                              draggedSessionId === session.id && 'opacity-60',
                               status === 'waiting' &&
-                                'border-dashed border-yellow-500 dark:border-yellow-400'
+                                'bg-yellow-500/10 text-yellow-700 border-yellow-500 hover:bg-yellow-500/20 hover:text-yellow-800 dark:bg-yellow-400/10 dark:text-yellow-300 dark:border-yellow-400 dark:hover:bg-yellow-400/20 dark:hover:text-yellow-200'
                             )}
                           >
                             <StatusIndicator

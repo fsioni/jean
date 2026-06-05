@@ -340,6 +340,15 @@ The helper is defined in `src-tauri/src/platform/process.rs` and exported via `p
 - `SessionListRow.tsx` - Compact row component for list view
 - `session-card-utils.tsx` - `computeSessionCardData()`, `SessionCardData`, and `SessionCardProps` types
 
+#### Keyboard Affordances in Web/Mobile
+
+Keyboard-only affordances are native-desktop only by default:
+
+- Hide `<Kbd>` shortcut hints in web access and mobile views unless the shortcut is explicitly useful there.
+- Disable matching keyboard-only default actions in web access/mobile (examples: toast default action `Alt+Enter`, unread session mark-read `R`).
+- Keep the click/tap action available; only gate the desktop keyboard hint/handler.
+- Use `isNativeApp()` plus `useIsMobile()`/viewport width for gating, and add tests for native desktop, web access, and mobile.
+
 #### Image Processing on Paste/Drop
 
 Images pasted or dropped into chat are processed before saving (`process_image()` in `src-tauri/src/chat/commands.rs`):

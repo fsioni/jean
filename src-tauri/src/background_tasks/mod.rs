@@ -749,7 +749,7 @@ async fn refresh_codex_usage_cache(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let _ = crate::codex_cli::get_codex_usage().await?;
+    let _ = crate::codex_cli::get_codex_usage(app.clone()).await?;
     Ok(())
 }
 

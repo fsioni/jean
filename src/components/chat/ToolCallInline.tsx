@@ -432,7 +432,7 @@ function SubThinkingItem({ thinking }: SubThinkingItemProps) {
         <CollapsibleContent>
           <div className="border-t border-border/30 px-2 py-1.5">
             <div className="pl-2 border-l-2 border-purple-500/30 text-[0.625rem] text-muted-foreground/70">
-              <Markdown>{thinking}</Markdown>
+              <Markdown variant="tool-call">{thinking}</Markdown>
             </div>
           </div>
         </CollapsibleContent>
@@ -972,7 +972,9 @@ function getToolDisplay(toolCall: ToolCall): ToolDisplay {
           instructions.length > 0
             ? 'Read-only analysis instructions'
             : undefined,
-        expandedContent: <Markdown>{markdownBody}</Markdown>,
+        expandedContent: (
+          <Markdown variant="tool-call">{markdownBody}</Markdown>
+        ),
       }
     }
 
@@ -1137,7 +1139,7 @@ function getToolDisplay(toolCall: ToolCall): ToolDisplay {
           />
         ),
         expandedContent: markdownBody ? (
-          <Markdown>{markdownBody}</Markdown>
+          <Markdown variant="tool-call">{markdownBody}</Markdown>
         ) : (
           JSON.stringify(input, null, 2)
         ),

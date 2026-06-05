@@ -18,6 +18,7 @@ import {
   Undo2,
   Link2,
   ShieldAlert,
+  Loader2,
 } from 'lucide-react'
 import {
   Dialog,
@@ -53,6 +54,7 @@ import { generateId } from '@/lib/uuid'
 import { openExternal } from '@/lib/platform'
 import { notify } from '@/lib/notifications'
 import { cn } from '@/lib/utils'
+import { toastActionLabel } from '@/lib/toast-action-label'
 import { toast } from 'sonner'
 import {
   gitPush,
@@ -1014,7 +1016,7 @@ export function MagicModal() {
               {
                 id: toastId,
                 action: {
-                  label: 'Open',
+                  label: toastActionLabel('Open'),
                   onClick: () => openExternal(result.pr_url),
                 },
               }
@@ -1275,7 +1277,7 @@ ${resolveInstructions}`
                   id: toastId,
                   action: result.pr_url
                     ? {
-                        label: 'Open',
+                        label: toastActionLabel('Open'),
                         onClick: () => openExternal(result.pr_url),
                       }
                     : undefined,
@@ -1429,7 +1431,7 @@ ${resolveInstructions}`
               {
                 id: toastId,
                 action: {
-                  label: 'Open',
+                  label: toastActionLabel('Open'),
                   onClick: () => {
                     const { setActiveSession, clearActiveWorktree } =
                       useChatStore.getState()
@@ -1576,7 +1578,7 @@ ${resolveInstructions}`
 
       toast.success(`Linked PR #${result.pr_number}: ${result.title}`, {
         action: {
-          label: 'Open',
+          label: toastActionLabel('Open'),
           onClick: () => openExternal(result.pr_url),
         },
       })
@@ -1980,12 +1982,14 @@ ${resolveInstructions}`
                     handleLinkPrSubmit()
                   }
                 }}
+                disabled={isDetectingLinkPr}
                 autoFocus
               />
               {isDetectingLinkPr && (
-                <p className="text-xs text-muted-foreground">
-                  Searching current branch for open PR…
-                </p>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Checking current branch for an open PR…</span>
+                </div>
               )}
               {detectedLinkPr && (
                 <p className="text-sm text-foreground">
@@ -2013,7 +2017,11 @@ ${resolveInstructions}`
                 onClick={handleLinkPrSubmit}
                 disabled={isLinkingPr || isDetectingLinkPr}
               >
-                {isLinkingPr ? 'Linking…' : 'Link PR'}
+                {isDetectingLinkPr
+                  ? 'Checking…'
+                  : isLinkingPr
+                    ? 'Linking…'
+                    : 'Link PR'}
               </Button>
             </div>
           </div>

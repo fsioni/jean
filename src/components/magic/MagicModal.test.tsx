@@ -211,15 +211,21 @@ describe('MagicModal manual PR link', () => {
     })
   })
 
-  it('opens a Link PR dialog and searches current branch for an existing PR', async () => {
+  it('opens a Link PR dialog and shows checking state while searching current branch', async () => {
     const user = userEvent.setup()
+    let resolveDetection:
+      | ((value: { pr_number: number; pr_url: string; title: string }) => void)
+      | undefined
+    const detectionPromise = new Promise<{
+      pr_number: number
+      pr_url: string
+      title: string
+    }>(resolve => {
+      resolveDetection = resolve
+    })
     mocks.invokeMock.mockImplementation((command: string) => {
       if (command === 'detect_and_link_pr') {
-        return Promise.resolve({
-          pr_number: 456,
-          pr_url: 'https://github.com/o/r/pull/456',
-          title: 'Existing branch PR',
-        })
+        return detectionPromise
       }
       return Promise.resolve(null)
     })
@@ -234,6 +240,19 @@ describe('MagicModal manual PR link', () => {
         worktreePath: '/repo/worktree',
       })
     })
+    expect(
+      screen.getByText(/Checking current branch for an open PR/i)
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText(/pr number/i)).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^checking/i })).toBeDisabled()
+
+    if (!resolveDetection) throw new Error('Detection resolver not set')
+    resolveDetection({
+      pr_number: 456,
+      pr_url: 'https://github.com/o/r/pull/456',
+      title: 'Existing branch PR',
+    })
+
     expect(await screen.findByDisplayValue('456')).toBeInTheDocument()
     expect(
       screen.getByText(/Found PR #456: Existing branch PR/i)
