@@ -558,7 +558,7 @@ describe('BackendModelPickerContent', () => {
     )
   })
 
-  it('Cmd+digit ignored on locked session for non-selected backend', async () => {
+  it('Cmd+digit switches backend even after the session has messages', async () => {
     const user = userEvent.setup()
 
     render(
@@ -583,13 +583,13 @@ describe('BackendModelPickerContent', () => {
 
     await user.keyboard('{Meta>}1{/Meta}')
 
-    expect(screen.getByRole('tab', { name: 'Codex' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Claude' })).toHaveAttribute(
       'aria-selected',
       'true'
     )
   })
 
-  it('disables non-selected backend tabs once the session has messages', () => {
+  it('keeps backend tabs enabled once the session has messages', () => {
     render(
       <BackendModelPickerContent
         open
@@ -605,8 +605,8 @@ describe('BackendModelPickerContent', () => {
       />
     )
 
-    expect(screen.getByRole('tab', { name: 'Claude' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Claude' })).not.toBeDisabled()
     expect(screen.getByRole('tab', { name: 'Codex' })).not.toBeDisabled()
-    expect(screen.getByRole('tab', { name: 'OpenCode' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'OpenCode' })).not.toBeDisabled()
   })
 })

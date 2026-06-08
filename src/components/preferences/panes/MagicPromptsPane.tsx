@@ -53,6 +53,7 @@ import {
   DEFAULT_SESSION_NAMING_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_GLOBAL_SYSTEM_PROMPT,
+  DEFAULT_PROVIDER_SWITCH_HANDOFF_PROMPT,
   DEFAULT_MAGIC_PROMPTS,
   DEFAULT_MAGIC_PROMPT_MODELS,
   DEFAULT_MAGIC_PROMPT_PROVIDERS,
@@ -456,6 +457,27 @@ const PROMPT_SECTIONS: PromptSection[] = [
           'Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md).',
         variables: [],
         defaultValue: DEFAULT_GLOBAL_SYSTEM_PROMPT,
+      },
+      {
+        key: 'provider_switch_handoff',
+        label: 'Provider Switch Handoff',
+        description:
+          'Hidden prompt prepended when a session switches between AI backends so the new provider uses Jean-local history as context.',
+        variables: [
+          {
+            name: '{previous_backend}',
+            description: 'Backend used by the previous run',
+          },
+          {
+            name: '{current_backend}',
+            description: 'Backend used by the current run',
+          },
+          {
+            name: '{history}',
+            description: 'Bounded Jean-local conversation history',
+          },
+        ],
+        defaultValue: DEFAULT_PROVIDER_SWITCH_HANDOFF_PROMPT,
       },
     ],
   },

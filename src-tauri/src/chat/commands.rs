@@ -2231,6 +2231,43 @@ pub async fn send_chat_message(
     let pi_session_id = sessions
         .find_session(&session_id)
         .and_then(|s| s.pi_session_id.clone());
+
+    let previous_backend = load_metadata(&app, &session_id)
+        .ok()
+        .flatten()
+        .and_then(|metadata| super::handoff::latest_completed_backend(&metadata));
+    let message_for_backend = if super::handoff::should_inject_handoff(
+        previous_backend.as_ref(),
+        &effective_backend,
+    ) {
+        let history = run_log::load_session_messages_window(&app, &session_id, Some(20), None)
+            .map(|loaded| super::handoff::format_handoff_history(&loaded.messages, 30_000))
+            .unwrap_or_default();
+
+        if let Some(previous_backend) = previous_backend.as_ref().filter(|_| !history.is_empty()) {
+            let template = crate::load_preferences(app.clone())
+                .await
+                .ok()
+                .and_then(|prefs| prefs.magic_prompts.provider_switch_handoff)
+                .filter(|prompt| !prompt.trim().is_empty())
+                .unwrap_or_else(crate::default_provider_switch_handoff_prompt);
+            let handoff_prompt = super::handoff::build_handoff_prompt(
+                &template,
+                previous_backend,
+                &effective_backend,
+                &history,
+            );
+            log::info!(
+                    "[SendChat] injecting hidden provider-switch handoff session={session_id} previous={previous_backend:?} current={effective_backend:?}"
+                );
+            super::handoff::prepend_hidden_handoff(&message, &handoff_prompt)
+        } else {
+            message.clone()
+        }
+    } else {
+        message.clone()
+    };
+
     // Cursor CLI doesn't support thinking/effort levels
     let run_thinking_level = if matches!(
         effective_backend,
@@ -2276,8 +2313,9 @@ pub async fn send_chat_message(
     let output_file = run_log_writer.output_file_path()?;
     let run_id = run_log_writer.run_id().to_string();
 
-    // Write input file with the user message
-    run_log::write_input_file(&app, &session_id, &run_id, &message)?;
+    // Write input file with the effective backend prompt. Hidden handoff context
+    // is intentionally not stored as the visible user message in metadata.
+    run_log::write_input_file(&app, &session_id, &run_id, &message_for_backend)?;
 
     // Use passed parameter for parallel execution prompt (None = disabled)
     let parallel_execution_prompt = parallel_execution_prompt.filter(|p| !p.trim().is_empty());
@@ -2372,7 +2410,7 @@ pub async fn send_chat_message(
         mcp_config.clone()
     };
     let thread_custom_profile = custom_profile_name.clone();
-    let thread_message = message.clone();
+    let thread_message = message_for_backend.clone();
     let thread_backend = effective_backend.clone();
     let thread_codex_search = codex_search_enabled;
     let thread_codex_multi_agent = codex_multi_agent_enabled;

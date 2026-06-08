@@ -181,7 +181,7 @@ export function DesktopBackendModelPicker({
                   />
                 )}
               </span>
-              {!sessionHasMessages && installedBackends.length > 1 && (
+              {installedBackends.length > 1 && (
                 <Kbd className="ml-1 hidden 2xl:inline-flex text-[10px]">
                   Tab
                 </Kbd>
@@ -196,9 +196,7 @@ export function DesktopBackendModelPicker({
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent>
-          {sessionHasMessages
-            ? 'Model (⌘⇧M)'
-            : 'Backend + model (⌘⇧M) · Tab cycles backend'}
+          Backend + model (⌘⇧M) · Tab cycles backend
         </TooltipContent>
       </Tooltip>
       <PopoverContent

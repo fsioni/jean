@@ -160,22 +160,22 @@ describe('ExitPlanModeButton', () => {
     ).toHaveLength(2)
 
     await user.click(
-      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[0]
+      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[0]!
     )
     expect(onClearContextApproval).toHaveBeenCalledWith()
 
     await openYoloMenu()
     await user.click(
-      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[1]
+      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[1]!
     )
     expect(onWorktreeYoloApproval).toHaveBeenCalledWith()
 
     await openYoloMenu()
     await user.click(
-      screen.getAllByRole('menuitem', { name: /Other model/i })[0]
+      screen.getAllByRole('menuitem', { name: /Other model/i })[0]!
     )
     await user.click(
-      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[0]
+      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[0]!
     )
     expect(onClearContextApproval).toHaveBeenCalledWith({
       backend: 'codex',
@@ -184,10 +184,10 @@ describe('ExitPlanModeButton', () => {
 
     await openYoloMenu()
     await user.click(
-      screen.getAllByRole('menuitem', { name: /Other model/i })[1]
+      screen.getAllByRole('menuitem', { name: /Other model/i })[1]!
     )
     await user.click(
-      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[1]
+      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[1]!
     )
     expect(onWorktreeYoloApproval).toHaveBeenCalledWith({
       backend: 'codex',

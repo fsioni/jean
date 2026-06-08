@@ -868,6 +868,8 @@ pub struct MagicPrompts {
     #[serde(default)]
     pub global_system_prompt: Option<String>,
     #[serde(default)]
+    pub provider_switch_handoff: Option<String>,
+    #[serde(default)]
     pub investigate_security_alert: Option<String>,
     #[serde(default)]
     pub investigate_advisory: Option<String>,
@@ -1427,6 +1429,22 @@ fn default_global_system_prompt() -> String {
         .to_string()
 }
 
+pub(crate) fn default_provider_switch_handoff_prompt() -> String {
+    r#"You are continuing a Jean chat session after the user switched AI backends.
+
+Jean-local history is the source of truth because provider-owned server history may be incomplete after backend switches.
+
+Previous backend: {previous_backend}
+Current backend: {current_backend}
+
+Use the Jean-local history below to reconstruct context before answering the user's latest message. Do not mention this hidden handoff unless it is directly relevant.
+
+<jean_local_history>
+{history}
+</jean_local_history>"#
+        .to_string()
+}
+
 /// Per-prompt model overrides for magic prompts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicPromptModels {
@@ -1645,7 +1663,7 @@ impl MagicPrompts {
     /// This ensures users who never customized a prompt get auto-updated defaults.
     fn migrate_defaults(&mut self) {
         type DefaultEntry<'a> = (fn() -> String, &'a mut Option<String>);
-        let defaults: [DefaultEntry; 16] = [
+        let defaults: [DefaultEntry; 17] = [
             (
                 default_investigate_issue_prompt,
                 &mut self.investigate_issue,
@@ -1670,6 +1688,10 @@ impl MagicPrompts {
                 &mut self.parallel_execution,
             ),
             (default_global_system_prompt, &mut self.global_system_prompt),
+            (
+                default_provider_switch_handoff_prompt,
+                &mut self.provider_switch_handoff,
+            ),
             (
                 default_investigate_security_alert_prompt,
                 &mut self.investigate_security_alert,

@@ -62,7 +62,7 @@ export function BackendModelPickerContent({
   selectedProvider,
   installedBackends,
   customCliProfiles,
-  sessionHasMessages,
+  sessionHasMessages: _sessionHasMessages,
   providerLocked,
   onModelChange,
   onBackendModelChange,
@@ -82,7 +82,9 @@ export function BackendModelPickerContent({
     /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
   const fastShortcutLabel = isApplePlatform ? '⌘F' : 'Ctrl F'
 
-  const isLocked = Boolean(sessionHasMessages)
+  // Sessions with messages can now switch backends because the backend gets a
+  // hidden Jean-local handoff prompt on provider changes.
+  const isLocked = false
 
   const { data: prefs } = usePreferences()
   const patchPreferences = usePatchPreferences()
@@ -388,7 +390,6 @@ export function BackendModelPickerContent({
 
   const showProviderHint =
     Boolean(providerLocked) &&
-    isLocked &&
     activeBackend === 'claude' &&
     customCliProfiles.length > 0
 

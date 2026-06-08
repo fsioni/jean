@@ -62,6 +62,8 @@ export interface MagicPrompts {
   parallel_execution: string | null
   /** Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md) */
   global_system_prompt: string | null
+  /** Hidden prompt prepended when switching providers within a Jean session */
+  provider_switch_handoff: string | null
   /** Prompt for investigating Dependabot vulnerability alerts */
   investigate_security_alert: string | null
   /** Prompt for investigating repository security advisories */
@@ -603,6 +605,19 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
 
 - After each finished task, please write a few bullet points on how to test the changes.`
 
+export const DEFAULT_PROVIDER_SWITCH_HANDOFF_PROMPT = `You are continuing a Jean chat session after the user switched AI backends.
+
+Jean-local history is the source of truth because provider-owned server history may be incomplete after backend switches.
+
+Previous backend: {previous_backend}
+Current backend: {current_backend}
+
+Use the Jean-local history below to reconstruct context before answering the user's latest message. Do not mention this hidden handoff unless it is directly relevant.
+
+<jean_local_history>
+{history}
+</jean_local_history>`
+
 /** Default prompt for addressing inline PR review comments */
 export const DEFAULT_REVIEW_COMMENTS_PROMPT = `<task>
 
@@ -649,6 +664,7 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   session_naming: null,
   parallel_execution: null,
   global_system_prompt: null,
+  provider_switch_handoff: null,
   investigate_security_alert: null,
   investigate_advisory: null,
   investigate_linear_issue: null,

@@ -98,4 +98,33 @@ describe('useToolbarHandlers', () => {
       value: 'xhigh',
     })
   })
+
+  it('cycles backend with Tab even after the session has messages', () => {
+    const { result } = renderHandlers({
+      installedBackends: ['claude', 'codex'],
+      session: {
+        ...baseSession,
+        messages: [
+          {
+            id: 'message-1',
+            session_id: 'session-1',
+            role: 'user',
+            content: 'hello',
+            timestamp: 1,
+            tool_calls: [],
+          },
+        ],
+      },
+      preferences: {
+        default_execution_mode: 'plan',
+        selected_codex_model: 'gpt-5.5',
+      },
+    })
+
+    act(() => {
+      result.current.handleTabBackendSwitch()
+    })
+
+    expect(useChatStore.getState().selectedBackends['session-1']).toBe('codex')
+  })
 })

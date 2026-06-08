@@ -783,6 +783,18 @@ const magicPromptDefinitions: {
     description: 'System prompt applied to every session.',
     keywords: ['global system prompt', 'system prompt'],
   },
+  {
+    key: 'provider_switch_handoff',
+    title: 'Provider Switch Handoff Prompt',
+    description:
+      'Hidden prompt used to rebuild context when switching AI backends.',
+    keywords: [
+      'provider switch handoff prompt',
+      'backend switch prompt',
+      'cross provider context',
+      'hidden handoff',
+    ],
+  },
 ]
 
 const magicPromptEntries: PreferenceSearchEntry[] = magicPromptDefinitions.map(
