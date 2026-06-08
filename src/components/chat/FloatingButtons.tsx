@@ -14,6 +14,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
+import {
+  ApprovalActionGroup,
+  type ApprovalModelOverride,
+} from './ApprovalModelSubmenu'
 
 interface FloatingButtonsProps {
   /** Whether a plan needs approval (streaming or pending) */
@@ -30,14 +34,18 @@ interface FloatingButtonsProps {
   onApprove: () => void
   /** Callback for approve (yolo mode) */
   onYoloApprove: () => void
+  /** Label for the build default backend/model */
+  buildDefaultModelLabel?: string | null
+  /** Label for the yolo default backend/model */
+  yoloDefaultModelLabel?: string | null
   /** Callback for clear context build approval */
-  onClearContextBuildApprove?: () => void
+  onClearContextBuildApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for clear context yolo approval */
-  onClearContextApprove?: () => void
+  onClearContextApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for worktree build approval */
-  onWorktreeBuildApprove?: () => void
+  onWorktreeBuildApprove?: (override?: ApprovalModelOverride) => void
   /** Callback for worktree yolo approval */
-  onWorktreeYoloApprove?: () => void
+  onWorktreeYoloApprove?: (override?: ApprovalModelOverride) => void
   /** Callback to scroll to findings */
   onScrollToFindings: () => void
   /** Callback to scroll to bottom */
@@ -56,6 +64,8 @@ export const FloatingButtons = memo(function FloatingButtons({
   approveShortcut,
   onApprove,
   onYoloApprove,
+  buildDefaultModelLabel,
+  yoloDefaultModelLabel,
   onClearContextBuildApprove,
   onClearContextApprove,
   onWorktreeBuildApprove,
@@ -66,10 +76,14 @@ export const FloatingButtons = memo(function FloatingButtons({
   const showApproveButton = showApprove && !isAtBottom
 
   const withScroll = useCallback(
-    (fn?: () => void) => () => {
-      fn?.()
-      onScrollToBottom()
-    },
+    (
+      fn?: (override?: ApprovalModelOverride) => void,
+      override?: ApprovalModelOverride
+    ) =>
+      () => {
+        fn?.(override)
+        onScrollToBottom()
+      },
     [onScrollToBottom]
   )
 
@@ -112,48 +126,63 @@ export const FloatingButtons = memo(function FloatingButtons({
                   </DropdownMenuShortcut>
                 </DropdownMenuItem>
                 {onClearContextBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={withScroll(onClearContextBuildApprove)}
-                  >
-                    New Session
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                  <ApprovalActionGroup
+                    title="New Session"
+                    defaultModelLabel={buildDefaultModelLabel}
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
+                    )}
+                    onDefaultSelect={withScroll(onClearContextBuildApprove)}
+                    onModelSelect={override => {
+                      onClearContextBuildApprove(override)
+                      onScrollToBottom()
+                    }}
+                  />
                 )}
                 {onClearContextApprove && (
-                  <DropdownMenuItem onClick={withScroll(onClearContextApprove)}>
-                    New Session (YOLO)
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                  <ApprovalActionGroup
+                    title="New Session (YOLO)"
+                    defaultModelLabel={yoloDefaultModelLabel}
+                    separatorBefore={Boolean(onClearContextBuildApprove)}
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context
+                    )}
+                    onDefaultSelect={withScroll(onClearContextApprove)}
+                    onModelSelect={override => {
+                      onClearContextApprove(override)
+                      onScrollToBottom()
+                    }}
+                  />
                 )}
                 {onWorktreeBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={withScroll(onWorktreeBuildApprove)}
-                  >
-                    New Worktree
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                  <ApprovalActionGroup
+                    title="New Worktree"
+                    defaultModelLabel={buildDefaultModelLabel}
+                    separatorBefore
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_build
+                    )}
+                    onDefaultSelect={withScroll(onWorktreeBuildApprove)}
+                    onModelSelect={override => {
+                      onWorktreeBuildApprove(override)
+                      onScrollToBottom()
+                    }}
+                  />
                 )}
                 {onWorktreeYoloApprove && (
-                  <DropdownMenuItem onClick={withScroll(onWorktreeYoloApprove)}>
-                    New Worktree (YOLO)
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                  <ApprovalActionGroup
+                    title="New Worktree (YOLO)"
+                    defaultModelLabel={yoloDefaultModelLabel}
+                    separatorBefore={Boolean(onWorktreeBuildApprove)}
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
+                    )}
+                    onDefaultSelect={withScroll(onWorktreeYoloApprove)}
+                    onModelSelect={override => {
+                      onWorktreeYoloApprove(override)
+                      onScrollToBottom()
+                    }}
+                  />
                 )}
               </DropdownMenuContent>
             </DropdownMenu>

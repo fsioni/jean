@@ -53,6 +53,7 @@ import {
 } from './message-content-utils'
 import { hasQuestionAnswerOutput } from '@/types/chat'
 import { MessageSettingsBadges } from '@/components/chat/MessageSettingsBadges'
+import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 
 interface MessageItemProps {
   /** The message to render */
@@ -86,13 +87,25 @@ interface MessageItemProps {
   /** Callback when user approves a plan with yolo mode */
   onPlanApprovalYolo?: (messageId: string) => void
   /** Callback for clear context approval (new session with plan in yolo mode) */
-  onClearContextApproval?: (messageId: string) => void
+  onClearContextApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for clear context approval (new session with plan in build mode) */
-  onClearContextApprovalBuild?: (messageId: string) => void
+  onClearContextApprovalBuild?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for worktree approval (new worktree with plan in build mode) */
-  onWorktreeBuildApproval?: (messageId: string) => void
+  onWorktreeBuildApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback for worktree approval (new worktree with plan in yolo mode) */
-  onWorktreeYoloApproval?: (messageId: string) => void
+  onWorktreeYoloApproval?: (
+    messageId: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Callback when user answers a question */
   onQuestionAnswer: (
     toolCallId: string,
@@ -204,24 +217,36 @@ export const MessageItem = memo(function MessageItem({
   }, [onPlanApprovalYolo, message.id])
 
   // Stable callback for clear context approval
-  const handleClearContextApproval = useCallback(() => {
-    onClearContextApproval?.(message.id)
-  }, [onClearContextApproval, message.id])
+  const handleClearContextApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextApproval?.(message.id, override)
+    },
+    [onClearContextApproval, message.id]
+  )
 
   // Stable callback for clear context build approval
-  const handleClearContextApprovalBuild = useCallback(() => {
-    onClearContextApprovalBuild?.(message.id)
-  }, [onClearContextApprovalBuild, message.id])
+  const handleClearContextApprovalBuild = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextApprovalBuild?.(message.id, override)
+    },
+    [onClearContextApprovalBuild, message.id]
+  )
 
   // Stable callback for worktree build approval
-  const handleWorktreeBuildApproval = useCallback(() => {
-    onWorktreeBuildApproval?.(message.id)
-  }, [onWorktreeBuildApproval, message.id])
+  const handleWorktreeBuildApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeBuildApproval?.(message.id, override)
+    },
+    [onWorktreeBuildApproval, message.id]
+  )
 
   // Stable callback for worktree yolo approval
-  const handleWorktreeYoloApproval = useCallback(() => {
-    onWorktreeYoloApproval?.(message.id)
-  }, [onWorktreeYoloApproval, message.id])
+  const handleWorktreeYoloApproval = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeYoloApproval?.(message.id, override)
+    },
+    [onWorktreeYoloApproval, message.id]
+  )
 
   // Stable callback for checking if finding is fixed
   const handleIsFindingFixed = useCallback(

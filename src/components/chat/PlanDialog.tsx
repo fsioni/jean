@@ -21,9 +21,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { SplitButton } from '@/components/ui/split-button'
 import {
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-} from '@/components/ui/dropdown-menu'
+  ApprovalActionGroup,
+  type ApprovalModelOverride,
+} from './ApprovalModelSubmenu'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
 
 export interface ApprovalContext {
@@ -41,10 +41,22 @@ interface PlanDialogBaseProps {
   approvalContext?: ApprovalContext
   onApprove?: (updatedPlan: string) => void
   onApproveYolo?: (updatedPlan: string) => void
-  onClearContextApprove?: (updatedPlan: string) => void
-  onClearContextBuildApprove?: (updatedPlan: string) => void
-  onWorktreeBuildApprove?: (updatedPlan: string) => void
-  onWorktreeYoloApprove?: (updatedPlan: string) => void
+  onClearContextApprove?: (
+    updatedPlan: string,
+    override?: ApprovalModelOverride
+  ) => void
+  onClearContextBuildApprove?: (
+    updatedPlan: string,
+    override?: ApprovalModelOverride
+  ) => void
+  onWorktreeBuildApprove?: (
+    updatedPlan: string,
+    override?: ApprovalModelOverride
+  ) => void
+  onWorktreeYoloApprove?: (
+    updatedPlan: string,
+    override?: ApprovalModelOverride
+  ) => void
   /** Hide approve buttons (e.g. for Codex which has no native approval flow) */
   hideApproveButtons?: boolean
 }
@@ -171,25 +183,37 @@ export function PlanDialog({
     onClose()
   }, [editedContent, onApproveYolo, onClose])
 
-  const handleClearContextApprove = useCallback(() => {
-    onClearContextApprove?.(editedContent)
-    onClose()
-  }, [editedContent, onClearContextApprove, onClose])
+  const handleClearContextApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextApprove?.(editedContent, override)
+      onClose()
+    },
+    [editedContent, onClearContextApprove, onClose]
+  )
 
-  const handleClearContextBuildApprove = useCallback(() => {
-    onClearContextBuildApprove?.(editedContent)
-    onClose()
-  }, [editedContent, onClearContextBuildApprove, onClose])
+  const handleClearContextBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onClearContextBuildApprove?.(editedContent, override)
+      onClose()
+    },
+    [editedContent, onClearContextBuildApprove, onClose]
+  )
 
-  const handleWorktreeBuildApprove = useCallback(() => {
-    onWorktreeBuildApprove?.(editedContent)
-    onClose()
-  }, [editedContent, onWorktreeBuildApprove, onClose])
+  const handleWorktreeBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeBuildApprove?.(editedContent, override)
+      onClose()
+    },
+    [editedContent, onWorktreeBuildApprove, onClose]
+  )
 
-  const handleWorktreeYoloApprove = useCallback(() => {
-    onWorktreeYoloApprove?.(editedContent)
-    onClose()
-  }, [editedContent, onWorktreeYoloApprove, onClose])
+  const handleWorktreeYoloApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      onWorktreeYoloApprove?.(editedContent, override)
+      onClose()
+    },
+    [editedContent, onWorktreeYoloApprove, onClose]
+  )
 
   // Keyboard shortcuts for approve actions
   useEffect(() => {
@@ -348,44 +372,29 @@ export function PlanDialog({
                 disabled={!canApprove}
               >
                 {onClearContextBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={handleClearContextBuildApprove}
+                  <ApprovalActionGroup
+                    title="New Session"
+                    defaultModelLabel={buildNewContextLabel}
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
+                    )}
                     disabled={!canApprove}
-                  >
-                    <span className="flex flex-col">
-                      <span>New Session</span>
-                      {buildNewContextLabel && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {buildNewContextLabel}
-                        </span>
-                      )}
-                    </span>
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                    onDefaultSelect={() => handleClearContextBuildApprove()}
+                    onModelSelect={handleClearContextBuildApprove}
+                  />
                 )}
                 {onWorktreeBuildApprove && (
-                  <DropdownMenuItem
-                    onClick={handleWorktreeBuildApprove}
+                  <ApprovalActionGroup
+                    title="New Worktree"
+                    defaultModelLabel={buildNewContextLabel}
+                    separatorBefore
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_build
+                    )}
                     disabled={!canApprove}
-                  >
-                    <span className="flex flex-col">
-                      <span>New Worktree</span>
-                      {buildNewContextLabel && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {buildNewContextLabel}
-                        </span>
-                      )}
-                    </span>
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_build
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                    onDefaultSelect={() => handleWorktreeBuildApprove()}
+                    onModelSelect={handleWorktreeBuildApprove}
+                  />
                 )}
               </SplitButton>
               <SplitButton
@@ -396,44 +405,29 @@ export function PlanDialog({
                 disabled={!canApprove}
               >
                 {onClearContextApprove && (
-                  <DropdownMenuItem
-                    onClick={handleClearContextApprove}
+                  <ApprovalActionGroup
+                    title="New Session (YOLO)"
+                    defaultModelLabel={yoloNewContextLabel}
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_clear_context
+                    )}
                     disabled={!canApprove}
-                  >
-                    <span className="flex flex-col">
-                      <span>New Session (YOLO)</span>
-                      {yoloNewContextLabel && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {yoloNewContextLabel}
-                        </span>
-                      )}
-                    </span>
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_clear_context
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                    onDefaultSelect={() => handleClearContextApprove()}
+                    onModelSelect={handleClearContextApprove}
+                  />
                 )}
                 {onWorktreeYoloApprove && (
-                  <DropdownMenuItem
-                    onClick={handleWorktreeYoloApprove}
+                  <ApprovalActionGroup
+                    title="New Worktree (YOLO)"
+                    defaultModelLabel={yoloNewContextLabel}
+                    separatorBefore
+                    shortcut={formatShortcutDisplay(
+                      DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
+                    )}
                     disabled={!canApprove}
-                  >
-                    <span className="flex flex-col">
-                      <span>New Worktree (YOLO)</span>
-                      {yoloNewContextLabel && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {yoloNewContextLabel}
-                        </span>
-                      )}
-                    </span>
-                    <DropdownMenuShortcut>
-                      {formatShortcutDisplay(
-                        DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
-                      )}
-                    </DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                    onDefaultSelect={() => handleWorktreeYoloApprove()}
+                    onModelSelect={handleWorktreeYoloApprove}
+                  />
                 )}
               </SplitButton>
             </div>

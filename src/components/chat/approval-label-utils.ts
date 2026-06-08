@@ -4,6 +4,21 @@ interface ResolveApprovalLabelOptions {
   forceModeOverride?: boolean
 }
 
+const BACKEND_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  cursor: 'Cursor',
+  commandcode: 'CommandCode',
+}
+
+function formatBackendLabel(backend: string): string {
+  return (
+    BACKEND_LABELS[backend] ??
+    backend.charAt(0).toUpperCase() + backend.slice(1)
+  )
+}
+
 /**
  * Resolves a human-readable label for the backend + model that will be used
  * when approving a plan in build or yolo mode.
@@ -57,8 +72,7 @@ export function resolveApprovalLabel(
   if (!resolvedModel && !resolvedBackend) return null
   const modelLabel = resolvedModel ? getMessageModelLabel(resolvedModel) : null
   const parts: string[] = []
-  if (resolvedBackend && resolvedBackend !== 'claude')
-    parts.push(resolvedBackend)
+  if (resolvedBackend) parts.push(formatBackendLabel(resolvedBackend))
   if (modelLabel) parts.push(modelLabel)
   return parts.length > 0 ? parts.join(' · ') : null
 }

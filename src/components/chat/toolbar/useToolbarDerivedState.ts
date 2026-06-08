@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import {
   getModelFastInfo,
   type ClaudeModel,
+  type CliBackend,
   type CustomCliProfile,
 } from '@/types/preferences'
 import {
@@ -15,13 +16,7 @@ import {
 import { sortModelOptionsByRawModel } from '@/components/chat/toolbar/toolbar-utils'
 
 interface UseToolbarDerivedStateArgs {
-  selectedBackend:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+  selectedBackend: CliBackend
   selectedProvider: string | null
   selectedModel: string
   opencodeModelOptions?: { value: string; label: string }[]
@@ -29,16 +24,65 @@ interface UseToolbarDerivedStateArgs {
   piModelOptions?: { value: string; label: string }[]
   commandcodeModelOptions?: { value: string; label: string }[]
   customCliProfiles: CustomCliProfile[]
-  installedBackends?: (
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
-  )[]
+  installedBackends?: CliBackend[]
   availableMcpServers?: { name: string; disabled?: boolean }[]
   enabledMcpServers?: string[]
+}
+
+export interface BackendModelSection {
+  backend: CliBackend
+  label: string
+  options: { value: string; label: string }[]
+}
+
+export function buildBackendModelSections({
+  installedBackends,
+  claudeModelOptions,
+  codexModelOptions,
+  opencodeModelOptions,
+  cursorModelOptions,
+  piModelOptions,
+  commandcodeModelOptions,
+}: {
+  installedBackends: CliBackend[]
+  claudeModelOptions: { value: string; label: string }[]
+  codexModelOptions: { value: string; label: string }[]
+  opencodeModelOptions: { value: string; label: string }[]
+  cursorModelOptions: { value: string; label: string }[]
+  piModelOptions?: { value: string; label: string }[]
+  commandcodeModelOptions?: { value: string; label: string }[]
+}): BackendModelSection[] {
+  const sections: BackendModelSection[] = []
+
+  for (const backend of installedBackends) {
+    if (backend === 'claude') {
+      sections.push({ backend, label: 'Claude', options: claudeModelOptions })
+    } else if (backend === 'codex') {
+      sections.push({ backend, label: 'Codex', options: codexModelOptions })
+    } else if (backend === 'opencode') {
+      sections.push({
+        backend,
+        label: 'OpenCode',
+        options: opencodeModelOptions,
+      })
+    } else if (backend === 'cursor') {
+      sections.push({ backend, label: 'Cursor', options: cursorModelOptions })
+    } else if (backend === 'pi') {
+      sections.push({
+        backend,
+        label: 'PI',
+        options: piModelOptions ?? PI_MODEL_OPTIONS,
+      })
+    } else if (backend === 'commandcode') {
+      sections.push({
+        backend,
+        label: 'Command Code',
+        options: commandcodeModelOptions ?? COMMANDCODE_MODEL_OPTIONS,
+      })
+    }
+  }
+
+  return sections
 }
 
 export function useToolbarDerivedState({
@@ -121,63 +165,27 @@ export function useToolbarDerivedState({
   const resolvedCommandCodeModelOptions =
     commandcodeModelOptions ?? COMMANDCODE_MODEL_OPTIONS
 
-  const backendModelSections = useMemo(() => {
-    const sections: {
-      backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
-      label: string
-      options: { value: string; label: string }[]
-    }[] = []
-
-    for (const backend of installedBackends) {
-      if (backend === 'claude') {
-        sections.push({
-          backend,
-          label: 'Claude',
-          options: claudeModelOptions,
-        })
-      } else if (backend === 'codex') {
-        sections.push({
-          backend,
-          label: 'Codex',
-          options: codexModelOptions,
-        })
-      } else if (backend === 'opencode') {
-        sections.push({
-          backend,
-          label: 'OpenCode',
-          options: resolvedOpencodeModelOptions,
-        })
-      } else if (backend === 'cursor') {
-        sections.push({
-          backend,
-          label: 'Cursor',
-          options: resolvedCursorModelOptions,
-        })
-      } else if (backend === 'pi') {
-        sections.push({
-          backend,
-          label: 'PI',
-          options: resolvedPiModelOptions,
-        })
-      } else if (backend === 'commandcode') {
-        sections.push({
-          backend,
-          label: 'Command Code',
-          options: resolvedCommandCodeModelOptions,
-        })
-      }
-    }
-
-    return sections
-  }, [
-    claudeModelOptions,
-    codexModelOptions,
-    installedBackends,
-    resolvedCursorModelOptions,
-    resolvedCommandCodeModelOptions,
-    resolvedOpencodeModelOptions,
-    resolvedPiModelOptions,
-  ])
+  const backendModelSections = useMemo(
+    () =>
+      buildBackendModelSections({
+        installedBackends,
+        claudeModelOptions,
+        codexModelOptions,
+        opencodeModelOptions: resolvedOpencodeModelOptions,
+        cursorModelOptions: resolvedCursorModelOptions,
+        piModelOptions: resolvedPiModelOptions,
+        commandcodeModelOptions: resolvedCommandCodeModelOptions,
+      }),
+    [
+      claudeModelOptions,
+      codexModelOptions,
+      installedBackends,
+      resolvedCursorModelOptions,
+      resolvedCommandCodeModelOptions,
+      resolvedOpencodeModelOptions,
+      resolvedPiModelOptions,
+    ]
+  )
 
   const filteredModelOptions = useMemo(() => {
     if (isCodex) return codexModelOptions

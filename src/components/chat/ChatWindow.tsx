@@ -109,6 +109,8 @@ import { ReviewMethodModal } from './ReviewMethodModal'
 import { QueuedMessagesList } from './QueuedMessageItem'
 import { FloatingButtons } from './FloatingButtons'
 import { PlanDialog } from './PlanDialog'
+import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
+import { resolveApprovalLabel } from './approval-label-utils'
 import { StreamingMessage } from './StreamingMessage'
 import { CompactStreamingTicker } from './CompactStreamingTicker'
 import { CompactMessageList } from './CompactMessageList'
@@ -621,6 +623,18 @@ export function ChatWindow({
     preferences
   )
   const selectedModel: string = session?.selected_model ?? defaultModel
+  const buildNewContextLabel = resolveApprovalLabel(
+    'build',
+    preferences,
+    selectedBackend,
+    { forceModeOverride: true }
+  )
+  const yoloNewContextLabel = resolveApprovalLabel(
+    'yolo',
+    preferences,
+    selectedBackend,
+    { forceModeOverride: true }
+  )
 
   // Per-session thinking level, falls back to preferences default
   const defaultThinkingLevel =
@@ -1093,7 +1107,7 @@ export function ChatWindow({
 
   // Clear context approval handler for PlanDialog
   const handlePlanDialogClearContextApprove = useCallback(
-    async (editedPlanContent: string) => {
+    async (editedPlanContent: string, override?: ApprovalModelOverride) => {
       if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
 
       // Mark pending plan approved if exists
@@ -1147,8 +1161,11 @@ export function ChatWindow({
 
       // Send plan as first message in YOLO mode
       const yoloBackend =
-        (yoloBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (yoloBackendRef.current as Session['backend']) ??
+        undefined
       const yoloModel =
+        override?.model ??
         yoloModelRef.current ??
         (yoloBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1163,7 +1180,7 @@ export function ChatWindow({
                     'commandcode/default')
                   : selectedModelRef.current)
       const yoloOverride =
-        yoloModelRef.current || yoloBackend
+        override || yoloModelRef.current || yoloBackend
           ? [yoloBackend, yoloModel].filter(Boolean).join(' / ')
           : ''
       const message = yoloOverride
@@ -1266,13 +1283,16 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   // Clear context approval handler for PlanDialog (build mode)
   const handlePlanDialogClearContextBuildApprove = useCallback(
-    async (editedPlanContent: string) => {
+    async (editedPlanContent: string, override?: ApprovalModelOverride) => {
       if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
 
       // Mark pending plan approved if exists
@@ -1326,8 +1346,11 @@ export function ChatWindow({
 
       // Send plan as first message in build mode using build overrides
       const buildBackend =
-        (buildBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (buildBackendRef.current as Session['backend']) ??
+        undefined
       const buildModel =
+        override?.model ??
         buildModelRef.current ??
         (buildBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1342,7 +1365,7 @@ export function ChatWindow({
                     'commandcode/default')
                   : selectedModelRef.current)
       const buildOverride =
-        buildModelRef.current || buildBackend
+        override || buildModelRef.current || buildBackend
           ? [buildBackend, buildModel].filter(Boolean).join(' / ')
           : ''
       const message = buildOverride
@@ -1445,13 +1468,20 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   // Worktree approval handler for PlanDialog (creates new worktree + session)
   const handlePlanDialogWorktreeApprove = useCallback(
-    async (editedPlanContent: string, mode: 'build' | 'yolo') => {
+    async (
+      editedPlanContent: string,
+      mode: 'build' | 'yolo',
+      override?: ApprovalModelOverride
+    ) => {
       const projectId = worktree?.project_id
       if (
         !activeSessionId ||
@@ -1584,8 +1614,11 @@ export function ChatWindow({
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
       const modeBackend =
-        (modeBackendRef.current as Session['backend']) ?? undefined
+        override?.backend ??
+        (modeBackendRef.current as Session['backend']) ??
+        undefined
       const modeModel =
+        override?.model ??
         modeModelRef.current ??
         (modeBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
@@ -1600,7 +1633,7 @@ export function ChatWindow({
                     'commandcode/default')
                   : selectedModelRef.current)
       const modeOverride =
-        modeModelRef.current || modeBackend
+        override || modeModelRef.current || modeBackend
           ? [modeBackend, modeModel].filter(Boolean).join(' / ')
           : ''
       const message = modeOverride
@@ -1710,19 +1743,22 @@ export function ChatWindow({
       useAdaptiveThinkingRef,
       preferences?.selected_codex_model,
       preferences?.selected_opencode_model,
+      preferences?.selected_cursor_model,
+      preferences?.selected_pi_model,
+      preferences?.selected_commandcode_model,
       session?.backend,
     ]
   )
 
   const handlePlanDialogWorktreeBuildApprove = useCallback(
-    (editedPlanContent: string) =>
-      handlePlanDialogWorktreeApprove(editedPlanContent, 'build'),
+    (editedPlanContent: string, override?: ApprovalModelOverride) =>
+      handlePlanDialogWorktreeApprove(editedPlanContent, 'build', override),
     [handlePlanDialogWorktreeApprove]
   )
 
   const handlePlanDialogWorktreeYoloApprove = useCallback(
-    (editedPlanContent: string) =>
-      handlePlanDialogWorktreeApprove(editedPlanContent, 'yolo'),
+    (editedPlanContent: string, override?: ApprovalModelOverride) =>
+      handlePlanDialogWorktreeApprove(editedPlanContent, 'yolo', override),
     [handlePlanDialogWorktreeApprove]
   )
 
@@ -2207,22 +2243,37 @@ export function ChatWindow({
     isCursorBackend,
   ])
 
-  const floatingClearContextBuildApprove = useCallback(() => {
-    if (pendingPlanMessage)
-      handleClearContextApprovalBuild(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleClearContextApprovalBuild])
+  const floatingClearContextBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleClearContextApprovalBuild(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleClearContextApprovalBuild]
+  )
 
-  const floatingClearContextApprove = useCallback(() => {
-    if (pendingPlanMessage) handleClearContextApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleClearContextApproval])
+  const floatingClearContextApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleClearContextApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleClearContextApproval]
+  )
 
-  const floatingWorktreeBuildApprove = useCallback(() => {
-    if (pendingPlanMessage) handleWorktreeBuildApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleWorktreeBuildApproval])
+  const floatingWorktreeBuildApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleWorktreeBuildApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleWorktreeBuildApproval]
+  )
 
-  const floatingWorktreeYoloApprove = useCallback(() => {
-    if (pendingPlanMessage) handleWorktreeYoloApproval(pendingPlanMessage.id)
-  }, [pendingPlanMessage, handleWorktreeYoloApproval])
+  const floatingWorktreeYoloApprove = useCallback(
+    (override?: ApprovalModelOverride) => {
+      if (pendingPlanMessage)
+        handleWorktreeYoloApproval(pendingPlanMessage.id, override)
+    },
+    [pendingPlanMessage, handleWorktreeYoloApproval]
+  )
 
   // Pending attachment removal, slash command execution, queue management
   const {
@@ -2819,6 +2870,8 @@ export function ChatWindow({
                         isAtBottom={isAtBottom || messages.length === 0}
                         isSending={isSending}
                         approveShortcut={approveShortcut}
+                        buildDefaultModelLabel={buildNewContextLabel}
+                        yoloDefaultModelLabel={yoloNewContextLabel}
                         onApprove={floatingApprove}
                         onYoloApprove={floatingYoloApprove}
                         onClearContextBuildApprove={
