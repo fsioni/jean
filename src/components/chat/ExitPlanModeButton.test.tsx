@@ -99,6 +99,12 @@ const planToolCalls: ToolCall[] = [
   },
 ]
 
+function getMenuItem(name: RegExp, index: number) {
+  const item = screen.getAllByRole('menuitem', { name })[index]
+  expect(item).toBeDefined()
+  return item as HTMLElement
+}
+
 beforeEach(() => {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -159,36 +165,24 @@ describe('ExitPlanModeButton', () => {
       screen.getAllByRole('menuitem', { name: /\(use default\)/i })
     ).toHaveLength(2)
 
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[0]
-    )
+    await user.click(getMenuItem(/\(use default\)/i, 0))
     expect(onClearContextApproval).toHaveBeenCalledWith()
 
     await openYoloMenu()
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /\(use default\)/i })[1]
-    )
+    await user.click(getMenuItem(/\(use default\)/i, 1))
     expect(onWorktreeYoloApproval).toHaveBeenCalledWith()
 
     await openYoloMenu()
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /Other model/i })[0]
-    )
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[0]
-    )
+    await user.click(getMenuItem(/Other model/i, 0))
+    await user.click(getMenuItem(/^Codex · GPT 5\.5$/i, 0))
     expect(onClearContextApproval).toHaveBeenCalledWith({
       backend: 'codex',
       model: 'gpt-5.5',
     })
 
     await openYoloMenu()
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /Other model/i })[1]
-    )
-    await user.click(
-      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })[1]
-    )
+    await user.click(getMenuItem(/Other model/i, 1))
+    await user.click(getMenuItem(/^Codex · GPT 5\.5$/i, 1))
     expect(onWorktreeYoloApproval).toHaveBeenCalledWith({
       backend: 'codex',
       model: 'gpt-5.5',
