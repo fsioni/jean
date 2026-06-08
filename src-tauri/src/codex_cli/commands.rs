@@ -1276,7 +1276,7 @@ async fn fetch_codex_versions_from_api(app: &AppHandle) -> Result<Vec<CodexRelea
         .await
         .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
 
-    let target = get_codex_target()?;
+    let target = resolve_codex_runtime_target()?;
     let asset_names = codex_asset_name_candidates(target);
     let versions = codex_versions_from_releases(releases, &asset_names);
 
@@ -1335,6 +1335,15 @@ fn get_codex_target() -> Result<&'static str, String> {
 
     #[allow(unreachable_code)]
     Err("Unsupported platform".to_string())
+}
+
+fn resolve_codex_runtime_target() -> Result<&'static str, String> {
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        wsl_codex_target(&wsl.distro)
+    } else {
+        get_codex_target()
+    }
 }
 
 fn codex_asset_candidates(target: &str) -> Vec<CodexAssetCandidate> {
@@ -1401,7 +1410,7 @@ async fn fetch_latest_codex_version(app: &AppHandle) -> Result<String, String> {
     if let Ok(resp) = request.send().await {
         if resp.status().is_success() {
             if let Ok(releases) = resp.json::<Vec<GitHubRelease>>().await {
-                let target = get_codex_target()?;
+                let target = resolve_codex_runtime_target()?;
                 let asset_names = codex_asset_name_candidates(target);
                 if let Some(version) = latest_codex_version_from_releases(releases, &asset_names) {
                     log::trace!("Latest Codex CLI version: {version}");
@@ -1507,7 +1516,18 @@ fn find_matching_asset_url(release: &GitHubRelease, asset_names: &[String]) -> O
 
 /// Pick the codex target triple for a WSL distro given the host install.
 fn wsl_codex_target(distro: &str) -> Result<&'static str, String> {
-    match crate::platform::wsl_detect_arch(distro) {
+    resolve_codex_runtime_target_for_wsl_arch(true, crate::platform::wsl_detect_arch(distro))
+}
+
+fn resolve_codex_runtime_target_for_wsl_arch(
+    wsl_enabled: bool,
+    wsl_arch: Option<&str>,
+) -> Result<&'static str, String> {
+    if !wsl_enabled {
+        return get_codex_target();
+    }
+
+    match wsl_arch {
         Some("linux-x64") => Ok("x86_64-unknown-linux-musl"),
         Some("linux-arm64") => Ok("aarch64-unknown-linux-musl"),
         _ => Err("Unsupported WSL architecture (expected x86_64 or aarch64)".to_string()),
@@ -1531,11 +1551,7 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
     };
 
     // Target triple differs for native host vs WSL.
-    let target: &str = if wsl.enabled {
-        wsl_codex_target(&wsl.distro)?
-    } else {
-        get_codex_target()?
-    };
+    let target: &str = resolve_codex_runtime_target()?;
     log::trace!("Installing version {version} for target {target}");
 
     let candidates = codex_asset_candidates(target);
@@ -1958,6 +1974,37 @@ mod tests {
             &codex_asset_name_candidates("x86_64-unknown-linux-musl"),
         );
 
+        assert_eq!(version, Some("0.130.0".to_string()));
+    }
+
+    #[test]
+    fn latest_codex_version_uses_wsl_linux_target_for_asset_filtering() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "rust-v0.131.0".to_string(),
+                published_at: "2026-05-15T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-pc-windows-msvc.exe.zip".to_string(),
+                    browser_download_url: "https://example.com/codex-windows.zip".to_string(),
+                }],
+            },
+            GitHubRelease {
+                tag_name: "rust-v0.130.0".to_string(),
+                published_at: "2026-05-08T23:09:55Z".to_string(),
+                prerelease: false,
+                assets: vec![GitHubAsset {
+                    name: "codex-x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    browser_download_url: "https://example.com/codex-linux-musl.tar.gz".to_string(),
+                }],
+            },
+        ];
+
+        let target = resolve_codex_runtime_target_for_wsl_arch(true, Some("linux-x64")).unwrap();
+        let version =
+            latest_codex_version_from_releases(releases, &codex_asset_name_candidates(target));
+
+        assert_eq!(target, "x86_64-unknown-linux-musl");
         assert_eq!(version, Some("0.130.0".to_string()));
     }
 }
