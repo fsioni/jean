@@ -142,4 +142,26 @@ describe('useInvestigateHandlers review comments', () => {
       'yolo'
     )
   })
+
+  it('uses an explicit yolo override even when current session mode is plan', async () => {
+    const { result, sendMessage } = renderHandlers({ executionMode: 'plan' })
+
+    await act(async () => {
+      await result.current.handleReviewComments(['fix one'], {
+        executionMode: 'yolo',
+      })
+    })
+
+    expect(sendMessage.mutate).toHaveBeenCalledTimes(1)
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'comment-session-1',
+        executionMode: 'yolo',
+      }),
+      expect.any(Object)
+    )
+    expect(useChatStore.getState().executionModes['comment-session-1']).toBe(
+      'yolo'
+    )
+  })
 })

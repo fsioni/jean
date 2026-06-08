@@ -511,6 +511,7 @@ export function ReviewCommentsDialog() {
     setIsSending(true)
     dispatchReviewCommentsPrompts({
       prompt: buildPrompt(formatted.join('\n\n---\n\n')),
+      executionMode: 'yolo',
     })
   }, [
     prNumber,
@@ -528,6 +529,7 @@ export function ReviewCommentsDialog() {
     setIsSending(true)
     dispatchReviewCommentsPrompts({
       prompts: formatted.map(buildPrompt),
+      executionMode: 'yolo',
     })
   }, [
     prNumber,

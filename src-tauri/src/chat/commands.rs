@@ -48,6 +48,14 @@ const CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT: &str = "\
 - Do NOT create git worktrees manually (`git worktree add`, Superpowers `using-git-worktrees`, or similar) unless the user explicitly asks for a new worktree.
 - If a new worktree is explicitly required, use Jean's worktree features through Jean MCP/tools, not raw git worktree commands.
 - If already in a Jean worktree or base/main workspace, continue in the current workspace.";
+const CODEX_DEFAULT_PLAN_MODE_PROMPT: &str = "\
+## Plan Mode
+
+- You are in PLAN MODE. Do not implement yet.
+- Inspect the project as needed, then present the plan with the native Codex plan tool (`update_plan` / `CodexPlan`) so Jean can show the approval UI.
+- Every plan-mode response that contains or revises a plan must use `update_plan` / `CodexPlan`; do not provide a plain-text-only plan.
+- If questions block the plan, prefer Codex `request_user_input`; after the user answers, call `update_plan` / `CodexPlan` again with the revised plan.
+- Do not call implementation tools or make file changes until the user approves the plan.";
 const DEFAULT_PARALLEL_EXECUTION_PROMPT: &str = r#"In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
 
 When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
@@ -67,12 +75,18 @@ fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'st
     match execution_mode.unwrap_or("plan") {
         "build" => Some(
             "You are in BUILD MODE. Start implementing immediately. \
+             This current BUILD MODE instruction supersedes any earlier plan-mode \
+             instructions remembered from conversation history; treat the approved plan \
+             as authorization to implement now. \
              Do NOT call update_plan/emit CodexPlan unless the user explicitly asks \
              for a new plan. If a required decision is missing, use request_user_input \
              instead of switching back to plan mode.",
         ),
         "yolo" => Some(
             "You are in YOLO EXECUTION MODE. Start implementing immediately. \
+             This current YOLO EXECUTION MODE instruction supersedes any earlier plan-mode \
+             instructions remembered from conversation history; treat the approved plan \
+             as authorization to implement now. \
              Do NOT call update_plan/emit CodexPlan unless the user explicitly asks \
              for a new plan. Do not ask for confirmation before routine implementation steps. \
              If a required decision is missing, use request_user_input instead of \
@@ -82,8 +96,11 @@ fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'st
     }
 }
 
-fn codex_default_global_system_prompt(_execution_mode: Option<&str>) -> String {
-    CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT.to_string()
+fn codex_default_global_system_prompt(execution_mode: Option<&str>) -> String {
+    match execution_mode.unwrap_or("plan") {
+        "build" | "yolo" => CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT.to_string(),
+        _ => CODEX_DEFAULT_PLAN_MODE_PROMPT.to_string(),
+    }
 }
 
 /// Resolve the default backend from preferences + project settings (sync).
@@ -7341,21 +7358,17 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_default_prompt_does_not_inject_plan_mode_rules() {
+    fn test_codex_default_prompt_injects_plan_rules_only_in_plan_mode() {
         let plan_prompt = codex_default_global_system_prompt(Some("plan"));
-        assert!(!plan_prompt.contains("## Plan Mode"));
-        assert!(!plan_prompt.contains("PLANNING MODE"));
-        assert!(!plan_prompt.contains("Do NOT attempt to make any file changes"));
-        assert!(!plan_prompt.contains("update_plan"));
-        assert!(!plan_prompt.contains("CodexPlan"));
-        assert!(plan_prompt.contains("## Not Plan Mode"));
-        assert!(plan_prompt.contains("Jean Worktree Policy"));
-        assert!(plan_prompt.contains("VERY IMPORTANT: Keep Code Simple"));
+        assert!(plan_prompt.contains("## Plan Mode"));
+        assert!(plan_prompt.contains("PLAN MODE"));
+        assert!(plan_prompt.contains("update_plan"));
+        assert!(plan_prompt.contains("CodexPlan"));
+        assert!(plan_prompt.contains("approval UI"));
+        assert!(!plan_prompt.contains("## Not Plan Mode"));
 
         let build_prompt = codex_default_global_system_prompt(Some("build"));
         assert!(!build_prompt.contains("## Plan Mode"));
-        assert!(!build_prompt.contains("PLANNING MODE"));
-        assert!(!build_prompt.contains("Do NOT attempt to make any file changes"));
         assert!(!build_prompt.contains("update_plan"));
         assert!(!build_prompt.contains("CodexPlan"));
         assert!(build_prompt.contains("## Not Plan Mode"));
@@ -7369,8 +7382,6 @@ mod tests {
 
         let yolo_prompt = codex_default_global_system_prompt(Some("yolo"));
         assert!(!yolo_prompt.contains("## Plan Mode"));
-        assert!(!yolo_prompt.contains("PLANNING MODE"));
-        assert!(!yolo_prompt.contains("Do NOT attempt to make any file changes"));
         assert!(!yolo_prompt.contains("update_plan"));
         assert!(!yolo_prompt.contains("CodexPlan"));
         assert!(yolo_prompt.contains("## Not Plan Mode"));
@@ -7386,12 +7397,16 @@ mod tests {
         assert!(build.contains("BUILD MODE"));
         assert!(build.contains("Start implementing immediately"));
         assert!(build.contains("Do NOT call update_plan/emit CodexPlan"));
+        assert!(build.contains("supersedes any earlier plan-mode"));
+        assert!(build.contains("approved plan"));
 
         let yolo = codex_execution_mode_instruction(Some("yolo")).unwrap();
         assert!(yolo.contains("YOLO EXECUTION MODE"));
         assert!(yolo.contains("Start implementing immediately"));
         assert!(yolo.contains("Do NOT call update_plan/emit CodexPlan"));
         assert!(yolo.contains("Do not ask for confirmation"));
+        assert!(yolo.contains("supersedes any earlier plan-mode"));
+        assert!(yolo.contains("approved plan"));
     }
 
     #[test]

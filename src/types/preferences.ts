@@ -623,6 +623,11 @@ Address the following review comments from PR #{prNumber}
 3. Make the requested changes to address each comment
 4. If a comment is unclear or you disagree with it, explain your reasoning
 5. After making changes, briefly summarize what you changed for each comment
+6. After the requested changes are implemented and verified, resolve each matching GitHub PR review conversation
+   - Look for unresolved review threads from coderabbitai when the comment came from CodeRabbit
+   - Match threads by PR #{prNumber}, file path, line number, reviewer, and comment body
+   - Use GitHub GraphQL mutation resolveReviewThread on the matching PullRequestReviewThread
+   - Do not resolve a thread if you cannot complete or verify the fix
 
 </instructions>
 
