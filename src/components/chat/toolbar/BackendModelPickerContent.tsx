@@ -13,16 +13,16 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Kbd } from '@/components/ui/kbd'
-import {
-  getModelFastInfo,
-  type CliBackend,
-  type CustomCliProfile,
-} from '@/types/preferences'
+import type { CliBackend, CustomCliProfile } from '@/types/preferences'
 import { usePatchPreferences, usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import {
+  getCatalogModelFastInfo,
+  useModelCatalog,
+} from '@/services/model-catalog'
 import { cn } from '@/lib/utils'
 import {
   getBackendIcon,
@@ -50,6 +50,7 @@ interface BackendModelPickerContentProps {
   onModelChange: (model: string) => void
   onBackendModelChange: (backend: CliBackend, model: string) => void
   onRequestClose: () => void
+  defaultModelOption?: { value: string; label: string }
   searchPlaceholder?: string
   className?: string
   commandListClassName?: string
@@ -67,6 +68,7 @@ export function BackendModelPickerContent({
   onModelChange,
   onBackendModelChange,
   onRequestClose,
+  defaultModelOption,
   searchPlaceholder,
   className,
   commandListClassName,
@@ -85,6 +87,7 @@ export function BackendModelPickerContent({
   const isLocked = Boolean(sessionHasMessages)
 
   const { data: prefs } = usePreferences()
+  const { data: modelCatalog } = useModelCatalog()
   const patchPreferences = usePatchPreferences()
   const favoriteModels = useMemo(
     () => prefs?.favorite_models ?? [],
@@ -172,17 +175,29 @@ export function BackendModelPickerContent({
     [availableCommandCodeModels]
   )
 
-  const { backendModelSections } = useToolbarDerivedState({
-    selectedBackend,
-    selectedProvider,
-    selectedModel,
-    opencodeModelOptions,
-    cursorModelOptions,
-    piModelOptions,
-    commandcodeModelOptions,
-    customCliProfiles,
-    installedBackends,
-  })
+  const { backendModelSections: baseBackendModelSections } =
+    useToolbarDerivedState({
+      selectedBackend,
+      selectedProvider,
+      selectedModel,
+      opencodeModelOptions,
+      cursorModelOptions,
+      piModelOptions,
+      commandcodeModelOptions,
+      customCliProfiles,
+      installedBackends,
+    })
+
+  const backendModelSections = useMemo(
+    () =>
+      defaultModelOption
+        ? baseBackendModelSections.map(section => ({
+            ...section,
+            options: [defaultModelOption, ...section.options],
+          }))
+        : baseBackendModelSections,
+    [baseBackendModelSections, defaultModelOption]
+  )
 
   const sidebarBackends = useMemo(
     () =>
@@ -294,7 +309,7 @@ export function BackendModelPickerContent({
   const handleSelect = useCallback(
     (backend: CliBackend, model: string) => {
       // Resolve to fast variant if user previously enabled fast for this base model.
-      const info = getModelFastInfo(backend, model)
+      const info = getCatalogModelFastInfo(modelCatalog, backend, model)
       const resolved =
         info.supportsFast &&
         !info.isFast &&
@@ -311,6 +326,7 @@ export function BackendModelPickerContent({
     },
     [
       isFastRemembered,
+      modelCatalog,
       onBackendModelChange,
       onModelChange,
       onRequestClose,
@@ -332,7 +348,11 @@ export function BackendModelPickerContent({
   const handleUseHighlightedFastMode = useCallback(() => {
     if (!highlightedOption) return false
 
-    const fastInfo = getModelFastInfo(activeBackend, highlightedOption.value)
+    const fastInfo = getCatalogModelFastInfo(
+      modelCatalog,
+      activeBackend,
+      highlightedOption.value
+    )
     if (!fastInfo.supportsFast || !fastInfo.fastModel) return false
 
     setFastRemembered(activeBackend, fastInfo.baseModel, true)
@@ -346,6 +366,7 @@ export function BackendModelPickerContent({
   }, [
     activeBackend,
     highlightedOption,
+    modelCatalog,
     onBackendModelChange,
     onModelChange,
     onRequestClose,
@@ -452,7 +473,11 @@ export function BackendModelPickerContent({
             )}
 
             {filteredOptions.map(option => {
-              const fastInfo = getModelFastInfo(activeBackend, option.value)
+              const fastInfo = getCatalogModelFastInfo(
+                modelCatalog,
+                activeBackend,
+                option.value
+              )
               const supportsFast = Boolean(
                 fastInfo.supportsFast && fastInfo.fastModel
               )

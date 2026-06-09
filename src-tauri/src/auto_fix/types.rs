@@ -12,4 +12,5 @@ pub struct AutoFixStoppedEvent {
 #[derive(Debug, Clone)]
 pub struct AutoFixIssueCandidate {
     pub number: u32,
+    pub labels: Vec<String>,
 }

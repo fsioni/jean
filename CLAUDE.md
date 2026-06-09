@@ -193,7 +193,7 @@ To diagnose unnecessary re-renders, temporarily install [why-did-you-render](htt
 **Read this before changing PI chat parsing** (`src-tauri/src/chat/pi.rs`).
 
 PI runs with `--mode json` and streams newline-delimited JSON. Jean persists its
-own session/run JSONL (run logs) — PI's format is only used to *parse* PI CLI
+own session/run JSONL (run logs) — PI's format is only used to _parse_ PI CLI
 output before writing Jean history. Reference: https://pi.dev/docs/latest/session-format
 
 - **Streaming assistant text** arrives as `message_update` / `assistant` events.
@@ -390,7 +390,7 @@ Images pasted or dropped into chat are processed before saving (`process_image()
 
 Three files need updating when adding a new model option:
 
-1. **`src/types/preferences.ts`** — Add to `ClaudeModel` type union and `modelOptions` array (full labels like "Claude Sonnet 4.6"). Model IDs use short names: `opus`, `sonnet`, `haiku`
+1. **`src/types/preferences.ts`** — Add to `ClaudeModel` type union and `modelOptions` array (full labels like "Claude Fable 5" or "Claude Sonnet 4.6"). Current first-party Claude Code model IDs use API-style names such as `claude-fable-5`, `claude-opus-4-8[1m]`, and `claude-sonnet-4-6[1m]`; legacy/provider aliases may still use `opus`, `sonnet`, or `haiku`.
 2. **`src/store/chat-store.ts`** — Add to duplicated `ClaudeModel` type union (line ~27)
 3. **`src/components/chat/ChatToolbar.tsx`** — Add to `MODEL_OPTIONS` array (short labels like "Sonnet 4.6")
 

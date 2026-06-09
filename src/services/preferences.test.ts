@@ -90,6 +90,7 @@ const createWrapper = (queryClient: QueryClient) => {
 describe('model option helpers', () => {
   it('uses 1M Claude variants where available and keeps no-1M-only models', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
+      'claude-fable-5',
       'claude-opus-4-8[1m]',
       'claude-opus-4-7[1m]',
       'claude-opus-4-6[1m]',
@@ -98,6 +99,7 @@ describe('model option helpers', () => {
       'haiku',
     ])
     expect(normalizeClaudeModel('sonnet')).toBe('claude-sonnet-4-6[1m]')
+    expect(normalizeClaudeModel('claude-fable-5')).toBe('claude-fable-5')
     expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8[1m]')
     expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7[1m]')
   })
@@ -125,10 +127,10 @@ describe('model option helpers', () => {
     )
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain('Codex request_user_input')
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
-      'after the user answers native `request_user_input`'
+      'when the current execution mode is plan: after the user answers native `request_user_input`'
     )
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(
-      'Every Codex plan-mode response'
+      'Every Codex response that contains or revises a plan while the current execution mode is plan'
     )
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain('Jean Worktree Policy')
     expect(DEFAULT_GLOBAL_SYSTEM_PROMPT).toContain(

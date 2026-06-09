@@ -28,6 +28,10 @@ pub struct ProjectAutoFixSettings {
     pub interval_minutes: u64,
     pub issue_limit: u32,
     pub max_parallel_worktrees: u32,
+    #[serde(default)]
+    pub included_labels: Vec<String>,
+    #[serde(default)]
+    pub excluded_labels: Vec<String>,
     pub planning_backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planning_model: Option<String>,
@@ -629,6 +633,8 @@ pub struct WorktreePathExistsEvent {
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
     pub advisory_context: Option<super::github_issues::AdvisoryContext>,
+    /// Origin of the worktree request, used to suppress user-facing conflicts for background jobs
+    pub origin: Option<WorktreeOrigin>,
 }
 
 /// Event emitted when worktree creation fails because the branch already exists
@@ -650,6 +656,8 @@ pub struct WorktreeBranchExistsEvent {
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
     pub advisory_context: Option<super::github_issues::AdvisoryContext>,
+    /// Origin of the worktree request, used to suppress user-facing conflicts for background jobs
+    pub origin: Option<WorktreeOrigin>,
 }
 
 impl Worktree {
@@ -742,6 +750,8 @@ mod label_tests {
             interval_minutes: 15,
             issue_limit: 3,
             max_parallel_worktrees: 2,
+            included_labels: vec!["bug".to_string()],
+            excluded_labels: vec!["wontfix".to_string()],
             planning_backend: "claude".to_string(),
             planning_model: Some("claude-opus-4-8[1m]".to_string()),
             auto_yolo_enabled: true,
@@ -757,6 +767,8 @@ mod label_tests {
         let parsed: ProjectAutoFixSettings = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.issue_limit, 3);
+        assert_eq!(parsed.included_labels, vec!["bug".to_string()]);
+        assert_eq!(parsed.excluded_labels, vec!["wontfix".to_string()]);
         assert!(parsed.auto_yolo_enabled);
         assert_eq!(parsed.yolo_backend, "codex");
     }
@@ -775,6 +787,8 @@ mod label_tests {
         let parsed: ProjectAutoFixSettings = serde_json::from_value(json).unwrap();
 
         assert!(!parsed.auto_yolo_enabled);
+        assert!(parsed.included_labels.is_empty());
+        assert!(parsed.excluded_labels.is_empty());
     }
 
     #[test]
@@ -783,5 +797,41 @@ mod label_tests {
         let json = serde_json::to_string(&origin).unwrap();
 
         assert_eq!(json, "\"auto_fix\"");
+    }
+
+    #[test]
+    fn conflict_events_serialize_auto_fix_origin() {
+        let path_event = WorktreePathExistsEvent {
+            id: "pending".to_string(),
+            project_id: "project".to_string(),
+            path: "/tmp/existing".to_string(),
+            suggested_name: "issue-1-abcd".to_string(),
+            archived_worktree_id: None,
+            archived_worktree_name: None,
+            issue_context: None,
+            security_context: None,
+            advisory_context: None,
+            origin: Some(WorktreeOrigin::AutoFix),
+        };
+        let branch_event = WorktreeBranchExistsEvent {
+            id: "pending".to_string(),
+            project_id: "project".to_string(),
+            branch: "issue-1".to_string(),
+            suggested_name: "issue-1-abcd".to_string(),
+            issue_context: None,
+            pr_context: None,
+            security_context: None,
+            advisory_context: None,
+            origin: Some(WorktreeOrigin::AutoFix),
+        };
+
+        assert_eq!(
+            serde_json::to_value(path_event).unwrap()["origin"],
+            serde_json::json!("auto_fix")
+        );
+        assert_eq!(
+            serde_json::to_value(branch_event).unwrap()["origin"],
+            serde_json::json!("auto_fix")
+        );
     }
 }

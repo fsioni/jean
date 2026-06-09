@@ -11,88 +11,175 @@ import { Kbd } from '@/components/ui/kbd'
 import { useUIStore } from '@/store/ui-store'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { formatShortcutDisplay, type ShortcutString } from '@/types/keybindings'
+import { backendOptions } from '@/types/preferences'
 
-interface ShortcutRow {
-  shortcut: ShortcutString
+interface TourItem {
   label: string
+  detail?: string
+  shortcut?: ShortcutString
+}
+
+interface TourStep {
+  title: string
+  description: string
+  items: TourItem[]
 }
 
 const steps = [
   {
-    title: 'Getting Started',
-    description: 'Essential shortcuts to start working',
-    shortcuts: [
-      {
-        shortcut: 'mod+n' as ShortcutString,
-        label: 'New worktree (own branch)',
-      },
-      { shortcut: 'mod+t' as ShortcutString, label: 'New session in worktree' },
-      { shortcut: 'mod+k' as ShortcutString, label: 'Command palette' },
-      { shortcut: 'mod+l' as ShortcutString, label: 'Focus chat input' },
-    ] satisfies ShortcutRow[],
-  },
-  {
-    title: 'Canvas Navigation',
-    description: 'Move between sessions on the canvas',
-    shortcuts: [
-      {
-        shortcut: 'ArrowLeft/ArrowRight' as ShortcutString,
-        label: 'Navigate left / right',
-      },
-      {
-        shortcut: 'ArrowUp/ArrowDown' as ShortcutString,
-        label: 'Navigate up / down',
-      },
-      { shortcut: 'Enter' as ShortcutString, label: 'Open selected session' },
-      { shortcut: '/' as ShortcutString, label: 'Search sessions' },
-    ] satisfies ShortcutRow[],
-  },
-  {
-    title: 'Session Shortcuts',
-    description: 'Quick actions on selected sessions',
-    shortcuts: [
-      { shortcut: 'mod+Enter' as ShortcutString, label: 'Approve plan' },
-      { shortcut: 'mod+y' as ShortcutString, label: 'Approve plan (YOLO)' },
-      { shortcut: 'mod+s' as ShortcutString, label: 'Toggle session label' },
-      {
-        shortcut: 'mod+w' as ShortcutString,
-        label: 'Close session or worktree',
-      },
-    ] satisfies ShortcutRow[],
-  },
-  {
-    title: 'Magic & Git',
-    description: 'Quick access to git and tooling commands',
-    shortcuts: [
+    title: 'Start with the Magic Menu',
+    description: 'Automate everyday dev tasks without hunting through GitHub.',
+    items: [
       {
         shortcut: 'mod+m' as ShortcutString,
-        label: 'Open magic commands menu',
+        label: 'Open Magic Menu',
+        detail: 'One place for the actions you repeat all day.',
       },
-      { shortcut: 'mod+shift+c' as ShortcutString, label: 'Commit' },
-      { shortcut: 'mod+g' as ShortcutString, label: 'Git diff' },
-      { shortcut: 'mod+r' as ShortcutString, label: 'Run script' },
-      { shortcut: 'mod+o' as ShortcutString, label: 'Open in...' },
-    ] satisfies ShortcutRow[],
+      {
+        label: 'Commit, push, open PRs',
+        detail: 'Ship the obvious git steps from the same menu.',
+      },
+      {
+        label: 'Save context, load context, create recaps',
+        detail: 'Capture the current state and bring it into the next session.',
+      },
+      {
+        label: 'Resolve conflicts',
+        detail: 'Hand messy merge conflicts to your selected AI backend.',
+      },
+      {
+        label: 'Review, merge, and write release notes',
+        detail:
+          'Turn PR follow-up into a guided checklist instead of tab juggling.',
+      },
+      {
+        label: 'Investigate issues, PRs, and security alerts',
+        detail: 'Create focused worktrees with context already loaded.',
+      },
+    ] satisfies TourItem[],
   },
   {
-    title: 'Automation',
-    description: 'Automate your workflow with jean.json',
-    shortcuts: [
+    title: 'Automate the project routine',
+    description: 'Jean can remember the setup, run, and cleanup work.',
+    items: [
       {
         shortcut: 'jean.json' as ShortcutString,
-        label: 'Config file in your project root',
+        label: 'Project automation file',
+        detail:
+          'Keep scripts in your repository so every worktree starts the same way.',
       },
       {
         shortcut: 'setup' as ShortcutString,
-        label: 'Runs after each worktree is created',
+        label: 'Setup',
+        detail:
+          'Install dependencies or bootstrap services after a worktree is created.',
       },
       {
         shortcut: 'run' as ShortcutString,
-        label: 'Dev server script, launched via ⌘R',
+        label: 'Run',
+        detail: 'Launch your dev server from Jean with the run shortcut.',
       },
-    ] satisfies ShortcutRow[],
+    ] satisfies TourItem[],
   },
-] as const
+  {
+    title: 'Bring your favorite AI backend',
+    description: 'Use Jean with the AI agents and models that fit each task.',
+    items: backendOptions.map(backend => ({
+      label: backend.label,
+      detail:
+        backend.value === 'pi' || backend.value === 'commandcode'
+          ? 'Beta backend available where installed and configured.'
+          : 'Available for chat sessions, Magic prompts, and model picking when installed.',
+    })) satisfies TourItem[],
+  },
+  {
+    title: 'Mr. Robot',
+    description: 'Let Jean keep an eye on your issue queue.',
+    items: [
+      {
+        label: 'Issue sweeps',
+        detail:
+          'Poll open GitHub issues and create one Jean worktree per issue.',
+      },
+      {
+        label: 'Focused plans',
+        detail:
+          'Ask an AI backend to investigate and draft a targeted implementation plan.',
+      },
+      {
+        label: 'Optional yolo',
+        detail: 'When you trust the setup, Mr. Robot can execute the plan too.',
+      },
+      {
+        label: 'Project Settings → Mr. Robot',
+        detail:
+          'Tune schedule, limits, active hours, and backend selection per project.',
+      },
+    ] satisfies TourItem[],
+  },
+  {
+    title: 'Opinionated helpers',
+    description: 'Install workflow skills across your AI backends.',
+    items: [
+      {
+        label: 'Caveman',
+        detail:
+          'Short, accurate responses that save tokens across supported backends.',
+      },
+      {
+        label: 'Superpowers',
+        detail:
+          'Brainstorming, TDD, debugging, plan writing, execution, and review workflows.',
+      },
+      {
+        label: 'Preferences → Opinionated',
+        detail:
+          'Install or remove these packs when you want stronger defaults.',
+      },
+    ] satisfies TourItem[],
+  },
+  {
+    title: 'Keyboard shortcuts',
+    description: 'Memorize only the keys that unlock the fastest paths.',
+    items: [
+      {
+        shortcut: 'mod+m' as ShortcutString,
+        label: 'Magic Menu',
+        detail: 'Automate everyday tasks.',
+      },
+      {
+        shortcut: 'mod+n' as ShortcutString,
+        label: 'New worktree',
+        detail: 'Start isolated work on a branch.',
+      },
+      {
+        shortcut: 'mod+t' as ShortcutString,
+        label: 'New session',
+        detail: 'Open the configured default session.',
+      },
+      {
+        shortcut: 'mod+Enter' as ShortcutString,
+        label: 'Approve plan',
+        detail: 'Move from planning to execution.',
+      },
+      {
+        shortcut: 'mod+k' as ShortcutString,
+        label: 'Command palette',
+        detail: 'Find any app command by name.',
+      },
+      {
+        shortcut: 'mod+period' as ShortcutString,
+        label: 'Quick menu',
+        detail: 'Open contextual actions from the active surface.',
+      },
+      {
+        shortcut: 'mod+l' as ShortcutString,
+        label: 'Focus chat input',
+        detail: 'Jump back to prompting without reaching for the mouse.',
+      },
+    ] satisfies TourItem[],
+  },
+] satisfies TourStep[]
 
 function formatArrowKeys(shortcut: string): string {
   if (shortcut === 'ArrowLeft/ArrowRight') return '← →'
@@ -160,7 +247,7 @@ function FeatureTourDialogContent() {
       open={featureTourOpen}
       onOpenChange={open => !open && handleClose()}
     >
-      <DialogContent className="sm:max-w-md" showCloseButton>
+      <DialogContent className="sm:max-w-lg" showCloseButton>
         <DialogHeader>
           {/* Step dots */}
           <div className="flex items-center justify-center gap-1.5 mb-2">
@@ -168,6 +255,7 @@ function FeatureTourDialogContent() {
               <button
                 key={s.title}
                 type="button"
+                aria-label={`Go to ${s.title}`}
                 onClick={() => setStepIndex(i)}
                 className={`size-2 rounded-full transition-colors cursor-pointer hover:bg-primary/70 ${
                   i === stepIndex
@@ -184,15 +272,26 @@ function FeatureTourDialogContent() {
         </DialogHeader>
 
         <div className="min-h-[300px] py-3 space-y-2">
-          {step.shortcuts.map(item => (
+          {step.items.map(item => (
             <div
-              key={item.shortcut}
-              className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5"
+              key={`${item.shortcut ?? item.label}-${item.label}`}
+              className="flex items-start gap-3 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5"
             >
-              <Kbd className="h-6 min-w-8 shrink-0 px-2 text-xs font-medium">
-                {formatArrowKeys(item.shortcut)}
-              </Kbd>
-              <span className="text-sm text-foreground/80">{item.label}</span>
+              {item.shortcut && (
+                <Kbd className="mt-0.5 h-6 min-w-8 shrink-0 px-2 text-xs font-medium">
+                  {formatArrowKeys(item.shortcut)}
+                </Kbd>
+              )}
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground/90">
+                  {item.label}
+                </div>
+                {item.detail && (
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {item.detail}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>

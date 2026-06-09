@@ -15,6 +15,8 @@ export interface ProjectAutoFixSettings {
   interval_minutes: number
   issue_limit: number
   max_parallel_worktrees: number
+  included_labels?: string[]
+  excluded_labels?: string[]
   planning_backend: string
   planning_model?: string | null
   auto_yolo_enabled?: boolean
@@ -307,6 +309,8 @@ export interface WorktreePathExistsEvent {
   security_context?: SecurityAlertContext
   /** Advisory context to use when creating a new worktree with the suggested name */
   advisory_context?: AdvisoryContext
+  /** Origin of the worktree request */
+  origin?: WorktreeOrigin | null
 }
 
 /** Event emitted when worktree creation fails because branch already exists */
@@ -354,6 +358,8 @@ export interface WorktreeBranchExistsEvent {
   security_context?: SecurityAlertContext
   /** Advisory context to use when creating a new worktree with the suggested name */
   advisory_context?: AdvisoryContext
+  /** Origin of the worktree request */
+  origin?: WorktreeOrigin | null
 }
 
 // =============================================================================

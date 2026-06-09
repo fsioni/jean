@@ -348,7 +348,7 @@ export const ChatToolbar = memo(function ChatToolbar({
         />
 
         <MobileToolbarMenu
-          isDisabled={hasPendingQuestions}
+          isDisabled={false}
           hasOpenPr={hasOpenPr}
           hasIssueContexts={loadedIssueContexts.length > 0}
           hasPrContexts={loadedPRContexts.length > 0}
@@ -367,7 +367,7 @@ export const ChatToolbar = memo(function ChatToolbar({
         />
 
         <MobileSettingsMenu
-          isDisabled={hasPendingQuestions}
+          isDisabled={false}
           providerLocked={providerLocked}
           selectedBackend={selectedBackend}
           selectedProvider={selectedProvider}

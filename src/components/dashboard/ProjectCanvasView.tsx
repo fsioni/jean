@@ -173,6 +173,7 @@ import {
   type CanvasPredefinedFilterTab,
   type CanvasPredefinedFilterTabItem,
 } from './canvas-worktree-filters'
+import { getWorktreeLabelContainerClassName } from './worktree-label-layout'
 const GitDiffModal = lazy(() =>
   import('@/components/chat/GitDiffModal').then(mod => ({
     default: mod.GitDiffModal,
@@ -604,7 +605,7 @@ function WorktreeSectionHeader({
       )}
 
       <div className={cn(showDetails ? 'flex flex-col gap-1.5' : 'contents')}>
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
           {shortcutNumber !== undefined && (
             <kbd className="hidden shrink-0 h-4 min-w-4 items-center justify-center rounded border border-border/50 bg-muted/50 px-0.5 font-mono text-muted-foreground sm:inline-flex">
               <span className="text-[9px]">⌘{shortcutNumber}</span>
@@ -726,7 +727,7 @@ function WorktreeSectionHeader({
             )}
           </span>
           {worktreeLabels.length > 0 && (
-            <span className="ml-auto flex max-w-[45%] flex-wrap justify-end gap-1 self-start shrink-0">
+            <span className={getWorktreeLabelContainerClassName()}>
               {worktreeLabels.slice(0, 3).map(label => (
                 <span
                   key={label.name}

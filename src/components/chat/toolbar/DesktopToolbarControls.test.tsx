@@ -159,10 +159,15 @@ describe('DesktopToolbarControls', () => {
     expect(onAttach).toHaveBeenCalledTimes(1)
   })
 
-  it('disables the desktop Magic button while questions are pending', () => {
+  it('keeps desktop Magic and settings controls usable while questions are pending', () => {
     renderDesktopToolbarControls({ hasPendingQuestions: true })
 
-    expect(screen.getByRole('button', { name: /magic/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /magic/i })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: /choose backend and model/i })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: /medium/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^plan$/i })).toBeEnabled()
   })
 
   it('hides reasoning control for Command Code on desktop', () => {

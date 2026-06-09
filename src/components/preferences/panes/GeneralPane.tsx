@@ -121,12 +121,15 @@ import {
   TooltipContent,
 } from '@/components/ui/tooltip'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
+import {
+  getCatalogDefaultModelOptions,
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
 import type { AppPreferences } from '@/types/preferences'
 import {
-  modelOptions,
   thinkingLevelOptions,
   effortLevelOptions,
-  codexDefaultModelOptions,
   codexReasoningOptions,
   backendOptions,
   terminalOptions,
@@ -218,6 +221,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const isGeneralScope = scope === 'general'
   const queryClient = useQueryClient()
   const { data: preferences } = usePreferences()
+  const { data: modelCatalog } = useModelCatalog()
   const patchPreferences = usePatchPreferences()
   const isWebAccessView = !isNativeApp()
   const webAccessSoundsEnabled = preferences?.web_access_sounds_enabled ?? true
@@ -235,6 +239,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     | null
   >(null)
   const [isDeletingCli, setIsDeletingCli] = useState(false)
+
+  const remoteClaudeModelOptions = useMemo(
+    () => getCatalogModelOptions(modelCatalog, 'claude'),
+    [modelCatalog]
+  )
+  const remoteCodexDefaultModelOptions = useMemo(
+    () => getCatalogDefaultModelOptions(modelCatalog, 'codex'),
+    [modelCatalog]
+  )
 
   // PATH detection
   const { data: pathDetection } = useClaudePathDetection()
@@ -2538,7 +2551,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {modelOptions.map(option => (
+                  {remoteClaudeModelOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -2626,7 +2639,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {codexDefaultModelOptions.map(option => (
+                  {remoteCodexDefaultModelOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -3233,10 +3246,10 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                       <SelectContent>
                         <SelectItem value="default">Default model</SelectItem>
                         {(effectiveBuildBackend === 'codex'
-                          ? codexDefaultModelOptions
+                          ? remoteCodexDefaultModelOptions
                           : effectiveBuildBackend === 'commandcode'
                             ? commandCodeModelOptions
-                            : modelOptions
+                            : remoteClaudeModelOptions
                         ).map(option => (
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}
@@ -3477,10 +3490,10 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                       <SelectContent>
                         <SelectItem value="default">Default model</SelectItem>
                         {(effectiveYoloBackend === 'codex'
-                          ? codexDefaultModelOptions
+                          ? remoteCodexDefaultModelOptions
                           : effectiveYoloBackend === 'commandcode'
                             ? commandCodeModelOptions
-                            : modelOptions
+                            : remoteClaudeModelOptions
                         ).map(option => (
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}

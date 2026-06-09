@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import type {
+  GitHubLabel,
   GitHubIssue,
   GitHubIssueDetail,
   GitHubIssueListResult,
@@ -69,6 +70,8 @@ export function isGhAuthError(error: unknown): boolean {
 // Query keys for GitHub
 export const githubQueryKeys = {
   all: ['github'] as const,
+  labels: (projectPath: string) =>
+    [...githubQueryKeys.all, 'labels', projectPath] as const,
   issues: (projectPath: string, state: string) =>
     [...githubQueryKeys.all, 'issues', projectPath, state] as const,
   issue: (projectPath: string, issueNumber: number) =>
@@ -151,6 +154,32 @@ export const githubQueryKeys = {
           'loaded-advisory-contexts',
           sessionId,
         ] as const),
+}
+
+export function useGitHubLabels(
+  projectPath: string | null,
+  options?: { enabled?: boolean; staleTime?: number }
+) {
+  return useQuery({
+    queryKey: githubQueryKeys.labels(projectPath ?? ''),
+    queryFn: async (): Promise<GitHubLabel[]> => {
+      if (!isTauri() || !projectPath) return []
+
+      try {
+        logger.debug('Fetching GitHub labels', { projectPath })
+        return await invoke<GitHubLabel[]>('list_github_labels', {
+          projectPath,
+        })
+      } catch (error) {
+        logger.error('Failed to load GitHub labels', { error, projectPath })
+        throw error
+      }
+    },
+    enabled: (options?.enabled ?? true) && !!projectPath,
+    staleTime: options?.staleTime ?? 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 30,
+    retry: 1,
+  })
 }
 
 /**

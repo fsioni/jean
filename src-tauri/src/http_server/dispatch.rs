@@ -580,6 +580,11 @@ pub async fn dispatch_command(
         // =====================================================================
         // GitHub Issues & PRs
         // =====================================================================
+        "list_github_labels" => {
+            let project_path: String = field(&args, "projectPath", "project_path")?;
+            let result = crate::projects::list_github_labels(app.clone(), project_path).await?;
+            to_value(result)
+        }
         "list_github_issues" => {
             let project_path: String = field(&args, "projectPath", "project_path")?;
             let state: Option<String> = from_field_opt(&args, "state")?;

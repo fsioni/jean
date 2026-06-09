@@ -1216,6 +1216,7 @@ pub async fn create_worktree(
     let app_clone = app.clone();
     let project_path = project.path.clone();
     let project_name = project.name.clone();
+    let project_worktrees_dir_clone = project_worktrees_dir.clone();
     let worktree_id_clone = worktree_id.clone();
     let project_id_clone = project_id.clone();
     let name_clone = name.clone();
@@ -1236,6 +1237,8 @@ pub async fn create_worktree(
         let panic_app = app_clone.clone();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let mut name_clone = name_clone;
+            let mut worktree_path_clone = worktree_path_clone;
             log::trace!("Background: Creating git worktree {name_clone} at {worktree_path_clone}");
 
             // Fetch base branch if enabled, use origin/<base> for up-to-date start point.
@@ -1263,6 +1266,52 @@ pub async fn create_worktree(
             } else {
                 format!("origin/{base_clone}")
             };
+
+            if should_auto_resolve_worktree_conflict(&worktree_origin_clone) {
+                let mut resolved = false;
+                for _ in 0..10 {
+                    let worktree_path = std::path::Path::new(&worktree_path_clone);
+                    let has_path_conflict = worktree_path.exists();
+                    let has_branch_conflict = pr_context_clone.is_none()
+                        && git::branch_exists(&project_path, &name_clone);
+
+                    if !has_path_conflict && !has_branch_conflict {
+                        resolved = true;
+                        break;
+                    }
+
+                    let data = load_projects_data(&app_clone).ok();
+                    let suggested_name = generate_unique_suffix_name(
+                        &name_clone,
+                        &project_path,
+                        &project_id_clone,
+                        data.as_ref(),
+                    );
+                    log::warn!(
+                        "Background: Auto-fix worktree conflict for {name_clone}; retrying with {suggested_name}"
+                    );
+                    name_clone = suggested_name;
+                    let next_path =
+                        project_worktrees_dir_clone.join(sanitize_folder_name(&name_clone));
+                    let Some(next_path_str) = next_path.to_str() else {
+                        log::error!("Background: Invalid auto-fix worktree path");
+                        break;
+                    };
+                    worktree_path_clone = next_path_str.to_string();
+                }
+
+                if !resolved {
+                    let error_event = WorktreeCreateErrorEvent {
+                        id: worktree_id_clone,
+                        project_id: project_id_clone,
+                        error: "Failed to auto-resolve worktree name conflict".to_string(),
+                    };
+                    if let Err(e) = app_clone.emit_all("worktree:error", &error_event) {
+                        log::error!("Failed to emit worktree:error event: {e}");
+                    }
+                    return;
+                }
+            }
 
             // Check if path already exists
             let worktree_path = std::path::Path::new(&worktree_path_clone);
@@ -1300,6 +1349,7 @@ pub async fn create_worktree(
                     issue_context: issue_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
+                    origin: worktree_origin_clone.clone(),
                 };
                 if let Err(e) = app_clone.emit_all("worktree:path_exists", &path_exists_event) {
                     log::error!("Failed to emit worktree:path_exists event: {e}");
@@ -1362,6 +1412,7 @@ pub async fn create_worktree(
                             pr_context: pr_context_clone.clone(),
                             security_context: security_context_clone.clone(),
                             advisory_context: advisory_context_clone.clone(),
+                            origin: worktree_origin_clone.clone(),
                         };
                         if let Err(e) =
                             app_clone.emit_all("worktree:branch_exists", &branch_exists_event)
@@ -1879,6 +1930,10 @@ fn parse_worktree_origin(origin: Option<&str>) -> Result<Option<WorktreeOrigin>,
     }
 }
 
+fn should_auto_resolve_worktree_conflict(origin: &Option<WorktreeOrigin>) -> bool {
+    matches!(origin, Some(WorktreeOrigin::AutoFix))
+}
+
 /// Create a worktree from an existing branch (runs in background)
 ///
 /// This command is used when a branch already exists and the user wants to
@@ -2051,6 +2106,7 @@ pub async fn create_worktree_from_existing_branch(
                     issue_context: issue_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
+                    origin: None,
                 };
                 if let Err(e) = app_clone.emit_all("worktree:path_exists", &path_exists_event) {
                     log::error!("Failed to emit worktree:path_exists event: {e}");
@@ -11101,6 +11157,17 @@ mod tests {
             parse_worktree_origin(Some("manual")),
             Ok(Some(WorktreeOrigin::Manual))
         );
+    }
+
+    #[test]
+    fn auto_fix_origin_auto_resolves_worktree_conflicts() {
+        assert!(should_auto_resolve_worktree_conflict(&Some(
+            WorktreeOrigin::AutoFix
+        )));
+        assert!(!should_auto_resolve_worktree_conflict(&Some(
+            WorktreeOrigin::Manual
+        )));
+        assert!(!should_auto_resolve_worktree_conflict(&None));
     }
 
     #[test]

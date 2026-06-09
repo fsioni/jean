@@ -33,6 +33,7 @@ import type { AppPreferences } from '@/types/preferences'
 import type { AdvisoryContext } from '@/types/github'
 import { hasBackend } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
+import { shouldSuppressAutoFixConflictNotification } from './worktree-conflict-events'
 
 // Check if a backend is available (Tauri IPC or WebSocket)
 // Kept as `isTauri` for backward compatibility across the codebase
@@ -1302,6 +1303,14 @@ export function useWorktreeEvents() {
     // Listen for path exists conflicts — show error toast instead of auto-creating
     unlistenPromises.push(
       listen<WorktreePathExistsEvent>('worktree:path_exists', event => {
+        if (shouldSuppressAutoFixConflictNotification(event.payload)) {
+          logger.info('Suppressing auto-fix worktree path conflict toast', {
+            path: event.payload.path,
+            suggestedName: event.payload.suggested_name,
+          })
+          return
+        }
+
         const { path, archived_worktree_id, archived_worktree_name } =
           event.payload
 
@@ -1329,6 +1338,14 @@ export function useWorktreeEvents() {
     // Listen for branch exists conflicts — dispatch DOM event for BranchConflictDialog
     unlistenPromises.push(
       listen<WorktreeBranchExistsEvent>('worktree:branch_exists', event => {
+        if (shouldSuppressAutoFixConflictNotification(event.payload)) {
+          logger.info('Suppressing auto-fix worktree branch conflict dialog', {
+            branch: event.payload.branch,
+            suggestedName: event.payload.suggested_name,
+          })
+          return
+        }
+
         const { branch } = event.payload
         logger.warn('Branch conflict', { branch })
         window.dispatchEvent(

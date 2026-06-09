@@ -18,6 +18,10 @@ pub struct GitHubLabel {
     pub color: String,
 }
 
+pub fn parse_github_labels_response(stdout: &str) -> Result<Vec<GitHubLabel>, String> {
+    serde_json::from_str(stdout).map_err(|e| format!("Failed to parse gh labels response: {e}"))
+}
+
 /// GitHub user/author
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubAuthor {
@@ -69,6 +73,40 @@ pub struct GitHubIssueDetail {
 pub struct GitHubIssueListResult {
     pub issues: Vec<GitHubIssue>,
     pub total_count: u32,
+}
+
+#[tauri::command]
+pub async fn list_github_labels(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<GitHubLabel>, String> {
+    log::trace!("Listing GitHub labels for {project_path}");
+
+    let gh = resolve_gh_binary(&app);
+    let output = silent_command(&gh)
+        .args(["label", "list", "--json", "name,color", "-L", "1000"])
+        .current_dir(&project_path)
+        .output()
+        .map_err(|e| format!("Failed to run gh label list: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_gh_cli_auth_error(&stderr) {
+            return Err("GitHub CLI not authenticated. Run 'gh auth login' first.".to_string());
+        }
+        if stderr.contains("not a git repository") {
+            return Err("Not a git repository".to_string());
+        }
+        if stderr.contains("Could not resolve") {
+            return Err("Could not resolve repository. Is this a GitHub repository?".to_string());
+        }
+        return Err(format!("gh label list failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut labels = parse_github_labels_response(&stdout)?;
+    labels.sort_by_key(|label| label.name.to_lowercase());
+    Ok(labels)
 }
 
 /// Issue context to pass when creating a worktree
@@ -3127,6 +3165,18 @@ mod tests {
             start_line: Some(10),
             line: Some(12),
         }
+    }
+
+    #[test]
+    fn parses_github_labels_response() {
+        let labels = parse_github_labels_response(
+            r##"[{"name":"bug","color":"d73a4a"},{"name":"help wanted","color":"008672"}]"##,
+        )
+        .expect("labels");
+
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].name, "bug");
+        assert_eq!(labels[1].color, "008672");
     }
 
     #[test]

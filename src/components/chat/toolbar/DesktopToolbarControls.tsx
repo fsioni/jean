@@ -246,7 +246,6 @@ export function DesktopToolbarControls({
           <button
             type="button"
             aria-label="Magic"
-            disabled={hasPendingQuestions}
             className="hidden @xl:flex h-8 items-center gap-1 px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             onClick={onOpenMagicModal}
           >
@@ -567,7 +566,6 @@ export function DesktopToolbarControls({
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      disabled={hasPendingQuestions}
                       className="hidden @xl:flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                     >
                       <span>{providerDisplayName}</span>
@@ -619,7 +617,7 @@ export function DesktopToolbarControls({
       <div className="hidden @xl:block h-4 w-px bg-border/50" />
 
       <DesktopBackendModelPicker
-        disabled={hasPendingQuestions}
+        disabled={false}
         sessionHasMessages={sessionHasMessages}
         providerLocked={providerLocked}
         triggerClassName="rounded-none border-0 bg-transparent px-3"
@@ -646,7 +644,6 @@ export function DesktopToolbarControls({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  disabled={hasPendingQuestions}
                   className="hidden @xl:flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                 >
                   <Brain className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
@@ -690,7 +687,6 @@ export function DesktopToolbarControls({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  disabled={hasPendingQuestions}
                   className="hidden @xl:flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                 >
                   <Brain
@@ -743,7 +739,7 @@ export function DesktopToolbarControls({
       <ExecutionModeDropdown
         executionMode={executionMode}
         availableModes={availableExecutionModes}
-        disabled={hasPendingQuestions}
+        disabled={false}
         onSetExecutionMode={onSetExecutionMode}
         className="hidden @xl:flex"
         onCloseAutoFocus={focusChatInput}

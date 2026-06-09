@@ -103,6 +103,37 @@ fn codex_default_global_system_prompt(execution_mode: Option<&str>) -> String {
     }
 }
 
+fn is_codex_default_global_system_prompt(prompt: &str) -> bool {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    trimmed == crate::default_global_system_prompt().trim()
+        || trimmed == CODEX_DEFAULT_PLAN_MODE_PROMPT.trim()
+        || trimmed == CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT.trim()
+        || (trimmed.contains("### 1. Plan Mode Default")
+            && trimmed.contains("Every Codex plan-mode response")
+            && trimmed.contains("Jean Worktree Policy"))
+}
+
+fn resolve_codex_global_system_prompt(
+    preferences_prompt: Option<&str>,
+    execution_mode: Option<&str>,
+) -> String {
+    preferences_prompt
+        .map(str::trim)
+        .filter(|prompt| !is_codex_default_global_system_prompt(prompt))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| codex_default_global_system_prompt(execution_mode))
+}
+
+fn append_codex_execution_mode_instruction(parts: &mut Vec<String>, execution_mode: Option<&str>) {
+    if let Some(mode_instruction) = codex_execution_mode_instruction(execution_mode) {
+        parts.push(mode_instruction.to_string());
+    }
+}
+
 /// Resolve the default backend from preferences + project settings (sync).
 /// Falls back to Claude if preferences can't be loaded.
 pub(crate) fn resolve_default_backend(app: &AppHandle, worktree_id: Option<&str>) -> Backend {
@@ -2637,12 +2668,6 @@ pub async fn send_chat_message(
 
                     let mut system_prompt_parts: Vec<String> = Vec::new();
 
-                    if let Some(mode_instruction) =
-                        codex_execution_mode_instruction(thread_execution_mode.as_deref())
-                    {
-                        system_prompt_parts.push(mode_instruction.to_string());
-                    }
-
                     // AI language preference
                     if let Some(lang) = &thread_ai_language {
                         let lang = lang.trim();
@@ -2652,23 +2677,17 @@ pub async fn send_chat_message(
                     }
 
                     // Global system prompt from preferences (with default fallback)
-                    let global_prompt = crate::get_preferences_path(&thread_app)
+                    let preferences_global_prompt = crate::get_preferences_path(&thread_app)
                         .ok()
                         .and_then(|prefs_path| std::fs::read_to_string(&prefs_path).ok())
                         .and_then(|contents| {
                             serde_json::from_str::<crate::AppPreferences>(&contents).ok()
                         })
-                        .and_then(|prefs| {
-                            prefs
-                                .magic_prompts
-                                .global_system_prompt
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                        })
-                        .unwrap_or_else(|| {
-                            codex_default_global_system_prompt(thread_execution_mode.as_deref())
-                        });
-                    system_prompt_parts.push(global_prompt);
+                        .and_then(|prefs| prefs.magic_prompts.global_system_prompt);
+                    system_prompt_parts.push(resolve_codex_global_system_prompt(
+                        preferences_global_prompt.as_deref(),
+                        thread_execution_mode.as_deref(),
+                    ));
 
                     // Parallel execution prompt
                     if let Some(prompt) = &thread_parallel_prompt {
@@ -2736,6 +2755,14 @@ pub async fn send_chat_message(
 
                     // End-of-turn recap instruction (compact view surfaces this block)
                     system_prompt_parts.push(super::RECAP_INSTRUCTION.to_string());
+
+                    // Keep the current Codex execution mode as the final authoritative
+                    // instruction so persisted/global plan-mode defaults cannot pull an
+                    // approved build/yolo continuation back into planning behavior.
+                    append_codex_execution_mode_instruction(
+                        &mut system_prompt_parts,
+                        thread_execution_mode.as_deref(),
+                    );
 
                     // Collect context file paths (issues, PRs, saved contexts)
                     let mut all_context_paths: Vec<std::path::PathBuf> = Vec::new();
@@ -7387,6 +7414,59 @@ mod tests {
         assert!(yolo_prompt.contains("## Not Plan Mode"));
         assert!(yolo_prompt.contains("VERY IMPORTANT: Keep Code Simple"));
         assert!(yolo_prompt.contains("Clickable References"));
+    }
+
+    #[test]
+    fn test_codex_legacy_global_default_resolves_to_mode_specific_prompt() {
+        let legacy_default = "### 1. Plan Mode Default
+- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
+
+## Jean Worktree Policy";
+
+        let yolo_prompt = resolve_codex_global_system_prompt(Some(legacy_default), Some("yolo"));
+        assert!(!yolo_prompt.contains("Plan Mode Default"));
+        assert!(!yolo_prompt.contains("update_plan"));
+        assert!(!yolo_prompt.contains("CodexPlan"));
+        assert!(yolo_prompt.contains("## Not Plan Mode"));
+
+        let plan_prompt = resolve_codex_global_system_prompt(Some(&legacy_default), Some("plan"));
+        assert!(plan_prompt.contains("## Plan Mode"));
+        assert!(plan_prompt.contains("CodexPlan"));
+    }
+
+    #[test]
+    fn test_codex_custom_global_prompt_is_preserved() {
+        let custom_prompt = "Custom project rule: always mention the release train.";
+
+        let resolved = resolve_codex_global_system_prompt(Some(custom_prompt), Some("yolo"));
+
+        assert_eq!(resolved, custom_prompt);
+    }
+
+    #[test]
+    fn test_codex_execution_mode_instruction_is_last_authoritative_part() {
+        let mut parts = vec![
+            "Custom prompt still says Every Codex plan-mode response must use update_plan/CodexPlan.".to_string(),
+            crate::chat::RECAP_INSTRUCTION.to_string(),
+        ];
+
+        append_codex_execution_mode_instruction(&mut parts, Some("yolo"));
+        let combined = parts.join("\n");
+
+        let stale_plan_rule = combined
+            .rfind("update_plan/CodexPlan")
+            .expect("stale plan rule is present in custom prompt");
+        let mode_override = combined
+            .rfind("YOLO EXECUTION MODE")
+            .expect("yolo override is present");
+
+        assert!(
+            mode_override > stale_plan_rule,
+            "the current execution-mode override must come after stale plan instructions"
+        );
+        assert!(combined
+            .trim_end()
+            .ends_with("switching back to plan mode."));
     }
 
     #[test]
