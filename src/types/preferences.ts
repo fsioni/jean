@@ -533,16 +533,16 @@ When launching multiple Task subagents, prefer sending them in a single message 
 Instruct each sub-agent to briefly outline its approach before implementing, so it can course-correct early without formal plan mode overhead.`
 
 /** Default global system prompt (must match DEFAULT_GLOBAL_SYSTEM_PROMPT in src-tauri) */
-export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
+- For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
+- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
-- For Codex specifically: after the user answers native \`request_user_input\`/open questions in plan mode, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
-- Every Codex plan-mode response that contains or revises a plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
+- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For Codex specifically, when the current execution mode is plan: after the user answers native \`request_user_input\`/open questions, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
+- Every Codex response that contains or revises a plan while the current execution mode is plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
@@ -638,6 +638,11 @@ Address the following review comments from PR #{prNumber}
 3. Make the requested changes to address each comment
 4. If a comment is unclear or you disagree with it, explain your reasoning
 5. After making changes, briefly summarize what you changed for each comment
+6. After the requested changes are implemented and verified, resolve each matching GitHub PR review conversation
+   - Look for unresolved review threads from coderabbitai when the comment came from CodeRabbit
+   - Match threads by PR #{prNumber}, file path, line number, reviewer, and comment body
+   - Use GitHub GraphQL mutation resolveReviewThread on the matching PullRequestReviewThread
+   - Do not resolve a thread if you cannot complete or verify the fix
 
 </instructions>
 
@@ -1172,6 +1177,7 @@ export const fileEditModeOptions: { value: FileEditMode; label: string }[] = [
 ]
 
 export type ClaudeModel =
+  | 'claude-fable-5'
   | 'claude-opus-4-8'
   | 'claude-opus-4-8[1m]'
   | 'claude-opus-4-7'
@@ -1189,6 +1195,7 @@ export type ClaudeModel =
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
+  { value: 'claude-fable-5', label: 'Claude Fable 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },

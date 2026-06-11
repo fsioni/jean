@@ -20,13 +20,19 @@ export async function openExternal(
   url: string,
   preOpenedWindow?: Window | null
 ): Promise<void> {
+  if (isNativeApp()) {
+    // Do not pass `inAppBrowser`: Tauri opener defaults to the OS/browser app on
+    // mobile, while `inAppBrowser` is the embedded-browser behavior we avoid.
+    await openUrl(url)
+    return
+  }
+
   if (preOpenedWindow) {
     preOpenedWindow.location.href = url
-  } else if (isNativeApp()) {
-    await openUrl(url)
-  } else {
-    window.open(url, '_blank')
+    return
   }
+
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 /**

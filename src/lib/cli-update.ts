@@ -35,7 +35,7 @@ export const CLI_SELF_UPDATE_ARGS: Record<CliType, string[] | null> = {
   claude: ['update'],
   opencode: ['upgrade'],
   coderabbit: ['update'],
-  pi: null,
+  pi: ['update', '--self'],
   gh: null,
   codex: null,
 }
@@ -82,11 +82,16 @@ export function resolveCliPathUpdateAction(
   packageManager: string | null | undefined,
   targetVersion: string | null | undefined
 ): [string, string[]] | null {
+  const selfUpdateArgs = CLI_SELF_UPDATE_ARGS[type]
+  if (type === 'pi' && selfUpdateArgs) {
+    return [cliPath ?? CLI_BINARY_NAMES[type], selfUpdateArgs]
+  }
+
   return getPathUpdateAction(
     cliPath,
     packageManager,
     CLI_BINARY_NAMES[type],
-    CLI_SELF_UPDATE_ARGS[type],
+    selfUpdateArgs,
     NPM_PACKAGE_NAMES[type],
     targetVersion ?? undefined
   )

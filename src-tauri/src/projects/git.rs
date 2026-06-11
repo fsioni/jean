@@ -1,10 +1,16 @@
 use crate::platform::silent_command;
 use crate::platform::wsl_aware_command;
+use once_cell::sync::Lazy;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use super::types::{JeanConfig, MergeType};
+
+static WORKTREE_CREATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+const WORKTREE_CREATE_ATTEMPTS: usize = 4;
 
 /// Resolve the git metadata directories for a working directory.
 ///
@@ -1200,28 +1206,17 @@ pub fn create_worktree(
             .map_err(|e| format!("Failed to create parent directory: {e}"))?;
     }
 
-    // Prune stale worktree entries (folders deleted outside the app)
-    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args(["worktree", "prune"])
-        .output();
-
-    // git worktree add -b <new_branch> <path> <base_branch>
-    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args([
+    run_git_worktree_add_with_retry(
+        repo_path,
+        &[
             "worktree",
             "add",
             "-b",
             new_branch_name,
             worktree_path,
             base_branch,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run git worktree add: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to create worktree: {stderr}"));
-    }
+        ],
+    )?;
 
     log::trace!("Successfully created worktree at {worktree_path}");
     Ok(())
@@ -1247,26 +1242,58 @@ pub fn create_worktree_from_existing_branch(
             .map_err(|e| format!("Failed to create parent directory: {e}"))?;
     }
 
-    // Prune stale worktree entries (folders deleted outside the app)
-    let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args(["worktree", "prune"])
-        .output();
-
-    // git worktree add <path> <existing_branch> (no -b flag)
-    let output = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args(["worktree", "add", worktree_path, existing_branch])
-        .output()
-        .map_err(|e| format!("Failed to run git worktree add: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to create worktree: {stderr}"));
-    }
+    run_git_worktree_add_with_retry(
+        repo_path,
+        &["worktree", "add", worktree_path, existing_branch],
+    )?;
 
     log::trace!(
         "Successfully created worktree at {worktree_path} using existing branch {existing_branch}"
     );
     Ok(())
+}
+
+pub fn is_retryable_worktree_create_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("could not lock config file")
+        || lower.contains("config.lock")
+        || (lower.contains(".git/config") && lower.contains("file exists"))
+        || lower.contains("unable to write upstream branch configuration")
+}
+
+fn run_git_worktree_add_with_retry(repo_path: &str, args: &[&str]) -> Result<(), String> {
+    let _guard = WORKTREE_CREATE_LOCK
+        .lock()
+        .expect("worktree create mutex poisoned");
+
+    for attempt in 1..=WORKTREE_CREATE_ATTEMPTS {
+        // Prune stale worktree entries (folders deleted outside the app)
+        let _ = wsl_aware_command("git", Some(Path::new(repo_path)))
+            .args(["worktree", "prune"])
+            .output();
+
+        let output = wsl_aware_command("git", Some(Path::new(repo_path)))
+            .args(args)
+            .output()
+            .map_err(|e| format!("Failed to run git worktree add: {e}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if attempt < WORKTREE_CREATE_ATTEMPTS && is_retryable_worktree_create_error(&stderr) {
+            log::warn!(
+                "Retrying git worktree add after retryable config-lock error (attempt {attempt}/{WORKTREE_CREATE_ATTEMPTS}): {stderr}"
+            );
+            std::thread::sleep(Duration::from_millis(150 * attempt as u64));
+            continue;
+        }
+
+        return Err(format!("Failed to create worktree: {stderr}"));
+    }
+
+    Err("Failed to create worktree: retry attempts exhausted".to_string())
 }
 
 /// Checkout a PR using gh CLI in the specified directory
@@ -2530,6 +2557,25 @@ mod tests {
                       To choose either option permanently, see push.default in git-config.\n\
                       fatal: push.default is set to simple";
         assert!(git_push_needs_upstream_retry(stderr));
+    }
+
+    #[test]
+    fn retryable_worktree_create_error_detects_git_config_lock() {
+        let stderr = "Preparing worktree (new branch 'issue-10593')\n\
+                      error: could not lock config file .git/config: File exists\n\
+                      error: unable to write upstream branch configuration";
+
+        assert!(is_retryable_worktree_create_error(stderr));
+    }
+
+    #[test]
+    fn retryable_worktree_create_error_rejects_real_conflicts() {
+        assert!(!is_retryable_worktree_create_error(
+            "fatal: a branch named 'issue-10593' already exists"
+        ));
+        assert!(!is_retryable_worktree_create_error(
+            "fatal: '/tmp/project/issue-10593' already exists"
+        ));
     }
 
     #[test]

@@ -186,9 +186,13 @@ describe('ReviewCommentsDialog', () => {
       const detail = (magicCommand.mock.calls[0]?.[0] as CustomEvent).detail
       expect(detail).toMatchObject({
         command: 'review-comments',
+        executionMode: 'yolo',
       })
       expect(detail.prompt).toContain('Please fix this')
       expect(detail.prompt).toContain('Second comment body')
+      expect(detail.prompt).toContain('resolveReviewThread')
+      expect(detail.prompt).toContain('coderabbitai')
+      expect(detail.prompt).toContain('implemented and verified')
       expect(detail.prompts).toBeUndefined()
     } finally {
       window.removeEventListener('magic-command', magicCommand)
@@ -212,8 +216,8 @@ describe('ReviewCommentsDialog', () => {
       const detail = (magicCommand.mock.calls[0]?.[0] as CustomEvent).detail
       expect(detail).toMatchObject({
         command: 'review-comments',
+        executionMode: 'yolo',
       })
-      expect(detail.executionMode).toBeUndefined()
       expect(detail.prompts).toHaveLength(2)
       expect(detail.prompts[0]).toContain('Please fix this')
       expect(detail.prompts[1]).toContain('Second comment body')

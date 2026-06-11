@@ -66,28 +66,30 @@ export const projectCommands: AppCommand[] = [
 
   {
     id: 'help.feature-tour',
-    label: 'Show Boarding Flow',
-    description: 'Run CLI setup and learn keyboard shortcuts',
+    label: 'Show Onboarding Tour',
+    description: 'Replay the Magic Menu and productivity tour',
     icon: Keyboard,
     group: 'help',
     keywords: [
       'tour',
       'boarding',
       'onboarding',
+      'magic',
+      'menu',
+      'automation',
+      'mr',
+      'robot',
       'shortcuts',
       'keybindings',
       'help',
       'keyboard',
-      'install',
-      'cli',
-      'setup',
     ],
 
     execute: () => {
       useUIStore.setState({
-        onboardingManuallyTriggered: true,
-        onboardingDismissed: false,
-        onboardingOpen: true,
+        featureTourOpen: true,
+        onboardingOpen: false,
+        onboardingManuallyTriggered: false,
       })
     },
   },

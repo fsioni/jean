@@ -137,7 +137,7 @@ fn is_wsl_available() -> bool {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
+    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -157,11 +157,11 @@ pub struct AppPreferences {
     #[serde(default = "default_auto_branch_naming")]
     pub auto_branch_naming: bool, // Automatically generate branch names from first message
     #[serde(default = "default_branch_naming_model")]
-    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
+    pub branch_naming_model: String, // Model for generating branch names: haiku, sonnet, claude-fable-5, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_auto_session_naming")]
     pub auto_session_naming: bool, // Automatically generate session names from first message
     #[serde(default = "default_session_naming_model")]
-    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-opus-4-8, claude-opus-4-7
+    pub session_naming_model: String, // Model for generating session names: haiku, sonnet, claude-fable-5, claude-opus-4-8, claude-opus-4-7
     #[serde(default = "default_font_size")]
     pub ui_font_size: u32, // Font size for UI text in pixels (10-24)
     #[serde(default = "default_font_size")]
@@ -665,8 +665,8 @@ mod tests {
 
         assert!(prompt.contains("backend-native interactive question UI"));
         assert!(prompt.contains("Codex request_user_input"));
-        assert!(prompt.contains("after the user answers native `request_user_input`"));
-        assert!(prompt.contains("Every Codex plan-mode response"));
+        assert!(prompt.contains("when the current execution mode is plan: after the user answers native `request_user_input`"));
+        assert!(prompt.contains("Every Codex response that contains or revises a plan while the current execution mode is plan"));
         assert!(prompt.contains("Claude AskUserQuestion"));
         assert!(prompt.contains("OpenCode question"));
         assert!(prompt.contains("Use a plain-text Unresolved Questions section only"));
@@ -1329,6 +1329,11 @@ Address the following review comments from PR #{prNumber}
 3. Make the requested changes to address each comment
 4. If a comment is unclear or you disagree with it, explain your reasoning
 5. After making changes, briefly summarize what you changed for each comment
+6. After the requested changes are implemented and verified, resolve each matching GitHub PR review conversation
+   - Look for unresolved review threads from coderabbitai when the comment came from CodeRabbit
+   - Match threads by PR #{prNumber}, file path, line number, reviewer, and comment body
+   - Use GitHub GraphQL mutation resolveReviewThread on the matching PullRequestReviewThread
+   - Do not resolve a thread if you cannot complete or verify the fix
 
 </instructions>
 
@@ -1355,16 +1360,16 @@ When specifying subagent_type for Task tool calls, always use the fully qualifie
 }
 
 fn default_global_system_prompt() -> String {
-    r#"### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+    r#"### 1. Planning Guidance
+- For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
+- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- In planning mode, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions in plan mode, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
-- For Codex specifically: after the user answers native `request_user_input`/open questions in plan mode, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.
-- Every Codex plan-mode response that contains or revises a plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
+- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For Codex specifically, when the current execution mode is plan: after the user answers native `request_user_input`/open questions, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.
+- Every Codex response that contains or revises a plan while the current execution mode is plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
@@ -3279,6 +3284,12 @@ pub fn run() {
         return;
     }
 
+    // Raise the open-file-descriptor soft limit to the hard limit. macOS GUI apps
+    // start with a low default (often 256); bulk git-status refresh across many
+    // worktrees plus child CLI spawns can exhaust it (EMFILE), silently breaking
+    // claude CLI runs. Must run before any subprocess work. No-op on Windows.
+    crate::platform::raise_fd_limit();
+
     let cli_args = parse_cli_args();
     let headless = cli_args.headless;
 
@@ -3915,6 +3926,7 @@ pub fn run() {
             projects::list_cursor_skills,
             projects::list_plugin_skills,
             // GitHub issues commands
+            projects::list_github_labels,
             projects::list_github_issues,
             projects::search_github_issues,
             projects::get_github_issue,

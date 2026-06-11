@@ -1,12 +1,24 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Check, ChevronsUpDown, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -16,19 +28,37 @@ import {
 } from '@/components/ui/select'
 import { useProjects, useUpdateProjectSettings } from '@/services/projects'
 import type { ProjectAutoFixSettings } from '@/types/projects'
-import { codexDefaultModelOptions, modelOptions } from '@/types/preferences'
 import {
+  backendOptions,
+  codexDefaultModelOptions,
+  type CliBackend,
+  modelOptions,
+} from '@/types/preferences'
+import { BackendLabel } from '@/components/ui/backend-label'
+import { cn } from '@/lib/utils'
+import { BackendModelPickerContent } from '@/components/chat/toolbar/BackendModelPickerContent'
+import {
+  COMMANDCODE_MODEL_OPTIONS,
   CURSOR_MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
+import { useGitHubLabels } from '@/services/github'
+import type { GitHubLabel } from '@/types/github'
 
 export const MR_ROBOT_SETTINGS_BADGE = 'Beta'
+const BACKEND_DEFAULT_MODEL_VALUE = '__backend_default__'
+const ALL_CLI_BACKENDS = backendOptions.map(
+  option => option.value
+) as CliBackend[]
 
 const DEFAULT_AUTO_FIX_SETTINGS: ProjectAutoFixSettings = {
   enabled: false,
   interval_minutes: 30,
   issue_limit: 1,
   max_parallel_worktrees: 1,
+  included_labels: [],
+  excluded_labels: [],
   planning_backend: 'claude',
   planning_model: null,
   auto_yolo_enabled: false,
@@ -39,6 +69,19 @@ const DEFAULT_AUTO_FIX_SETTINGS: ProjectAutoFixSettings = {
   active_hours_end: 8,
 }
 
+function parseLabelList(value: string): string[] {
+  const seen = new Set<string>()
+  const labels: string[] = []
+  for (const label of value.split(',')) {
+    const trimmed = label.trim()
+    const key = trimmed.toLowerCase()
+    if (!trimmed || seen.has(key)) continue
+    seen.add(key)
+    labels.push(trimmed)
+  }
+  return labels
+}
+
 function normalizeAutoFixSettings(
   settings: ProjectAutoFixSettings
 ): ProjectAutoFixSettings {
@@ -47,6 +90,8 @@ function normalizeAutoFixSettings(
     ...settings,
     planning_model: settings.planning_model?.trim() || null,
     yolo_model: settings.yolo_model?.trim() || null,
+    included_labels: parseLabelList((settings.included_labels ?? []).join(',')),
+    excluded_labels: parseLabelList((settings.excluded_labels ?? []).join(',')),
   }
 }
 
@@ -88,6 +133,108 @@ function Field({
   )
 }
 
+function GitHubLabelMultiSelect({
+  label,
+  labels,
+  selected,
+  isLoading,
+  disabled,
+  onChange,
+}: {
+  label: string
+  labels: GitHubLabel[]
+  selected: string[]
+  isLoading?: boolean
+  disabled?: boolean
+  onChange: (labels: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const options = useMemo(() => {
+    const byName = new Map<string, GitHubLabel>()
+    for (const label of labels) {
+      byName.set(label.name.toLowerCase(), label)
+    }
+    for (const name of selected) {
+      if (!byName.has(name.toLowerCase())) {
+        byName.set(name.toLowerCase(), { name, color: '6b7280' })
+      }
+    }
+    return Array.from(byName.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )
+  }, [labels, selected])
+  const selectedSet = useMemo(
+    () => new Set(selected.map(name => name.toLowerCase())),
+    [selected]
+  )
+  const buttonText =
+    selected.length > 0
+      ? selected.join(', ')
+      : isLoading
+        ? 'Loading labels...'
+        : 'Select labels'
+
+  const toggleLabel = useCallback(
+    (name: string) => {
+      const key = name.toLowerCase()
+      if (selectedSet.has(key)) {
+        onChange(selected.filter(label => label.toLowerCase() !== key))
+      } else {
+        onChange([...selected, name])
+      }
+    },
+    [onChange, selected, selectedSet]
+  )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          aria-label={label}
+          disabled={disabled}
+          className="w-full justify-between font-normal"
+        >
+          <span className="truncate text-left">{buttonText}</span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[24rem] max-w-[80vw] p-0">
+        <Command>
+          <CommandInput placeholder="Search labels..." />
+          <CommandList>
+            <CommandEmpty>No GitHub labels found.</CommandEmpty>
+            {options.map(option => {
+              const checked = selectedSet.has(option.name.toLowerCase())
+              return (
+                <CommandItem
+                  key={option.name}
+                  value={option.name}
+                  onSelect={() => toggleLabel(option.name)}
+                  className="flex items-center gap-2"
+                >
+                  <Check
+                    className={cn(
+                      'h-4 w-4',
+                      checked ? 'opacity-100' : 'opacity-0'
+                    )}
+                  />
+                  <span
+                    className="h-2.5 w-2.5 rounded-full border"
+                    style={{ backgroundColor: `#${option.color}` }}
+                  />
+                  <span className="truncate">{option.name}</span>
+                </CommandItem>
+              )
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function getModelOptions(backend: string) {
   switch (backend) {
     case 'codex':
@@ -96,43 +243,101 @@ function getModelOptions(backend: string) {
       return OPENCODE_MODEL_OPTIONS
     case 'cursor':
       return CURSOR_MODEL_OPTIONS
+    case 'pi':
+      return PI_MODEL_OPTIONS
+    case 'commandcode':
+      return COMMANDCODE_MODEL_OPTIONS
     case 'claude':
     default:
       return modelOptions
   }
 }
 
-function ModelSelect({
+function getModelLabel(backend: string, model: string | null | undefined) {
+  if (!model) return 'Backend default'
+
+  return (
+    getModelOptions(backend).find(option => option.value === model)?.label ??
+    model
+  )
+}
+
+function AutoFixBackendModelPicker({
+  label,
   backend,
-  value,
+  model,
   disabled,
   onChange,
 }: {
+  label: string
   backend: string
-  value: string | null | undefined
+  model: string | null | undefined
   disabled?: boolean
-  onChange: (value: string | null) => void
+  onChange: (backend: string, model: string | null) => void
 }) {
-  const options = getModelOptions(backend)
+  const [open, setOpen] = useState(false)
+  const selectedBackend = backend as CliBackend
+  const selectedModel = model ?? BACKEND_DEFAULT_MODEL_VALUE
+  const modelLabel = getModelLabel(backend, model)
+  const handleModelChange = useCallback(
+    (nextModel: string) => {
+      onChange(
+        backend,
+        nextModel === BACKEND_DEFAULT_MODEL_VALUE ? null : nextModel
+      )
+    },
+    [backend, onChange]
+  )
+  const handleBackendModelChange = useCallback(
+    (nextBackend: CliBackend, nextModel: string) => {
+      onChange(
+        nextBackend,
+        nextModel === BACKEND_DEFAULT_MODEL_VALUE ? null : nextModel
+      )
+    },
+    [onChange]
+  )
 
   return (
-    <Select
-      value={value ?? 'default'}
-      disabled={disabled}
-      onValueChange={v => onChange(v === 'default' ? null : v)}
-    >
-      <SelectTrigger>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="default">Backend default</SelectItem>
-        {options.map(option => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Choose ${label} backend and model`}
+          disabled={disabled}
+          className={cn(
+            'flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border/70 bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
+            disabled && 'opacity-50'
+          )}
+        >
+          <span className="min-w-0 flex items-center gap-1.5">
+            <BackendLabel backend={selectedBackend} className="shrink-0" />
+            <span className="truncate">· {modelLabel}</span>
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[min(36rem,calc(100vw-4rem))] p-0"
+      >
+        <BackendModelPickerContent
+          open={open}
+          selectedBackend={selectedBackend}
+          selectedModel={selectedModel}
+          selectedProvider={null}
+          installedBackends={ALL_CLI_BACKENDS}
+          customCliProfiles={[]}
+          onModelChange={handleModelChange}
+          onBackendModelChange={handleBackendModelChange}
+          onRequestClose={() => setOpen(false)}
+          defaultModelOption={{
+            value: BACKEND_DEFAULT_MODEL_VALUE,
+            label: 'Backend default',
+          }}
+        />
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -140,6 +345,10 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
   const { data: projects = [] } = useProjects()
   const project = projects.find(p => p.id === projectId)
   const updateSettings = useUpdateProjectSettings()
+  const { data: githubLabels = [], isLoading: githubLabelsLoading } =
+    useGitHubLabels(project?.path ?? null, {
+      enabled: Boolean(project?.path && !project?.is_folder),
+    })
 
   const initialSettings = useMemo(
     () => ({
@@ -284,6 +493,42 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
 
           <Separator className="my-4" />
 
+          <Field
+            label="Included GitHub labels"
+            description="When set, Mr. Robot starts from issues with any of these labels. Leave blank to include all open issues before exclusions."
+          >
+            <GitHubLabelMultiSelect
+              label="Included GitHub labels"
+              labels={githubLabels}
+              selected={settings.included_labels ?? []}
+              isLoading={githubLabelsLoading}
+              disabled={updateSettings.isPending}
+              onChange={included_labels =>
+                setSettings(current => ({ ...current, included_labels }))
+              }
+            />
+          </Field>
+
+          <div className="pt-4">
+            <Field
+              label="Excluded GitHub labels"
+              description="Issues with any of these labels are removed from the final Mr. Robot list."
+            >
+              <GitHubLabelMultiSelect
+                label="Excluded GitHub labels"
+                labels={githubLabels}
+                selected={settings.excluded_labels ?? []}
+                isLoading={githubLabelsLoading}
+                disabled={updateSettings.isPending}
+                onChange={excluded_labels =>
+                  setSettings(current => ({ ...current, excluded_labels }))
+                }
+              />
+            </Field>
+          </div>
+
+          <Separator className="my-4" />
+
           <div className="flex items-start justify-between gap-4">
             <div className="max-w-2xl">
               <Label className="text-sm text-foreground">Active hours</Label>
@@ -352,39 +597,20 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Backend">
-                <Select
-                  value={settings.planning_backend}
-                  onValueChange={planning_backend =>
-                    setSettings(current => ({
-                      ...current,
-                      planning_backend,
-                      planning_model: null,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="claude">Claude</SelectItem>
-                    <SelectItem value="codex">Codex</SelectItem>
-                    <SelectItem value="opencode">OpenCode</SelectItem>
-                    <SelectItem value="cursor">Cursor</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Model">
-                <ModelSelect
-                  backend={settings.planning_backend}
-                  value={settings.planning_model}
-                  onChange={planning_model =>
-                    setSettings(current => ({ ...current, planning_model }))
-                  }
-                />
-              </Field>
-            </div>
+            <Field label="Backend + model">
+              <AutoFixBackendModelPicker
+                label="planning"
+                backend={settings.planning_backend}
+                model={settings.planning_model}
+                onChange={(planning_backend, planning_model) =>
+                  setSettings(current => ({
+                    ...current,
+                    planning_backend,
+                    planning_model,
+                  }))
+                }
+              />
+            </Field>
           </div>
 
           <div className="rounded-lg border p-4">
@@ -406,45 +632,21 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
                 disabled={updateSettings.isPending}
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Backend">
-                <div className={settings.auto_yolo_enabled ? '' : 'opacity-50'}>
-                  <Select
-                    value={settings.yolo_backend}
-                    disabled={!settings.auto_yolo_enabled}
-                    onValueChange={yolo_backend =>
-                      setSettings(current => ({
-                        ...current,
-                        yolo_backend,
-                        yolo_model: null,
-                      }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="claude">Claude</SelectItem>
-                      <SelectItem value="codex">Codex</SelectItem>
-                      <SelectItem value="opencode">OpenCode</SelectItem>
-                      <SelectItem value="cursor">Cursor</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </Field>
-              <Field label="Model">
-                <div className={settings.auto_yolo_enabled ? '' : 'opacity-50'}>
-                  <ModelSelect
-                    backend={settings.yolo_backend}
-                    value={settings.yolo_model}
-                    disabled={!settings.auto_yolo_enabled}
-                    onChange={yolo_model =>
-                      setSettings(current => ({ ...current, yolo_model }))
-                    }
-                  />
-                </div>
-              </Field>
-            </div>
+            <Field label="Backend + model">
+              <AutoFixBackendModelPicker
+                label="yolo"
+                backend={settings.yolo_backend}
+                model={settings.yolo_model}
+                disabled={!settings.auto_yolo_enabled}
+                onChange={(yolo_backend, yolo_model) =>
+                  setSettings(current => ({
+                    ...current,
+                    yolo_backend,
+                    yolo_model,
+                  }))
+                }
+              />
+            </Field>
           </div>
         </div>
 

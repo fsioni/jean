@@ -10,8 +10,36 @@ pub struct CliPathUpdateOutput {
     pub exit_code: Option<i32>,
 }
 
-const ALLOWED_CLI_TYPES: &[&str] = &["claude", "codex", "opencode", "gh", "coderabbit"];
-const ALLOWED_COMMANDS: &[&str] = &["brew", "npm", "bun", "claude", "opencode", "coderabbit"];
+const ALLOWED_CLI_TYPES: &[&str] = &["claude", "codex", "opencode", "gh", "coderabbit", "pi"];
+const ALLOWED_COMMANDS: &[&str] = &[
+    "brew",
+    "npm",
+    "bun",
+    "claude",
+    "opencode",
+    "coderabbit",
+    "pi",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::{ALLOWED_CLI_TYPES, ALLOWED_COMMANDS};
+
+    #[test]
+    fn pi_is_an_allowed_cli_type_for_path_updates() {
+        assert!(ALLOWED_CLI_TYPES.contains(&"pi"));
+    }
+
+    #[test]
+    fn pi_is_an_allowed_update_command_for_self_updates() {
+        assert!(ALLOWED_COMMANDS.contains(&"pi"));
+    }
+
+    #[test]
+    fn arbitrary_cli_type_is_not_allowed_for_path_updates() {
+        assert!(!ALLOWED_CLI_TYPES.contains(&"definitely-not-a-cli"));
+    }
+}
 
 /// Run a CLI update command silently in the background.
 /// Captures stdout/stderr and returns the result without opening a terminal window.

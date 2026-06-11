@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { CommandContext, AppCommand } from './types'
+import { useUIStore } from '@/store/ui-store'
 
 const { registerCommands, getAllCommands, executeCommand, clearRegistry } =
   await import('./registry')
@@ -184,6 +185,12 @@ describe('Project Commands', () => {
     clearRegistry()
     mockContext = createMockContext()
     registerCommands(projectCommands)
+    useUIStore.setState({
+      featureTourOpen: false,
+      onboardingOpen: false,
+      onboardingManuallyTriggered: false,
+      onboardingDismissed: true,
+    })
   })
 
   it('registers all project commands', () => {
@@ -204,6 +211,15 @@ describe('Project Commands', () => {
     expect(result.success).toBe(true)
     expect(mockContext.copySessionDebugDetails).toHaveBeenCalled()
     expect(mockContext.toggleDebugMode).not.toHaveBeenCalled()
+  })
+
+  it('feature tour command replays the product tour directly', async () => {
+    const result = await executeCommand('help.feature-tour', mockContext)
+
+    expect(result.success).toBe(true)
+    expect(useUIStore.getState().featureTourOpen).toBe(true)
+    expect(useUIStore.getState().onboardingOpen).toBe(false)
+    expect(useUIStore.getState().onboardingManuallyTriggered).toBe(false)
   })
 })
 

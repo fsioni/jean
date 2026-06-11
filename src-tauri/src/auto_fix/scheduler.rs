@@ -60,14 +60,71 @@ fn now_unix_secs() -> u64 {
 pub fn select_issue_numbers_to_start(
     issues: &[AutoFixIssueCandidate],
     handled_issue_numbers: &HashSet<u32>,
+    included_labels: &[String],
+    excluded_labels: &[String],
     limit: usize,
 ) -> Vec<u32> {
+    let included_labels = normalized_label_set(included_labels);
+    let excluded_labels = normalized_label_set(excluded_labels);
     issues
         .iter()
         .filter(|issue| !handled_issue_numbers.contains(&issue.number))
+        .filter(|issue| issue_is_label_eligible(issue, &included_labels, &excluded_labels))
         .take(limit)
         .map(|issue| issue.number)
         .collect()
+}
+
+fn normalized_label_set(labels: &[String]) -> HashSet<String> {
+    labels
+        .iter()
+        .map(|label| normalized_label_name(label))
+        .filter(|label| !label.is_empty())
+        .collect()
+}
+
+fn normalized_label_name(label: &str) -> String {
+    label
+        .trim()
+        .chars()
+        .filter(|ch| !matches!(ch, '\u{fe0e}' | '\u{fe0f}'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn issue_has_excluded_label(
+    issue: &AutoFixIssueCandidate,
+    excluded_labels: &HashSet<String>,
+) -> bool {
+    issue
+        .labels
+        .iter()
+        .map(|label| normalized_label_name(label))
+        .any(|label| excluded_labels.contains(&label))
+}
+
+fn issue_matches_included_labels(
+    issue: &AutoFixIssueCandidate,
+    included_labels: &HashSet<String>,
+) -> bool {
+    if included_labels.is_empty() {
+        return true;
+    }
+
+    issue
+        .labels
+        .iter()
+        .map(|label| normalized_label_name(label))
+        .any(|label| included_labels.contains(&label))
+}
+
+fn issue_is_label_eligible(
+    issue: &AutoFixIssueCandidate,
+    included_labels: &HashSet<String>,
+    excluded_labels: &HashSet<String>,
+) -> bool {
+    issue_matches_included_labels(issue, included_labels)
+        && !issue_has_excluded_label(issue, excluded_labels)
 }
 
 pub fn is_backend_quota_or_auth_error(error: &str) -> bool {
@@ -120,24 +177,6 @@ async fn run_auto_fix_scan(app: &AppHandle) {
             .filter(|worktree| worktree.project_id == project.id)
             .cloned()
             .collect();
-        let active_auto_fix = project_worktrees
-            .iter()
-            .filter(|worktree| {
-                worktree.archived_at.is_none()
-                    && matches!(worktree.origin, Some(WorktreeOrigin::AutoFix))
-            })
-            .count();
-        let max_parallel = settings.max_parallel_worktrees.max(1) as usize;
-        if active_auto_fix >= max_parallel {
-            continue;
-        }
-
-        let capacity = max_parallel - active_auto_fix;
-        let limit = (settings.issue_limit.max(1) as usize).min(capacity);
-        let handled: HashSet<u32> = project_worktrees
-            .iter()
-            .filter_map(|worktree| worktree.issue_number)
-            .collect();
 
         let issues = match crate::projects::github_issues::list_github_issues(
             app.clone(),
@@ -151,6 +190,7 @@ async fn run_auto_fix_scan(app: &AppHandle) {
                 .into_iter()
                 .map(|issue| AutoFixIssueCandidate {
                     number: issue.number,
+                    labels: issue.labels.into_iter().map(|label| label.name).collect(),
                 })
                 .collect::<Vec<_>>(),
             Err(err) => {
@@ -161,8 +201,61 @@ async fn run_auto_fix_scan(app: &AppHandle) {
                 continue;
             }
         };
+        let open_issue_numbers: HashSet<u32> = issues.iter().map(|issue| issue.number).collect();
+        let closed_worktree_ids =
+            closed_auto_fix_issue_worktree_ids(&project_worktrees, &open_issue_numbers);
+        let ineligible_worktree_ids = ineligible_auto_fix_issue_worktree_ids(
+            &project_worktrees,
+            &issues,
+            &settings.included_labels,
+            &settings.excluded_labels,
+        );
+        let archived_worktree_ids: Vec<String> = closed_worktree_ids
+            .into_iter()
+            .chain(ineligible_worktree_ids.into_iter())
+            .collect();
+        let archived_worktree_id_set: HashSet<String> =
+            archived_worktree_ids.iter().cloned().collect();
 
-        for issue_number in select_issue_numbers_to_start(&issues, &handled, limit) {
+        for worktree_id in &archived_worktree_ids {
+            match crate::projects::archive_worktree(app.clone(), worktree_id.clone()).await {
+                Ok(()) => log::info!(
+                    "Mr. Robot: archived auto-fix worktree {worktree_id} because its GitHub issue is closed or no longer matches label filters"
+                ),
+                Err(err) => log::warn!(
+                    "Mr. Robot: failed to archive auto-fix worktree {worktree_id}: {err}"
+                ),
+            }
+        }
+
+        let active_auto_fix = project_worktrees
+            .iter()
+            .filter(|worktree| {
+                worktree.archived_at.is_none()
+                    && !archived_worktree_id_set.contains(&worktree.id)
+                    && matches!(worktree.origin, Some(WorktreeOrigin::AutoFix))
+            })
+            .count();
+        let max_parallel = settings.max_parallel_worktrees.max(1) as usize;
+        if active_auto_fix >= max_parallel {
+            continue;
+        }
+
+        let capacity = max_parallel - active_auto_fix;
+        let limit = (settings.issue_limit.max(1) as usize).min(capacity);
+        let handled: HashSet<u32> = project_worktrees
+            .iter()
+            .filter(|worktree| !archived_worktree_id_set.contains(&worktree.id))
+            .filter_map(|worktree| worktree.issue_number)
+            .collect();
+
+        for issue_number in select_issue_numbers_to_start(
+            &issues,
+            &handled,
+            &settings.included_labels,
+            &settings.excluded_labels,
+            limit,
+        ) {
             let app_clone = app.clone();
             let project_clone = project.clone();
             let settings_clone = settings.clone();
@@ -225,6 +318,62 @@ fn project_due(project: &Project, settings: &ProjectAutoFixSettings) -> bool {
     true
 }
 
+fn closed_auto_fix_issue_worktree_ids(
+    worktrees: &[Worktree],
+    open_issue_numbers: &HashSet<u32>,
+) -> Vec<String> {
+    worktrees
+        .iter()
+        .filter(|worktree| {
+            worktree.archived_at.is_none()
+                && matches!(worktree.origin, Some(WorktreeOrigin::AutoFix))
+                && worktree
+                    .issue_number
+                    .is_some_and(|issue_number| !open_issue_numbers.contains(&issue_number))
+        })
+        .map(|worktree| worktree.id.clone())
+        .collect()
+}
+
+fn ineligible_auto_fix_issue_worktree_ids(
+    worktrees: &[Worktree],
+    issues: &[AutoFixIssueCandidate],
+    included_labels: &[String],
+    excluded_labels: &[String],
+) -> Vec<String> {
+    let included_labels = normalized_label_set(included_labels);
+    let excluded_labels = normalized_label_set(excluded_labels);
+    let issues_by_number: HashMap<u32, &AutoFixIssueCandidate> =
+        issues.iter().map(|issue| (issue.number, issue)).collect();
+
+    worktrees
+        .iter()
+        .filter(|worktree| {
+            worktree.archived_at.is_none()
+                && matches!(worktree.origin, Some(WorktreeOrigin::AutoFix))
+                && worktree
+                    .issue_number
+                    .and_then(|issue_number| issues_by_number.get(&issue_number))
+                    .is_some_and(|issue| {
+                        !issue_is_label_eligible(issue, &included_labels, &excluded_labels)
+                    })
+        })
+        .map(|worktree| worktree.id.clone())
+        .collect()
+}
+
+fn build_auto_fix_investigation_prompt(
+    prefs: &crate::AppPreferences,
+    worktree: &Worktree,
+) -> String {
+    let worktree_value = serde_json::to_value(worktree).unwrap_or_else(|_| serde_json::json!({}));
+    crate::jean_mcp_core::build_investigation_prompt(
+        prefs,
+        &worktree_value,
+        crate::jean_mcp_core::InvestigationKind::Issue,
+    )
+}
+
 async fn start_issue_auto_fix(
     app: &AppHandle,
     project: &Project,
@@ -261,9 +410,8 @@ async fn start_issue_auto_fix(
     .await?;
 
     let ready_worktree = wait_for_worktree_ready(app, &pending_worktree.id).await?;
-    let prompt = format!(
-        "Investigate GitHub issue #{issue_number}. Create a focused implementation plan for fixing it. Do not implement yet; stop in plan mode and wait for approval."
-    );
+    let prefs = crate::load_preferences(app.clone()).await?;
+    let prompt = build_auto_fix_investigation_prompt(&prefs, &ready_worktree);
     let model = settings
         .planning_model
         .clone()
@@ -605,7 +753,9 @@ fn default_model_for_backend(backend: &str) -> String {
     match backend {
         "codex" => "gpt-5.3-codex".to_string(),
         "opencode" => "opencode/gpt-5.3-codex".to_string(),
-        "cursor" => "auto".to_string(),
+        "cursor" => "cursor/auto".to_string(),
+        "pi" => "pi/sonnet".to_string(),
+        "commandcode" => "commandcode/default".to_string(),
         _ => "claude-opus-4-8[1m]".to_string(),
     }
 }
@@ -614,19 +764,159 @@ fn default_model_for_backend(backend: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_worktree(
+        id: &str,
+        issue_number: Option<u32>,
+        origin: Option<WorktreeOrigin>,
+        archived_at: Option<u64>,
+    ) -> Worktree {
+        Worktree {
+            id: id.to_string(),
+            project_id: "project".to_string(),
+            name: id.to_string(),
+            path: format!("/tmp/{id}"),
+            branch: id.to_string(),
+            base_branch: Some("main".to_string()),
+            created_at: 1,
+            setup_output: None,
+            setup_script: None,
+            setup_success: None,
+            session_type: crate::projects::types::SessionType::Worktree,
+            pr_number: None,
+            pr_url: None,
+            issue_number,
+            linear_issue_identifier: None,
+            security_alert_number: None,
+            security_alert_url: None,
+            advisory_ghsa_id: None,
+            advisory_url: None,
+            cached_pr_status: None,
+            cached_check_status: None,
+            cached_behind_count: None,
+            cached_ahead_count: None,
+            cached_status_at: None,
+            cached_uncommitted_added: None,
+            cached_uncommitted_removed: None,
+            cached_branch_diff_added: None,
+            cached_branch_diff_removed: None,
+            cached_base_branch_ahead_count: None,
+            cached_base_branch_behind_count: None,
+            cached_worktree_ahead_count: None,
+            cached_unpushed_count: None,
+            pr_push_remote: None,
+            pr_push_branch: None,
+            order: 0,
+            origin,
+            archived_at,
+            labels: Vec::new(),
+            label: None,
+            last_opened_at: None,
+        }
+    }
+
     #[test]
     fn skips_handled_issues_and_respects_limit() {
         let issues = vec![
-            AutoFixIssueCandidate { number: 1 },
-            AutoFixIssueCandidate { number: 2 },
-            AutoFixIssueCandidate { number: 3 },
-            AutoFixIssueCandidate { number: 4 },
+            AutoFixIssueCandidate {
+                number: 1,
+                labels: Vec::new(),
+            },
+            AutoFixIssueCandidate {
+                number: 2,
+                labels: Vec::new(),
+            },
+            AutoFixIssueCandidate {
+                number: 3,
+                labels: Vec::new(),
+            },
+            AutoFixIssueCandidate {
+                number: 4,
+                labels: Vec::new(),
+            },
         ];
         let handled = HashSet::from([2, 4]);
 
-        let selected = select_issue_numbers_to_start(&issues, &handled, 2);
+        let selected = select_issue_numbers_to_start(&issues, &handled, &[], &[], 2);
 
         assert_eq!(selected, vec![1, 3]);
+    }
+
+    #[test]
+    fn skips_issues_with_excluded_labels_case_insensitively() {
+        let issues = vec![
+            AutoFixIssueCandidate {
+                number: 1,
+                labels: vec!["bug".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 2,
+                labels: vec!["wontfix".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 3,
+                labels: vec!["Do Not Fix".to_string()],
+            },
+        ];
+        let excluded_labels = vec!["WONTFIX".to_string(), "do not fix".to_string()];
+
+        let selected =
+            select_issue_numbers_to_start(&issues, &HashSet::new(), &[], &excluded_labels, 3);
+
+        assert_eq!(selected, vec![1]);
+    }
+
+    #[test]
+    fn skips_issues_when_emoji_label_differs_only_by_variation_selector() {
+        let issues = vec![
+            AutoFixIssueCandidate {
+                number: 1,
+                labels: vec!["bug".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 2,
+                labels: vec!["🤖️ mr robot skip".to_string()],
+            },
+        ];
+        let excluded_labels = vec!["🤖 mr robot skip".to_string()];
+
+        let selected =
+            select_issue_numbers_to_start(&issues, &HashSet::new(), &[], &excluded_labels, 2);
+
+        assert_eq!(selected, vec![1]);
+    }
+
+    #[test]
+    fn included_labels_union_then_excluded_labels_remove_matches() {
+        let issues = vec![
+            AutoFixIssueCandidate {
+                number: 1,
+                labels: vec!["bug".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 2,
+                labels: vec!["enhancement".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 3,
+                labels: vec!["bug".to_string(), "wontfix".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 4,
+                labels: vec!["question".to_string()],
+            },
+        ];
+        let included_labels = vec!["BUG".to_string(), "enhancement".to_string()];
+        let excluded_labels = vec!["wontfix".to_string()];
+
+        let selected = select_issue_numbers_to_start(
+            &issues,
+            &HashSet::new(),
+            &included_labels,
+            &excluded_labels,
+            10,
+        );
+
+        assert_eq!(selected, vec![1, 2]);
     }
 
     #[test]
@@ -678,6 +968,126 @@ mod tests {
     }
 
     #[test]
+    fn default_models_cover_all_auto_fix_backends() {
+        assert_eq!(
+            default_model_for_backend("claude"),
+            "claude-opus-4-8[1m]".to_string()
+        );
+        assert_eq!(
+            default_model_for_backend("codex"),
+            "gpt-5.3-codex".to_string()
+        );
+        assert_eq!(
+            default_model_for_backend("opencode"),
+            "opencode/gpt-5.3-codex".to_string()
+        );
+        assert_eq!(
+            default_model_for_backend("cursor"),
+            "cursor/auto".to_string()
+        );
+        assert_eq!(default_model_for_backend("pi"), "pi/sonnet".to_string());
+        assert_eq!(
+            default_model_for_backend("commandcode"),
+            "commandcode/default".to_string()
+        );
+    }
+
+    #[test]
+    fn selects_only_open_auto_fix_worktrees_with_closed_issues_for_archive() {
+        let open_issue_numbers = HashSet::from([1, 3]);
+        let worktrees = vec![
+            test_worktree("auto-open", Some(1), Some(WorktreeOrigin::AutoFix), None),
+            test_worktree("auto-closed", Some(2), Some(WorktreeOrigin::AutoFix), None),
+            test_worktree("manual-closed", Some(2), Some(WorktreeOrigin::Manual), None),
+            test_worktree(
+                "archived-auto-closed",
+                Some(2),
+                Some(WorktreeOrigin::AutoFix),
+                Some(123),
+            ),
+            test_worktree("auto-no-issue", None, Some(WorktreeOrigin::AutoFix), None),
+        ];
+
+        let selected = closed_auto_fix_issue_worktree_ids(&worktrees, &open_issue_numbers);
+
+        assert_eq!(selected, vec!["auto-closed".to_string()]);
+    }
+
+    #[test]
+    fn selects_auto_fix_worktrees_whose_issue_is_no_longer_label_eligible_for_archive() {
+        let issues = vec![
+            AutoFixIssueCandidate {
+                number: 1,
+                labels: vec!["bug".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 2,
+                labels: vec!["🤖 mr robot skip".to_string()],
+            },
+            AutoFixIssueCandidate {
+                number: 3,
+                labels: vec!["enhancement".to_string()],
+            },
+        ];
+        let worktrees = vec![
+            test_worktree(
+                "auto-eligible",
+                Some(1),
+                Some(WorktreeOrigin::AutoFix),
+                None,
+            ),
+            test_worktree(
+                "auto-excluded",
+                Some(2),
+                Some(WorktreeOrigin::AutoFix),
+                None,
+            ),
+            test_worktree(
+                "manual-excluded",
+                Some(2),
+                Some(WorktreeOrigin::Manual),
+                None,
+            ),
+            test_worktree(
+                "archived-auto-excluded",
+                Some(2),
+                Some(WorktreeOrigin::AutoFix),
+                Some(123),
+            ),
+            test_worktree(
+                "auto-not-included",
+                Some(3),
+                Some(WorktreeOrigin::AutoFix),
+                None,
+            ),
+        ];
+
+        let selected = ineligible_auto_fix_issue_worktree_ids(
+            &worktrees,
+            &issues,
+            &["bug".to_string(), "🤖 mr robot skip".to_string()],
+            &["🤖 mr robot skip".to_string()],
+        );
+
+        assert_eq!(
+            selected,
+            vec!["auto-excluded".to_string(), "auto-not-included".to_string()]
+        );
+    }
+
+    #[test]
+    fn auto_fix_investigation_prompt_reuses_investigate_issue_prompt() {
+        let mut prefs = crate::AppPreferences::default();
+        prefs.magic_prompts.investigate_issue =
+            Some("Custom investigate {issueWord} prompt for {issueRefs}".to_string());
+        let worktree = test_worktree("auto-issue", Some(42), Some(WorktreeOrigin::AutoFix), None);
+
+        let prompt = build_auto_fix_investigation_prompt(&prefs, &worktree);
+
+        assert_eq!(prompt, "Custom investigate issue prompt for #42");
+    }
+
+    #[test]
     fn clears_pending_auto_yolo_entries_for_stopped_project() {
         let entry_for_stopped_project = PendingAutoYolo {
             project_id: "project-1".to_string(),
@@ -718,6 +1128,8 @@ mod tests {
             interval_minutes: 15,
             issue_limit: 1,
             max_parallel_worktrees: 1,
+            included_labels: Vec::new(),
+            excluded_labels: Vec::new(),
             planning_backend: "claude".to_string(),
             planning_model: None,
             auto_yolo_enabled: false,
@@ -738,6 +1150,8 @@ mod tests {
             interval_minutes: 15,
             issue_limit: 1,
             max_parallel_worktrees: 1,
+            included_labels: Vec::new(),
+            excluded_labels: Vec::new(),
             planning_backend: "claude".to_string(),
             planning_model: None,
             auto_yolo_enabled: true,

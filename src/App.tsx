@@ -57,6 +57,7 @@ import {
 import { scheduleIdleWork } from './lib/idle'
 import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
+import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 
 interface AutoFixStoppedEvent {
   projectId: string
@@ -543,6 +544,9 @@ function App() {
       window.removeEventListener('error', handleError)
     }
   }, [])
+
+  // Ensure external anchors open in the OS/default browser instead of the current WebView.
+  useExternalLinkInterceptor()
 
   // Apply font settings from preferences
   useFontSettings()

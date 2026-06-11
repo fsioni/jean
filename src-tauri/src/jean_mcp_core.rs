@@ -817,7 +817,7 @@ fn resolve_non_conflicting_worktree_name(
 }
 
 #[derive(Clone, Copy, Debug)]
-enum InvestigationKind {
+pub(crate) enum InvestigationKind {
     Issue,
     Pr,
 }
@@ -1112,7 +1112,7 @@ fn resolve_investigation_selection(
     }
 }
 
-fn build_investigation_prompt(
+pub(crate) fn build_investigation_prompt(
     prefs: &crate::AppPreferences,
     worktree: &Value,
     kind: InvestigationKind,

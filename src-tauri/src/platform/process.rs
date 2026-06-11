@@ -71,6 +71,87 @@ pub fn silent_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     cmd
 }
 
+/// Raise the open-file-descriptor soft limit (`RLIMIT_NOFILE`) to the hard limit.
+///
+/// macOS GUI apps launch with a low default soft limit (often 256). Jean spawns
+/// many short-lived child processes (git, claude CLI, gh) — each needing pipe fds —
+/// and with 100+ worktrees a bulk git-status refresh can exhaust the table, causing
+/// `EMFILE` ("Too many open files"). That silently breaks git status AND coinciding
+/// claude CLI spawns (the backgrounded child dies before writing any output, leaving
+/// the run "completed" with empty content). Raising the soft limit to the hard limit
+/// at startup prevents this. No-op on Windows (no such limit).
+#[cfg(unix)]
+pub fn raise_fd_limit() {
+    unsafe {
+        let mut rlim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) != 0 {
+            log::warn!(
+                "raise_fd_limit: getrlimit failed: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+
+        let old_cur = rlim.rlim_cur;
+
+        // Target the hard limit, but on macOS the kernel rejects values above
+        // kern.maxfilesperproc (and rejects RLIM_INFINITY) with EINVAL, so clamp.
+        let mut target = rlim.rlim_max;
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(max_per_proc) = macos_maxfilesperproc() {
+                target = target.min(max_per_proc);
+            }
+        }
+
+        if old_cur >= target {
+            log::info!("raise_fd_limit: soft fd limit already sufficient ({old_cur})");
+            return;
+        }
+
+        rlim.rlim_cur = target;
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &rlim) != 0 {
+            log::warn!(
+                "raise_fd_limit: setrlimit to {target} failed: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+
+        log::info!("raise_fd_limit: raised soft fd limit {old_cur} -> {target}");
+    }
+}
+
+/// Read `kern.maxfilesperproc` — the kernel's per-process open-file ceiling.
+/// `RLIMIT_NOFILE` cannot be raised above this on macOS.
+#[cfg(target_os = "macos")]
+fn macos_maxfilesperproc() -> Option<libc::rlim_t> {
+    let mut value: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    let name = b"kern.maxfilesperproc\0";
+    let ret = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr() as *const libc::c_char,
+            &mut value as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret == 0 && value > 0 {
+        Some(value as libc::rlim_t)
+    } else {
+        None
+    }
+}
+
+/// No-op on Windows — there is no per-process open-file-descriptor limit to raise.
+#[cfg(windows)]
+pub fn raise_fd_limit() {}
+
 /// Check if a process is still alive
 /// - Unix: Uses kill(pid, 0) to check
 /// - Windows: Uses OpenProcess + GetExitCodeProcess
