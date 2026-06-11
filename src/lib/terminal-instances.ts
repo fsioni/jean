@@ -1003,11 +1003,16 @@ export async function attachToContainer(
     instance.compositionGuardCleanup?.()
     instance.compositionGuardCleanup = null
     if (instance.renderer === 'xterm') {
-      // WebKitGTK+ibus fires compositionend without compositionstart for
-      // composed chars (é, ç…), which makes xterm.js re-send accumulated
-      // input — see terminal-composition-guard.ts.
-      instance.compositionGuardCleanup =
-        attachOrphanCompositionEndGuard(hostElement)
+      // WebKitGTK+ibus commits composed chars (é, ç…) without
+      // compositionstart, which breaks xterm.js's composition handling and
+      // duplicates input — see terminal-composition-guard.ts. The guard
+      // swallows the orphan compositionend and delivers the committed char
+      // itself, bypassing xterm's racy keydown-diff path.
+      const xterm = terminal as XtermTerminal
+      instance.compositionGuardCleanup = attachOrphanCompositionEndGuard(
+        hostElement,
+        data => xterm.input(data, true)
+      )
     }
     if (!instance.initialized) {
       // A brand-new visible terminal should never show stale renderer/DOM
