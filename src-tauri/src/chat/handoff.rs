@@ -2,6 +2,19 @@ use super::types::{Backend, ChatMessage, MessageRole, RunStatus, SessionMetadata
 
 const HANDOFF_OPEN_TAG: &str = "<jean_provider_switch_handoff>";
 const HANDOFF_CLOSE_TAG: &str = "</jean_provider_switch_handoff>";
+const TRUNCATED_HISTORY_MARKER: &str = "[truncated older Jean history]";
+
+/// Return the last `max_chars` characters of `input` (char-safe, never panics on multibyte).
+fn tail_chars(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let count = input.chars().count();
+    if count <= max_chars {
+        return input.to_string();
+    }
+    input.chars().skip(count - max_chars).collect()
+}
 
 fn backend_label(backend: &Backend) -> &'static str {
     match backend {
@@ -80,26 +93,26 @@ pub(crate) fn format_handoff_history(messages: &[ChatMessage], max_chars: usize)
         .collect();
 
     let mut selected = Vec::new();
-    let mut total_len = 0usize;
+    let mut total_chars = 0usize;
     let mut truncated = false;
 
     for line in rendered.iter().rev() {
-        let next_len = if selected.is_empty() {
-            line.len()
+        let line_chars = line.chars().count();
+        let next_chars = if selected.is_empty() {
+            line_chars
         } else {
-            line.len() + 2
+            line_chars + 2
         };
-        if !selected.is_empty() && total_len + next_len > max_chars {
+        if !selected.is_empty() && total_chars + next_chars > max_chars {
             truncated = true;
             break;
         }
-        if selected.is_empty() && next_len > max_chars {
-            let start = line.len().saturating_sub(max_chars);
-            selected.push(line[start..].to_string());
+        if selected.is_empty() && next_chars > max_chars {
+            selected.push(tail_chars(line, max_chars));
             truncated = true;
             break;
         }
-        total_len += next_len;
+        total_chars += next_chars;
         selected.push(line.clone());
     }
 
@@ -107,9 +120,16 @@ pub(crate) fn format_handoff_history(messages: &[ChatMessage], max_chars: usize)
     let mut history = selected.join("\n\n");
     if truncated {
         if history.is_empty() {
-            history = "[truncated older Jean history]".to_string();
+            history = tail_chars(TRUNCATED_HISTORY_MARKER, max_chars);
         } else {
-            history = format!("[truncated older Jean history]\n\n{history}");
+            let prefix = format!("{TRUNCATED_HISTORY_MARKER}\n\n");
+            let prefix_chars = prefix.chars().count();
+            if prefix_chars >= max_chars {
+                history = prefix.chars().take(max_chars).collect();
+            } else {
+                let remaining = max_chars - prefix_chars;
+                history = format!("{prefix}{}", tail_chars(&history, remaining));
+            }
         }
     }
     history
@@ -199,12 +219,30 @@ mod tests {
             message(MessageRole::Assistant, "new assistant context", 4),
         ];
 
-        let history = format_handoff_history(&messages, 80);
+        let history = format_handoff_history(&messages, 100);
 
+        assert!(history.chars().count() <= 100);
         assert!(history.contains("[truncated older Jean history]"));
         assert!(!history.contains("old user context"));
         assert!(history.contains("User: new user context"));
         assert!(history.contains("Assistant: new assistant context"));
+    }
+
+    #[test]
+    fn bounds_history_by_chars_and_handles_multibyte() {
+        // Single overlong multibyte line: byte-slicing here would panic.
+        let messages = vec![message(MessageRole::User, &"é".repeat(200), 1)];
+        let history = format_handoff_history(&messages, 50);
+        assert!(history.chars().count() <= 50);
+        assert!(history.contains('é'));
+
+        // Truncation banner must not push final output past max_chars.
+        let many = (0..20)
+            .map(|i| message(MessageRole::User, &format!("líne {i} with unicode ❤"), i))
+            .collect::<Vec<_>>();
+        let bounded = format_handoff_history(&many, 60);
+        assert!(bounded.chars().count() <= 60);
+        assert!(bounded.contains("[truncated older Jean history]"));
     }
 
     #[test]

@@ -27,6 +27,7 @@ import {
 import { useToolbarDerivedState } from '@/components/chat/toolbar/useToolbarDerivedState'
 import { useToolbarDropdownShortcuts } from '@/components/chat/toolbar/useToolbarDropdownShortcuts'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { isNativeApp } from '@/lib/environment'
 
 interface DesktopBackendModelPickerProps {
   disabled?: boolean
@@ -73,10 +74,12 @@ export function DesktopBackendModelPicker({
 }: DesktopBackendModelPickerProps) {
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
+  // Keyboard-only affordances (Tab shortcut hint + handler) are native-desktop only
+  const keyboardShortcutsEnabled = isNativeApp() && !isMobile
 
   useToolbarDropdownShortcuts({
     setModelDropdownOpen: setOpen,
-    enabled: !isMobile,
+    enabled: keyboardShortcutsEnabled,
   })
 
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({
@@ -181,7 +184,7 @@ export function DesktopBackendModelPicker({
                   />
                 )}
               </span>
-              {installedBackends.length > 1 && (
+              {keyboardShortcutsEnabled && installedBackends.length > 1 && (
                 <Kbd className="ml-1 hidden 2xl:inline-flex text-[10px]">
                   Tab
                 </Kbd>
@@ -196,7 +199,11 @@ export function DesktopBackendModelPicker({
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent>
-          Backend + model (⌘⇧M) · Tab cycles backend
+          {keyboardShortcutsEnabled
+            ? installedBackends.length > 1
+              ? 'Backend + model (⌘⇧M) · Tab cycles backend'
+              : 'Backend + model (⌘⇧M)'
+            : 'Backend + model'}
         </TooltipContent>
       </Tooltip>
       <PopoverContent

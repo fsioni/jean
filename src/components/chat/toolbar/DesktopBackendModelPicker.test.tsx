@@ -25,6 +25,20 @@ const modelMocks = vi.hoisted(() => ({
   piModels: [{ id: 'openai-codex/gpt-5.5', label: 'gpt-5.5 (openai-codex)' }],
 }))
 
+const envMocks = vi.hoisted(() => ({
+  isNativeApp: true,
+  isMobile: false,
+}))
+
+vi.mock('@/lib/environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/environment')>()),
+  isNativeApp: () => envMocks.isNativeApp,
+}))
+
+vi.mock('@/hooks/use-mobile', () => ({
+  useIsMobile: () => envMocks.isMobile,
+}))
+
 vi.mock('@/services/opencode-cli', () => ({
   useAvailableOpencodeModels: () => ({
     data: modelMocks.opencodeModels,
@@ -44,6 +58,8 @@ vi.mock('@/services/pi-cli', () => ({
 }))
 
 beforeEach(() => {
+  envMocks.isNativeApp = true
+  envMocks.isMobile = false
   modelMocks.opencodeModels = ['openai/gpt-5.4', 'groq/compound-mini']
   modelMocks.cursorModels = [{ id: 'auto', label: 'Auto' }]
   modelMocks.piModels = [
@@ -212,6 +228,58 @@ describe('DesktopBackendModelPicker', () => {
     expect(
       within(list as HTMLElement).getByRole('tab', { name: 'OpenCode' })
     ).not.toBeDisabled()
+  })
+
+  it('shows the Tab shortcut hint on native desktop with multiple backends', () => {
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="codex"
+        selectedModel="gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex', 'opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Tab')).toBeInTheDocument()
+  })
+
+  it('hides the Tab shortcut hint in web access (non-native) contexts', () => {
+    envMocks.isNativeApp = false
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="codex"
+        selectedModel="gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex', 'opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByText('Tab')).toBeNull()
+  })
+
+  it('hides the Tab shortcut hint on mobile', () => {
+    envMocks.isMobile = true
+
+    render(
+      <DesktopBackendModelPicker
+        selectedBackend="codex"
+        selectedModel="gpt-5.4"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex', 'opencode']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByText('Tab')).toBeNull()
   })
 
   it('uses active PI provider models in the picker and trigger label', async () => {

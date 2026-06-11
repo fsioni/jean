@@ -2426,6 +2426,10 @@ pub async fn send_chat_message(
             if let Err(e) = run_log_writer.cancel(None, None) {
                 log::warn!("Failed to cancel run log for pre-cancelled OpenCode session: {e}");
             }
+            // Remove the input file so the hidden handoff/history payload isn't retained on disk.
+            if let Err(e) = run_log::delete_input_file(&app, &session_id, &run_id) {
+                log::warn!("Failed to delete input file for pre-cancelled OpenCode session: {e}");
+            }
             return Err("Request cancelled".to_string());
         }
         Some(flag)
@@ -3791,6 +3795,10 @@ pub async fn send_chat_message(
                     }
                 }
             }
+            // Remove the input file so the hidden handoff/history payload isn't retained on disk.
+            if let Err(del_err) = run_log::delete_input_file(&app, &session_id, &run_id) {
+                log::warn!("Failed to delete input file after thread error: {del_err}");
+            }
             trigger_backend_queue_drain(
                 app.clone(),
                 worktree_id.clone(),
@@ -3829,6 +3837,10 @@ pub async fn send_chat_message(
                     });
                 }
             }
+            // Remove the input file so the hidden handoff/history payload isn't retained on disk.
+            if let Err(del_err) = run_log::delete_input_file(&app, &session_id, &run_id) {
+                log::warn!("Failed to delete input file after thread panic: {del_err}");
+            }
             trigger_backend_queue_drain(
                 app.clone(),
                 worktree_id.clone(),
@@ -3861,7 +3873,12 @@ pub async fn send_chat_message(
             if !unified_response.content_blocks.is_empty() {
                 // Filter out echoed user prompt: OpenCode includes the user
                 // message as the first text block in its response.
-                let trimmed_prompt = message.trim();
+                // Compare against the *effective* prompt (message_for_backend),
+                // not the raw message — when a hidden provider-switch handoff is
+                // prepended, the backend echoes the submitted prompt including the
+                // handoff. Matching the raw message would let that injected history
+                // leak into the visible assistant transcript/NDJSON.
+                let trimmed_prompt = message_for_backend.trim();
                 let blocks_to_write: Vec<&super::types::ContentBlock> = {
                     let mut iter = unified_response.content_blocks.iter().peekable();
                     let first = iter.peek();
