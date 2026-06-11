@@ -61,6 +61,14 @@ function hasActiveStreamingState(
   )
 }
 
+function compactReplayBlocks(blocks: ContentBlock[]): ContentBlock[] {
+  return blocks.filter(block => {
+    if (block.type === 'text') return block.text.length > 0
+    if (block.type === 'thinking') return block.thinking.length > 0
+    return block.type === 'tool_use'
+  })
+}
+
 interface ChatUIState {
   // Currently active worktree for chat
   activeWorktreeId: string | null
@@ -121,6 +129,10 @@ interface ChatUIState {
 
   // Streaming content blocks per session (preserves text/tool order)
   streamingContentBlocks: Record<string, ContentBlock[]>
+
+  // Hydrated running snapshots that a recovered backend may replay.
+  // Matching replayed events are consumed before they can duplicate/reorder UI.
+  streamingReplayContentBlocks: Record<string, ContentBlock[]>
 
   // Streaming thinking content per session (extended thinking)
   streamingThinkingContent: Record<string, string>
@@ -413,6 +425,20 @@ interface ChatUIState {
   addThinkingBlock: (sessionId: string, thinking: string) => void
   clearStreamingContentBlocks: (sessionId: string) => void
   getStreamingContentBlocks: (sessionId: string) => ContentBlock[]
+  setStreamingReplayContentBlocks: (
+    sessionId: string,
+    blocks: ContentBlock[]
+  ) => void
+  consumeStreamingReplayText: (sessionId: string, text: string) => string
+  consumeStreamingReplayThinking: (
+    sessionId: string,
+    thinking: string
+  ) => string
+  consumeStreamingReplayToolBlock: (
+    sessionId: string,
+    toolCallId: string
+  ) => boolean
+  clearStreamingReplayContentBlocks: (sessionId: string) => void
 
   // Actions - Thinking content (session-based, for extended thinking)
   appendThinkingContent: (sessionId: string, content: string) => void
@@ -693,6 +719,7 @@ export const useChatStore = create<ChatUIState>()(
       streamingContents: {},
       activeToolCalls: {},
       streamingContentBlocks: {},
+      streamingReplayContentBlocks: {},
       streamingThinkingContent: {},
       inputDrafts: {},
       executionModes: {},
@@ -1626,6 +1653,116 @@ export const useChatStore = create<ChatUIState>()(
 
       getStreamingContentBlocks: sessionId =>
         get().streamingContentBlocks[sessionId] ?? [],
+
+      setStreamingReplayContentBlocks: (sessionId, blocks) =>
+        set(
+          state => {
+            const normalized = compactReplayBlocks(blocks)
+            if (normalized.length === 0) {
+              if (!(sessionId in state.streamingReplayContentBlocks)) {
+                return state
+              }
+              const { [sessionId]: _, ...rest } =
+                state.streamingReplayContentBlocks
+              return { streamingReplayContentBlocks: rest }
+            }
+            return {
+              streamingReplayContentBlocks: {
+                ...state.streamingReplayContentBlocks,
+                [sessionId]: normalized,
+              },
+            }
+          },
+          undefined,
+          'setStreamingReplayContentBlocks'
+        ),
+
+      consumeStreamingReplayText: (sessionId, text) => {
+        if (!text) return text
+        const blocks = get().streamingReplayContentBlocks[sessionId]
+        const first = blocks?.[0]
+        if (!blocks?.length || !first) return text
+
+        if (first.type !== 'text') {
+          get().clearStreamingReplayContentBlocks(sessionId)
+          return text
+        }
+
+        if (first.text.startsWith(text)) {
+          const remaining = first.text.slice(text.length)
+          const nextBlocks = remaining
+            ? [{ type: 'text' as const, text: remaining }, ...blocks.slice(1)]
+            : blocks.slice(1)
+          get().setStreamingReplayContentBlocks(sessionId, nextBlocks)
+          return ''
+        }
+
+        if (text.startsWith(first.text)) {
+          get().setStreamingReplayContentBlocks(sessionId, blocks.slice(1))
+          return text.slice(first.text.length)
+        }
+
+        get().clearStreamingReplayContentBlocks(sessionId)
+        return text
+      },
+
+      consumeStreamingReplayThinking: (sessionId, thinking) => {
+        if (!thinking) return thinking
+        const blocks = get().streamingReplayContentBlocks[sessionId]
+        const first = blocks?.[0]
+        if (!blocks?.length || !first) return thinking
+
+        if (first.type !== 'thinking') {
+          get().clearStreamingReplayContentBlocks(sessionId)
+          return thinking
+        }
+
+        if (first.thinking.startsWith(thinking)) {
+          const remaining = first.thinking.slice(thinking.length)
+          const nextBlocks = remaining
+            ? [
+                { type: 'thinking' as const, thinking: remaining },
+                ...blocks.slice(1),
+              ]
+            : blocks.slice(1)
+          get().setStreamingReplayContentBlocks(sessionId, nextBlocks)
+          return ''
+        }
+
+        if (thinking.startsWith(first.thinking)) {
+          get().setStreamingReplayContentBlocks(sessionId, blocks.slice(1))
+          return thinking.slice(first.thinking.length)
+        }
+
+        get().clearStreamingReplayContentBlocks(sessionId)
+        return thinking
+      },
+
+      consumeStreamingReplayToolBlock: (sessionId, toolCallId) => {
+        const blocks = get().streamingReplayContentBlocks[sessionId]
+        const first = blocks?.[0]
+        if (!blocks?.length || !first) return false
+
+        if (first.type === 'tool_use' && first.tool_call_id === toolCallId) {
+          get().setStreamingReplayContentBlocks(sessionId, blocks.slice(1))
+          return true
+        }
+
+        get().clearStreamingReplayContentBlocks(sessionId)
+        return false
+      },
+
+      clearStreamingReplayContentBlocks: sessionId =>
+        set(
+          state => {
+            if (!(sessionId in state.streamingReplayContentBlocks)) return state
+            const { [sessionId]: _, ...rest } =
+              state.streamingReplayContentBlocks
+            return { streamingReplayContentBlocks: rest }
+          },
+          undefined,
+          'clearStreamingReplayContentBlocks'
+        ),
 
       // Thinking content (session-based, for extended thinking)
       appendThinkingContent: (sessionId, content) =>
@@ -2797,6 +2934,8 @@ export const useChatStore = create<ChatUIState>()(
               state.streamingContents
             const { [sessionId]: _sb, ...streamingContentBlocks } =
               state.streamingContentBlocks
+            const { [sessionId]: _srb, ...streamingReplayContentBlocks } =
+              state.streamingReplayContentBlocks
             const { [sessionId]: _tc, ...activeToolCalls } =
               state.activeToolCalls
             const { [sessionId]: _ss, ...sendingSessionIds } =
@@ -2811,6 +2950,7 @@ export const useChatStore = create<ChatUIState>()(
             return {
               streamingContents,
               streamingContentBlocks,
+              streamingReplayContentBlocks,
               activeToolCalls,
               sendingSessionIds,
               waitingForInputSessionIds,
@@ -2840,6 +2980,8 @@ export const useChatStore = create<ChatUIState>()(
               state.streamingContents
             const { [sessionId]: _sb, ...streamingContentBlocks } =
               state.streamingContentBlocks
+            const { [sessionId]: _srb, ...streamingReplayContentBlocks } =
+              state.streamingReplayContentBlocks
             const { [sessionId]: _tc, ...activeToolCalls } =
               state.activeToolCalls
             const { [sessionId]: _ss, ...sendingSessionIds } =
@@ -2874,6 +3016,7 @@ export const useChatStore = create<ChatUIState>()(
             return {
               streamingContents,
               streamingContentBlocks,
+              streamingReplayContentBlocks,
               activeToolCalls,
               sendingSessionIds,
               waitingForInputSessionIds,
@@ -2917,6 +3060,8 @@ export const useChatStore = create<ChatUIState>()(
             }
             const { [sessionId]: _sc, ...streamingContents } =
               state.streamingContents
+            const { [sessionId]: _srb, ...streamingReplayContentBlocks } =
+              state.streamingReplayContentBlocks
             const { [sessionId]: _ss, ...sendingSessionIds } =
               state.sendingSessionIds
             const { [sessionId]: _em, ...executingModes } = state.executingModes
@@ -2924,6 +3069,7 @@ export const useChatStore = create<ChatUIState>()(
               state.sendStartedAt
             return {
               streamingContents,
+              streamingReplayContentBlocks,
               sendingSessionIds,
               executingModes,
               sendStartedAt: sendStartedAtRest,
@@ -2952,6 +3098,8 @@ export const useChatStore = create<ChatUIState>()(
               state.streamingContents
             const { [sessionId]: _sb, ...streamingContentBlocks } =
               state.streamingContentBlocks
+            const { [sessionId]: _srb, ...streamingReplayContentBlocks } =
+              state.streamingReplayContentBlocks
             const { [sessionId]: _tc, ...activeToolCalls } =
               state.activeToolCalls
             const { [sessionId]: _ss, ...sendingSessionIds } =
@@ -2963,6 +3111,7 @@ export const useChatStore = create<ChatUIState>()(
             return {
               streamingContents,
               streamingContentBlocks,
+              streamingReplayContentBlocks,
               activeToolCalls,
               sendingSessionIds,
               waitingForInputSessionIds,
@@ -3016,6 +3165,8 @@ export const useChatStore = create<ChatUIState>()(
             const { [sessionId]: _goal, ...restCodexGoals } = state.codexGoals
             const { [sessionId]: _duration, ...restDurations } =
               state.completedDurations
+            const { [sessionId]: _replay, ...restReplayContentBlocks } =
+              state.streamingReplayContentBlocks
 
             return {
               approvedTools: restApproved,
@@ -3036,6 +3187,7 @@ export const useChatStore = create<ChatUIState>()(
               sessionLabels: restLabels,
               codexGoals: restCodexGoals,
               completedDurations: restDurations,
+              streamingReplayContentBlocks: restReplayContentBlocks,
             }
           },
           undefined,

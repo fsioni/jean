@@ -1,8 +1,8 @@
 use tauri::Manager;
 
 use super::types::{
-    CompactMetadata, ContentBlock, EffortLevel, PermissionDenial, PermissionDeniedEvent,
-    ThinkingLevel, ToolCall, UsageData,
+    is_claude_compaction_summary_text, CompactMetadata, ContentBlock, EffortLevel,
+    PermissionDenial, PermissionDeniedEvent, ThinkingLevel, ToolCall, UsageData,
 };
 use crate::http_server::EmitExt;
 use crate::projects::github_issues::{
@@ -232,6 +232,14 @@ struct CompactedEvent {
     session_id: String,
     worktree_id: String,
     metadata: CompactMetadata,
+}
+
+fn compact_metadata_from_system_message(msg: &serde_json::Value) -> Option<CompactMetadata> {
+    msg.get("compact_metadata")
+        .or_else(|| msg.get("compactMetadata"))
+        .and_then(|metadata_val| {
+            serde_json::from_value::<CompactMetadata>(metadata_val.clone()).ok()
+        })
 }
 
 // =============================================================================
@@ -1288,7 +1296,9 @@ pub fn tail_claude_output(
                                         {
                                             // Skip CLI placeholder text emitted when extended
                                             // thinking starts before any real text content
-                                            if text == "(no content)" {
+                                            if text == "(no content)"
+                                                || is_claude_compaction_summary_text(text)
+                                            {
                                                 continue;
                                             }
 
@@ -1893,18 +1903,14 @@ pub fn tail_claude_output(
                         }
 
                         // Emit compacted event with metadata if available
-                        if let Some(metadata_val) = msg.get("compactMetadata") {
-                            if let Ok(metadata) =
-                                serde_json::from_value::<CompactMetadata>(metadata_val.clone())
-                            {
-                                let compacted_event = CompactedEvent {
-                                    session_id: session_id.to_string(),
-                                    worktree_id: worktree_id.to_string(),
-                                    metadata,
-                                };
-                                if let Err(e) = app.emit_all("chat:compacted", &compacted_event) {
-                                    log::error!("Failed to emit compacted: {e}");
-                                }
+                        if let Some(metadata) = compact_metadata_from_system_message(&msg) {
+                            let compacted_event = CompactedEvent {
+                                session_id: session_id.to_string(),
+                                worktree_id: worktree_id.to_string(),
+                                metadata,
+                            };
+                            if let Err(e) = app.emit_all("chat:compacted", &compacted_event) {
+                                log::error!("Failed to emit compacted: {e}");
                             }
                         }
                     }
@@ -2148,6 +2154,23 @@ pub fn tail_claude_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_metadata_accepts_snake_case_from_claude_cli() {
+        let msg = serde_json::json!({
+            "type": "system",
+            "subtype": "compact_boundary",
+            "compact_metadata": {
+                "trigger": "auto",
+                "pre_tokens": 170298
+            }
+        });
+
+        let metadata = compact_metadata_from_system_message(&msg).unwrap();
+
+        assert_eq!(metadata.trigger, "auto");
+        assert_eq!(metadata.pre_tokens, 170298);
+    }
 
     #[test]
     fn split_fast_model_strips_suffix() {

@@ -202,14 +202,18 @@ export function ChatSearchBar({ scrollContainerRef }: ChatSearchBarProps) {
 
   if (!chatSearchOpen) return null
 
-  // Escape closes search only when the input is focused (Chrome behavior).
-  // Note: Safari closes its find bar on Escape even when unfocused — no consensus.
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation() // Prevent session from also closing
+      e.nativeEvent.stopImmediatePropagation()
       close()
-    } else if (e.key === 'Enter' && e.shiftKey) {
+      return
+    }
+
+    if (e.target !== inputRef.current) return
+
+    if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault()
       navigateToMatch(activeIndex - 1)
     } else if (e.key === 'Enter') {
@@ -221,6 +225,7 @@ export function ChatSearchBar({ scrollContainerRef }: ChatSearchBarProps) {
   return (
     <div
       data-chat-search-bar
+      onKeyDown={handleKeyDown}
       className="absolute top-2 right-4 z-30 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 shadow-md"
     >
       <input
@@ -228,7 +233,6 @@ export function ChatSearchBar({ scrollContainerRef }: ChatSearchBarProps) {
         type="text"
         value={query}
         onChange={e => setQuery(e.target.value)}
-        onKeyDown={handleKeyDown}
         placeholder="Find in chat..."
         className="w-40 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground md:text-xs"
       />

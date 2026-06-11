@@ -59,6 +59,15 @@ pub struct CompactMetadata {
     pub pre_tokens: u64,
 }
 
+pub(crate) const CLAUDE_COMPACTION_SUMMARY_PREFIX: &str =
+    "This session is being continued from a previous conversation that ran out of context. \
+The summary below covers the earlier portion of the conversation.";
+
+pub(crate) fn is_claude_compaction_summary_text(text: &str) -> bool {
+    text.trim_start()
+        .starts_with(CLAUDE_COMPACTION_SUMMARY_PREFIX)
+}
+
 // ============================================================================
 // Usage Types
 // ============================================================================

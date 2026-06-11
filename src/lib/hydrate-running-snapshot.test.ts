@@ -34,6 +34,7 @@ describe('hydrateRunningSnapshot', () => {
       sendingSessionIds: {},
       streamingContents: {},
       streamingContentBlocks: {},
+      streamingReplayContentBlocks: {},
       activeToolCalls: {},
     })
   })
@@ -91,6 +92,33 @@ describe('hydrateRunningSnapshot', () => {
         name: 'Bash',
         input: { command: 'rtk git status' },
       },
+    ])
+  })
+
+  it('seeds replay dedupe when requested, even if snapshot was already hydrated', () => {
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      streamingContentBlocks: {
+        'session-1': [{ type: 'text', text: 'old content' }],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [
+          { type: 'text', text: 'old content' },
+          { type: 'tool_use', tool_call_id: 'tool-1' },
+        ],
+      }),
+      { allowWhileSending: true, dedupeReplayedOutput: true }
+    )
+
+    expect(
+      useChatStore.getState().streamingReplayContentBlocks['session-1']
+    ).toEqual([
+      { type: 'text', text: 'old content' },
+      { type: 'tool_use', tool_call_id: 'tool-1' },
     ])
   })
 })

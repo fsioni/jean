@@ -1108,6 +1108,7 @@ function App() {
 
               hydrateRunningSnapshot(session.session_id, lastMsg, {
                 allowWhileSending: true,
+                dedupeReplayedOutput: sessionSnapshot?.backend === 'claude',
               })
 
               queryClient.setQueryData<Session>(

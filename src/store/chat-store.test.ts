@@ -10,6 +10,7 @@ vi.mock('@/lib/transport', () => ({
 
 import { useChatStore } from './chat-store'
 import type {
+  ContentBlock,
   ToolCall,
   QueuedMessage,
   CodexCommandApprovalRequest,
@@ -41,6 +42,7 @@ describe('ChatStore', () => {
       streamingContents: {},
       activeToolCalls: {},
       streamingContentBlocks: {},
+      streamingReplayContentBlocks: {},
       streamingThinkingContent: {},
       inputDrafts: {},
       executionModes: {},
@@ -520,6 +522,68 @@ describe('ChatStore', () => {
       clearStreamingContentBlocks('session-1')
 
       expect(getStreamingContentBlocks('session-1')).toHaveLength(0)
+    })
+  })
+
+  describe('streaming replay dedupe', () => {
+    const replayBlocks: ContentBlock[] = [
+      { type: 'text', text: 'Before tool. ' },
+      { type: 'tool_use', tool_call_id: 'tool-1' },
+      { type: 'text', text: 'After tool.' },
+    ]
+
+    it('consumes replayed text and tool blocks without changing rendered order', () => {
+      const store = useChatStore.getState()
+
+      store.addTextBlock('session-1', 'Before tool. ')
+      store.addToolBlock('session-1', 'tool-1')
+      store.addTextBlock('session-1', 'After tool.')
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(
+        store.consumeStreamingReplayText('session-1', 'Before tool. ')
+      ).toBe('')
+      expect(store.consumeStreamingReplayToolBlock('session-1', 'tool-1')).toBe(
+        true
+      )
+      expect(store.consumeStreamingReplayText('session-1', 'After tool.')).toBe(
+        ''
+      )
+
+      expect(
+        useChatStore.getState().getStreamingContentBlocks('session-1')
+      ).toEqual(replayBlocks)
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('clears replay dedupe and keeps new text when incoming text does not match', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(store.consumeStreamingReplayText('session-1', 'New output')).toBe(
+        'New output'
+      )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('returns the non-replayed suffix when a text chunk crosses the replay boundary', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', [
+        { type: 'text', text: 'Old' },
+      ])
+
+      expect(store.consumeStreamingReplayText('session-1', 'OldNew')).toBe(
+        'New'
+      )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
     })
   })
 

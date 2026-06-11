@@ -53,6 +53,7 @@ import type {
   WakeupCancelledEvent,
   PendingWakeupEntry,
   QueuedMessage,
+  ContentBlock,
 } from '@/types/chat'
 import { persistEnqueue } from '@/services/chat'
 import {
@@ -96,6 +97,22 @@ function getTextContentFromBlocks(
   return contentBlocks
     .flatMap(block => (block.type === 'text' && block.text ? [block.text] : []))
     .join('')
+}
+
+const CLAUDE_COMPACTION_SUMMARY_PREFIX =
+  'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.'
+
+function isClaudeCompactionSummaryText(text: string): boolean {
+  return text.trimStart().startsWith(CLAUDE_COMPACTION_SUMMARY_PREFIX)
+}
+
+function sanitizeCancelledContentBlocks(
+  contentBlocks: ContentBlock[] | undefined
+): ContentBlock[] | undefined {
+  if (!contentBlocks) return undefined
+  return contentBlocks.filter(
+    block => block.type !== 'text' || !isClaudeCompactionSummaryText(block.text)
+  )
 }
 
 async function hydrateCompletedSessionFromBackend(
@@ -390,10 +407,16 @@ export default function useStreamingEvents({
       ) {
         return
       }
+      const replayFilteredContent =
+        useChatStore
+          .getState()
+          .consumeStreamingReplayText(session_id, content) ?? ''
+      if (!replayFilteredContent) return
       // Ensure session is marked as sending (recovers state after reconnect/refresh)
       addSendingSession(session_id)
       // Accumulate into buffer
-      chunkBuffer[session_id] = (chunkBuffer[session_id] ?? '') + content
+      chunkBuffer[session_id] =
+        (chunkBuffer[session_id] ?? '') + replayFilteredContent
       // Schedule flush on next animation frame (coalesces all chunks in this frame)
       if (chunkRafId === null) {
         chunkRafId = requestAnimationFrame(flushChunkBuffer)
@@ -423,6 +446,13 @@ export default function useStreamingEvents({
       'chat:tool_block',
       event => {
         const { session_id, tool_call_id } = event.payload
+        if (
+          useChatStore
+            .getState()
+            .consumeStreamingReplayToolBlock(session_id, tool_call_id)
+        ) {
+          return
+        }
         addToolBlock(session_id, tool_call_id)
       }
     )
@@ -443,7 +473,13 @@ export default function useStreamingEvents({
 
     const unlistenThinking = listen<ThinkingEvent>('chat:thinking', event => {
       const { session_id, content } = event.payload
-      thinkingBuffer[session_id] = (thinkingBuffer[session_id] ?? '') + content
+      const replayFilteredContent =
+        useChatStore
+          .getState()
+          .consumeStreamingReplayThinking(session_id, content) ?? ''
+      if (!replayFilteredContent) return
+      thinkingBuffer[session_id] =
+        (thinkingBuffer[session_id] ?? '') + replayFilteredContent
       if (thinkingRafId === null) {
         thinkingRafId = requestAnimationFrame(flushThinkingBuffer)
       }
@@ -1526,6 +1562,14 @@ export default function useStreamingEvents({
         const content = streamingContents[session_id]
         const toolCalls = activeToolCalls[session_id]
         const contentBlocks = streamingContentBlocks[session_id]
+        const sanitizedContentBlocks =
+          sanitizeCancelledContentBlocks(contentBlocks)
+        const sanitizedContent =
+          sanitizedContentBlocks && sanitizedContentBlocks.length > 0
+            ? getTextContentFromBlocks(sanitizedContentBlocks)
+            : content && isClaudeCompactionSummaryText(content)
+              ? ''
+              : (content ?? '')
 
         // Check if this session is currently being viewed
         const sessionWorktreeId =
@@ -1571,9 +1615,10 @@ export default function useStreamingEvents({
         // Any assistant output (text, tool call, thinking, content block) counts
         // as a started response — if present, preserve it and leave input empty.
         const hasToolCalls = toolCalls && toolCalls.length > 0
-        const hasText = !!content && content.trim().length > 0
+        const hasText = sanitizedContent.trim().length > 0
         const hasThinking = !!streamingThinkingContent[session_id]
-        const hasContentBlocks = !!contentBlocks && contentBlocks.length > 0
+        const hasContentBlocks =
+          !!sanitizedContentBlocks && sanitizedContentBlocks.length > 0
         const hasContent =
           hasToolCalls || hasText || hasThinking || hasContentBlocks
         const hasQueuedMessages =
@@ -1670,10 +1715,10 @@ export default function useStreamingEvents({
                   id: generateId(),
                   session_id,
                   role: 'assistant' as const,
-                  content: content ?? '',
+                  content: sanitizedContent,
                   timestamp: Math.floor(Date.now() / 1000),
                   tool_calls: toolCalls ?? [],
-                  content_blocks: contentBlocks ?? [],
+                  content_blocks: sanitizedContentBlocks ?? [],
                   cancelled: true,
                 }),
               }
@@ -1689,9 +1734,9 @@ export default function useStreamingEvents({
             sessionId: session_id,
             worktreeId: sessionWorktreeId ?? eventWorktreeId,
             worktreePath: '',
-            content: content ?? '',
+            content: sanitizedContent,
             toolCalls: toolCalls ?? [],
-            contentBlocks: contentBlocks ?? [],
+            contentBlocks: sanitizedContentBlocks ?? [],
           })
             .catch(err =>
               console.debug(

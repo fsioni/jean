@@ -1,9 +1,9 @@
 /**
  * Model utilities for feature detection and CLI compatibility.
  *
- * Claude 4.6 Opus models introduce adaptive thinking (effort parameter)
- * replacing traditional thinking levels (budget_tokens). This is supported
- * from Claude CLI >= 2.1.32. Sonnet and other models continue to use
+ * Some Claude models use effort levels (effort parameter) instead of
+ * traditional thinking levels (budget_tokens). This is supported from
+ * Claude CLI >= 2.1.32. Sonnet and other models continue to use
  * traditional thinking levels.
  */
 
@@ -17,7 +17,7 @@ export type ModelBackend =
   | 'pi'
   | 'commandcode'
 
-/** Minimum CLI version that supports Claude 4.6 adaptive thinking */
+/** Minimum CLI version that supports Claude effort levels */
 const ADAPTIVE_THINKING_MIN_CLI_VERSION = '2.1.32'
 
 /**
@@ -41,21 +41,22 @@ export function getModelImpliedBackend(
 }
 
 /**
- * Check if the current model + CLI version combination supports
- * adaptive thinking (effort parameter) instead of traditional thinking levels.
+ * Check if the current model + CLI version combination uses effort levels
+ * instead of traditional thinking levels.
  *
  * Returns true when:
- * - Model is a Claude Opus variant ('claude-opus-*')
+ * - Model is a Claude Fable or Opus variant
  * - CLI version is >= 2.1.32
  *
- * Sonnet models use traditional thinking levels, not adaptive thinking.
+ * Sonnet models use traditional thinking levels, not effort levels.
  */
 export function supportsAdaptiveThinking(
   model: string,
   cliVersion: string | null | undefined
 ): boolean {
-  const isOpusModel = model.startsWith('claude-opus-')
-  if (!isOpusModel) return false
+  const usesEffortLevels =
+    model.startsWith('claude-fable-') || model.startsWith('claude-opus-')
+  if (!usesEffortLevels) return false
   if (!cliVersion) return false
   return compareVersions(cliVersion, ADAPTIVE_THINKING_MIN_CLI_VERSION) >= 0
 }

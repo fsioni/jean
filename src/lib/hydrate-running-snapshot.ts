@@ -17,9 +17,13 @@ import { coalesceContentBlocks } from '@/components/chat/tool-call-utils'
 export function hydrateRunningSnapshot(
   sessionId: string,
   lastMsg: ChatMessage,
-  options: { allowWhileSending?: boolean } = {}
+  options: { allowWhileSending?: boolean; dedupeReplayedOutput?: boolean } = {}
 ): void {
   const store = useChatStore.getState()
+  const normalized = coalesceContentBlocks(lastMsg.content_blocks ?? [])
+  if (options.dedupeReplayedOutput) {
+    store.setStreamingReplayContentBlocks(sessionId, normalized)
+  }
   // Defense in depth: never hydrate while this client is mid-send or the store
   // already has live streaming blocks/tool calls for the session. Wholesale
   // injection mid-stream double-renders the assistant bubble.
@@ -29,7 +33,6 @@ export function hydrateRunningSnapshot(
   if (store.streamingContentBlocks[sessionId]?.length) return
   if (store.activeToolCalls[sessionId]?.length) return
 
-  const normalized = coalesceContentBlocks(lastMsg.content_blocks ?? [])
   for (const block of normalized) {
     if (block.type === 'text') {
       store.addTextBlock(sessionId, block.text)
