@@ -14,9 +14,13 @@ import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
+import { useWorktreeMenuActions } from './useWorktreeMenuActions'
+import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
+import { useSessionArchive } from '@/components/chat/hooks/useSessionArchive'
+import { middleClickClose } from '@/lib/middle-click'
 import { useRenameWorktree } from '@/services/projects'
 import { useSessions } from '@/services/chat'
-import { isAskUserQuestion, isPlanToolCall } from '@/types/chat'
+import { isAskUserQuestion, isPlanToolCall, type Session } from '@/types/chat'
 import {
   computeSessionCardData,
   groupCardsByStatus,
@@ -47,7 +51,6 @@ interface WorktreeItemProps {
 export function WorktreeItem({
   worktree,
   projectId,
-  projectPath,
   defaultBranch,
 }: WorktreeItemProps) {
   const isMobile = useIsMobile()
@@ -102,6 +105,27 @@ export function WorktreeItem({
 
   // Fetch sessions to check for persisted unanswered questions
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
+
+  // Canonical worktree actions — computed once here and passed to
+  // WorktreeContextMenu so the hook isn't run twice per row. The middle-click
+  // close reuses `handleArchiveOrClose` (same as the context menu).
+  const menuActions = useWorktreeMenuActions({ worktree, projectId })
+  const { handleArchiveOrClose, preferences } = menuActions
+
+  // Delete/archive a single conversation (session) respecting removal_behavior.
+  const { handleDeleteSession } = useSessionArchive({
+    worktreeId: worktree.id,
+    worktreePath: worktree.path,
+    removalBehavior: preferences?.removal_behavior,
+  })
+
+  // Confirmation dialog shared by middle-click close of a worktree or a
+  // conversation — mirrors the canvas/session-tab "validation" flow. Stores the
+  // intent (not a callback) so the action is derived in onConfirm.
+  const [closeConfirm, setCloseConfirm] = useState<{
+    mode: 'worktree' | 'session'
+    sessionId?: string
+  } | null>(null)
 
   // Check if any session has streaming AskUserQuestion waiting (blinks).
   // Return primitive booleans from the store selector so each sidebar row avoids
@@ -427,6 +451,39 @@ export function WorktreeItem({
     selectWorktree,
   ])
 
+  // Middle-click closes the worktree, mirroring the canvas/session-tab close —
+  // including the confirmation dialog when `confirm_session_close` is enabled.
+  const handleWorktreeMiddleClose = useCallback(() => {
+    if (preferences?.confirm_session_close !== false) {
+      setCloseConfirm({ mode: 'worktree' })
+    } else {
+      handleArchiveOrClose()
+    }
+  }, [preferences?.confirm_session_close, handleArchiveOrClose])
+
+  // Middle-click on a conversation row deletes it, mirroring the session-tab
+  // middle-click: validate only when removing the last session of the worktree.
+  const handleSessionMiddleClose = useCallback(
+    (session: Session) => {
+      // The row is rendered from sessionsData, so the count is reliable here.
+      const activeCount = (sessionsData?.sessions ?? []).filter(
+        s => !s.archived_at
+      ).length
+      const isLastSession = activeCount <= 1
+      const sessionIsEmpty = !session.message_count
+      if (
+        isLastSession &&
+        preferences?.confirm_session_close !== false &&
+        !sessionIsEmpty
+      ) {
+        setCloseConfirm({ mode: 'session', sessionId: session.id })
+      } else {
+        handleDeleteSession(session.id)
+      }
+    },
+    [sessionsData?.sessions, handleDeleteSession, preferences?.confirm_session_close]
+  )
+
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -525,11 +582,7 @@ export function WorktreeItem({
 
   return (
     <div>
-      <WorktreeContextMenu
-        worktree={worktree}
-        projectId={projectId}
-        projectPath={projectPath}
-      >
+      <WorktreeContextMenu actions={menuActions}>
         <div
           className={cn(
             'group relative flex cursor-pointer items-center gap-1.5 py-1.5 pr-2 overflow-hidden transition-colors duration-150',
@@ -539,6 +592,7 @@ export function WorktreeItem({
               : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
           )}
           onClick={handleClick}
+          {...middleClickClose(handleWorktreeMiddleClose)}
           onDoubleClick={handleDoubleClick}
         >
           {/* Chat status indicator (spinner/dot) */}
@@ -686,6 +740,9 @@ export function WorktreeItem({
                       e.stopPropagation()
                       handleSessionSelect(card.session.id)
                     }}
+                    {...middleClickClose(() =>
+                      handleSessionMiddleClose(card.session)
+                    )}
                   >
                     <StatusIndicator
                       status={config.indicatorStatus}
@@ -702,6 +759,25 @@ export function WorktreeItem({
           ))}
         </div>
       )}
+
+      <CloseWorktreeDialog
+        open={!!closeConfirm}
+        onOpenChange={open => {
+          if (!open) setCloseConfirm(null)
+        }}
+        onConfirm={() => {
+          const intent = closeConfirm
+          setCloseConfirm(null)
+          if (!intent) return
+          if (intent.mode === 'session' && intent.sessionId) {
+            handleDeleteSession(intent.sessionId)
+          } else {
+            handleArchiveOrClose()
+          }
+        }}
+        branchName={worktree.branch}
+        mode={closeConfirm?.mode ?? 'worktree'}
+      />
     </div>
   )
 }

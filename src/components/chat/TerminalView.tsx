@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo, memo, useState } from 'react'
 import { Plus, X, Minus, Terminal, ChevronUp } from 'lucide-react'
 import { invoke } from '@/lib/transport'
+import { middleClickClose } from '@/lib/middle-click'
 import { useTerminal } from '@/hooks/useTerminal'
 import { useTerminalBackgroundColor } from '@/hooks/useTerminalThemeSync'
 import {
@@ -345,6 +346,7 @@ export function TerminalView({
                 onDrop={e => handleTerminalDrop(e, terminal.id)}
                 onDragEnd={() => setDraggedTerminalId(null)}
                 onClick={() => handleSelectTerminal(terminal.id)}
+                {...middleClickClose(e => void handleCloseTerminal(e, terminal.id))}
                 className={cn(
                   'group flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors',
                   isActive

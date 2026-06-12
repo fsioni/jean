@@ -27,23 +27,20 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import type { Worktree } from '@/types/projects'
 import { getEditorLabel, getTerminalLabel } from '@/types/preferences'
 import { isNativeApp } from '@/lib/environment'
 import { getFileManagerName } from '@/lib/platform'
-import { useWorktreeMenuActions } from './useWorktreeMenuActions'
+import type { useWorktreeMenuActions } from './useWorktreeMenuActions'
 
 interface WorktreeContextMenuProps {
-  worktree: Worktree
-  projectId: string
-  projectPath: string
+  // Computed once by the parent (WorktreeItem) and passed in so the hook isn't
+  // run twice per worktree row.
+  actions: ReturnType<typeof useWorktreeMenuActions>
   children: React.ReactNode
 }
 
 export function WorktreeContextMenu({
-  worktree,
-  projectId,
-  projectPath,
+  actions,
   children,
 }: WorktreeContextMenuProps) {
   const {
@@ -59,10 +56,7 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
-  } = useWorktreeMenuActions({ worktree, projectId })
-
-  // Suppress unused variable warning
-  void projectPath
+  } = actions
 
   return (
     <ContextMenu>
