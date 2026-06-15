@@ -120,13 +120,13 @@ async function hydrateCompletedSessionFromBackend(
   queryClient: QueryClient,
   sessionId: string,
   worktreeId: string
-): Promise<void> {
+): Promise<Session | null> {
   const worktreePath = useChatStore.getState().worktreePaths[worktreeId]
   if (!worktreePath) {
     queryClient.invalidateQueries({
       queryKey: chatQueryKeys.session(sessionId),
     })
-    return
+    return null
   }
 
   try {
@@ -136,11 +136,13 @@ async function hydrateCompletedSessionFromBackend(
       worktreePath,
     })
     queryClient.setQueryData(chatQueryKeys.session(sessionId), session)
+    return session
   } catch (error) {
     console.error(
       '[useStreamingEvents] Failed to hydrate completed session from backend:',
       error
     )
+    return null
   } finally {
     queryClient.invalidateQueries({
       queryKey: chatQueryKeys.session(sessionId),
@@ -1686,6 +1688,7 @@ export default function useStreamingEvents({
           hasToolCalls || hasText || hasThinking || hasContentBlocks
         const hasQueuedMessages =
           (useChatStore.getState().messageQueues[session_id] ?? []).length > 0
+        const shouldHydrateCancelledFromBackend = !undo_send && !hasContent
         const shouldRestoreMessage =
           !hasQueuedMessages && (undo_send || !hasContent)
 
@@ -1862,6 +1865,21 @@ export default function useStreamingEvents({
             queryClient.invalidateQueries({
               queryKey: chatQueryKeys.sessions(resolvedWorktreeId),
             })
+            if (shouldHydrateCancelledFromBackend) {
+              void hydrateCompletedSessionFromBackend(
+                queryClient,
+                session_id,
+                resolvedWorktreeId
+              ).then(session => {
+                const lastHydratedMessage = session?.messages.at(-1)
+                const hydratedCancelledAssistant =
+                  lastHydratedMessage?.role === 'assistant' &&
+                  lastHydratedMessage.cancelled === true
+                if (hydratedCancelledAssistant) {
+                  useChatStore.getState().clearInputDraft(session_id)
+                }
+              })
+            }
           }
           queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
         }
