@@ -6,7 +6,11 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useUIStore } from '@/store/ui-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
-import { isPanelTerminal, useTerminalStore } from '@/store/terminal-store'
+import {
+  getActiveGroup,
+  isPanelTerminal,
+  useTerminalStore,
+} from '@/store/terminal-store'
 import {
   collectLeafIds,
   countLeaves,
@@ -200,9 +204,7 @@ export function closeFocusedTerminalPaneForShortcut(): boolean {
 
   const store = useTerminalStore.getState()
   const focusedId = store.activeTerminalIds[worktreeId]
-  const activeGroup = (store.groups[worktreeId] ?? []).find(
-    g => g.id === store.activeGroupIds[worktreeId]
-  )
+  const activeGroup = getActiveGroup(store, worktreeId)
   // Only acts inside a real split (>1 pane); single-pane views use Close tab.
   if (
     !focusedId ||
@@ -227,9 +229,7 @@ export function focusNextTerminalPaneForShortcut(): boolean {
   if (!worktreeId) return false
 
   const store = useTerminalStore.getState()
-  const activeGroup = (store.groups[worktreeId] ?? []).find(
-    g => g.id === store.activeGroupIds[worktreeId]
-  )
+  const activeGroup = getActiveGroup(store, worktreeId)
   if (!activeGroup) return false
   const ids = collectLeafIds(activeGroup.layout)
   if (ids.length < 2) return false

@@ -193,6 +193,15 @@ function findGroupOf(
   return groups.find(group => hasLeaf(group.layout, terminalId))
 }
 
+/** The currently-active view for a worktree, from a store snapshot. */
+export function getActiveGroup(
+  state: TerminalState,
+  worktreeId: string
+): TerminalGroup | undefined {
+  const groups = state.groups[worktreeId] ?? []
+  return groups.find(g => g.id === state.activeGroupIds[worktreeId])
+}
+
 /** Close every browser surface for this worktree — terminal modal and
  * browser surfaces are mutually exclusive. Called inside terminal-store
  * actions when opening the terminal modal. */

@@ -711,6 +711,7 @@ export function TerminalView({
             onDetachPane={handleDetachPane}
             onRenameTerminal={handleRenameTerminal}
             onPaneDrop={splitEnabled ? handlePaneDrop : undefined}
+            terminalsById={terminalsById}
           />
         )}
         {/* Keep other views' terminals mounted (hidden) to preserve their buffers */}

@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState } from 'react'
+import { Fragment, memo, useState } from 'react'
 import { GripVertical, SquareArrowOutUpRight, X } from 'lucide-react'
 import {
   ResizableHandle,
@@ -36,6 +36,8 @@ interface TerminalSplitLayoutProps {
     orientation: SplitOrientation,
     payload: string
   ) => void
+  /** Lookup map shared by the host view (avoids rebuilding it per layout). */
+  terminalsById: Map<string, TerminalInstance>
 }
 
 /** Stable React key / panel id for a child subtree (its top-left leaf). */
@@ -296,15 +298,8 @@ export function TerminalSplitLayout({
   onDetachPane,
   onRenameTerminal,
   onPaneDrop,
+  terminalsById,
 }: TerminalSplitLayoutProps) {
-  const terminals = useTerminalStore(state => state.terminals[worktreeId])
-
-  const terminalsById = useMemo(() => {
-    const map = new Map<string, TerminalInstance>()
-    for (const terminal of terminals ?? []) map.set(terminal.id, terminal)
-    return map
-  }, [terminals])
-
   const shared: SharedPaneProps = {
     worktreeId,
     worktreePath,
