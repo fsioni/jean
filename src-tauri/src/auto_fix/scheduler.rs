@@ -212,7 +212,7 @@ async fn run_auto_fix_scan(app: &AppHandle) {
         );
         let archived_worktree_ids: Vec<String> = closed_worktree_ids
             .into_iter()
-            .chain(ineligible_worktree_ids.into_iter())
+            .chain(ineligible_worktree_ids)
             .collect();
         let archived_worktree_id_set: HashSet<String> =
             archived_worktree_ids.iter().cloned().collect();

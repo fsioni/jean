@@ -191,7 +191,7 @@ pub async fn list_attached_saved_contexts(
     }
 
     // Sort by created_at (newest first)
-    contexts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    contexts.sort_by_key(|context| std::cmp::Reverse(context.created_at));
 
     log::trace!("Found {} attached saved contexts", contexts.len());
     Ok(contexts)

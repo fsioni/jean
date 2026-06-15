@@ -107,10 +107,11 @@ fn should_forward_cancel_request(session_id: &str) -> bool {
 
 fn clear_stale_pending_cancel_before_send(session_id: &str) {
     let has_active_send = ACTIVE_SENDS.lock().unwrap().contains(session_id);
-    if !has_active_send && !super::registry::is_session_actively_managed(session_id) {
-        if super::registry::clear_pending_cancel(session_id) {
-            log::warn!("Cleared stale pending cancel before fresh send: {session_id}");
-        }
+    if !has_active_send
+        && !super::registry::is_session_actively_managed(session_id)
+        && super::registry::clear_pending_cancel(session_id)
+    {
+        log::warn!("Cleared stale pending cancel before fresh send: {session_id}");
     }
 }
 
@@ -5885,7 +5886,7 @@ pub async fn list_saved_contexts(app: AppHandle) -> Result<SavedContextsResponse
     }
 
     // Sort by created_at descending (newest first)
-    contexts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    contexts.sort_by_key(|context| std::cmp::Reverse(context.created_at));
 
     log::trace!("Found {} saved contexts", contexts.len());
     Ok(SavedContextsResponse { contexts })

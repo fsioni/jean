@@ -1237,7 +1237,7 @@ pub fn execute_pi(
             Some(app),
             session_id,
             worktree_id,
-            Some(run_id),
+            Some(&run_id),
             BufReader::new(stdout),
         )?;
         let status = child
