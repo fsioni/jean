@@ -49,7 +49,6 @@ const baseProps = {
   onQuestionAnswer: noopQuestionAnswer,
   onQuestionSkip: vi.fn(),
   onFileClick: vi.fn(),
-  onEditedFileClick: vi.fn(),
   onFixFinding: noopFixFinding,
   onFixAllFindings: noopFixAllFindings,
   isQuestionAnswered: vi.fn(() => false),

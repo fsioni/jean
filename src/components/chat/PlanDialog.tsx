@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { SplitButton } from '@/components/ui/split-button'
 import {
-  ApprovalActionGroup,
+  ApprovalActionMenu,
   type ApprovalModelOverride,
 } from './ApprovalModelSubmenu'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
@@ -363,72 +363,62 @@ export function PlanDialog({
               </Button>
             )}
 
-            {/* Right side: Approve + Auto split buttons */}
+            {/* Right side: YOLO primary, Approve secondary */}
             <div className="flex gap-2">
-              <SplitButton
-                label="Approve"
-                tooltip={`Approve plan (${formatShortcutDisplay(DEFAULT_KEYBINDINGS.approve_plan)})`}
-                onClick={handleApprove}
-                disabled={!canApprove}
-              >
-                {onClearContextBuildApprove && (
-                  <ApprovalActionGroup
-                    title="New Session"
-                    defaultModelLabel={buildNewContextLabel}
-                    shortcut={formatShortcutDisplay(
-                      DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
-                    )}
-                    disabled={!canApprove}
-                    onDefaultSelect={() => handleClearContextBuildApprove()}
-                    onModelSelect={handleClearContextBuildApprove}
-                  />
-                )}
-                {onWorktreeBuildApprove && (
-                  <ApprovalActionGroup
-                    title="New Worktree"
-                    defaultModelLabel={buildNewContextLabel}
-                    separatorBefore
-                    shortcut={formatShortcutDisplay(
-                      DEFAULT_KEYBINDINGS.approve_plan_worktree_build
-                    )}
-                    disabled={!canApprove}
-                    onDefaultSelect={() => handleWorktreeBuildApprove()}
-                    onModelSelect={handleWorktreeBuildApprove}
-                  />
-                )}
-              </SplitButton>
               <SplitButton
                 label="YOLO"
                 tooltip={`Approve with yolo mode (${formatShortcutDisplay(DEFAULT_KEYBINDINGS.approve_plan_yolo)})`}
-                variant="outline"
                 onClick={handleApproveYolo}
                 disabled={!canApprove}
               >
-                {onClearContextApprove && (
-                  <ApprovalActionGroup
-                    title="New Session (YOLO)"
-                    defaultModelLabel={yoloNewContextLabel}
-                    shortcut={formatShortcutDisplay(
-                      DEFAULT_KEYBINDINGS.approve_plan_clear_context
-                    )}
-                    disabled={!canApprove}
-                    onDefaultSelect={() => handleClearContextApprove()}
-                    onModelSelect={handleClearContextApprove}
-                  />
-                )}
-                {onWorktreeYoloApprove && (
-                  <ApprovalActionGroup
-                    title="New Worktree (YOLO)"
-                    defaultModelLabel={yoloNewContextLabel}
-                    separatorBefore
-                    shortcut={formatShortcutDisplay(
-                      DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
-                    )}
-                    disabled={!canApprove}
-                    onDefaultSelect={() => handleWorktreeYoloApprove()}
-                    onModelSelect={handleWorktreeYoloApprove}
-                  />
-                )}
+                <ApprovalActionMenu
+                  yoloDefaultModelLabel={yoloNewContextLabel}
+                  clearContextShortcut={formatShortcutDisplay(
+                    DEFAULT_KEYBINDINGS.approve_plan_clear_context
+                  )}
+                  worktreeYoloShortcut={formatShortcutDisplay(
+                    DEFAULT_KEYBINDINGS.approve_plan_worktree_yolo
+                  )}
+                  disabled={!canApprove}
+                  onClearContextApprove={
+                    onClearContextApprove
+                      ? handleClearContextApprove
+                      : undefined
+                  }
+                  onWorktreeYoloApprove={
+                    onWorktreeYoloApprove
+                      ? handleWorktreeYoloApprove
+                      : undefined
+                  }
+                />
+              </SplitButton>
+              <SplitButton
+                label="Approve"
+                tooltip={`Approve plan (${formatShortcutDisplay(DEFAULT_KEYBINDINGS.approve_plan)})`}
+                variant="outline"
+                onClick={handleApprove}
+                disabled={!canApprove}
+              >
+                <ApprovalActionMenu
+                  buildDefaultModelLabel={buildNewContextLabel}
+                  clearContextBuildShortcut={formatShortcutDisplay(
+                    DEFAULT_KEYBINDINGS.approve_plan_clear_context_build
+                  )}
+                  worktreeBuildShortcut={formatShortcutDisplay(
+                    DEFAULT_KEYBINDINGS.approve_plan_worktree_build
+                  )}
+                  disabled={!canApprove}
+                  onClearContextBuildApprove={
+                    onClearContextBuildApprove
+                      ? handleClearContextBuildApprove
+                      : undefined
+                  }
+                  onWorktreeBuildApprove={
+                    onWorktreeBuildApprove
+                      ? handleWorktreeBuildApprove
+                      : undefined
+                  }
+                />
               </SplitButton>
             </div>
           </DialogFooter>

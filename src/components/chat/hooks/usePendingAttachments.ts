@@ -120,7 +120,9 @@ export function usePendingAttachments({
         executionMode: executionModeRef.current,
         thinkingLevel: selectedThinkingLevelRef.current,
         effortLevel:
-          useAdaptiveThinkingRef.current || isCodexBackendRef.current
+          useAdaptiveThinkingRef.current ||
+          isCodexBackendRef.current ||
+          selectedBackendRef.current === 'pi'
             ? selectedEffortLevelRef.current
             : undefined,
         mcpConfig: buildMcpConfigJson(

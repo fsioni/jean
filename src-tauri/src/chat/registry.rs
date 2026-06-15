@@ -198,6 +198,16 @@ pub fn update_cancel_flag_context(
     }
 }
 
+/// The OpenCode session id of the CURRENTLY RUNNING turn for this Jean session,
+/// as recorded by `update_cancel_flag_context`. Available mid-run — including the
+/// first turn of a brand-new session, before the id is persisted to session
+/// metadata — so steering can resolve the live session id.
+pub fn get_opencode_session_id(session_id: &str) -> Option<String> {
+    lock_recover(&CANCEL_FLAGS, "CANCEL_FLAGS")
+        .get(session_id)
+        .and_then(|entry| entry.opencode_session_id.clone())
+}
+
 /// Fire-and-forget server-side abort for a running OpenCode session.
 ///
 /// OpenCode exposes `POST /session/{id}/abort`. Jean still keeps a local
@@ -283,6 +293,13 @@ pub fn cleanup_session_registrations(session_id: &str) {
             "[Registry] cleaned stale state for session={session_id} pid={removed_pid:?} pending={removed_pending} cancel_flag={removed_flag} codex_turn={removed_turn}"
         );
     }
+}
+
+/// Clear only a queued pre-registration cancel for an otherwise idle session.
+/// Used before starting a fresh send so stale pending cancel state from a
+/// previous idle-cancel race cannot poison the next run.
+pub fn clear_pending_cancel(session_id: &str) -> bool {
+    lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").remove(session_id)
 }
 
 /// Check if a session has a running process
@@ -386,6 +403,30 @@ mod tests {
     }
 
     #[test]
+    fn get_opencode_session_id_returns_live_id_after_context_update() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
+        clear_registries();
+
+        // Before the run registers, there is no live id.
+        assert_eq!(get_opencode_session_id("oc-session"), None);
+
+        assert!(register_cancel_flag(
+            "oc-session".to_string(),
+            Arc::new(AtomicBool::new(false))
+        ));
+        // Registered but no OpenCode session id yet (first-turn window).
+        assert_eq!(get_opencode_session_id("oc-session"), None);
+
+        update_cancel_flag_context("oc-session", "ses_live_123".to_string(), "/tmp".to_string());
+        assert_eq!(
+            get_opencode_session_id("oc-session"),
+            Some("ses_live_123".to_string())
+        );
+
+        clear_registries();
+    }
+
+    #[test]
     fn get_codex_turn_returns_registered_pair() {
         let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
         clear_registries();
@@ -422,6 +463,23 @@ mod tests {
         cleanup_session_registrations("opencode-session");
 
         assert!(!is_session_actively_managed("opencode-session"));
+
+        clear_registries();
+    }
+
+    #[test]
+    fn clear_pending_cancel_leaves_active_registrations_intact() {
+        let _guard = lock_recover(&TEST_LOCK, "TEST_LOCK");
+        clear_registries();
+
+        assert!(register_cancel_flag(
+            "active-session".to_string(),
+            Arc::new(AtomicBool::new(false))
+        ));
+        lock_recover(&PENDING_CANCELS, "PENDING_CANCELS").insert("active-session".to_string());
+
+        assert!(clear_pending_cancel("active-session"));
+        assert!(is_session_actively_managed("active-session"));
 
         clear_registries();
     }

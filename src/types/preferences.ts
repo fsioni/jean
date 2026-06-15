@@ -1055,6 +1055,8 @@ export interface AppPreferences {
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
   codex_max_agent_threads: number // Max concurrent agent threads (1-8) when multi-agent is enabled
   codex_auto_steer_enabled: boolean // Steer prompts into a running Codex turn instead of queueing (default: true)
+  opencode_auto_steer_enabled: boolean // Steer prompts into a running OpenCode turn instead of queueing (default: true)
+  pi_auto_steer_enabled: boolean // Steer prompts into a running PI turn instead of queueing (default: true)
   restore_last_session: boolean // Restore last session when switching projects (default: true)
   close_original_on_clear_context: boolean // Close original session when using Clear Context and yolo (default: true)
   build_model: string | null // Model override for plan approval (build mode), null = use session model
@@ -1885,7 +1887,9 @@ export const defaultPreferences: AppPreferences = {
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
   codex_max_agent_threads: 3, // Default: 3 threads
-  codex_auto_steer_enabled: true, // Default: steer running turn instead of queueing
+  codex_auto_steer_enabled: true, // Default: steer Codex running turn instead of queueing
+  opencode_auto_steer_enabled: true, // Default: steer OpenCode running turn instead of queueing
+  pi_auto_steer_enabled: true, // Default: steer PI running turn instead of queueing
   restore_last_session: true, // Default: enabled
   close_original_on_clear_context: true, // Default: enabled
   build_model: null, // Default: use session model

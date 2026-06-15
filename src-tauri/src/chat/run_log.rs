@@ -1062,9 +1062,43 @@ pub fn load_session_messages(
     Ok(load_session_messages_window(app, session_id, None, None)?.messages)
 }
 
+struct RenderableRunWindow {
+    run_indices: Vec<usize>,
+    start_index: usize,
+}
+
+fn select_renderable_run_window(
+    runs: &[RunEntry],
+    limit: Option<usize>,
+    before_run_index: Option<usize>,
+) -> RenderableRunWindow {
+    let end = before_run_index.unwrap_or(runs.len()).min(runs.len());
+    let max_renderable = limit.unwrap_or(usize::MAX);
+    let mut run_indices = Vec::new();
+
+    if max_renderable > 0 {
+        for index in (0..end).rev() {
+            if runs[index].is_renderable_in_chat_history() {
+                run_indices.push(index);
+                if run_indices.len() >= max_renderable {
+                    break;
+                }
+            }
+        }
+    }
+
+    run_indices.reverse();
+    let start_index = run_indices.first().copied().unwrap_or(0);
+
+    RenderableRunWindow {
+        run_indices,
+        start_index,
+    }
+}
+
 /// Load a window of messages for a session by parsing JSONL files.
 ///
-/// - `limit`: max number of runs (most recent within window) to parse. `None` = all.
+/// - `limit`: max number of renderable runs (most recent within window) to parse. `None` = all.
 /// - `before_run_index`: only parse runs strictly before this index. `None` = up to end.
 ///
 /// Returned `LoadedMessages.loaded_run_start_index` is the index of the first run actually
@@ -1088,21 +1122,20 @@ pub fn load_session_messages_window(
     };
 
     let total_runs = metadata.runs.len();
-    let end = before_run_index.unwrap_or(total_runs).min(total_runs);
-    let start = limit.map_or(0, |n| end.saturating_sub(n));
+    let window = select_renderable_run_window(&metadata.runs, limit, before_run_index);
 
     log::debug!(
-        "[LoadMessages] session={session_id} metadata has {} runs (backend={:?}) — window [{start}..{end}]",
+        "[LoadMessages] session={session_id} metadata has {} runs (backend={:?}) — renderable window start={} count={}",
         total_runs,
-        metadata.backend
+        metadata.backend,
+        window.start_index,
+        window.run_indices.len(),
     );
 
     let mut messages = Vec::new();
 
-    for run in &metadata.runs[start..end] {
-        if !run.is_renderable_in_chat_history() {
-            continue;
-        }
+    for run_index in &window.run_indices {
+        let run = &metadata.runs[*run_index];
 
         // Add user message
         messages.push(ChatMessage {
@@ -1123,9 +1156,9 @@ pub fn load_session_messages_window(
             usage: None, // User messages don't have token usage
         });
 
-        // Add assistant message for every renderable run, including Running runs.
+        // Add assistant message for every run that should render assistant output.
         // Running logs contain partial JSONL snapshots that we can surface on reload.
-        {
+        if run.renders_assistant_message() {
             let lines = read_run_log(app, session_id, &run.run_id)?;
 
             // Parse JSONL content — route by backend.
@@ -1215,7 +1248,7 @@ pub fn load_session_messages_window(
     Ok(LoadedMessages {
         messages,
         total_runs,
-        loaded_run_start_index: start,
+        loaded_run_start_index: window.start_index,
     })
 }
 
@@ -1388,6 +1421,56 @@ mod tests {
         inject_synthetic_enter_plan("run-123", &mut msg);
 
         assert_eq!(msg.tool_calls.len(), before_tool_count);
+    }
+
+    #[test]
+    fn renderable_window_backfills_past_recent_cancelled_runs() {
+        let mut runs = Vec::new();
+        for index in 0..3 {
+            runs.push(RunEntry {
+                run_id: format!("completed-{index}"),
+                user_message_id: format!("user-completed-{index}"),
+                user_message: format!("completed prompt {index}"),
+                started_at: index as u64,
+                ended_at: Some(index as u64 + 1),
+                ..sample_run()
+            });
+        }
+        for index in 0..10 {
+            runs.push(RunEntry {
+                run_id: format!("cancelled-{index}"),
+                user_message_id: format!("user-cancelled-{index}"),
+                user_message: format!("cancelled prompt {index}"),
+                started_at: 100 + index as u64,
+                ended_at: Some(101 + index as u64),
+                status: RunStatus::Cancelled,
+                assistant_message_id: None,
+                cancelled: true,
+                ..sample_run()
+            });
+        }
+
+        let window = select_renderable_run_window(&runs, Some(10), None);
+
+        assert_eq!(window.start_index, 0);
+        assert_eq!(window.run_indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn renderable_window_includes_cancelled_runs_with_assistant_id() {
+        let runs = vec![RunEntry {
+            run_id: "cancelled-with-assistant".to_string(),
+            user_message_id: "user-cancelled".to_string(),
+            user_message: "cancelled prompt".to_string(),
+            status: RunStatus::Cancelled,
+            assistant_message_id: Some("assistant-cancelled".to_string()),
+            cancelled: true,
+            ..sample_run()
+        }];
+
+        let window = select_renderable_run_window(&runs, Some(10), None);
+
+        assert_eq!(window.run_indices, vec![0]);
     }
 
     #[test]

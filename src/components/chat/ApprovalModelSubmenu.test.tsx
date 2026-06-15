@@ -7,7 +7,10 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ApprovalModelSubmenu } from './ApprovalModelSubmenu'
+import {
+  ApprovalActionMenu,
+  ApprovalModelSubmenu,
+} from './ApprovalModelSubmenu'
 
 const preferencesMock = vi.hoisted(() => ({
   data: {
@@ -68,6 +71,12 @@ function findModelItem(model: string) {
   return item as HTMLElement
 }
 
+function getMenuItem(name: RegExp, index: number) {
+  const item = screen.getAllByRole('menuitem', { name })[index]
+  expect(item).toBeDefined()
+  return item as HTMLElement
+}
+
 function renderMenu(onSelect = vi.fn()) {
   render(
     <DropdownMenu open>
@@ -102,6 +111,60 @@ beforeEach(() => {
 })
 
 describe('ApprovalModelSubmenu', () => {
+  it('renders grouped approval actions without redundant mode headings and routes callbacks yolo-first', async () => {
+    const user = userEvent.setup()
+    const onApprove = vi.fn()
+    const onApproveYolo = vi.fn()
+    const onClearContextApprove = vi.fn()
+    const onClearContextBuildApprove = vi.fn()
+    const onWorktreeBuildApprove = vi.fn()
+    const onWorktreeYoloApprove = vi.fn()
+
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <ApprovalActionMenu
+            buildDefaultModelLabel="Codex · GPT 5.5"
+            yoloDefaultModelLabel="Codex · GPT 5.5"
+            onApprove={onApprove}
+            onApproveYolo={onApproveYolo}
+            onClearContextApprove={onClearContextApprove}
+            onClearContextBuildApprove={onClearContextBuildApprove}
+            onWorktreeBuildApprove={onWorktreeBuildApprove}
+            onWorktreeYoloApprove={onWorktreeYoloApprove}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+
+    expect(screen.queryByText('YOLO')).toBeNull()
+    expect(screen.queryByText('Build')).toBeNull()
+    expect(screen.getAllByText('Current Session')).toHaveLength(2)
+    expect(screen.getAllByText('New Session')).toHaveLength(2)
+    expect(screen.getAllByText('New Worktree')).toHaveLength(2)
+    expect(screen.queryByText('New Session (YOLO)')).toBeNull()
+    expect(screen.queryByText('New Worktree (YOLO)')).toBeNull()
+
+    await user.click(getMenuItem(/current session/i, 0))
+    expect(onApproveYolo).toHaveBeenCalledTimes(1)
+
+    await user.click(getMenuItem(/\(use default\)/i, 0))
+    expect(onClearContextApprove).toHaveBeenCalledWith()
+
+    await user.click(getMenuItem(/\(use default\)/i, 1))
+    expect(onWorktreeYoloApprove).toHaveBeenCalledWith()
+
+    await user.click(getMenuItem(/current session/i, 1))
+    expect(onApprove).toHaveBeenCalledTimes(1)
+
+    await user.click(getMenuItem(/\(use default\)/i, 2))
+    expect(onClearContextBuildApprove).toHaveBeenCalledWith()
+
+    await user.click(getMenuItem(/\(use default\)/i, 3))
+    expect(onWorktreeBuildApprove).toHaveBeenCalledWith()
+  })
+
   it('renders other model choices grouped by installed backend', async () => {
     const user = userEvent.setup()
     renderMenu()

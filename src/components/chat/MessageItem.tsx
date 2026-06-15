@@ -27,7 +27,6 @@ import { SkillBadge } from './SkillBadge'
 import { ToolCallsDisplay } from './ToolCallsDisplay'
 import { ExitPlanModeButton } from './ExitPlanModeButton'
 import { EditedFilesDisplay } from './EditedFilesDisplay'
-import type { FileEdit } from './FileEditsDiffModal'
 import {
   Tooltip,
   TooltipTrigger,
@@ -59,6 +58,12 @@ import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 interface MessageItemProps {
   /** The message to render */
   message: ChatMessage
+  /**
+   * Stable accessor for the full session message list, used to compute
+   * "subsequent edits" lazily when a diff is opened. Passing a stable
+   * function (not the array) preserves this row's memoization.
+   */
+  getMessages?: () => ChatMessage[]
   /** Index of this message in the message list */
   messageIndex: number
   /** Total number of messages (to determine if this is the last message) */
@@ -117,8 +122,6 @@ interface MessageItemProps {
   onQuestionSkip: (toolCallId: string) => void
   /** Callback when user clicks a file path */
   onFileClick: (path: string) => void
-  /** Callback when user clicks an edited file badge (opens diff modal) */
-  onEditedFileClick: (path: string, edits: FileEdit[]) => void
   /** Callback when user fixes a finding */
   onFixFinding: (finding: ReviewFinding, suggestion?: string) => Promise<void>
   /** Callback when user fixes all findings */
@@ -140,6 +143,8 @@ interface MessageItemProps {
   onCopyToInput?: (message: ChatMessage) => void
   /** Hide approve buttons (e.g. for Codex which has no native approval flow) */
   hideApproveButtons?: boolean
+  /** Hide the built-in cancelled marker when a parent compact row renders it externally */
+  hideCancelledIndicator?: boolean
   /** Duration of this assistant message in ms (computed from user→assistant timestamp delta) */
   durationMs?: number | null
 }
@@ -150,6 +155,7 @@ interface MessageItemProps {
  */
 export const MessageItem = memo(function MessageItem({
   message,
+  getMessages,
   messageIndex,
   totalMessages,
   lastPlanMessageIndex,
@@ -171,7 +177,6 @@ export const MessageItem = memo(function MessageItem({
   onQuestionAnswer,
   onQuestionSkip,
   onFileClick,
-  onEditedFileClick,
   onFixFinding,
   onFixAllFindings,
   isQuestionAnswered,
@@ -180,6 +185,7 @@ export const MessageItem = memo(function MessageItem({
   isFindingFixed,
   onCopyToInput,
   hideApproveButtons,
+  hideCancelledIndicator,
   durationMs,
 }: MessageItemProps) {
   // Only show Approve button for the last message with ExitPlanMode
@@ -798,11 +804,13 @@ export const MessageItem = memo(function MessageItem({
         !skipToolCalls && (
           <EditedFilesDisplay
             toolCalls={message.tool_calls}
-            onFileClick={onEditedFileClick}
+            worktreePath={worktreePath}
+            getMessages={getMessages}
+            messageIndex={messageIndex}
           />
         )}
 
-      {message.cancelled && (
+      {message.cancelled && !hideCancelledIndicator && (
         <span className="text-xs text-muted-foreground/50 italic">
           (cancelled)
         </span>

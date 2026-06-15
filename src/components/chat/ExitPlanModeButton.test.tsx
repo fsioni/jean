@@ -60,32 +60,136 @@ vi.mock('./ApprovalModelSubmenu', async () => {
     )
 
   return {
-    ApprovalActionGroup: ({
-      title,
-      defaultModelLabel,
-      separatorBefore,
-      onDefaultSelect,
-      onModelSelect,
+    ApprovalActionMenu: ({
+      onApprove,
+      onApproveYolo,
+      onClearContextApproval,
+      onClearContextApprove,
+      onClearContextBuildApproval,
+      onClearContextBuildApprove,
+      onWorktreeBuildApproval,
+      onWorktreeBuildApprove,
+      onWorktreeYoloApproval,
+      onWorktreeYoloApprove,
     }: {
-      title: string
-      defaultModelLabel?: string | null
-      separatorBefore?: boolean
-      onDefaultSelect: () => void
-      onModelSelect: (override: { backend: string; model: string }) => void
+      onApprove?: () => void
+      onApproveYolo?: () => void
+      onClearContextApproval?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onClearContextApprove?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onClearContextBuildApproval?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onClearContextBuildApprove?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onWorktreeBuildApproval?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onWorktreeBuildApprove?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onWorktreeYoloApproval?: (override?: {
+        backend: string
+        model: string
+      }) => void
+      onWorktreeYoloApprove?: (override?: {
+        backend: string
+        model: string
+      }) => void
     }) => (
       <>
-        {separatorBefore && <DropdownMenuSeparator />}
-        <DropdownMenuLabel>{title}</DropdownMenuLabel>
-        <DropdownMenuItem onClick={onDefaultSelect}>
-          <span>{defaultModelLabel ?? 'Current default'}</span>
-          <span>(use default)</span>
-        </DropdownMenuItem>
-        <div role="menuitem">Other model…</div>
-        <DropdownMenuItem
-          onClick={() => onModelSelect({ backend: 'codex', model: 'gpt-5.5' })}
-        >
-          Codex · GPT 5.5
-        </DropdownMenuItem>
+        {(onApproveYolo ||
+          onClearContextApprove ||
+          onClearContextApproval ||
+          onWorktreeYoloApprove ||
+          onWorktreeYoloApproval) && (
+          <>
+            {onApproveYolo && (
+              <DropdownMenuItem onClick={onApproveYolo}>
+                Current Session
+              </DropdownMenuItem>
+            )}
+            {(onClearContextApprove ?? onClearContextApproval) && (
+              <>
+                <DropdownMenuLabel>New Session</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() =>
+                    (onClearContextApprove ?? onClearContextApproval)?.()
+                  }
+                >
+                  <span>Codex · GPT 5.5</span>
+                  <span>(use default)</span>
+                </DropdownMenuItem>
+              </>
+            )}
+            {(onWorktreeYoloApprove ?? onWorktreeYoloApproval) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>New Worktree</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() =>
+                    (onWorktreeYoloApprove ?? onWorktreeYoloApproval)?.()
+                  }
+                >
+                  <span>Codex · GPT 5.5</span>
+                  <span>(use default)</span>
+                </DropdownMenuItem>
+              </>
+            )}
+          </>
+        )}
+        {(onApprove ||
+          onClearContextBuildApprove ||
+          onClearContextBuildApproval ||
+          onWorktreeBuildApprove ||
+          onWorktreeBuildApproval) && (
+          <>
+            {onApprove && (
+              <DropdownMenuItem onClick={onApprove}>
+                Current Session
+              </DropdownMenuItem>
+            )}
+            {(onClearContextBuildApprove ?? onClearContextBuildApproval) && (
+              <>
+                <DropdownMenuLabel>New Session</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() =>
+                    (
+                      onClearContextBuildApprove ?? onClearContextBuildApproval
+                    )?.()
+                  }
+                >
+                  <span>Codex · GPT 5.5</span>
+                  <span>(use default)</span>
+                </DropdownMenuItem>
+              </>
+            )}
+            {(onWorktreeBuildApprove ?? onWorktreeBuildApproval) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>New Worktree</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() =>
+                    (onWorktreeBuildApprove ?? onWorktreeBuildApproval)?.()
+                  }
+                >
+                  <span>Codex · GPT 5.5</span>
+                  <span>(use default)</span>
+                </DropdownMenuItem>
+              </>
+            )}
+          </>
+        )}
       </>
     ),
   }
@@ -105,6 +209,12 @@ function getMenuItem(name: RegExp, index: number) {
   return item as HTMLElement
 }
 
+function getButton(name: string, index: number) {
+  const button = screen.getAllByRole('button', { name })[index]
+  expect(button).toBeDefined()
+  return button as HTMLElement
+}
+
 beforeEach(() => {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -122,70 +232,63 @@ beforeEach(() => {
 })
 
 describe('ExitPlanModeButton', () => {
-  it('groups yolo new-session and new-worktree model choices under titled sections', async () => {
+  it('keeps YOLO as the primary left button and Approve as the secondary right button', async () => {
     const user = userEvent.setup()
+    const onPlanApproval = vi.fn()
+    const onPlanApprovalYolo = vi.fn()
     const onClearContextApproval = vi.fn()
+    const onClearContextBuildApproval = vi.fn()
+    const onWorktreeBuildApproval = vi.fn()
     const onWorktreeYoloApproval = vi.fn()
 
     render(
       <ExitPlanModeButton
         toolCalls={planToolCalls}
         isApproved={false}
-        onPlanApproval={vi.fn()}
-        onPlanApprovalYolo={vi.fn()}
+        onPlanApproval={onPlanApproval}
+        onPlanApprovalYolo={onPlanApprovalYolo}
         onClearContextApproval={onClearContextApproval}
+        onClearContextBuildApproval={onClearContextBuildApproval}
+        onWorktreeBuildApproval={onWorktreeBuildApproval}
         onWorktreeYoloApproval={onWorktreeYoloApproval}
         sessionId="session-1"
       />
     )
 
-    const yoloChevron = screen.getAllByRole('button', { name: '' }).at(-1)
-    expect(yoloChevron).toBeDefined()
-    const openYoloMenu = async () => {
-      await user.click(yoloChevron as HTMLElement)
-    }
-
-    await openYoloMenu()
-
-    expect(screen.getByText('New Session (YOLO)')).toBeInTheDocument()
-    expect(screen.getByText('New Worktree (YOLO)')).toBeInTheDocument()
-    expect(screen.queryByText('New Session (YOLO): Other model…')).toBeNull()
-    expect(screen.queryByText('New Worktree (YOLO): Other model…')).toBeNull()
-
-    const groups = screen.getAllByText(/New (Session|Worktree) \(YOLO\)/)
-    expect(groups).toHaveLength(2)
+    const yoloButton = screen.getByRole('button', { name: 'YOLO' })
+    const approveButton = screen.getByRole('button', { name: 'Approve' })
+    expect(yoloButton).toBeInTheDocument()
+    expect(approveButton).toBeInTheDocument()
     expect(
-      screen.getAllByRole('menuitem', { name: /Other model/i })
-    ).toHaveLength(2)
-    expect(
-      screen.getAllByRole('menuitem', { name: /^Codex · GPT 5\.5$/i })
-    ).toHaveLength(2)
-    expect(screen.getAllByText('(use default)')).toHaveLength(2)
-    expect(
-      screen.getAllByRole('menuitem', { name: /\(use default\)/i })
-    ).toHaveLength(2)
+      yoloButton.compareDocumentPosition(approveButton) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    expect(screen.getAllByRole('button', { name: '' })).toHaveLength(2)
+
+    await user.click(getButton('', 0))
+
+    expect(screen.queryByText('Build')).toBeNull()
+    expect(screen.getAllByText('New Session')).toHaveLength(1)
+    expect(screen.getAllByText('New Worktree')).toHaveLength(1)
 
     await user.click(getMenuItem(/\(use default\)/i, 0))
     expect(onClearContextApproval).toHaveBeenCalledWith()
 
-    await openYoloMenu()
+    await user.click(getButton('', 0))
     await user.click(getMenuItem(/\(use default\)/i, 1))
     expect(onWorktreeYoloApproval).toHaveBeenCalledWith()
 
-    await openYoloMenu()
-    await user.click(getMenuItem(/Other model/i, 0))
-    await user.click(getMenuItem(/^Codex · GPT 5\.5$/i, 0))
-    expect(onClearContextApproval).toHaveBeenCalledWith({
-      backend: 'codex',
-      model: 'gpt-5.5',
-    })
+    await user.click(getButton('', 1))
+    expect(screen.queryByText('Build')).toBeNull()
+    expect(screen.queryByText('New Session (YOLO)')).toBeNull()
+    expect(screen.queryByText('New Worktree (YOLO)')).toBeNull()
 
-    await openYoloMenu()
-    await user.click(getMenuItem(/Other model/i, 1))
-    await user.click(getMenuItem(/^Codex · GPT 5\.5$/i, 1))
-    expect(onWorktreeYoloApproval).toHaveBeenCalledWith({
-      backend: 'codex',
-      model: 'gpt-5.5',
-    })
+    await user.click(getMenuItem(/\(use default\)/i, 0))
+    expect(onClearContextBuildApproval).toHaveBeenCalledWith()
+
+    await user.click(getButton('', 1))
+    await user.click(getMenuItem(/\(use default\)/i, 1))
+    expect(onWorktreeBuildApproval).toHaveBeenCalledWith()
   })
 })

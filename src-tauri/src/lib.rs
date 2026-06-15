@@ -284,6 +284,10 @@ pub struct AppPreferences {
     pub codex_multi_agent_enabled: bool, // Enable multi-agent collaboration (experimental)
     #[serde(default = "default_codex_auto_steer")]
     pub codex_auto_steer_enabled: bool, // Steer prompts into a running Codex turn instead of queueing (default: true)
+    #[serde(default = "default_opencode_auto_steer")]
+    pub opencode_auto_steer_enabled: bool, // Steer prompts into a running OpenCode session instead of queueing (default: true)
+    #[serde(default = "default_pi_auto_steer")]
+    pub pi_auto_steer_enabled: bool, // Steer prompts into a running PI turn instead of queueing (default: true)
     #[serde(default = "default_codex_max_agent_threads")]
     pub codex_max_agent_threads: u32, // Max concurrent agent threads (1-8)
     #[serde(default = "default_restore_last_session")]
@@ -367,6 +371,14 @@ fn default_restore_last_session() -> bool {
 }
 
 fn default_codex_auto_steer() -> bool {
+    true
+}
+
+fn default_opencode_auto_steer() -> bool {
+    true
+}
+
+fn default_pi_auto_steer() -> bool {
     true
 }
 
@@ -1856,6 +1868,8 @@ impl Default for AppPreferences {
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: false,
             codex_auto_steer_enabled: default_codex_auto_steer(),
+            opencode_auto_steer_enabled: default_opencode_auto_steer(),
+            pi_auto_steer_enabled: default_pi_auto_steer(),
             codex_max_agent_threads: default_codex_max_agent_threads(),
             restore_last_session: true,
             close_original_on_clear_context: true,
@@ -4195,6 +4209,7 @@ pub fn run() {
             chat::clear_message_queue,
             chat::move_queued_message_front,
             chat::steer_codex_turn,
+            chat::steer_opencode_turn,
             chat::steer_pi_turn,
             chat::answer_opencode_question,
             // Chat commands - ScheduleWakeup support

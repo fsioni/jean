@@ -110,6 +110,17 @@ struct SharedSseSubscriber {
     run_id: String,
     cancelled: Arc<AtomicBool>,
     streamed_any: Arc<AtomicBool>,
+    /// True once the OpenCode session's turn has started (first streamed part
+    /// seen). Steered `prompt_async` injections must wait for this so they never
+    /// race the main blocking `/message` POST and reset its connection.
+    turn_started: Arc<AtomicBool>,
+    /// True when OpenCode emitted `session.idle` (whole session queue drained).
+    /// Reset to false on any streamed part. Used to keep a steered run open
+    /// until every injected prompt has finished.
+    session_idle: Arc<AtomicBool>,
+    /// True once at least one steered prompt was injected into this run. Only
+    /// steered runs wait for `session.idle`; plain runs finalize immediately.
+    steered: Arc<AtomicBool>,
     tracked_parts: HashMap<String, TrackedPartState>,
     /// Ordered list of content blocks accumulated from SSE events.
     /// Includes intermediate thinking/tool blocks that may not appear in the
@@ -262,6 +273,14 @@ impl SharedSseSubscriber {
             });
         }
     }
+
+    /// Record that the session is actively streaming: the turn has started and
+    /// the session is no longer idle. Called on every streamed part so a steered
+    /// prompt that just made the session busy again re-extends the run.
+    fn note_streaming_activity(&self) {
+        self.turn_started.store(true, Ordering::Relaxed);
+        self.session_idle.store(false, Ordering::Relaxed);
+    }
 }
 
 type SharedSseSubscriberHandle = Arc<Mutex<SharedSseSubscriber>>;
@@ -344,6 +363,9 @@ impl SharedSseSubscription {
         working_dir: String,
         cancelled: Arc<AtomicBool>,
         streamed_any: Arc<AtomicBool>,
+        turn_started: Arc<AtomicBool>,
+        session_idle: Arc<AtomicBool>,
+        steered: Arc<AtomicBool>,
     ) -> Self {
         ensure_shared_sse_listener(app, base_url, &working_dir);
 
@@ -353,6 +375,9 @@ impl SharedSseSubscription {
             run_id,
             cancelled,
             streamed_any,
+            turn_started,
+            session_idle,
+            steered,
             tracked_parts: HashMap::new(),
             accumulated_blocks: Vec::new(),
             accumulated_tool_calls: Vec::new(),
@@ -603,6 +628,92 @@ fn emit_tool_result_for_subscriber(
         output,
     );
     subscriber.streamed_any.store(true, Ordering::Relaxed);
+}
+
+/// Look up the (turn_started, session_idle, steered) flags for an OpenCode
+/// session from the shared subscriber map. Returns None if no run is currently
+/// subscribed for that session.
+fn opencode_session_flags(
+    opencode_session_id: &str,
+) -> Option<(Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>)> {
+    let subscribers = lock_recover(&SHARED_SSE.subscribers, "OPENCODE_SSE_SUBSCRIBERS");
+    let entry = subscribers.get(opencode_session_id)?;
+    let sub = lock_recover(&entry.handle, "OPENCODE_SSE_SUBSCRIBER");
+    Some((
+        sub.turn_started.clone(),
+        sub.session_idle.clone(),
+        sub.steered.clone(),
+    ))
+}
+
+/// Block until the OpenCode session's main turn has started streaming (so a
+/// steered `prompt_async` injection never races the blocking `/message` POST and
+/// resets its connection), or until `timeout` elapses. Returns true if the turn
+/// started.
+pub fn wait_opencode_turn_started(opencode_session_id: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some((turn_started, _, _)) = opencode_session_flags(opencode_session_id) {
+            if turn_started.load(Ordering::Relaxed) {
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Mark that a steered prompt was injected into the OpenCode session's active
+/// run, so the run waits for `session.idle` before finalizing instead of
+/// completing as soon as the original blocking `/message` POST returns.
+pub fn mark_opencode_steered(opencode_session_id: &str) {
+    if let Some((_, _, steered)) = opencode_session_flags(opencode_session_id) {
+        steered.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Block (cancel-aware, bounded) until the OpenCode session reaches a STABLE
+/// `session.idle` — i.e. every steered `prompt_async` injection has finished and
+/// no new one has restarted streaming. A freshly injected prompt resets
+/// `session_idle` to false on its first streamed part, so this naturally extends
+/// the run across all injected prompts.
+fn wait_for_opencode_session_idle(
+    session_idle: &Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
+    opencode_session_id: &str,
+) {
+    const MAX_WAIT: Duration = Duration::from_secs(1800);
+    const GRACE: Duration = Duration::from_millis(500);
+    let deadline = Instant::now() + MAX_WAIT;
+    log::info!(
+        "OpenCode: steered run waiting for session.idle opencode_session={opencode_session_id}"
+    );
+    loop {
+        if cancelled.load(Ordering::SeqCst) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            log::warn!(
+                "OpenCode: steered run idle-wait timed out opencode_session={opencode_session_id}"
+            );
+            return;
+        }
+        if session_idle.load(Ordering::Relaxed) {
+            // Confirm idle is stable: a steered prompt mid-injection resets the
+            // flag on its first streamed part, so re-check after a short grace.
+            std::thread::sleep(GRACE);
+            if session_idle.load(Ordering::Relaxed) {
+                log::info!(
+                    "OpenCode: steered run reached stable session.idle opencode_session={opencode_session_id}"
+                );
+                return;
+            }
+            continue;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn has_subscribers_for_working_dir(
@@ -1347,6 +1458,7 @@ fn process_message_part_event(
     if subscriber.cancelled.load(Ordering::Relaxed) {
         return Some(false);
     }
+    subscriber.note_streaming_activity();
 
     let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let part_id = part
@@ -1624,6 +1736,7 @@ fn process_message_part_delta_event(
     if subscriber.cancelled.load(Ordering::Relaxed) {
         return Some(false);
     }
+    subscriber.note_streaming_activity();
 
     let delta_session_id = properties
         .get("sessionID")
@@ -1819,6 +1932,27 @@ fn process_shared_sse_event(
             process_message_part_delta_event(app, &properties, &mut subscriber)
         }
         "message.created" | "session.updated" => Some(false),
+        "session.idle" => {
+            // The session's whole queue (original turn + any steered prompts)
+            // has drained. Flag the subscriber so a steered run can finalize.
+            let opencode_session_id = properties
+                .get("sessionID")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    properties
+                        .get("info")
+                        .and_then(|i| i.get("id"))
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("");
+            if let Some((_, session_idle, _)) = opencode_session_flags(opencode_session_id) {
+                session_idle.store(true, Ordering::Relaxed);
+                log::info!(
+                    "OpenCode shared SSE: session.idle opencode_session={opencode_session_id}"
+                );
+            }
+            Some(false)
+        }
         _ => {
             log::trace!("OpenCode shared SSE: event type='{}'", event_type);
             Some(false)
@@ -2056,6 +2190,12 @@ pub fn execute_opencode_http(
         opencode_session_id.clone(),
         working_dir_string.clone(),
     );
+    super::commands::trigger_opencode_queue_steer(
+        app.clone(),
+        worktree_id.to_string(),
+        working_dir_string.clone(),
+        session_id.to_string(),
+    );
 
     let selected_model = if let Some(pm) = parse_provider_model(model) {
         pm
@@ -2102,6 +2242,13 @@ pub fn execute_opencode_http(
     }
 
     let streamed_via_sse = Arc::new(AtomicBool::new(false));
+    // Steering coordination flags shared with the SSE listener. `turn_started`
+    // gates steered `prompt_async` injections until the main turn is live;
+    // `session_idle` lets a steered run wait for every injected prompt to finish;
+    // `steered` records whether any injection happened (plain runs skip the wait).
+    let turn_started = Arc::new(AtomicBool::new(false));
+    let session_idle = Arc::new(AtomicBool::new(false));
+    let steered = Arc::new(AtomicBool::new(false));
     log::info!(
         "OpenCode: registering shared SSE subscriber jean_session={} opencode_session={}",
         session_id,
@@ -2117,6 +2264,9 @@ pub fn execute_opencode_http(
         working_dir_string.clone(),
         cancelled.clone(),
         streamed_via_sse.clone(),
+        turn_started.clone(),
+        session_idle.clone(),
+        steered.clone(),
     );
 
     let sse_connected = wait_for_shared_sse_connection(Duration::from_secs(3), &working_dir_string);
@@ -2456,6 +2606,16 @@ pub fn execute_opencode_http(
             }
             _ => {}
         }
+    }
+
+    // If any prompt was steered into this run via `prompt_async`, the blocking
+    // `/message` POST returns when the ORIGINAL turn finishes — but injected
+    // prompts keep running server-side and stream over the (still-subscribed)
+    // SSE. Wait for `session.idle` so their output is captured below before we
+    // take the accumulated SSE blocks. Plain (non-steered) runs skip this and
+    // finalize immediately, so they are completely unaffected.
+    if steered.load(Ordering::Relaxed) {
+        wait_for_opencode_session_idle(&session_idle, cancelled, &opencode_session_id);
     }
 
     // If SSE accumulated richer content (intermediate thinking/tool blocks),
@@ -2856,6 +3016,22 @@ pub fn answer_opencode_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_started_gate_returns_false_for_unknown_session_quickly() {
+        // No subscriber registered → gate must time out (not block forever) and
+        // report the turn never started, so the steer caller requeues instead.
+        let start = Instant::now();
+        let started = wait_opencode_turn_started("ses_does_not_exist", Duration::from_millis(120));
+        assert!(!started);
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn mark_steered_is_noop_for_unknown_session() {
+        // Must not panic when the session has no active subscriber.
+        mark_opencode_steered("ses_does_not_exist");
+    }
 
     #[test]
     fn parse_provider_model_keeps_single_segment_after_opencode_prefix() {

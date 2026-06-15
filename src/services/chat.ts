@@ -2671,6 +2671,26 @@ export async function steerCodexTurn(
 }
 
 /**
+ * Inject a text-only user message into a running OpenCode session via
+ * OpenCode's `prompt_async` endpoint. Throws when the OpenCode session is not
+ * available or the async prompt request fails — callers fall back to queue or
+ * cancel+send.
+ */
+export async function steerOpencodeTurn(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  message: string
+): Promise<void> {
+  await invoke('steer_opencode_turn', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    message,
+  })
+}
+
+/**
  * Inject a user message into a running Pi RPC turn via Jean's detached Pi host.
  * Throws when the host is gone or steering is unavailable — callers fall back
  * to cancel+send.

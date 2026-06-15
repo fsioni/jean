@@ -209,7 +209,100 @@ describe('useStreamingEvents cancellation sanitization', () => {
     vi.unstubAllGlobals()
   })
 
-  it('removes optimistic prompt and partial assistant content when cancelling a partial response', async () => {
+  it('does not park a plain plan completion when prompts are queued', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    queryClient.setQueryData(['chat', 'session', 'session-1'], {
+      id: 'session-1',
+      name: 'Test',
+      order: 0,
+      created_at: 1,
+      updated_at: 1,
+      messages: [
+        {
+          id: 'user-1',
+          session_id: 'session-1',
+          role: 'user',
+          content: 'hello',
+          timestamp: 1,
+          tool_calls: [],
+        },
+      ],
+    })
+    queryClient.setQueryData(['chat', 'sessions', 'worktree-1'], {
+      worktree_id: 'worktree-1',
+      sessions: [
+        {
+          id: 'session-1',
+          name: 'Test',
+          order: 0,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      streamingContents: { 'session-1': 'Hello. What would you like to do?' },
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Hello. What would you like to do?' },
+        ],
+      },
+      sendingSessionIds: { 'session-1': true },
+      sendStartedAt: { 'session-1': 1000 },
+      sessionWorktreeMap: { 'session-1': 'worktree-1' },
+      worktreePaths: { 'worktree-1': '/tmp/worktree' },
+      messageQueues: {
+        'session-1': [
+          {
+            id: 'queued-1',
+            message: 'who are you',
+            pendingImages: [],
+            pendingFiles: [],
+            pendingSkills: [],
+            pendingTextFiles: [],
+            model: 'opencode/gpt-5.3-codex',
+            provider: null,
+            executionMode: 'plan',
+            thinkingLevel: 'off',
+            backend: 'opencode',
+            queuedAt: 1,
+          },
+        ],
+      },
+    })
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() => expect(registeredListeners.has('chat:done')).toBe(true))
+
+    registeredListeners.get('chat:done')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        waiting_for_plan: true,
+      },
+    })
+
+    expect(
+      useChatStore.getState().waitingForInputSessionIds['session-1']
+    ).toBeUndefined()
+    expect(useChatStore.getState().sendingSessionIds['session-1']).toBe(
+      undefined
+    )
+    expect(
+      queryClient.getQueryData<{ waiting_for_input?: boolean }>([
+        'chat',
+        'session',
+        'session-1',
+      ])?.waiting_for_input
+    ).not.toBe(true)
+  })
+
+  it('keeps the prompt and the partial assistant output (incl tool calls) when cancelling a partial response', async () => {
     const queryClient = createQueryClient()
     const wrapper = createWrapper(queryClient)
     const compactSummary =
@@ -265,18 +358,34 @@ describe('useStreamingEvents cancellation sanitization', () => {
     })
 
     const session = queryClient.getQueryData<{
-      messages: Array<{
+      messages: {
         role: string
         content: string
-        content_blocks?: unknown
-      }>
+        cancelled?: boolean
+        content_blocks?: { type: string; text?: string }[]
+      }[]
     }>(['chat', 'session', 'session-1'])
-    expect(session?.messages).toEqual([])
-    expect(mockInvoke).not.toHaveBeenCalledWith(
+    // Prompt stays, plus a cancelled assistant turn with the compaction summary
+    // stripped from the persisted/visible partial content.
+    expect(session?.messages.map(message => message.content)).toEqual([
+      'continue',
+      'Actual partial response.',
+    ])
+    const assistant = session?.messages[1]
+    expect(assistant?.role).toBe('assistant')
+    expect(assistant?.cancelled).toBe(true)
+    expect(assistant?.content_blocks).toEqual([
+      { type: 'text', text: 'Actual partial response.' },
+    ])
+    // Partial content is persisted to the run JSONL so it survives reload.
+    expect(mockInvoke).toHaveBeenCalledWith(
       'save_cancelled_message',
-      expect.anything()
+      expect.objectContaining({
+        sessionId: 'session-1',
+        content: 'Actual partial response.',
+      })
     )
-    expect(useChatStore.getState().isSessionReviewing('session-1')).toBe(false)
+    expect(useChatStore.getState().isSessionReviewing('session-1')).toBe(true)
 
     registeredListeners.get('chat:chunk')?.({
       payload: {
@@ -294,7 +403,7 @@ describe('useStreamingEvents cancellation sanitization', () => {
     )
   })
 
-  it('keeps prior history when removing a cancelled partial response', async () => {
+  it('keeps prior history, current prompt, and the cancelled partial assistant turn', async () => {
     const queryClient = createQueryClient()
     const wrapper = createWrapper(queryClient)
 
@@ -359,16 +468,111 @@ describe('useStreamingEvents cancellation sanitization', () => {
     })
 
     const session = queryClient.getQueryData<{
-      messages: Array<{ id: string; role: string; content: string }>
+      messages: {
+        id: string
+        role: string
+        content: string
+        cancelled?: boolean
+      }[]
+    }>(['chat', 'session', 'session-1'])
+
+    // Prior history + current prompt + the cancelled partial assistant turn.
+    expect(session?.messages.map(message => message.id)).toEqual([
+      'old-user',
+      'old-assistant',
+      'current-user',
+      'cancelled-session-1-2000',
+    ])
+    const cancelledTurn = session?.messages[3]
+    expect(cancelledTurn?.role).toBe('assistant')
+    expect(cancelledTurn?.content).toBe('Partial response.')
+    expect(cancelledTurn?.cancelled).toBe(true)
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'save_cancelled_message',
+      expect.objectContaining({ sessionId: 'session-1' })
+    )
+    expect(useChatStore.getState().isSessionReviewing('session-1')).toBe(true)
+  })
+
+  it('restores an instant-cancelled prompt while keeping prior history visible', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    queryClient.setQueryData(['chat', 'session', 'session-1'], {
+      id: 'session-1',
+      name: 'Test',
+      order: 0,
+      created_at: 1,
+      updated_at: 1,
+      messages: [
+        {
+          id: 'old-user',
+          session_id: 'session-1',
+          role: 'user',
+          content: 'old prompt',
+          timestamp: 1,
+          tool_calls: [],
+        },
+        {
+          id: 'old-assistant',
+          session_id: 'session-1',
+          role: 'assistant',
+          content: 'old answer',
+          timestamp: 2,
+          tool_calls: [],
+        },
+        {
+          id: 'current-user',
+          session_id: 'session-1',
+          role: 'user',
+          content: 'cancel this',
+          timestamp: 3,
+          tool_calls: [],
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      streamingContents: {},
+      streamingContentBlocks: {},
+      streamingThinkingContent: {},
+      activeToolCalls: {},
+      sendingSessionIds: { 'session-1': true },
+      sendStartedAt: { 'session-1': 1000 },
+      sessionWorktreeMap: { 'session-1': 'worktree-1' },
+      worktreePaths: { 'worktree-1': '/tmp/worktree' },
+      lastSentMessages: { 'session-1': 'cancel this' },
+      inputDrafts: { 'session-1': '' },
+    })
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() =>
+      expect(registeredListeners.has('chat:cancelled')).toBe(true)
+    )
+
+    registeredListeners.get('chat:cancelled')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        undo_send: true,
+        emitted_at_ms: 2000,
+      },
+    })
+
+    const session = queryClient.getQueryData<{
+      messages: { id: string; role: string; content: string }[]
     }>(['chat', 'session', 'session-1'])
 
     expect(session?.messages.map(message => message.id)).toEqual([
       'old-user',
       'old-assistant',
     ])
-    expect(mockInvoke).not.toHaveBeenCalledWith(
-      'save_cancelled_message',
-      expect.anything()
+    expect(useChatStore.getState().inputDrafts['session-1']).toBe(
+      'cancel this'
+    )
+    expect(useChatStore.getState().lastSentMessages['session-1']).toBe(
+      undefined
     )
     expect(useChatStore.getState().isSessionReviewing('session-1')).toBe(true)
   })

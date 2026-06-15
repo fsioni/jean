@@ -4,6 +4,7 @@ import {
   persistMoveQueuedFront,
   persistRemoveQueued,
   steerCodexTurn,
+  steerOpencodeTurn,
   steerPiTurn,
 } from '@/services/chat'
 import { useChatStore } from '@/store/chat-store'
@@ -81,17 +82,24 @@ export function useQueuedPromptActions() {
         return
       }
 
-      // Busy Codex/Pi session: steer the running turn. Attachments can't be
+      // Busy Codex/OpenCode/Pi session: steer the running turn. Attachments can't be
       // injected mid-turn, so those messages use the cancel+send path.
       const backend = store.selectedBackends[sessionId] ?? 'claude'
       if (
-        (backend === 'codex' || backend === 'pi') &&
+        (backend === 'codex' || backend === 'opencode' || backend === 'pi') &&
         isSending &&
         !hasAttachments(msg)
       ) {
         try {
           if (backend === 'pi') {
             await steerPiTurn(worktreeId, sessionId, msg.message)
+          } else if (backend === 'opencode') {
+            await steerOpencodeTurn(
+              worktreeId,
+              worktreePath,
+              sessionId,
+              msg.message
+            )
           } else {
             await steerCodexTurn(worktreeId, sessionId, msg.message)
           }

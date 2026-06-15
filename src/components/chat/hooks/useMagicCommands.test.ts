@@ -14,6 +14,7 @@ function renderUseMagicCommands(
     handleCommitAndPush: vi.fn(),
     handlePull: vi.fn(),
     handlePush: vi.fn(),
+    handleRevertLastCommit: vi.fn(),
     handleOpenPr: vi.fn(),
     handleReview: vi.fn(),
     handleMerge: vi.fn(),

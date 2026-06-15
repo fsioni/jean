@@ -1,10 +1,11 @@
 import { useCallback } from 'react'
-import { Code, Terminal, FolderOpen, Github, ChevronDown } from 'lucide-react'
+import { Code, Terminal, FolderOpen, Github, ChevronDown, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -21,6 +22,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { getOpenInDefaultLabel } from '@/types/preferences'
 import { isNativeApp } from '@/lib/environment'
+import { useUIStore } from '@/store/ui-store'
 
 interface OpenInButtonProps {
   worktreePath: string
@@ -34,6 +36,7 @@ export function OpenInButton({
   className,
 }: OpenInButtonProps) {
   const { data: preferences } = usePreferences()
+  const openPreferencesPane = useUIStore(state => state.openPreferencesPane)
   const openInEditor = useOpenWorktreeInEditor()
   const openInTerminal = useOpenWorktreeInTerminal()
   const openInFinder = useOpenWorktreeInFinder()
@@ -134,6 +137,11 @@ export function OpenInButton({
               GitHub
             </DropdownMenuItem>
           )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => openPreferencesPane('general')}>
+            <Settings className="h-4 w-4" />
+            Change default...
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

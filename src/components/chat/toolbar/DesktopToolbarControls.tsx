@@ -54,6 +54,7 @@ import { cn } from '@/lib/utils'
 import {
   CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
@@ -203,16 +204,21 @@ export function DesktopToolbarControls({
   handleViewLinear,
   handleViewSavedContext,
 }: DesktopToolbarControlsProps) {
-  const effortLevelOptions = isCodex
-    ? CODEX_EFFORT_LEVEL_OPTIONS
-    : EFFORT_LEVEL_OPTIONS
-  const displayedEffortLevel = isCodex
-    ? selectedEffortLevel === 'max'
-      ? 'high'
-      : selectedEffortLevel === 'ultracode'
-        ? 'xhigh'
-        : selectedEffortLevel
-    : selectedEffortLevel
+  const isPi = selectedBackend === 'pi'
+  const usesEffortControl = useAdaptiveThinking || isCodex || isPi
+  const effortLevelOptions = isPi
+    ? PI_EFFORT_LEVEL_OPTIONS
+    : isCodex
+      ? CODEX_EFFORT_LEVEL_OPTIONS
+      : EFFORT_LEVEL_OPTIONS
+  const displayedEffortLevel =
+    isCodex || isPi
+      ? selectedEffortLevel === 'max'
+        ? 'high'
+        : selectedEffortLevel === 'ultracode'
+          ? 'xhigh'
+          : selectedEffortLevel
+      : selectedEffortLevel
   const displayedEffortLabel =
     effortLevelOptions.find(o => o.value === displayedEffortLevel)?.label ??
     displayedEffortLevel
@@ -634,7 +640,7 @@ export function DesktopToolbarControls({
         <div className="hidden @xl:block h-4 w-px bg-border/50" />
       )}
 
-      {hideReasoningControl ? null : useAdaptiveThinking || isCodex ? (
+      {hideReasoningControl ? null : usesEffortControl ? (
         <DropdownMenu
           open={thinkingDropdownOpen}
           onOpenChange={setThinkingDropdownOpen}

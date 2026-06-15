@@ -18,7 +18,6 @@ describe('StreamingMessage', () => {
     onQuestionAnswer: noopQuestionAnswer,
     onQuestionSkip: vi.fn(),
     onFileClick: vi.fn(),
-    onEditedFileClick: vi.fn(),
     isQuestionAnswered: vi.fn(() => false),
     getSubmittedAnswers: vi.fn(() => undefined),
     areQuestionsSkipped: vi.fn(() => false),

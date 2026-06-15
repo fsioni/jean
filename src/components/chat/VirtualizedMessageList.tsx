@@ -17,7 +17,6 @@ import type {
   ReviewFinding,
 } from '@/types/chat'
 import { MessageItem } from './MessageItem'
-import type { FileEdit } from './FileEditsDiffModal'
 import { getAssistantDurationMs } from './time-utils'
 
 /** Number of messages to render initially (from the end) */
@@ -86,8 +85,6 @@ interface VirtualizedMessageListProps {
   onQuestionSkip: (toolCallId: string) => void
   /** Callback when user clicks a file path */
   onFileClick: (path: string) => void
-  /** Callback when user clicks an edited file badge (opens diff modal) */
-  onEditedFileClick: (path: string, edits: FileEdit[]) => void
   /** Callback when user fixes a finding */
   onFixFinding: (finding: ReviewFinding, suggestion?: string) => Promise<void>
   /** Callback when user fixes all findings */
@@ -155,7 +152,6 @@ export const VirtualizedMessageList = memo(
         onQuestionAnswer,
         onQuestionSkip,
         onFileClick,
-        onEditedFileClick,
         onFixFinding,
         onFixAllFindings,
         isQuestionAnswered,
@@ -182,6 +178,15 @@ export const VirtualizedMessageList = memo(
       // Messages length captured at request time, used to compute how many
       // messages the backend actually prepended (varies per response).
       const pendingPrependMessagesLengthRef = useRef<number | null>(null)
+
+      // Stable accessor for the full message list. Kept in a ref so the
+      // identity passed down to memoized rows never changes — computing
+      // "subsequent edits" stays lazy without busting per-row memoization.
+      const messagesRef = useRef(messages)
+      useEffect(() => {
+        messagesRef.current = messages
+      }, [messages])
+      const getMessages = useCallback(() => messagesRef.current, [])
 
       // Track how many messages to render (from the end)
       const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
@@ -405,6 +410,7 @@ export const VirtualizedMessageList = memo(
               >
                 <MessageItem
                   message={message}
+                  getMessages={getMessages}
                   messageIndex={globalIndex}
                   totalMessages={totalMessages}
                   lastPlanMessageIndex={lastPlanMessageIndex}
@@ -432,7 +438,6 @@ export const VirtualizedMessageList = memo(
                   onQuestionAnswer={onQuestionAnswer}
                   onQuestionSkip={onQuestionSkip}
                   onFileClick={onFileClick}
-                  onEditedFileClick={onEditedFileClick}
                   onFixFinding={onFixFinding}
                   onFixAllFindings={onFixAllFindings}
                   isQuestionAnswered={isQuestionAnswered}

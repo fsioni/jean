@@ -47,6 +47,24 @@ interface ApprovalActionGroupProps {
   onModelSelect: (override: ApprovalModelOverride) => void
 }
 
+interface ApprovalActionMenuProps {
+  buildDefaultModelLabel?: string | null
+  yoloDefaultModelLabel?: string | null
+  buildShortcut?: string
+  yoloShortcut?: string
+  clearContextShortcut?: string
+  clearContextBuildShortcut?: string
+  worktreeBuildShortcut?: string
+  worktreeYoloShortcut?: string
+  disabled?: boolean
+  onApprove?: () => void
+  onApproveYolo?: () => void
+  onClearContextApprove?: (override?: ApprovalModelOverride) => void
+  onClearContextBuildApprove?: (override?: ApprovalModelOverride) => void
+  onWorktreeBuildApprove?: (override?: ApprovalModelOverride) => void
+  onWorktreeYoloApprove?: (override?: ApprovalModelOverride) => void
+}
+
 function getClaudeModelOptions(
   selectedProvider: string | null | undefined,
   customCliProfiles: CustomCliProfile[]
@@ -237,6 +255,116 @@ export function ApprovalActionGroup({
         disabled={disabled}
         onSelect={onModelSelect}
       />
+    </>
+  )
+}
+
+function CurrentSessionAction({
+  shortcut,
+  disabled,
+  onSelect,
+}: {
+  shortcut?: string
+  disabled?: boolean
+  onSelect?: () => void
+}) {
+  if (!onSelect) return null
+
+  return (
+    <DropdownMenuItem onClick={onSelect} disabled={disabled}>
+      Current Session
+      {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
+    </DropdownMenuItem>
+  )
+}
+
+export function ApprovalActionMenu({
+  buildDefaultModelLabel,
+  yoloDefaultModelLabel,
+  buildShortcut,
+  yoloShortcut,
+  clearContextShortcut,
+  clearContextBuildShortcut,
+  worktreeBuildShortcut,
+  worktreeYoloShortcut,
+  disabled,
+  onApprove,
+  onApproveYolo,
+  onClearContextApprove,
+  onClearContextBuildApprove,
+  onWorktreeBuildApprove,
+  onWorktreeYoloApprove,
+}: ApprovalActionMenuProps) {
+  const hasYoloActions =
+    !!onApproveYolo || !!onClearContextApprove || !!onWorktreeYoloApprove
+  const hasBuildActions =
+    !!onApprove || !!onClearContextBuildApprove || !!onWorktreeBuildApprove
+
+  if (!hasYoloActions && !hasBuildActions) return null
+
+  return (
+    <>
+      {hasYoloActions && (
+        <>
+          <CurrentSessionAction
+            shortcut={yoloShortcut}
+            disabled={disabled}
+            onSelect={onApproveYolo}
+          />
+          {onClearContextApprove && (
+            <ApprovalActionGroup
+              title="New Session"
+              defaultModelLabel={yoloDefaultModelLabel}
+              shortcut={clearContextShortcut}
+              disabled={disabled}
+              onDefaultSelect={() => onClearContextApprove()}
+              onModelSelect={onClearContextApprove}
+            />
+          )}
+          {onWorktreeYoloApprove && (
+            <ApprovalActionGroup
+              title="New Worktree"
+              defaultModelLabel={yoloDefaultModelLabel}
+              separatorBefore={!!onClearContextApprove}
+              shortcut={worktreeYoloShortcut}
+              disabled={disabled}
+              onDefaultSelect={() => onWorktreeYoloApprove()}
+              onModelSelect={onWorktreeYoloApprove}
+            />
+          )}
+        </>
+      )}
+      {hasBuildActions && (
+        <>
+          {hasYoloActions && <DropdownMenuSeparator />}
+          <CurrentSessionAction
+            shortcut={buildShortcut}
+            disabled={disabled}
+            onSelect={onApprove}
+          />
+          {onClearContextBuildApprove && (
+            <ApprovalActionGroup
+              title="New Session"
+              defaultModelLabel={buildDefaultModelLabel}
+              shortcut={clearContextBuildShortcut}
+              disabled={disabled}
+              onDefaultSelect={() => onClearContextBuildApprove()}
+              onModelSelect={onClearContextBuildApprove}
+            />
+          )}
+          {onWorktreeBuildApprove && (
+            <ApprovalActionGroup
+              title="New Worktree"
+              defaultModelLabel={buildDefaultModelLabel}
+              separatorBefore={!!onClearContextBuildApprove}
+              shortcut={worktreeBuildShortcut}
+              disabled={disabled}
+              onDefaultSelect={() => onWorktreeBuildApprove()}
+              onModelSelect={onWorktreeBuildApprove}
+            />
+          )}
+        </>
+      )}
     </>
   )
 }

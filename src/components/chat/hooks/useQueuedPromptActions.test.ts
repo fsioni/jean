@@ -7,6 +7,7 @@ import {
   persistMoveQueuedFront,
   persistRemoveQueued,
   steerCodexTurn,
+  steerOpencodeTurn,
   steerPiTurn,
 } from '@/services/chat'
 import type { QueuedMessage } from '@/types/chat'
@@ -16,6 +17,7 @@ vi.mock('@/services/chat', () => ({
   persistMoveQueuedFront: vi.fn().mockResolvedValue(true),
   persistRemoveQueued: vi.fn(),
   steerCodexTurn: vi.fn().mockResolvedValue(undefined),
+  steerOpencodeTurn: vi.fn().mockResolvedValue(undefined),
   steerPiTurn: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -46,6 +48,7 @@ describe('useQueuedPromptActions', () => {
     vi.clearAllMocks()
     vi.mocked(persistMoveQueuedFront).mockResolvedValue(true)
     vi.mocked(steerCodexTurn).mockResolvedValue(undefined)
+    vi.mocked(steerOpencodeTurn).mockResolvedValue(undefined)
     vi.mocked(steerPiTurn).mockResolvedValue(undefined)
     useChatStore.setState({
       messageQueues: {
@@ -215,6 +218,72 @@ describe('useQueuedPromptActions', () => {
     expect(
       useChatStore.getState().messageQueues['session-1']?.map(m => m.id)
     ).toEqual(['msg-2', 'msg-1', 'msg-3'])
+    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+  })
+
+  it('busy opencode session: steers the running turn and removes the message', async () => {
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      selectedBackends: { 'session-1': 'opencode' },
+    })
+    const { result } = renderHook(() => useQueuedPromptActions())
+
+    await act(async () => {
+      await result.current.handleSendQueuedNow('session-1', 'msg-2')
+    })
+
+    expect(steerOpencodeTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      '/tmp/worktree-1',
+      'session-1',
+      'prompt msg-2'
+    )
+    expect(
+      useChatStore.getState().messageQueues['session-1']?.map(m => m.id)
+    ).toEqual(['msg-1', 'msg-3'])
+    expect(cancelChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('busy opencode session: falls back to cancel+send when steering fails', async () => {
+    vi.mocked(steerOpencodeTurn).mockRejectedValue(new Error('session missing'))
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      selectedBackends: { 'session-1': 'opencode' },
+    })
+    const { result } = renderHook(() => useQueuedPromptActions())
+
+    await act(async () => {
+      await result.current.handleSendQueuedNow('session-1', 'msg-2')
+    })
+
+    expect(persistMoveQueuedFront).toHaveBeenCalled()
+    expect(
+      useChatStore.getState().messageQueues['session-1']?.map(m => m.id)
+    ).toEqual(['msg-2', 'msg-1', 'msg-3'])
+    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+  })
+
+  it('busy opencode session with attachments: skips steer, cancels instead', async () => {
+    useChatStore.setState({
+      messageQueues: {
+        'session-1': [
+          createMessage('msg-1', {
+            pendingTextFiles: [
+              { id: 'txt-1', path: '/tmp/input.txt' },
+            ] as never,
+          }),
+        ],
+      },
+      sendingSessionIds: { 'session-1': true },
+      selectedBackends: { 'session-1': 'opencode' },
+    })
+    const { result } = renderHook(() => useQueuedPromptActions())
+
+    await act(async () => {
+      await result.current.handleSendQueuedNow('session-1', 'msg-1')
+    })
+
+    expect(steerOpencodeTurn).not.toHaveBeenCalled()
     expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
   })
 

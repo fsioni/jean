@@ -19,7 +19,6 @@ import {
 import { ToolCallsDisplay } from './ToolCallsDisplay'
 import { PlanDisplay } from './PlanFileDisplay'
 import { EditedFilesDisplay } from './EditedFilesDisplay'
-import type { FileEdit } from './FileEditsDiffModal'
 import { ThinkingBlock } from './ThinkingBlock'
 import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
@@ -44,8 +43,6 @@ interface StreamingMessageProps {
   onQuestionSkip: (toolCallId: string) => void
   /** Callback when user clicks a file path */
   onFileClick: (path: string) => void
-  /** Callback when user clicks an edited file badge (opens diff modal) */
-  onEditedFileClick: (path: string, edits: FileEdit[]) => void
   /** Check if a question has been answered */
   isQuestionAnswered: (sessionId: string, toolCallId: string) => boolean
   /** Get submitted answers for a question */
@@ -69,7 +66,6 @@ export const StreamingMessage = memo(function StreamingMessage({
   onQuestionAnswer,
   onQuestionSkip,
   onFileClick,
-  onEditedFileClick,
   isQuestionAnswered,
   getSubmittedAnswers,
   areQuestionsSkipped,
@@ -375,10 +371,7 @@ export const StreamingMessage = memo(function StreamingMessage({
       )}
 
       {/* Show edited files during streaming */}
-      <EditedFilesDisplay
-        toolCalls={toolCalls}
-        onFileClick={onEditedFileClick}
-      />
+      <EditedFilesDisplay toolCalls={toolCalls} />
     </div>
   )
 })

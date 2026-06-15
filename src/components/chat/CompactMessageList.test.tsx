@@ -1,6 +1,6 @@
 import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@/test/test-utils'
+import { fireEvent, render, screen } from '@/test/test-utils'
 import { CompactMessageList } from './CompactMessageList'
 import type {
   ChatMessage,
@@ -56,7 +56,6 @@ function renderCompact(messages: ChatMessage[]) {
       onQuestionAnswer={noopQuestionAnswer}
       onQuestionSkip={vi.fn()}
       onFileClick={vi.fn()}
-      onEditedFileClick={vi.fn()}
       onFixFinding={noopFixFinding}
       onFixAllFindings={noopFixAllFindings}
       isQuestionAnswered={vi.fn(() => false)}
@@ -98,6 +97,33 @@ describe('CompactMessageList', () => {
 
     expect(screen.getByText('Bash')).toBeVisible()
     expect(screen.getByText('1 step')).toBeVisible()
+  })
+
+  it('renders cancelled marker outside the compact activity card', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'check status'),
+      message('assistant-1', 'assistant', 104, '', {
+        cancelled: true,
+        tool_calls: [
+          {
+            id: 'tool-1',
+            name: 'Bash',
+            input: { command: 'rtk git status --short' },
+            output: 'clean',
+          },
+        ],
+        content_blocks: [{ type: 'tool_use', tool_call_id: 'tool-1' }],
+      }),
+    ])
+
+    const compactTrigger = screen.getByRole('button', { name: /Bash/ })
+    fireEvent.click(compactTrigger)
+
+    const activityCard = compactTrigger.closest('.rounded-md.border')
+    const cancelledMarker = screen.getByText('(cancelled)')
+
+    expect(activityCard).not.toBeNull()
+    expect(activityCard).not.toContainElement(cancelledMarker)
   })
 
   it('surfaces steered user prompts as separate visible rows', () => {

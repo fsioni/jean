@@ -98,7 +98,6 @@ import { ImagePreview } from './ImagePreview'
 import { TextFilePreview } from './TextFilePreview'
 import { SkillBadge } from './SkillBadge'
 import { FileContentModal } from './FileContentModal'
-import { FileEditsDiffModal, type FileEdit } from './FileEditsDiffModal'
 import { FilePreview } from './FilePreview'
 import { ContextPreview } from './ContextPreview'
 import { ChatInput } from './ChatInput'
@@ -152,7 +151,6 @@ import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
 import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
 import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
-import { FileDiffModal } from './FileDiffModal'
 import { getEffectiveSessionWaiting } from './session-card-utils'
 
 // Lazy-loaded heavy modals (code splitting)
@@ -1030,18 +1028,6 @@ export function ChatWindow({
   // State for file content modal (opened by clicking filenames in tool calls)
   const [viewingFilePath, setViewingFilePath] = useState<string | null>(null)
 
-  // State for edited-file diff modal (opened by clicking edited file pills)
-  const [viewingFileEdits, setViewingFileEdits] = useState<{
-    filePath: string
-    edits: FileEdit[]
-  } | null>(null)
-  const handleEditedFileClick = useCallback(
-    (filePath: string, edits: FileEdit[]) => {
-      setViewingFileEdits({ filePath, edits })
-    },
-    []
-  )
-
   // State for git diff modal (opened by clicking diff stats)
   const [diffRequest, setDiffRequest] = useState<DiffRequest | null>(null)
 
@@ -1050,9 +1036,6 @@ export function ChatWindow({
     useUIStore.getState().setGitDiffModalOpen(!!diffRequest)
     return () => useUIStore.getState().setGitDiffModalOpen(false)
   }, [diffRequest])
-
-  // State for single file diff modal (opened by clicking edited file badges)
-  const [editedFilePath, setEditedFilePath] = useState<string | null>(null)
 
   // Active todos and agents from streaming/persisted tool calls (with dismissal tracking)
   const {
@@ -1255,19 +1238,19 @@ export function ChatWindow({
       const effectiveYoloBackend = yoloBackend ?? session?.backend
       const yoloModeThinking = yoloThinkingLevelRef.current
       const yoloModeEffort = yoloEffortLevelRef.current
-      const yoloThinkingLevel: ThinkingLevel =
-        effectiveYoloBackend === 'codex'
-          ? 'off'
-          : ((yoloModeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const yoloEffortLevel: EffortLevel | undefined =
-        effectiveYoloBackend === 'codex'
+      const yoloUsesEffort =
+        effectiveYoloBackend === 'codex' || effectiveYoloBackend === 'pi'
+      const yoloThinkingLevel: ThinkingLevel = yoloUsesEffort
+        ? 'off'
+        : ((yoloModeThinking ??
+            selectedThinkingLevelRef.current) as ThinkingLevel)
+      const yoloEffortLevel: EffortLevel | undefined = yoloUsesEffort
+        ? ((yoloModeEffort as EffortLevel | null) ??
+          selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((yoloModeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((yoloModeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: activeWorktreeId,
@@ -1440,19 +1423,19 @@ export function ChatWindow({
       const effectiveBuildBackend = buildBackend ?? session?.backend
       const buildModeThinking = buildThinkingLevelRef.current
       const buildModeEffort = buildEffortLevelRef.current
-      const buildThinkingLevel: ThinkingLevel =
-        effectiveBuildBackend === 'codex'
-          ? 'off'
-          : ((buildModeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const buildEffortLevel: EffortLevel | undefined =
-        effectiveBuildBackend === 'codex'
+      const buildUsesEffort =
+        effectiveBuildBackend === 'codex' || effectiveBuildBackend === 'pi'
+      const buildThinkingLevel: ThinkingLevel = buildUsesEffort
+        ? 'off'
+        : ((buildModeThinking ??
+            selectedThinkingLevelRef.current) as ThinkingLevel)
+      const buildEffortLevel: EffortLevel | undefined = buildUsesEffort
+        ? ((buildModeEffort as EffortLevel | null) ??
+          selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((buildModeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((buildModeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: activeWorktreeId,
@@ -1711,19 +1694,17 @@ export function ChatWindow({
       const effectiveBackend = modeBackend ?? session?.backend
       const modeThinking = modeThinkingRef.current
       const modeEffort = modeEffortRef.current
-      const thinkingLevel: ThinkingLevel =
-        effectiveBackend === 'codex'
-          ? 'off'
-          : ((modeThinking ??
-              selectedThinkingLevelRef.current) as ThinkingLevel)
-      const effortLevel: EffortLevel | undefined =
-        effectiveBackend === 'codex'
+      const modeUsesEffort =
+        effectiveBackend === 'codex' || effectiveBackend === 'pi'
+      const thinkingLevel: ThinkingLevel = modeUsesEffort
+        ? 'off'
+        : ((modeThinking ?? selectedThinkingLevelRef.current) as ThinkingLevel)
+      const effortLevel: EffortLevel | undefined = modeUsesEffort
+        ? ((modeEffort as EffortLevel | null) ?? selectedEffortLevelRef.current)
+        : useAdaptiveThinkingRef.current
           ? ((modeEffort as EffortLevel | null) ??
             selectedEffortLevelRef.current)
-          : useAdaptiveThinkingRef.current
-            ? ((modeEffort as EffortLevel | null) ??
-              selectedEffortLevelRef.current)
-            : undefined
+          : undefined
       sendMessage.mutate({
         sessionId: newSession.id,
         worktreeId: readyWorktree.id,
@@ -1877,6 +1858,7 @@ export function ChatWindow({
     handleCommitAndPush,
     handlePull,
     handlePush,
+    handleRevertLastCommit,
     handleOpenPr,
     handleReview,
     handleCodeRabbitReview,
@@ -1900,6 +1882,11 @@ export function ChatWindow({
     setSessionModel,
     setSessionBackend,
     setSessionProvider,
+    sendMessage,
+    selectedThinkingLevelRef,
+    selectedEffortLevelRef,
+    mcpServersDataRef,
+    enabledMcpServersRef,
   })
 
   // Wrap push/pull/commit-and-push with remote picker for multi-remote repos
@@ -2054,6 +2041,7 @@ export function ChatWindow({
     handleCommitAndPush: handleCommitAndPushWithPicker,
     handlePull: handlePullWithPicker,
     handlePush: handlePushWithPicker,
+    handleRevertLastCommit,
     handleOpenPr,
     handleReview,
     handleMerge,
@@ -2601,7 +2589,6 @@ export function ChatWindow({
                                     onQuestionAnswer={handleQuestionAnswer}
                                     onQuestionSkip={handleSkipQuestion}
                                     onFileClick={setViewingFilePath}
-                                    onEditedFileClick={handleEditedFileClick}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
                                     isQuestionAnswered={isQuestionAnswered}
@@ -2675,7 +2662,6 @@ export function ChatWindow({
                                     onQuestionAnswer={handleQuestionAnswer}
                                     onQuestionSkip={handleSkipQuestion}
                                     onFileClick={setViewingFilePath}
-                                    onEditedFileClick={handleEditedFileClick}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
                                     isQuestionAnswered={isQuestionAnswered}
@@ -2713,7 +2699,6 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
-                                      onEditedFileClick={handleEditedFileClick}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
@@ -2729,7 +2714,6 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
-                                      onEditedFileClick={handleEditedFileClick}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
@@ -3289,13 +3273,6 @@ export function ChatWindow({
           onClose={() => setViewingFilePath(null)}
         />
 
-        {/* Edited-file diff modal for viewing diffs of edited files */}
-        <FileEditsDiffModal
-          filePath={viewingFileEdits?.filePath ?? null}
-          edits={viewingFileEdits?.edits ?? []}
-          onClose={() => setViewingFileEdits(null)}
-        />
-
         {/* Git diff modal for viewing diffs */}
         <Suspense fallback={null}>
           <GitDiffModal
@@ -3309,13 +3286,6 @@ export function ChatWindow({
             branchStats={{ added: branchDiffAdded, removed: branchDiffRemoved }}
           />
         </Suspense>
-
-        {/* Single file diff modal for viewing edited file changes */}
-        <FileDiffModal
-          filePath={editedFilePath}
-          worktreePath={activeWorktreePath ?? ''}
-          onClose={() => setEditedFilePath(null)}
-        />
 
         {/* Load Context modal for selecting saved contexts */}
         <Suspense fallback={null}>

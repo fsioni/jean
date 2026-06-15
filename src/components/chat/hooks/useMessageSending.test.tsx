@@ -3,7 +3,12 @@ import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from '@/store/chat-store'
 import { useMessageSending } from './useMessageSending'
-import { persistEnqueue, steerCodexTurn } from '@/services/chat'
+import {
+  persistEnqueue,
+  steerCodexTurn,
+  steerOpencodeTurn,
+  steerPiTurn,
+} from '@/services/chat'
 import type { ExecutionMode, Session } from '@/types/chat'
 import type * as ChatService from '@/services/chat'
 
@@ -29,13 +34,20 @@ vi.mock('@/services/chat', async importOriginal => {
     cancelChatMessage: vi.fn(),
     persistEnqueue: vi.fn(),
     steerCodexTurn: vi.fn(),
+    steerOpencodeTurn: vi.fn(),
+    steerPiTurn: vi.fn(),
   }
 })
 
 function renderUseMessageSending({
   goalMode,
   autoSteer,
+  opencodeAutoSteer,
+  piAutoSteer,
   inputValue = '/goal Ship the feature',
+  selectedBackend = 'codex',
+  selectedModel = 'gpt-5.5',
+  selectedEffortLevel = 'high',
   createSession = {
     mutateAsync: vi.fn(async () => ({
       id: 'new-session',
@@ -52,7 +64,12 @@ function renderUseMessageSending({
 }: {
   goalMode?: 'build' | 'yolo'
   autoSteer?: boolean
+  opencodeAutoSteer?: boolean
+  piAutoSteer?: boolean
   inputValue?: string
+  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
+  selectedModel?: string
+  selectedEffortLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
   createSession?: {
     mutateAsync: (args: {
       worktreeId: string
@@ -75,19 +92,21 @@ function renderUseMessageSending({
       activeWorktreeId: 'worktree-1',
       activeWorktreePath: '/tmp/worktree',
       inputRef,
-      selectedModelRef: { current: 'gpt-5.5' },
+      selectedModelRef: { current: selectedModel },
       selectedProviderRef: { current: null },
       selectedThinkingLevelRef: { current: 'off' },
-      selectedEffortLevelRef: { current: 'high' },
+      selectedEffortLevelRef: { current: selectedEffortLevel },
       executionModeRef,
       useAdaptiveThinkingRef: { current: false },
-      isCodexBackendRef: { current: true },
+      isCodexBackendRef: { current: selectedBackend === 'codex' },
       mcpServersDataRef: { current: [] },
       enabledMcpServersRef: { current: [] },
-      selectedBackendRef: { current: 'codex' },
+      selectedBackendRef: { current: selectedBackend },
       preferences: {
         codex_goal_execution_mode: goalMode,
         codex_auto_steer_enabled: autoSteer,
+        opencode_auto_steer_enabled: opencodeAutoSteer,
+        pi_auto_steer_enabled: piAutoSteer,
       },
       sendMessage,
       createSession,
@@ -173,6 +192,58 @@ describe('useMessageSending Codex /goal', () => {
       expect.objectContaining({
         executionMode: 'yolo',
         message: 'Work toward the active goal:\n\nShip the feature',
+      }),
+      expect.any(Object)
+    )
+  })
+})
+
+describe('useMessageSending PI effort', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.setState({
+      inputDrafts: {},
+      pendingImages: {},
+      pendingFiles: {},
+      pendingTextFiles: {},
+      pendingSkills: {},
+      sendingSessionIds: {},
+      executionModes: {},
+      selectedModels: {},
+      executingModes: {},
+      errors: {},
+      lastSentMessages: {},
+      reviewingSessions: {},
+      waitingForInputSessionIds: {},
+      messageQueues: {},
+      approvedTools: {},
+      streamingContents: {},
+      activeToolCalls: {},
+      streamingContentBlocks: {},
+      streamingThinkingContent: {},
+    })
+  })
+
+  it('passes selected PI effort when sending a PI prompt', async () => {
+    const { result, sendMessage } = renderUseMessageSending({
+      selectedBackend: 'pi',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      selectedEffortLevel: 'xhigh',
+      inputValue: 'inspect pi effort',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: 'pi',
+        effortLevel: 'xhigh',
+        thinkingLevel: 'off',
       }),
       expect.any(Object)
     )
@@ -280,6 +351,59 @@ describe('useMessageSending Codex auto-steer', () => {
     expect(sendMessage.mutate).not.toHaveBeenCalled()
   })
 
+  it('steers the running pi turn instead of queueing when auto-steer is enabled', async () => {
+    vi.mocked(steerPiTurn).mockResolvedValue(undefined)
+    const { result, sendMessage } = renderUseMessageSending({
+      selectedBackend: 'pi',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      inputValue: 'also inspect pi',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerPiTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      'also inspect pi'
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+    expect(
+      useChatStore.getState().messageQueues['session-1'] ?? []
+    ).toHaveLength(0)
+    expect(sendMessage.mutate).not.toHaveBeenCalled()
+  })
+
+  it('steers the running opencode turn instead of queueing by default', async () => {
+    vi.mocked(steerOpencodeTurn).mockResolvedValue(undefined)
+    const { result, sendMessage } = renderUseMessageSending({
+      selectedBackend: 'opencode',
+      selectedModel: 'opencode/gpt-5.3-codex',
+      inputValue: 'also inspect opencode',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerOpencodeTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      '/tmp/worktree',
+      'session-1',
+      'also inspect opencode'
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+    expect(
+      useChatStore.getState().messageQueues['session-1'] ?? []
+    ).toHaveLength(0)
+    expect(sendMessage.mutate).not.toHaveBeenCalled()
+  })
+
   it('queues instead of steering when auto-steer is disabled', async () => {
     const { result } = renderUseMessageSending({
       autoSteer: false,
@@ -293,6 +417,44 @@ describe('useMessageSending Codex auto-steer', () => {
     })
 
     expect(steerCodexTurn).not.toHaveBeenCalled()
+    expect(persistEnqueue).toHaveBeenCalled()
+    expect(useChatStore.getState().messageQueues['session-1']).toHaveLength(1)
+  })
+
+  it('queues pi prompts instead of steering when pi auto-steer is disabled', async () => {
+    const { result } = renderUseMessageSending({
+      selectedBackend: 'pi',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      piAutoSteer: false,
+      inputValue: 'also inspect pi',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerPiTurn).not.toHaveBeenCalled()
+    expect(persistEnqueue).toHaveBeenCalled()
+    expect(useChatStore.getState().messageQueues['session-1']).toHaveLength(1)
+  })
+
+  it('queues opencode prompts instead of steering when opencode auto-steer is disabled', async () => {
+    const { result } = renderUseMessageSending({
+      selectedBackend: 'opencode',
+      selectedModel: 'opencode/gpt-5.3-codex',
+      opencodeAutoSteer: false,
+      inputValue: 'also inspect opencode',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerOpencodeTurn).not.toHaveBeenCalled()
     expect(persistEnqueue).toHaveBeenCalled()
     expect(useChatStore.getState().messageQueues['session-1']).toHaveLength(1)
   })

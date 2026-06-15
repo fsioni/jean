@@ -199,6 +199,28 @@ describe('DesktopToolbarControls', () => {
     expect(screen.queryByText('Ultracode')).not.toBeInTheDocument()
   })
 
+  it('shows PI effort options instead of Claude thinking on desktop', () => {
+    renderDesktopToolbarControls({
+      isCodex: false,
+      selectedBackend: 'pi',
+      selectedModel: 'pi/openai-codex/gpt-5.5',
+      selectedEffortLevel: 'xhigh',
+      useAdaptiveThinking: false,
+      selectedThinkingLevel: 'megathink',
+      thinkingDropdownOpen: true,
+    })
+
+    expect(
+      screen.getByRole('menuitemradio', { name: /xhigh/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', { name: /minimal/i })
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Megathink')).not.toBeInTheDocument()
+    expect(screen.queryByText('Max')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ultracode')).not.toBeInTheDocument()
+  })
+
   it('calls effort change handler when selecting an effort on desktop', async () => {
     const user = userEvent.setup()
     const handleEffortLevelChange = vi.fn()

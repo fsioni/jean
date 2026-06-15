@@ -217,14 +217,8 @@ fn merge_assistant_message(response: &mut PiResponse, message: &Value) {
     }
 }
 
-/// Merge a single already-parsed PI JSON line into the accumulating response.
-///
-/// This is the per-line core of PI stream parsing. Both the batch parser
-/// (`parse_pi_json_stream_inner`) and the streaming parser (`parse_pi_stream`)
-/// call this once per line, so the live stream never re-parses the whole
-/// accumulated buffer (avoids O(n²) work on long sessions).
-fn merge_pi_line(response: &mut PiResponse, value: &Value) {
-    if let Some(id) = value
+fn pi_session_id_from_value(value: &Value) -> Option<String> {
+    value
         .get("session_id")
         .or_else(|| value.get("sessionId"))
         .or_else(|| {
@@ -234,11 +228,32 @@ fn merge_pi_line(response: &mut PiResponse, value: &Value) {
                 None
             }
         })
+        .or_else(|| {
+            if value.get("type").and_then(Value::as_str) == Some("response")
+                && value.get("command").and_then(Value::as_str) == Some("get_state")
+            {
+                value
+                    .get("data")
+                    .and_then(|data| data.get("sessionId").or_else(|| data.get("session_id")))
+            } else {
+                None
+            }
+        })
         .and_then(Value::as_str)
-    {
-        if !id.is_empty() {
-            response.session_id = id.to_string();
-        }
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Merge a single already-parsed PI JSON line into the accumulating response.
+///
+/// This is the per-line core of PI stream parsing. Both the batch parser
+/// (`parse_pi_json_stream_inner`) and the streaming parser (`parse_pi_stream`)
+/// call this once per line, so the live stream never re-parses the whole
+/// accumulated buffer (avoids O(n²) work on long sessions).
+fn merge_pi_line(response: &mut PiResponse, value: &Value) {
+    if let Some(id) = pi_session_id_from_value(value) {
+        response.session_id = id;
     }
 
     let event_type = value.get("type").and_then(Value::as_str).unwrap_or("");
@@ -474,21 +489,9 @@ fn pi_line_is_completion_result(line: &str) -> bool {
 }
 
 fn pi_line_session_id(line: &str) -> Option<String> {
-    serde_json::from_str::<Value>(line).ok().and_then(|value| {
-        value
-            .get("session_id")
-            .or_else(|| value.get("sessionId"))
-            .or_else(|| {
-                if value.get("type").and_then(Value::as_str) == Some("session") {
-                    value.get("id")
-                } else {
-                    None
-                }
-            })
-            .and_then(Value::as_str)
-            .filter(|id| !id.is_empty())
-            .map(ToOwned::to_owned)
-    })
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .and_then(|value| pi_session_id_from_value(&value))
 }
 
 pub(crate) fn run_id_from_output_file(output_file: &Path) -> String {
@@ -729,6 +732,19 @@ pub fn run_pi_rpc_host_from_args() -> Result<(), String> {
             }
         }
     });
+
+    let get_state_line = serialize_pi_rpc_command("get_state", None, Some("jean-get-state"));
+    {
+        let mut stdin = stdin_writer
+            .lock()
+            .map_err(|_| "PI stdin lock poisoned".to_string())?;
+        stdin
+            .write_all(get_state_line.as_bytes())
+            .map_err(|e| format!("Failed to write PI RPC get_state command: {e}"))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("Failed to flush PI RPC get_state command: {e}"))?;
+    }
 
     let mut pi_session_id: Option<String> = None;
     let reader = BufReader::new(stdout);
@@ -1474,6 +1490,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_pi_session_id_from_rpc_get_state_response() {
+        let stream = r#"
+{"id":"jean-get-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"pi-rpc-session-123","messageCount":0}}
+{"type":"message_update","role":"assistant","delta":{"type":"text_delta","text":"remembered"}}
+{"type":"agent_end","messages":[]}
+"#;
+
+        let response = parse_pi_json_stream_inner(stream);
+
+        assert_eq!(response.session_id, "pi-rpc-session-123");
+        assert_eq!(response.content, "remembered");
+    }
+
+    #[test]
+    fn pi_line_session_id_reads_rpc_get_state_response() {
+        let line = r#"{"type":"response","command":"get_state","success":true,"data":{"sessionId":"pi-rpc-session-456"}}"#;
+
+        assert_eq!(
+            pi_line_session_id(line).as_deref(),
+            Some("pi-rpc-session-456")
+        );
+    }
+
+    #[test]
     fn pi_rpc_agent_end_counts_as_completion_result() {
         let line = r#"{"type":"agent_end","messages":[]}"#;
 
@@ -1493,6 +1533,20 @@ mod tests {
             value.get("message").and_then(Value::as_str),
             Some("Stop and inspect tests")
         );
+    }
+
+    #[test]
+    fn serializes_pi_rpc_get_state_without_message() {
+        let line = serialize_pi_rpc_command("get_state", None, Some("jean-get-state"));
+
+        assert!(line.ends_with('\n'));
+        let value: Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            value.get("id").and_then(Value::as_str),
+            Some("jean-get-state")
+        );
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("get_state"));
+        assert!(value.get("message").is_none());
     }
 
     #[test]

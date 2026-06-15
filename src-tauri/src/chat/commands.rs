@@ -100,6 +100,20 @@ impl Drop for SendClaim {
     }
 }
 
+fn should_forward_cancel_request(session_id: &str) -> bool {
+    ACTIVE_SENDS.lock().unwrap().contains(session_id)
+        || super::registry::is_session_actively_managed(session_id)
+}
+
+fn clear_stale_pending_cancel_before_send(session_id: &str) {
+    let has_active_send = ACTIVE_SENDS.lock().unwrap().contains(session_id);
+    if !has_active_send && !super::registry::is_session_actively_managed(session_id) {
+        if super::registry::clear_pending_cancel(session_id) {
+            log::warn!("Cleared stale pending cancel before fresh send: {session_id}");
+        }
+    }
+}
+
 fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'static str> {
     match execution_mode.unwrap_or("plan") {
         "build" => Some(
@@ -246,6 +260,29 @@ fn infer_backend_from_model(model: &str, fallback: Backend) -> Backend {
     } else {
         fallback
     }
+}
+
+fn resume_id_for_persisted_claude_run<'a>(
+    backend: &Backend,
+    resume_id: &'a str,
+    has_assistant_payload: bool,
+) -> Option<&'a str> {
+    if *backend == Backend::Claude && !resume_id.is_empty() && has_assistant_payload {
+        Some(resume_id)
+    } else {
+        None
+    }
+}
+
+fn should_clear_stale_resumed_claude_session(
+    was_resuming: bool,
+    has_content: bool,
+    has_tool_calls: bool,
+    has_content_blocks: bool,
+    has_usage: bool,
+    _was_cancelled: bool,
+) -> bool {
+    was_resuming && !has_content && !has_tool_calls && !has_content_blocks && !has_usage
 }
 
 fn default_model_for_backend(
@@ -768,6 +805,7 @@ async fn drain_backend_queue(
             // A Codex turn may be running — steer queued messages into it
             // instead of waiting for the run to finish (preference-gated).
             drain_queue_into_codex_turn(&app, &worktree_id, &session_id).await;
+            drain_queue_into_opencode_turn(&app, &worktree_id, &worktree_path, &session_id).await;
             drain_queue_into_pi_turn(&app, &worktree_id, &session_id).await;
             log::trace!("[QueueDrain] session active, stop session={session_id}");
             return;
@@ -1351,6 +1389,14 @@ fn plan_mode_content_waits_for_approval(
         && execution_mode == Some("plan")
         && has_content
         && !has_plan_tool
+}
+
+fn queued_prompt_skips_plan_wait(
+    has_queued_messages: bool,
+    has_question_tool: bool,
+    has_plan_wait: bool,
+) -> bool {
+    has_queued_messages && has_plan_wait && !has_question_tool
 }
 
 /// Close/delete a session tab
@@ -2076,6 +2122,8 @@ pub async fn send_chat_message(
         return Err("Worktree path cannot be empty".to_string());
     }
 
+    clear_stale_pending_cancel_before_send(&session_id);
+
     // Guard: atomically claim the session's send slot for the duration of this
     // call. Closes the race window where two concurrent sends (queue processor
     // vs backend drain vs another client) both pass the registry check below
@@ -2612,11 +2660,14 @@ pub async fn send_chat_message(
                         Ok((pid, response)) => {
                             log::trace!("execute_claude_detached succeeded (PID: {pid})");
 
-                            if response.content.is_empty()
-                                && response.usage.is_none()
-                                && !response.cancelled
-                                && claude_session_id_for_call.is_some()
-                            {
+                            if should_clear_stale_resumed_claude_session(
+                                claude_session_id_for_call.is_some(),
+                                !response.content.is_empty(),
+                                !response.tool_calls.is_empty(),
+                                !response.content_blocks.is_empty(),
+                                response.usage.is_some(),
+                                response.cancelled,
+                            ) {
                                 log::warn!(
                                     "Empty response while resuming session {}, clearing stale session ID",
                                     claude_session_id_for_call.as_deref().unwrap_or("")
@@ -4081,6 +4132,9 @@ pub async fn send_chat_message(
     // This avoids cluttering history with empty cancelled messages from instant cancellations
     let has_meaningful_content = unified_response.content.len() >= 10;
     let has_tool_calls = !unified_response.tool_calls.is_empty();
+    let has_content_blocks = !unified_response.content_blocks.is_empty();
+    let has_assistant_payload =
+        !unified_response.content.is_empty() || has_tool_calls || has_content_blocks;
     let resume_id_for_log = unified_response.resume_id.clone();
     let response_backend = unified_response.backend.clone();
 
@@ -4116,13 +4170,17 @@ pub async fn send_chat_message(
         });
     }
 
-    if unified_response.cancelled && !has_meaningful_content && !has_tool_calls {
+    if unified_response.cancelled
+        && !has_meaningful_content
+        && !has_tool_calls
+        && !has_content_blocks
+    {
         // Instant cancellation with no content
-        let resume_sid = if response_backend != Backend::Claude || resume_id_for_log.is_empty() {
-            None
-        } else {
-            Some(resume_id_for_log.as_str())
-        };
+        let resume_sid = resume_id_for_persisted_claude_run(
+            &response_backend,
+            &resume_id_for_log,
+            has_assistant_payload,
+        );
         // Cancel the run log, persisting session ID if available so next run can --resume
         if let Err(e) = run_log_writer.cancel(None, resume_sid) {
             log::warn!("Failed to cancel run log: {e}");
@@ -4132,7 +4190,9 @@ pub async fn send_chat_message(
         with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
             if let Some(session) = sessions.find_session_mut(&session_id) {
                 // Persist resume ID so next run can resume context even after cancellation
-                if !resume_id_for_log.is_empty() {
+                if !resume_id_for_log.is_empty()
+                    && (response_backend != Backend::Claude || has_assistant_payload)
+                {
                     match response_backend {
                         Backend::Claude => {
                             session.claude_session_id = Some(resume_id_for_log.clone());
@@ -4244,21 +4304,20 @@ pub async fn send_chat_message(
 
     // Finalize run log (complete or cancel based on response status)
     if was_cancelled {
-        let cancel_resume_sid =
-            if response_backend != Backend::Claude || resume_id_for_log.is_empty() {
-                None
-            } else {
-                Some(resume_id_for_log.as_str())
-            };
+        let cancel_resume_sid = resume_id_for_persisted_claude_run(
+            &response_backend,
+            &resume_id_for_log,
+            has_assistant_payload,
+        );
         if let Err(e) = run_log_writer.cancel(Some(&assistant_msg_id), cancel_resume_sid) {
             log::warn!("Failed to cancel run log: {e}");
         }
     } else {
-        let resume_sid = if response_backend != Backend::Claude || resume_id_for_log.is_empty() {
-            None
-        } else {
-            Some(resume_id_for_log.as_str())
-        };
+        let resume_sid = resume_id_for_persisted_claude_run(
+            &response_backend,
+            &resume_id_for_log,
+            has_assistant_payload,
+        );
         if let Err(e) =
             run_log_writer.complete(&assistant_msg_id, resume_sid, unified_response.usage)
         {
@@ -4276,7 +4335,7 @@ pub async fn send_chat_message(
     // back the conversation cache even though the CLI ran successfully (#209).
     if let Err(e) = with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
         if let Some(session) = sessions.find_session_mut(&session_id) {
-            if !resume_id_for_log.is_empty() && has_content {
+            if !resume_id_for_log.is_empty() && has_assistant_payload {
                 match response_backend {
                     Backend::Claude => {
                         session.claude_session_id = Some(resume_id_for_log.clone());
@@ -4301,8 +4360,20 @@ pub async fn send_chat_message(
             // This eliminates the dual-client race where both native and web frontends
             // independently call update_session_state with conflicting decisions.
             // Flags are pre-computed above before unified_response fields are moved.
+            let queued_prompt_should_continue = queued_prompt_skips_plan_wait(
+                !session.queued_messages.is_empty(),
+                has_question_tool,
+                has_blocking_tool || is_plan_mode_with_content,
+            );
             if was_cancelled {
                 // Cancelled: don't change waiting/reviewing state
+            } else if queued_prompt_should_continue {
+                // A queued prompt is an explicit "continue now"; don't park on
+                // plan approval because the backend queue drain runs right after
+                // this write and should be allowed to dequeue it.
+                session.waiting_for_input = false;
+                session.is_reviewing = true;
+                session.waiting_for_input_type = None;
             } else if has_blocking_tool {
                 session.waiting_for_input = true;
                 session.is_reviewing = false;
@@ -4710,6 +4781,13 @@ pub async fn cancel_chat_message(
     worktree_id: String,
 ) -> Result<bool, String> {
     log::trace!("Cancel chat message requested for session: {session_id}");
+    if !should_forward_cancel_request(&session_id) {
+        log::warn!(
+            "Ignoring cancel request for idle session: {session_id} (no active send/process)"
+        );
+        super::registry::cleanup_session_registrations(&session_id);
+        return Ok(false);
+    }
     cancel_process(&app, &session_id, &worktree_id)
 }
 
@@ -7565,6 +7643,142 @@ pub async fn steer_codex_turn(
     steer_text_into_codex_turn(&app, &worktree_id, &session_id, &message).await
 }
 
+/// Inject a text-only user message into a running OpenCode session via
+/// OpenCode's `prompt_async` endpoint. Unlike Codex `turn/steer`, OpenCode
+/// appends an async prompt to the active session; callers still fall back to
+/// queue/cancel+send when this request fails.
+#[tauri::command]
+pub async fn steer_opencode_turn(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    session_id: String,
+    message: String,
+) -> Result<(), String> {
+    steer_text_into_opencode_turn(&app, &worktree_id, &worktree_path, &session_id, &message).await
+}
+
+fn opencode_text_prompt_payload(message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "parts": [
+            {
+                "type": "text",
+                "text": message,
+            }
+        ]
+    })
+}
+
+async fn steer_text_into_opencode_turn(
+    app: &AppHandle,
+    worktree_id: &str,
+    worktree_path: &str,
+    session_id: &str,
+    message: &str,
+) -> Result<(), String> {
+    let metadata = load_metadata(app, session_id)?
+        .ok_or_else(|| format!("No metadata found for session: {session_id}"))?;
+    // Prefer the live run's OpenCode session id from the registry: on the FIRST
+    // turn of a new session, `metadata.opencode_session_id` is still None (only
+    // persisted after the run completes), so metadata-only resolution silently
+    // dropped first-turn steers. The registry holds the currently-running id.
+    let opencode_session_id = super::registry::get_opencode_session_id(session_id)
+        .or_else(|| metadata.opencode_session_id.clone())
+        .ok_or_else(|| format!("No OpenCode session id for session: {session_id}"))?;
+    let run_id = metadata
+        .runs
+        .iter()
+        .rev()
+        .find(|r| r.status == RunStatus::Running && r.backend == Some(Backend::Opencode))
+        .map(|r| r.run_id.clone())
+        .ok_or_else(|| format!("No running OpenCode run for session: {session_id}"))?;
+
+    // Wait until the main `/message` turn is actively streaming before injecting.
+    // A `prompt_async` sent before the turn is live starts a SECOND concurrent
+    // turn on the same OpenCode session, which resets the in-flight `/message`
+    // connection (the "error sending request for url" failure). If the turn never
+    // starts within the window, bail so the caller requeues instead of colliding.
+    if !crate::chat::opencode::wait_opencode_turn_started(
+        &opencode_session_id,
+        std::time::Duration::from_secs(15),
+    ) {
+        return Err(format!(
+            "OpenCode turn not yet active for session {session_id}; cannot steer"
+        ));
+    }
+
+    let base_url = crate::opencode_server::acquire(app)?;
+
+    struct ServerReleaseGuard;
+    impl Drop for ServerReleaseGuard {
+        fn drop(&mut self) {
+            crate::opencode_server::release();
+        }
+    }
+    let _server_guard = ServerReleaseGuard;
+
+    let prompt_url = format!("{base_url}/session/{opencode_session_id}/prompt_async");
+    let directory = worktree_path.to_string();
+    let payload = opencode_text_prompt_payload(message);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to build OpenCode steer client: {e}"))?;
+
+        let response = client
+            .post(&prompt_url)
+            .query(&[("directory", directory)])
+            .json(&payload)
+            .send()
+            .map_err(|e| format!("Failed to steer OpenCode session: {e}"))?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            Err(format!(
+                "OpenCode steer failed: status={status}, body={body}"
+            ))
+        }
+    })
+    .await
+    .map_err(|e| format!("OpenCode steer task failed: {e}"))??;
+
+    // Tell the running OpenCode turn to wait for `session.idle` before finalizing,
+    // so this injected prompt's streamed output is captured into the run.
+    crate::chat::opencode::mark_opencode_steered(&opencode_session_id);
+
+    match run_log::RunLogWriter::resume(app, session_id, &run_id) {
+        Ok(mut writer) => {
+            let line = serde_json::json!({
+                "type": "steered_user_message",
+                "text": message,
+            });
+            if let Err(e) = writer.write_line(&line.to_string()) {
+                log::warn!(
+                    "Failed to persist OpenCode steered message for session {session_id}: {e}"
+                );
+            }
+        }
+        Err(e) => log::warn!("Failed to open OpenCode run log for steered message: {e}"),
+    }
+
+    app.emit_all(
+        "chat:steered",
+        &serde_json::json!({
+            "session_id": session_id,
+            "worktree_id": worktree_id,
+            "text": message,
+        }),
+    )
+    .ok();
+
+    Ok(())
+}
+
 /// Core steer implementation shared by the `steer_codex_turn` command and the
 /// queue auto-steer drain: sends `turn/steer`, persists the injected text into
 /// the run log, and broadcasts `chat:steered` for live display.
@@ -7822,9 +8036,122 @@ pub(crate) fn trigger_codex_queue_steer(app: AppHandle, worktree_id: String, ses
     });
 }
 
+/// Drain steerable queued messages into a running OpenCode session via
+/// `prompt_async` (when `opencode_auto_steer_enabled` is on, default true).
+async fn drain_queue_into_opencode_turn(
+    app: &AppHandle,
+    worktree_id: &str,
+    worktree_path: &str,
+    session_id: &str,
+) {
+    let auto_steer = crate::load_preferences_sync(app)
+        .map(|p| p.opencode_auto_steer_enabled)
+        .unwrap_or(true);
+    if !auto_steer {
+        return;
+    }
+
+    loop {
+        let has_running_opencode = load_metadata(app, session_id)
+            .ok()
+            .flatten()
+            .and_then(|metadata| {
+                metadata
+                    .runs
+                    .iter()
+                    .rev()
+                    .find(|r| {
+                        r.status == RunStatus::Running && r.backend == Some(Backend::Opencode)
+                    })
+                    .map(|r| r.run_id.clone())
+            })
+            .is_some();
+        if !has_running_opencode {
+            return;
+        }
+
+        let popped = match with_existing_metadata_mut(app, session_id, |metadata| {
+            match metadata.queued_messages.first() {
+                Some(front) if queued_message_is_steerable_for_backend(front, "opencode") => {
+                    let msg = metadata.queued_messages.remove(0);
+                    (Some(msg), metadata.queued_messages.clone())
+                }
+                _ => (None, metadata.queued_messages.clone()),
+            }
+        }) {
+            Ok((popped, queue)) => {
+                if popped.is_some() {
+                    app.emit_all(
+                        "queue:updated",
+                        &serde_json::json!({ "sessionId": session_id, "queue": queue }),
+                    )
+                    .ok();
+                }
+                popped
+            }
+            Err(e) => {
+                log::warn!("[OpenCodeSteer] failed to read queue session={session_id}: {e}");
+                return;
+            }
+        };
+
+        let Some(msg) = popped else { return };
+        let text = msg
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        log::info!("[OpenCodeSteer] steering queued message into running session={session_id}");
+        if let Err(e) =
+            steer_text_into_opencode_turn(app, worktree_id, worktree_path, session_id, &text).await
+        {
+            log::warn!(
+                "[OpenCodeSteer] steer failed, requeueing at front session={session_id}: {e}"
+            );
+            let requeued = with_existing_metadata_mut(app, session_id, |metadata| {
+                metadata.queued_messages.insert(0, msg.clone());
+                metadata.queued_messages.clone()
+            });
+            if let Ok(queue) = requeued {
+                app.emit_all(
+                    "queue:updated",
+                    &serde_json::json!({ "sessionId": session_id, "queue": queue }),
+                )
+                .ok();
+            }
+            return;
+        }
+    }
+}
+
+/// Fire-and-forget OpenCode steer drain — called after OpenCode session id is
+/// known, so prompts queued while startup was still registering can be injected.
+pub(crate) fn trigger_opencode_queue_steer(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    session_id: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        drain_queue_into_opencode_turn(&app, &worktree_id, &worktree_path, &session_id).await;
+    });
+}
+
 /// Drain steerable queued messages into a running Pi RPC host. Pi's own
 /// steering queue delivers these at the next safe tool/turn boundary.
 async fn drain_queue_into_pi_turn(app: &AppHandle, worktree_id: &str, session_id: &str) {
+    let auto_steer = crate::load_preferences_sync(app)
+        .map(|p| p.pi_auto_steer_enabled)
+        .unwrap_or(true);
+    if !auto_steer {
+        return;
+    }
+
     #[cfg(not(unix))]
     {
         let _ = (app, worktree_id, session_id);
@@ -8020,6 +8347,49 @@ mod tests {
     }
 
     #[test]
+    fn queued_message_steerable_for_backend_accepts_opencode_text_only() {
+        let opencode_plain = serde_json::json!({
+            "id": "m1",
+            "message": "hello",
+            "backend": "opencode",
+            "pendingImages": [],
+            "pendingFiles": [],
+            "pendingSkills": [],
+            "pendingTextFiles": [],
+        });
+        assert!(queued_message_is_steerable_for_backend(
+            &opencode_plain,
+            "opencode"
+        ));
+
+        let opencode_with_file = serde_json::json!({
+            "id": "m2",
+            "message": "hello",
+            "backend": "opencode",
+            "pendingFiles": [{ "id": "file-1", "path": "/tmp/a.txt" }],
+        });
+        assert!(!queued_message_is_steerable_for_backend(
+            &opencode_with_file,
+            "opencode"
+        ));
+    }
+
+    #[test]
+    fn opencode_text_prompt_payload_uses_text_part_only() {
+        assert_eq!(
+            opencode_text_prompt_payload("steer now"),
+            serde_json::json!({
+                "parts": [
+                    {
+                        "type": "text",
+                        "text": "steer now",
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn test_queue_default_allowed_tools_match_frontend_git_scope() {
         assert!(QUEUE_DEFAULT_ALLOWED_TOOLS.contains(&"Bash(git:*)"));
         assert!(!QUEUE_DEFAULT_ALLOWED_TOOLS.contains(&"Bash"));
@@ -8034,6 +8404,75 @@ mod tests {
             infer_backend_from_model("commandcode/deepseek/deepseek-v4-flash", Backend::Claude),
             Backend::Commandcode
         );
+    }
+
+    #[test]
+    fn claude_resume_id_requires_assistant_payload() {
+        assert_eq!(
+            resume_id_for_persisted_claude_run(&Backend::Claude, "claude-session-1", false),
+            None
+        );
+        assert_eq!(
+            resume_id_for_persisted_claude_run(&Backend::Claude, "claude-session-1", true),
+            Some("claude-session-1")
+        );
+    }
+
+    #[test]
+    fn stale_resumed_claude_session_is_cleared_for_empty_cancelled_response() {
+        assert!(should_clear_stale_resumed_claude_session(
+            true, false, false, false, false, false
+        ));
+    }
+
+    #[test]
+    fn stale_resumed_claude_session_is_not_cleared_when_payload_exists() {
+        assert!(!should_clear_stale_resumed_claude_session(
+            true, true, false, false, false, true
+        ));
+        assert!(!should_clear_stale_resumed_claude_session(
+            true, false, true, false, false, true
+        ));
+        assert!(!should_clear_stale_resumed_claude_session(
+            true, false, false, true, false, true
+        ));
+    }
+
+    #[test]
+    fn stale_resumed_claude_session_is_kept_for_cancelled_content_block_only_response() {
+        // Regression for the send-path branch at the execute_claude_detached call
+        // site: a cancelled response that carries content_blocks but no plain
+        // content must NOT clear the resumed session id. Clearing it here is what
+        // produced "Response content was not captured for this completed run."
+        // after cancelling and resending (issue #395).
+        let was_resuming = true;
+        let has_content = false;
+        let has_tool_calls = false;
+        let has_content_blocks = true;
+        let has_usage = false;
+        let was_cancelled = true;
+
+        assert!(!should_clear_stale_resumed_claude_session(
+            was_resuming,
+            has_content,
+            has_tool_calls,
+            has_content_blocks,
+            has_usage,
+            was_cancelled,
+        ));
+    }
+
+    #[test]
+    fn idle_sessions_should_not_forward_cancel_requests() {
+        assert!(!should_forward_cancel_request("idle-session"));
+    }
+
+    #[test]
+    fn active_send_should_forward_cancel_requests_before_process_registration() {
+        let _claim =
+            SendClaim::try_acquire("pre-register-session").expect("send claim should acquire");
+
+        assert!(should_forward_cancel_request("pre-register-session"));
     }
 
     #[test]
@@ -8195,6 +8634,14 @@ mod tests {
             true,
             false
         ));
+    }
+
+    #[test]
+    fn queued_prompt_skips_plan_wait_but_not_questions() {
+        assert!(queued_prompt_skips_plan_wait(true, false, true));
+        assert!(!queued_prompt_skips_plan_wait(false, false, true));
+        assert!(!queued_prompt_skips_plan_wait(true, true, true));
+        assert!(!queued_prompt_skips_plan_wait(true, false, false));
     }
 
     #[test]

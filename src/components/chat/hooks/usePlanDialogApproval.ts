@@ -276,7 +276,9 @@ export function usePlanDialogApproval({
           : buildEffortLevelRef.current
         : null
       const resolvedEffortLevel: EffortLevel | undefined =
-        useAdaptiveThinkingRef.current || isCodexBackendRef.current
+        useAdaptiveThinkingRef.current ||
+        isCodexBackendRef.current ||
+        selectedBackendRef.current === 'pi'
           ? ((effortOverride as EffortLevel | null) ??
             selectedEffortLevelRef.current)
           : undefined
