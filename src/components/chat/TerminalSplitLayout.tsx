@@ -164,6 +164,7 @@ const SplitPane = memo(function SplitPane({
               }}
               onCancel={() => setEditing(false)}
               className="flex-1"
+              ariaLabel="Rename pane"
             />
           ) : (
             <span

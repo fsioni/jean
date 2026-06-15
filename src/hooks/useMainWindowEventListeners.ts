@@ -218,7 +218,10 @@ export function closeFocusedTerminalPaneForShortcut(): boolean {
   invoke('stop_terminal', { terminalId: focusedId }).catch(() => {
     /* noop */
   })
-  disposeTerminal(focusedId)
+  // disposeTerminal is async; fire-and-forget but swallow rejections.
+  void disposeTerminal(focusedId).catch(() => {
+    /* noop */
+  })
   store.closeSplitPane(worktreeId, focusedId)
   return true
 }

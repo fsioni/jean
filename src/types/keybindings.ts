@@ -61,7 +61,7 @@ export interface KeybindingDefinition {
   label: string
   description: string
   default_shortcut: ShortcutString
-  category: 'navigation' | 'git' | 'chat'
+  category: 'navigation' | 'git' | 'chat' | 'terminal'
 }
 
 // Default keybindings configuration
@@ -298,7 +298,7 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     label: 'Toggle terminal',
     description: 'Show or hide the terminal panel',
     default_shortcut: 'mod+backquote',
-    category: 'chat',
+    category: 'terminal',
   },
   {
     action: 'toggle_browser',
@@ -425,28 +425,28 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     label: 'Split terminal right',
     description: 'Split the focused terminal pane into left/right panes',
     default_shortcut: 'mod+backslash',
-    category: 'chat',
+    category: 'terminal',
   },
   {
     action: 'split_terminal_vertical',
     label: 'Split terminal down',
     description: 'Split the focused terminal pane into top/bottom panes',
     default_shortcut: 'mod+shift+backslash',
-    category: 'chat',
+    category: 'terminal',
   },
   {
     action: 'close_terminal_pane',
     label: 'Close terminal pane',
     description: 'Close the focused split pane and collapse to its sibling',
     default_shortcut: 'mod+shift+w',
-    category: 'chat',
+    category: 'terminal',
   },
   {
     action: 'focus_next_pane',
     label: 'Focus next pane',
     description: 'Move keyboard focus to the next terminal split pane',
     default_shortcut: 'mod+bracketright',
-    category: 'chat',
+    category: 'terminal',
   },
 ]
 

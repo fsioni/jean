@@ -47,16 +47,20 @@ export function InlineRename({
   onCommit,
   onCancel,
   className,
+  ariaLabel,
 }: {
   value: string
   onCommit: (next: string) => void
   onCancel: () => void
   className?: string
+  /** Accessible name for the rename field (e.g. "Rename view"/"Rename pane"). */
+  ariaLabel?: string
 }) {
   const [draft, setDraft] = useState(value)
   return (
     <input
       autoFocus
+      aria-label={ariaLabel}
       value={draft}
       onChange={e => setDraft(e.target.value)}
       onFocus={e => e.currentTarget.select()}
@@ -91,10 +95,12 @@ interface TerminalViewProps {
 /**
  * Individual terminal content surface.
  *
- * `isVisible` drives PTY attach/detach (a terminal is visible when it is the
- * active tab in single mode, or a leaf in the current split layout). `isFocused`
- * drives keyboard focus — exactly one visible pane is focused at a time so
- * multiple split panes don't fight over `focus()`.
+ * `isVisible` gates PTY attach + fit (a terminal is visible when it is the
+ * active tab in single mode, or a leaf in the current split layout). Hidden
+ * terminals stay mounted to preserve their scrollback buffers — they are never
+ * detached here; teardown happens explicitly on close. `isFocused` drives
+ * keyboard focus — exactly one visible pane is focused at a time so multiple
+ * split panes don't fight over `focus()`.
  */
 export const TerminalTabContent = memo(function TerminalTabContent({
   terminal,
@@ -329,7 +335,10 @@ export function TerminalView({
     } catch {
       // Terminal may already be stopped
     }
-    disposeTerminal(terminalId)
+    // disposeTerminal is async; swallow rejection so the chain never rejects.
+    await disposeTerminal(terminalId).catch(() => {
+      /* already disposed */
+    })
   }, [])
 
   // Close a whole view (tab): every pane it contains.
@@ -340,8 +349,11 @@ export function TerminalView({
         g => g.id === groupId
       )
       if (!group) return
-      for (const terminalId of collectLeafIds(group.layout)) {
-        await stopAndDispose(terminalId)
+      const leafIds = collectLeafIds(group.layout)
+      // Stop/dispose every pane concurrently rather than serially — for a
+      // multi-pane view this avoids stacking one PTY round-trip per pane.
+      await Promise.all(leafIds.map(stopAndDispose))
+      for (const terminalId of leafIds) {
         useTerminalStore.getState().removeTerminal(worktreeId, terminalId)
       }
       closePanelIfEmpty()
@@ -463,6 +475,9 @@ export function TerminalView({
       const sourceId =
         draggedGroupId ?? (raw.startsWith('group:') ? raw.slice(6) : null)
       setDraggedGroupId(null)
+      // Clear the cross-pane drag id here too — don't rely solely on dragEnd,
+      // which may not fire when the drop is handled outside the drag source.
+      useTerminalStore.getState().setDragTerminal(null)
       if (!sourceId || sourceId === targetGroupId) return
 
       const ids = groups.map(group => group.id)
@@ -584,6 +599,7 @@ export function TerminalView({
                     onCommit={name => handleRenameGroup(group.id, name)}
                     onCancel={() => setEditingGroupId(null)}
                     className="max-w-[100px]"
+                    ariaLabel="Rename view"
                   />
                 ) : (
                   <span

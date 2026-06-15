@@ -25,7 +25,7 @@ const { mockInvoke, mockListen, mockDisposeTerminal, isNativeAppMock } =
     mockListen: vi.fn().mockResolvedValue(() => {
       /* noop cleanup */
     }),
-    mockDisposeTerminal: vi.fn(),
+    mockDisposeTerminal: vi.fn().mockResolvedValue(undefined),
     isNativeAppMock: vi.fn(() => true),
   }))
 
