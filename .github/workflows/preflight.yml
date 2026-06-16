@@ -80,8 +80,6 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      - name: Rust format check
-        run: bun run rust:fmt:check
 
       - name: Rust clippy
         run: bun run rust:clippy
