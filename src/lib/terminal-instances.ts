@@ -62,6 +62,8 @@ interface PersistentTerminal {
   worktreePath: string
   command: string | null
   commandArgs: string[] | null
+  /** Jean session id backing this terminal (session terminals only). */
+  sessionId: string | null
   initialized: boolean // PTY has been started
   opened: boolean // Terminal UI has been opened into hostElement
   readyForOutput: boolean // Ghostty Web needs one settled paint before writes
@@ -881,6 +883,7 @@ export function getOrCreateTerminal(
     worktreePath: string
     command?: string | null
     commandArgs?: string[] | null
+    sessionId?: string | null
   }
 ): PersistentTerminal {
   const existing = instances.get(terminalId)
@@ -896,6 +899,7 @@ export function getOrCreateTerminal(
     worktreePath,
     command = null,
     commandArgs = null,
+    sessionId = null,
   } = options
 
   // Ensure the visibility/focus wake handler is running.
@@ -918,6 +922,7 @@ export function getOrCreateTerminal(
     worktreePath,
     command,
     commandArgs,
+    sessionId,
     initialized: false,
     opened: false,
     readyForOutput: renderer !== 'ghostty-web',
@@ -1043,6 +1048,7 @@ export async function attachToContainer(
           rows,
           command,
           commandArgs,
+          sessionId: instance.sessionId,
         }).catch(error => {
           console.error('[terminal-instances] start_terminal failed:', error)
           terminal.writeln(`\x1b[31mFailed to start terminal: ${error}\x1b[0m`)
@@ -1075,6 +1081,7 @@ export function startHeadless(
     worktreePath: string
     command: string
     commandArgs?: string[] | null
+    sessionId?: string | null
   }
 ): void {
   const instance = getOrCreateTerminal(terminalId, options)
@@ -1092,6 +1099,7 @@ export function startHeadless(
         rows: 24,
         command: options.command,
         commandArgs: options.commandArgs ?? null,
+        sessionId: options.sessionId ?? null,
       })
     })
     .catch(error => {

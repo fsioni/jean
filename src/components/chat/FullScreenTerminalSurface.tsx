@@ -1,6 +1,8 @@
+import { useEffect } from 'react'
 import { MessageSquare, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { invoke, listen } from '@/lib/transport'
 import { useUIStore } from '@/store/ui-store'
 import { SingleTerminalView } from './TerminalView'
 
@@ -28,6 +30,42 @@ export function FullScreenTerminalSurface({
       useUIStore.getState().setSessionPrimarySurface(sessionId, 'chat')
     }
   }
+
+  // While this terminal session is on screen, the user is viewing it: clear the
+  // Claude Code "needs attention" signal as soon as it fires (window focused),
+  // and whenever the window regains focus — so the session you're looking at
+  // never lingers as "waiting" in the bell / list. Leaving the surface unmounts
+  // this effect, so a backgrounded session can still surface in the bell.
+  useEffect(() => {
+    if (!sessionId) return
+    const markViewed = () => {
+      void invoke('set_session_last_opened', { sessionId })
+        .then(() =>
+          window.dispatchEvent(
+            new CustomEvent('session-opened', {
+              detail: { sessionIds: [sessionId] },
+            })
+          )
+        )
+        .catch(() => undefined)
+    }
+    let unlisten: (() => void) | undefined
+    void listen<{ sessionId: string }>('terminal:attention', event => {
+      if (event.payload?.sessionId === sessionId && document.hasFocus()) {
+        markViewed()
+      }
+    })
+      .then(fn => {
+        unlisten = fn
+      })
+      .catch(() => undefined)
+    const onFocus = () => markViewed()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      unlisten?.()
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [sessionId])
 
   return (
     <div
