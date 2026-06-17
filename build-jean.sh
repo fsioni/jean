@@ -36,31 +36,40 @@ DEST="$DEST_DIR/jean-$APP_VERSION-build$((last + 1))"
 cp "$BIN" "$DEST"
 chmod +x "$DEST"
 
-# 4. Integration bureau (icone + lanceur) : le binaire --no-bundle n'en a aucune.
-#    Le .desktop doit s'appeler comme le binaire et declarer le meme
-#    StartupWMClass pour que l'icone du dock soit bien associee (GNOME/Wayland).
-binbase="$(basename "$DEST")"
-buildn="${binbase##*-}"
+# 4. Integration bureau (icone + lanceur). Le binaire --no-bundle n'embarque
+#    aucune icone. CLE Wayland/GNOME : l'icone + le nom du dock sont associes a
+#    une fenetre via son app_id = nom de l'executable lance (verifie via
+#    WAYLAND_DEBUG: set_app_id("<basename argv0>")). Le binaire versionne donne
+#    donc un app_id qui CHANGE a chaque build (jean-<ver>-build<N>, avec des
+#    points de version) -> association fragile, a refaire/reindexer a chaque
+#    fois. On lance plutot via un symlink a nom STABLE "jean-team" : app_id
+#    stable -> un seul .desktop, indexe une fois, qui matche tous les builds.
+LINK="$DEST_DIR/jean-team"
+ln -sfn "$DEST" "$LINK"
+
 for sz in 128 256 512; do
   icondir="$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps"
   mkdir -p "$icondir"
   cp -f "src-tauri/icons/${sz}x${sz}.png" "$icondir/jean.png"
 done
+
 apps="$HOME/.local/share/applications"
 mkdir -p "$apps"
-# Purger les lanceurs des builds precedents (menu propre) sans toucher a
-# jean.desktop (AppImage officielle eventuelle).
+# Purger d'anciens lanceurs versionnes (quand un .desktop par build etait cree)
+# sans toucher a jean.desktop (AppImage officielle eventuelle).
 rm -f "$apps"/jean-*-build*.desktop
-cat > "$apps/$binbase.desktop" <<EOF
+# Un SEUL lanceur stable : nom de fichier + StartupWMClass = "jean-team" (= app_id
+# du symlink), pour que GNOME associe icone/nom quel que soit le build courant.
+cat > "$apps/jean-team.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Jean (build $buildn)
-Comment=Jean - fork equipe (fsioni/jean)
-Exec="$DEST" %U
+Name=Jean (équipe) $APP_VERSION-build$((last + 1))
+Comment=Jean — fork équipe fsioni/jean
+Exec="$LINK" %U
 Icon=jean
 Terminal=false
 Categories=Development;
-StartupWMClass=$binbase
+StartupWMClass=jean-team
 StartupNotify=true
 EOF
 update-desktop-database "$apps" 2>/dev/null || true
@@ -68,5 +77,9 @@ gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || tr
 
 echo
 echo "OK Binaire    : $DEST"
-echo "OK Lanceur    : cherche \"Jean\" dans tes applications."
+echo "OK Symlink    : $LINK -> $(basename "$DEST")"
+echo "OK Lanceur    : cherche \"Jean (équipe)\" dans tes applications,"
+echo "                ou lance directement: $LINK"
+echo "IMPORTANT : lance via le lanceur ou le symlink jean-team (PAS le binaire"
+echo "            versionne), sinon l'icone/nom du dock ne s'associent pas."
 echo "Astuce : ferme le Jean officiel avant de lancer (memes donnees partagees)."
