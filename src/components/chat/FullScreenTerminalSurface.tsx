@@ -33,9 +33,10 @@ export function FullScreenTerminalSurface({
 
   // While this terminal session is on screen, the user is viewing it: clear the
   // Claude Code "needs attention" signal as soon as it fires (window focused),
-  // and whenever the window regains focus — so the session you're looking at
-  // never lingers as "waiting" in the bell / list. Leaving the surface unmounts
-  // this effect, so a backgrounded session can still surface in the bell.
+  // and when the window regains focus if an attention arrived while it was
+  // blurred — so the session you're looking at never lingers as "waiting" in the
+  // bell / list. Leaving the surface unmounts this effect, so a backgrounded
+  // session can still surface in the bell.
   useEffect(() => {
     if (!sessionId) return
     const markViewed = () => {
@@ -49,19 +50,31 @@ export function FullScreenTerminalSurface({
         )
         .catch(() => undefined)
     }
+    // Only clear on focus when an attention signal is actually pending for this
+    // session, so an unrelated window focus never triggers a backend write.
+    let pendingAttention = false
+    let cancelled = false
     let unlisten: (() => void) | undefined
     void listen<{ sessionId: string }>('terminal:attention', event => {
-      if (event.payload?.sessionId === sessionId && document.hasFocus()) {
-        markViewed()
-      }
+      if (event.payload?.sessionId !== sessionId) return
+      if (document.hasFocus()) markViewed()
+      else pendingAttention = true
     })
       .then(fn => {
-        unlisten = fn
+        // The effect may have been cleaned up before listen() resolved; if so,
+        // dispose immediately so the listener can't leak.
+        if (cancelled) fn()
+        else unlisten = fn
       })
       .catch(() => undefined)
-    const onFocus = () => markViewed()
+    const onFocus = () => {
+      if (!pendingAttention) return
+      pendingAttention = false
+      markViewed()
+    }
     window.addEventListener('focus', onFocus)
     return () => {
+      cancelled = true
       unlisten?.()
       window.removeEventListener('focus', onFocus)
     }

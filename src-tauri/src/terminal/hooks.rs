@@ -55,6 +55,14 @@ pub fn is_claude_command(command: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// POSIX single-quote-escape a string for safe embedding inside a `'...'` shell
+/// literal: every `'` becomes `'\''`. Guards against app-data paths that contain
+/// an apostrophe (e.g. a home dir like `/home/o'brien`), which would otherwise
+/// break the hook command or open a shell-injection surface.
+fn sh_single_quote_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
 /// Build the `--settings` JSON wiring Claude Code hooks. `Stop`/`Notification`
 /// append their event name to `signal_path` (hooks run through the shell, so
 /// `echo <Event> >>` writes one newline-terminated line per event). The
@@ -62,10 +70,10 @@ pub fn is_claude_command(command: &str) -> bool {
 /// first prompt can drive iso session/branch auto-naming; it writes the prompt
 /// file BEFORE the marker so the tailer always sees a complete payload.
 fn hook_settings_json(signal_path: &Path, prompt_path: &Path) -> String {
-    let signal = signal_path.to_string_lossy();
-    let prompt = prompt_path.to_string_lossy();
-    // Single-quote paths so spaces (macOS "Application Support") are safe;
-    // session-id-derived paths never contain single quotes.
+    // Paths are wrapped in single quotes (so spaces like macOS "Application
+    // Support" are safe) and any embedded `'` is POSIX-escaped first.
+    let signal = sh_single_quote_escape(&signal_path.to_string_lossy());
+    let prompt = sh_single_quote_escape(&prompt_path.to_string_lossy());
     let echo = |event: &str| {
         serde_json::json!({
             "hooks": [ {
@@ -295,5 +303,21 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(user_prompt_cmd.contains("cat > '/tmp/sess-1.prompt'"));
+    }
+
+    #[test]
+    fn settings_json_posix_escapes_apostrophes_in_paths() {
+        let json = hook_settings_json(
+            Path::new("/home/o'brien/sess.log"),
+            Path::new("/home/o'brien/sess.prompt"),
+        );
+        // Still valid JSON, and the apostrophe is POSIX-escaped as '\'' so the
+        // single-quoted shell literal stays well-formed.
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let cmd = value["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.contains(r"'\''"));
+        assert!(cmd.contains(r"'/home/o'\''brien/sess.log'"));
     }
 }
