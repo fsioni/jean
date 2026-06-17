@@ -90,10 +90,10 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/coollabsio/jean/releases/latest/download/latest.json"
+        "https://github.com/fsioni/jean/releases/download/edge/latest.json"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyNzkyNTI0QUFENzA3MUYKUldRZkI5ZXFKQ1Y1WWdod05PSjhkcUVBUnNyOWJTcEpVazBRN01SUndya2JQcTdNeUxrS0pFY3QK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1RDE2NDQyMzVDNTkwOTEKUldTUmtNVTFRbVRSMVdvQzllQ1pjdzh6UGhFRkRXS1RqVWExRU1LNzRZOEZjVjhSSTRtSHpiazgK"
     }
   }
 }

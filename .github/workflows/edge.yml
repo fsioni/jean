@@ -1,0 +1,138 @@
+name: 'Edge build (Linux)'
+
+# Canal "edge" : à chaque push sur main (code app), build d'un AppImage Linux signé
+# et publication sur une release roulante `edge`. L'app (endpoint updater pointé sur
+# cette release) se met à jour automatiquement vers le dernier build.
+#
+# Prérequis (secrets sur fsioni/jean) :
+#   - TAURI_PRIVATE_KEY                    : contenu de ~/.tauri/jean-edge.key
+#   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD   : contenu de ~/.tauri/jean-edge.pass
+# Voir docs/developer/edge-channel.md
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.ai/**'
+      - 'tasks-todo/**'
+      - 'tasks-done/**'
+      - '.github/**'
+      - '!.github/workflows/edge.yml'
+  workflow_dispatch:
+
+# Une seule build edge à la fois : un nouveau push annule la précédente.
+concurrency:
+  group: edge-build
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  EDGE_TAG: edge
+
+jobs:
+  build-edge:
+    name: Build & publish edge AppImage (linux-x86_64)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute monotonic edge version
+        id: ver
+        run: |
+          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          # github.run_number est monotone croissant -> chaque build est "plus récent" en semver.
+          VERSION="${BASE}-edge.${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Edge version: $VERSION"
+
+      - name: Inject edge version into tauri.conf.json
+        env:
+          EDGE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+            d.version = process.env.EDGE_VERSION;
+            fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+          "
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          shared-key: edge-linux
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # build-appimage.sh build, applique le fix WebKitGTK, crée le .tar.gz et le SIGNE
+      # dès que TAURI_SIGNING_PRIVATE_KEY est présent.
+      - name: Build & sign AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/build-appimage.sh
+
+      - name: Publish to rolling "edge" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
+          APPIMAGE="Jean_${VERSION}_amd64.AppImage"
+          APPIMAGE_TAR="${APPIMAGE}.tar.gz"
+          SIG_FILE="${BUNDLE_DIR}/${APPIMAGE_TAR}.sig"
+
+          if [ ! -f "$SIG_FILE" ]; then
+            echo "::error::Signature absente ($SIG_FILE). Le secret TAURI_PRIVATE_KEY est-il défini ?"
+            exit 1
+          fi
+
+          # Crée la release roulante "edge" (prerelease) si elle n'existe pas encore.
+          if ! gh release view "$EDGE_TAG" >/dev/null 2>&1; then
+            gh release create "$EDGE_TAG" \
+              --prerelease \
+              --title "Edge (rolling)" \
+              --notes "Build automatique du dernier main. Canal de dev — pas une release stable."
+          fi
+
+          # Upload AppImage + artefacts updater (écrase les précédents, URL stable).
+          gh release upload "$EDGE_TAG" \
+            "${BUNDLE_DIR}/${APPIMAGE}" \
+            "${BUNDLE_DIR}/${APPIMAGE_TAR}" \
+            "${SIG_FILE}" --clobber
+
+          # Génère latest.json (Linux x86_64 uniquement) pointant sur l'artefact .tar.gz.
+          URL="https://github.com/fsioni/jean/releases/download/${EDGE_TAG}/${APPIMAGE_TAR}"
+          SIG_CONTENT="$(cat "$SIG_FILE")" VERSION="$VERSION" URL="$URL" node -e "
+            const fs = require('fs');
+            const data = {
+              version: process.env.VERSION,
+              notes: 'Edge build (rolling) — dernier main',
+              pub_date: new Date().toISOString(),
+              platforms: {
+                'linux-x86_64': { signature: process.env.SIG_CONTENT, url: process.env.URL }
+              }
+            };
+            fs.writeFileSync('/tmp/latest.json', JSON.stringify(data, null, 2));
+          "
+          gh release upload "$EDGE_TAG" /tmp/latest.json --clobber
+          echo "✓ Edge publié : $VERSION"
