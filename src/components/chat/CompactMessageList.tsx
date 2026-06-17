@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { flushSync } from 'react-dom'
 import { ChevronRight, Loader2, Activity, Brain } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import {
@@ -40,6 +39,11 @@ import {
   TOOL_CALL_DETAIL_PILL_CLASS,
 } from './ToolCallInline'
 import type { VirtualizedMessageListHandle } from './VirtualizedMessageList'
+import {
+  capturePrependScrollAnchor,
+  restorePrependScrollAnchor,
+  type PrependScrollAnchor,
+} from './message-scroll-anchor'
 
 const SCROLL_THRESHOLD = 300
 
@@ -541,9 +545,7 @@ function CompactActivityRow({
             </span>
           )}
           {hasCancelledMessage && (
-            <span className="italic text-muted-foreground/50">
-              (cancelled)
-            </span>
+            <span className="italic text-muted-foreground/50">(cancelled)</span>
           )}
         </div>
       )}
@@ -748,7 +750,7 @@ export const CompactMessageList = memo(
       ref
     ) {
       const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map())
-      const pendingPrependScrollHeightRef = useRef<number | null>(null)
+      const pendingPrependAnchorRef = useRef<PrependScrollAnchor | null>(null)
       const pendingPrependMessagesLengthRef = useRef<number | null>(null)
 
       // Stable accessor for the full message list. Kept in a ref so the
@@ -979,11 +981,11 @@ export const CompactMessageList = memo(
           !hasOlderOnDisk ||
           isLoadingOlder ||
           !onLoadOlderRuns ||
-          pendingPrependScrollHeightRef.current !== null
+          pendingPrependMessagesLengthRef.current !== null
         ) {
           return
         }
-        pendingPrependScrollHeightRef.current = container.scrollHeight
+        pendingPrependAnchorRef.current = capturePrependScrollAnchor(container)
         pendingPrependMessagesLengthRef.current = messages.length
         onLoadOlderRuns()
       }, [
@@ -997,21 +999,17 @@ export const CompactMessageList = memo(
       // Restore scroll position after older messages prepend.
       useLayoutEffect(() => {
         const container = scrollContainerRef.current
-        const before = pendingPrependScrollHeightRef.current
+        const anchor = pendingPrependAnchorRef.current
         const prevLen = pendingPrependMessagesLengthRef.current
-        if (!container || before === null || prevLen === null) return
+        if (!container || prevLen === null) return
         if (isLoadingOlder) return
 
-        pendingPrependScrollHeightRef.current = null
+        pendingPrependAnchorRef.current = null
         pendingPrependMessagesLengthRef.current = null
 
         if (messages.length === prevLen) return
 
-        flushSync(() => {
-          /* trigger paint */
-        })
-        const delta = container.scrollHeight - before
-        if (delta > 0) container.scrollTop += delta
+        restorePrependScrollAnchor(container, anchor)
       }, [scrollContainerRef, isLoadingOlder, messages.length])
 
       // Scroll-to-top auto-load.
@@ -1030,6 +1028,7 @@ export const CompactMessageList = memo(
       useEffect(() => {
         if (
           shouldScrollToBottom &&
+          pendingPrependMessagesLengthRef.current === null &&
           messages.length > prevMessageCountRef.current
         ) {
           const lastEl = messageRefs.current.get(lastIndex)
@@ -1104,6 +1103,7 @@ export const CompactMessageList = memo(
               return (
                 <div
                   key={item.message.id}
+                  data-message-anchor-id={item.message.id}
                   ref={el => {
                     if (el) messageRefs.current.set(item.globalIndex, el)
                     else messageRefs.current.delete(item.globalIndex)
@@ -1128,6 +1128,7 @@ export const CompactMessageList = memo(
               return (
                 <div
                   key={item.message.id}
+                  data-message-anchor-id={item.message.id}
                   ref={el => {
                     if (el) messageRefs.current.set(item.globalIndex, el)
                     else messageRefs.current.delete(item.globalIndex)

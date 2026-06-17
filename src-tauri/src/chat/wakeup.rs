@@ -422,6 +422,6 @@ mod tests {
         remove_entries_for_session(&mut map, "s1");
         assert_eq!(map.get(&100).unwrap().len(), 1);
         remove_entries_for_session(&mut map, "s2");
-        assert!(map.get(&100).is_none());
+        assert!(!map.contains_key(&100));
     }
 }

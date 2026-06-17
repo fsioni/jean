@@ -2,7 +2,14 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { createPatch } from 'diff'
 import { parsePatchFiles } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
-import { FileText, Columns2, Rows3, Loader2, ExternalLink, X } from 'lucide-react'
+import {
+  FileText,
+  Columns2,
+  Rows3,
+  Loader2,
+  ExternalLink,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
@@ -148,7 +155,9 @@ export function MessageDiffModal({
           beforeThis = replaceLast(beforeThis, newStr, oldStr)
         }
       }
-      const patch = createPatch(relativePath, beforeThis, afterThis, '', '', { context: 3 })
+      const patch = createPatch(relativePath, beforeThis, afterThis, '', '', {
+        context: 3,
+      })
       const patches = parsePatchFiles(patch)
       return patches[0]?.files[0] ?? null
     } catch {
@@ -159,7 +168,12 @@ export function MessageDiffModal({
   // ── All changes: full uncommitted git diff ───────────────────────────────
   const { data: gitDiff, isLoading: isLoadingGit } = useQuery({
     queryKey: ['git-diff', worktreePath, 'uncommitted'],
-    queryFn: () => getGitDiff(worktreePath!, 'uncommitted'),
+    queryFn: () => {
+      if (!worktreePath) {
+        throw new Error('worktreePath is required to load git diff')
+      }
+      return getGitDiff(worktreePath, 'uncommitted')
+    },
     enabled: viewMode === 'all' && !!worktreePath && isTauri(),
     staleTime: 30_000,
   })
@@ -191,12 +205,13 @@ export function MessageDiffModal({
   }, [gitDiff?.raw_patch, filePath, worktreePath])
 
   const currentStats = useMemo(
-    () => currentChangeFile ? getHunkLineStats(currentChangeFile.hunks) : null,
+    () =>
+      currentChangeFile ? getHunkLineStats(currentChangeFile.hunks) : null,
     [currentChangeFile]
   )
 
   const allStats = useMemo(
-    () => allChangesFile ? getHunkLineStats(allChangesFile.hunks) : null,
+    () => (allChangesFile ? getHunkLineStats(allChangesFile.hunks) : null),
     [allChangesFile]
   )
 
@@ -270,13 +285,18 @@ export function MessageDiffModal({
               )}
             >
               Current change
-              {currentStats && (currentStats.additions > 0 || currentStats.deletions > 0) && (
-                <span className="ml-1.5 font-mono opacity-80">
-                  <span className="text-green-500">+{currentStats.additions}</span>
-                  <span className="mx-0.5">/</span>
-                  <span className="text-red-500">-{currentStats.deletions}</span>
-                </span>
-              )}
+              {currentStats &&
+                (currentStats.additions > 0 || currentStats.deletions > 0) && (
+                  <span className="ml-1.5 font-mono opacity-80">
+                    <span className="text-green-500">
+                      +{currentStats.additions}
+                    </span>
+                    <span className="mx-0.5">/</span>
+                    <span className="text-red-500">
+                      -{currentStats.deletions}
+                    </span>
+                  </span>
+                )}
             </button>
             {allChangesAvailable && (
               <button
@@ -290,13 +310,18 @@ export function MessageDiffModal({
                 )}
               >
                 All changes
-                {allStats && (allStats.additions > 0 || allStats.deletions > 0) && (
-                  <span className="ml-1.5 font-mono opacity-80">
-                    <span className="text-green-500">+{allStats.additions}</span>
-                    <span className="mx-0.5">/</span>
-                    <span className="text-red-500">-{allStats.deletions}</span>
-                  </span>
-                )}
+                {allStats &&
+                  (allStats.additions > 0 || allStats.deletions > 0) && (
+                    <span className="ml-1.5 font-mono opacity-80">
+                      <span className="text-green-500">
+                        +{allStats.additions}
+                      </span>
+                      <span className="mx-0.5">/</span>
+                      <span className="text-red-500">
+                        -{allStats.deletions}
+                      </span>
+                    </span>
+                  )}
               </button>
             )}
           </div>
@@ -376,7 +401,10 @@ export function MessageDiffModal({
               </div>
             ) : currentChangeFile ? (
               <DiffBlock fileName={relativePath}>
-                <FileDiff fileDiff={currentChangeFile} options={fileDiffOptions} />
+                <FileDiff
+                  fileDiff={currentChangeFile}
+                  options={fileDiffOptions}
+                />
               </DiffBlock>
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -390,7 +418,9 @@ export function MessageDiffModal({
             </div>
           ) : allChangesFile ? (
             <DiffBlock
-              fileName={allChangesFile.name || allChangesFile.prevName || relativePath}
+              fileName={
+                allChangesFile.name || allChangesFile.prevName || relativePath
+              }
               prevName={
                 allChangesFile.prevName &&
                 allChangesFile.prevName !== allChangesFile.name

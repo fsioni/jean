@@ -1,4 +1,5 @@
 use serde::Serialize;
+#[cfg(unix)]
 use std::collections::{HashMap, HashSet};
 use tauri::AppHandle;
 
@@ -6,7 +7,10 @@ use super::pty::{
     kill_all_terminals as pty_kill_all_terminals, kill_terminal, resize_terminal, spawn_terminal,
     write_to_terminal,
 };
-use super::registry::{get_all_terminal_ids, has_terminal, TERMINAL_SESSIONS};
+#[cfg(unix)]
+use super::registry::TERMINAL_SESSIONS;
+use super::registry::{get_all_terminal_ids, has_terminal};
+#[cfg(unix)]
 use crate::platform::silent_command;
 use crate::projects::git::read_jean_config;
 
@@ -194,7 +198,7 @@ pub async fn get_terminal_listening_ports() -> Vec<TerminalPortInfo> {
     #[cfg(not(unix))]
     {
         // lsof is not available on Windows
-        return Vec::new();
+        Vec::new()
     }
 
     #[cfg(unix)]

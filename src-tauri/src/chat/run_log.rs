@@ -1067,18 +1067,23 @@ struct RenderableRunWindow {
     start_index: usize,
 }
 
-fn select_renderable_run_window(
+fn select_renderable_run_window<F>(
     runs: &[RunEntry],
     limit: Option<usize>,
     before_run_index: Option<usize>,
-) -> RenderableRunWindow {
+    is_renderable: F,
+) -> RenderableRunWindow
+where
+    F: FnMut(usize, &RunEntry) -> bool,
+{
     let end = before_run_index.unwrap_or(runs.len()).min(runs.len());
     let max_renderable = limit.unwrap_or(usize::MAX);
     let mut run_indices = Vec::new();
+    let mut is_renderable = is_renderable;
 
     if max_renderable > 0 {
         for index in (0..end).rev() {
-            if runs[index].is_renderable_in_chat_history() {
+            if is_renderable(index, &runs[index]) {
                 run_indices.push(index);
                 if run_indices.len() >= max_renderable {
                     break;
@@ -1094,6 +1099,40 @@ fn select_renderable_run_window(
         run_indices,
         start_index,
     }
+}
+
+fn run_uses_codex_history_parser(metadata_backend: &Backend, run: &RunEntry) -> bool {
+    if run.model.is_some() {
+        run.model
+            .as_deref()
+            .map(crate::is_codex_model)
+            .unwrap_or(false)
+    } else {
+        metadata_backend == &Backend::Codex
+    }
+}
+
+fn cancelled_codex_run_has_visible_artifacts(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    metadata_backend: &Backend,
+    run: &RunEntry,
+) -> bool {
+    if run.status != RunStatus::Cancelled || run.assistant_message_id.is_some() {
+        return false;
+    }
+    if !run_uses_codex_history_parser(metadata_backend, run) {
+        return false;
+    }
+
+    let Ok(lines) = read_run_log(app, session_id, &run.run_id) else {
+        return false;
+    };
+
+    super::codex::codex_run_log_has_visible_assistant_artifacts(
+        &lines,
+        run.execution_mode.as_deref() == Some("plan"),
+    )
 }
 
 /// Load a window of messages for a session by parsing JSONL files.
@@ -1122,7 +1161,19 @@ pub fn load_session_messages_window(
     };
 
     let total_runs = metadata.runs.len();
-    let window = select_renderable_run_window(&metadata.runs, limit, before_run_index);
+    let cancelled_artifact_run_indices = std::cell::RefCell::new(std::collections::HashSet::new());
+    let mut is_renderable = |index: usize, run: &RunEntry| {
+        if run.is_renderable_in_chat_history() {
+            return true;
+        }
+        if cancelled_codex_run_has_visible_artifacts(app, session_id, &metadata.backend, run) {
+            cancelled_artifact_run_indices.borrow_mut().insert(index);
+            return true;
+        }
+        false
+    };
+    let window =
+        select_renderable_run_window(&metadata.runs, limit, before_run_index, &mut is_renderable);
 
     log::debug!(
         "[LoadMessages] session={session_id} metadata has {} runs (backend={:?}) — renderable window start={} count={}",
@@ -1158,25 +1209,15 @@ pub fn load_session_messages_window(
 
         // Add assistant message for every run that should render assistant output.
         // Running logs contain partial JSONL snapshots that we can surface on reload.
-        if run.renders_assistant_message() {
+        if run.renders_assistant_message()
+            || cancelled_artifact_run_indices.borrow().contains(run_index)
+        {
             let lines = read_run_log(app, session_id, &run.run_id)?;
 
             // Parse JSONL content — route by backend.
             // Per-run model is authoritative when present. Only fall back to
             // session-level metadata.backend for legacy runs with no model stored.
-            let run_is_codex = run
-                .model
-                .as_deref()
-                .map(crate::is_codex_model)
-                .unwrap_or(false);
-            let use_codex_parser = if run.model.is_some() {
-                // Model stored per-run: only Codex runs use the Codex history parser.
-                // OpenCode persists Claude-style `type: assistant` JSONL lines.
-                run_is_codex
-            } else {
-                // Legacy run without model field: fall back to session backend.
-                metadata.backend == Backend::Codex
-            };
+            let use_codex_parser = run_uses_codex_history_parser(&metadata.backend, run);
             let mut assistant_msg = if use_codex_parser {
                 super::codex::parse_codex_run_to_message(&lines, run)?
             } else {
@@ -1204,6 +1245,8 @@ pub fn load_session_messages_window(
             assistant_msg.session_id = session_id.to_string();
             if run.status == RunStatus::Running {
                 assistant_msg.id = format!("running-{}", run.run_id);
+            } else if run.status == RunStatus::Cancelled && run.assistant_message_id.is_none() {
+                assistant_msg.id = format!("cancelled-{}", run.run_id);
             }
 
             if should_inject_synthetic_enter_plan(&metadata.backend, run, &assistant_msg) {
@@ -1450,7 +1493,9 @@ mod tests {
             });
         }
 
-        let window = select_renderable_run_window(&runs, Some(10), None);
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history()
+        });
 
         assert_eq!(window.start_index, 0);
         assert_eq!(window.run_indices, vec![0, 1, 2]);
@@ -1468,7 +1513,28 @@ mod tests {
             ..sample_run()
         }];
 
-        let window = select_renderable_run_window(&runs, Some(10), None);
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history()
+        });
+
+        assert_eq!(window.run_indices, vec![0]);
+    }
+
+    #[test]
+    fn renderable_window_can_include_cancelled_codex_runs_with_persisted_artifacts() {
+        let runs = vec![RunEntry {
+            run_id: "cancelled-with-artifacts".to_string(),
+            user_message_id: "user-cancelled".to_string(),
+            user_message: "continue".to_string(),
+            status: RunStatus::Cancelled,
+            assistant_message_id: None,
+            cancelled: true,
+            ..sample_run()
+        }];
+
+        let window = select_renderable_run_window(&runs, Some(10), None, |_, run| {
+            run.is_renderable_in_chat_history() || run.run_id == "cancelled-with-artifacts"
+        });
 
         assert_eq!(window.run_indices, vec![0]);
     }

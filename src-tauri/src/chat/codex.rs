@@ -3345,6 +3345,74 @@ fn process_codex_event(
 // JSONL history parser (for loading saved sessions)
 // =============================================================================
 
+/// Return true when a persisted Codex run log contains anything that should
+/// render as assistant-side output, even if the run was cancelled before
+/// metadata received a final assistant_message_id.
+pub(crate) fn codex_run_log_has_visible_assistant_artifacts(
+    lines: &[String],
+    is_plan_mode: bool,
+) -> bool {
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+
+        if msg
+            .get("_run_meta")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        match msg
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+        {
+            "turn.plan_updated" | "item.plan.delta" if is_plan_mode => return true,
+            "turn.completed" => {
+                if msg
+                    .get("output")
+                    .and_then(extract_text_from_turn_output)
+                    .is_some_and(|text| !text.trim().is_empty())
+                {
+                    return true;
+                }
+            }
+            "item.started" | "item.completed" => {
+                let item = msg.get("item").unwrap_or(&serde_json::Value::Null);
+                let item_type = item
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                match item_type {
+                    "agent_message" => {
+                        if extract_agent_message_text(item)
+                            .is_some_and(|text| !text.trim().is_empty())
+                        {
+                            return true;
+                        }
+                    }
+                    "plan" if is_plan_mode => return true,
+                    "command_execution" | "file_change" | "mcp_tool_call" | "collab_tool_call"
+                    | "todo_list" | "web_search" | "image_generation" | "image_view"
+                    | "context_compaction" | "dynamic_tool_call" => return true,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
 /// Parse stored Codex JSONL into a ChatMessage (for loading history).
 ///
 /// Maps Codex events to the same ChatMessage format used by Claude sessions.
@@ -4057,6 +4125,7 @@ fn build_one_shot_codex_args(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::chat::types::{RunEntry, RunStatus};
@@ -4760,6 +4829,30 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("Refined")
         );
+    }
+
+    #[test]
+    fn codex_run_log_visible_artifacts_detects_cancelled_tool_output_without_agent_id() {
+        let lines = vec![
+            r#"{"_run_meta":true}"#.to_string(),
+            r#"{"type":"turn.started"}"#.to_string(),
+            r#"{"item":{"aggregated_output":null,"command":"rtk test","id":"call-1","status":"inProgress","type":"command_execution"},"type":"item.started"}"#.to_string(),
+        ];
+
+        assert!(codex_run_log_has_visible_assistant_artifacts(&lines, false));
+    }
+
+    #[test]
+    fn codex_run_log_visible_artifacts_ignores_user_only_cancelled_run() {
+        let lines = vec![
+            r#"{"_run_meta":true}"#.to_string(),
+            r#"{"type":"turn.started"}"#.to_string(),
+            r#"{"item":{"content":[{"text":"continue","type":"text"}],"id":"user-1","type":"user_message"},"type":"item.completed"}"#.to_string(),
+        ];
+
+        assert!(!codex_run_log_has_visible_assistant_artifacts(
+            &lines, false
+        ));
     }
 
     #[test]

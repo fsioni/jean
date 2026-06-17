@@ -188,7 +188,7 @@ pub fn list_wsl_distros() -> Vec<String> {
     let text = if stdout.len() >= 2 && stdout[0] == 0xFF && stdout[1] == 0xFE {
         // UTF-16LE BOM
         decode_utf16le(&stdout[2..])
-    } else if stdout.iter().any(|&b| b == 0) {
+    } else if stdout.contains(&0) {
         // No BOM but has null bytes — likely UTF-16LE
         decode_utf16le(stdout)
     } else {

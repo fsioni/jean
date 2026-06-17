@@ -5,7 +5,9 @@
 //! running desktop app, avoiding HTTP ports while preserving in-process app
 //! command dispatch in the parent.
 
-use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::io::BufReader;
+use std::io::{BufRead, Write};
 
 use serde_json::{json, Value};
 

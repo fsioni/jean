@@ -1,5 +1,12 @@
 import { useCallback } from 'react'
-import { Code, Terminal, FolderOpen, Github, ChevronDown, Settings } from 'lucide-react'
+import {
+  Code,
+  Terminal,
+  FolderOpen,
+  Github,
+  ChevronDown,
+  Settings,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,

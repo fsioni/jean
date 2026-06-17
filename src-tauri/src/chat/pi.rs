@@ -4,14 +4,23 @@ use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 use serde_json::Value;
+#[cfg(unix)]
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::io::Write;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::Stdio;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(unix)]
+use tauri::Manager;
 
 pub const PI_RPC_HOST_ARG: &str = "--jean-pi-rpc-host";
 
@@ -1168,6 +1177,7 @@ pub fn execute_pi(
     {
         use std::io::Read as _;
 
+        let run_id = run_id_from_output_file(output_file);
         let mut args = vec!["--mode".to_string(), "json".to_string()];
         let resume_pi_session_id = usable_pi_session_id(existing_pi_session_id, session_id);
         if let Some(id) = resume_pi_session_id {
@@ -1236,7 +1246,7 @@ pub fn execute_pi(
             Some(app),
             session_id,
             worktree_id,
-            Some(run_id),
+            Some(&run_id),
             BufReader::new(stdout),
         )?;
         let status = child

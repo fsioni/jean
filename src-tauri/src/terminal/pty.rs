@@ -134,7 +134,7 @@ pub fn spawn_terminal(
             #[cfg(windows)]
             {
                 c.arg("-Command");
-                c.arg(run_command.to_string());
+                c.arg(run_command);
             }
             #[cfg(not(windows))]
             {

@@ -6885,7 +6885,7 @@ fn generate_pr_content_from_inputs(
 // =============================================================================
 
 /// JSON schema for structured commit message generation
-const COMMIT_MESSAGE_SCHEMA: &str = r#"{"type":"object","properties":{"message":{"type":"string","description":"Commit message using Conventional Commits format. First line: type(scope): description (max 72 chars). Types: feat, fix, docs, style, refactor, perf, test, chore. Followed by blank line and optional body explaining what and why."}},"required":["message"],"additionalProperties":false}"#;
+const COMMIT_MESSAGE_SCHEMA: &str = r#"{"type":"object","properties":{"message":{"type":"string","description":"Commit message using Conventional Commits format. First line: type(scope): description (max 72 chars). Types: feat, fix, docs, style, refactor, perf, test, chore, ci. Followed by blank line and optional body explaining what and why."}},"required":["message"],"additionalProperties":false}"#;
 
 /// Prompt template for commit message generation
 const COMMIT_MESSAGE_PROMPT: &str = r#"Generate a conventional commit message for these staged changes.
@@ -6944,7 +6944,7 @@ fn validate_commit_message(message: &str, _diff_stat: &str, _status: &str) -> Re
     }
 
     static CONVENTIONAL_COMMIT_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(feat|fix|docs|style|refactor|perf|test|chore)(\([a-z0-9._-]+\))?!?: .+")
+        Regex::new(r"^[a-z][a-z0-9-]*(\([a-z0-9._-]+\))?!?: .+")
             .expect("valid conventional commit regex")
     });
     if !CONVENTIONAL_COMMIT_RE.is_match(subject) {
@@ -7329,13 +7329,36 @@ fn generate_commit_message(
                 magic_backend,
                 reasoning_effort,
             )?;
-            validate_commit_message(&retry_response.message, prompt, prompt).map_err(|reason| {
-                format!(
-                    "AI generated invalid commit message twice. Last rejection: {reason}. Message: {}",
-                    commit_message_subject(&retry_response.message)
-                )
-            })?;
-            Ok(retry_response)
+            match validate_commit_message(&retry_response.message, prompt, prompt) {
+                Ok(()) => Ok(retry_response),
+                Err(second_reason) => {
+                    // Never block the commit on validation — keep whatever the
+                    // model produced and commit it anyway.
+                    log::warn!(
+                        "Commit message still invalid after retry ({second_reason}); committing it anyway: {}",
+                        commit_message_subject(&retry_response.message)
+                    );
+                    Ok(pick_fallback_commit_message(response, retry_response))
+                }
+            }
+        }
+    }
+}
+
+/// Choose a usable commit message when validation failed but we still want to
+/// commit. Never fails — prefers the most recent non-empty message and only
+/// synthesizes a default if both attempts have an empty subject.
+fn pick_fallback_commit_message(
+    first: CommitMessageResponse,
+    retry: CommitMessageResponse,
+) -> CommitMessageResponse {
+    if !commit_message_subject(&retry.message).is_empty() {
+        retry
+    } else if !commit_message_subject(&first.message).is_empty() {
+        first
+    } else {
+        CommitMessageResponse {
+            message: "chore: commit staged changes".to_string(),
         }
     }
 }
@@ -10835,7 +10858,7 @@ fn opencode_config_dir(home: &std::path::Path) -> std::path::PathBuf {
         if let Ok(app_data) = std::env::var("APPDATA") {
             return std::path::PathBuf::from(app_data).join("opencode");
         }
-        return home.join("AppData").join("Roaming").join("opencode");
+        home.join("AppData").join("Roaming").join("opencode")
     }
 
     #[cfg(not(windows))]
@@ -11612,6 +11635,55 @@ Body
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_commit_message_accepts_non_default_conventional_types() {
+        let ci_result = validate_commit_message(
+            "ci(nightly): drop macOS amd64 build artifacts",
+            ".github/workflows/release.yml | 10 ++++------",
+            "M  .github/workflows/release.yml",
+        );
+        assert!(ci_result.is_ok());
+
+        let build_result = validate_commit_message(
+            "build(release): assert package version before publishing",
+            "scripts/assert-release-version.js | 20 ++++++++++++++++++++",
+            "A  scripts/assert-release-version.js",
+        );
+        assert!(build_result.is_ok());
+    }
+
+    #[test]
+    fn pick_fallback_prefers_retry_then_first_then_default() {
+        let first = CommitMessageResponse {
+            message: "fix: first".into(),
+        };
+        let retry = CommitMessageResponse {
+            message: "ci(nightly): retry".into(),
+        };
+        assert_eq!(
+            pick_fallback_commit_message(first, retry).message,
+            "ci(nightly): retry"
+        );
+
+        let first = CommitMessageResponse {
+            message: "fix: first".into(),
+        };
+        let empty = CommitMessageResponse {
+            message: "".into(),
+        };
+        assert_eq!(pick_fallback_commit_message(first, empty).message, "fix: first");
+
+        let empty1 = CommitMessageResponse {
+            message: "".into(),
+        };
+        let empty2 = CommitMessageResponse {
+            message: "   ".into(),
+        };
+        assert!(pick_fallback_commit_message(empty1, empty2)
+            .message
+            .starts_with("chore:"));
     }
 
     #[test]

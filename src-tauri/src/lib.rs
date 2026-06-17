@@ -699,18 +699,22 @@ mod tests {
 
     #[test]
     fn resolve_http_server_bind_host_prefers_explicit_host() {
-        let mut prefs = AppPreferences::default();
-        prefs.http_server_bind_host = Some(" 100.110.76.47 ".to_string());
-        prefs.http_server_localhost_only = true;
+        let prefs = AppPreferences {
+            http_server_bind_host: Some(" 100.110.76.47 ".to_string()),
+            http_server_localhost_only: true,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_http_server_bind_host(&prefs), "100.110.76.47");
     }
 
     #[test]
     fn resolve_http_server_bind_host_falls_back_to_legacy_boolean() {
-        let mut prefs = AppPreferences::default();
-        prefs.http_server_bind_host = None;
-        prefs.http_server_localhost_only = true;
+        let mut prefs = AppPreferences {
+            http_server_bind_host: None,
+            http_server_localhost_only: true,
+            ..Default::default()
+        };
         assert_eq!(resolve_http_server_bind_host(&prefs), "127.0.0.1");
 
         prefs.http_server_localhost_only = false;

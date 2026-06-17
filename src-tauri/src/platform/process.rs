@@ -99,13 +99,17 @@ pub fn raise_fd_limit() {
 
         // Target the hard limit, but on macOS the kernel rejects values above
         // kern.maxfilesperproc (and rejects RLIM_INFINITY) with EINVAL, so clamp.
-        let mut target = rlim.rlim_max;
+        #[cfg(not(target_os = "macos"))]
+        let target = rlim.rlim_max;
+
         #[cfg(target_os = "macos")]
-        {
+        let target = {
+            let mut target = rlim.rlim_max;
             if let Some(max_per_proc) = macos_maxfilesperproc() {
                 target = target.min(max_per_proc);
             }
-        }
+            target
+        };
 
         if old_cur >= target {
             log::info!("raise_fd_limit: soft fd limit already sufficient ({old_cur})");

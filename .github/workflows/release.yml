@@ -15,7 +15,43 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  prepare-release:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version }}
+        run: |
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "Release tag/version is required"
+            exit 1
+          fi
+
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release version must look like v1.2.3, got: $RELEASE_TAG"
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG#v}"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Preparing release $RELEASE_TAG ($VERSION)"
+
+  preflight:
+    name: Preflight
+    needs: prepare-release
+    uses: ./.github/workflows/preflight.yml
+    with:
+      version: ${{ needs.prepare-release.outputs.tag }}
+
   publish-tauri:
+    name: Publish Tauri (${{ matrix.platform }})
+    needs: [prepare-release, preflight]
     permissions:
       contents: write
     strategy:
@@ -35,15 +71,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Patch version from release tag
-        shell: bash
-        run: |
-          TAG="${{ github.event.release.tag_name || inputs.version }}"
-          VERSION="${TAG#v}"
-          echo "Patching version to $VERSION"
-          node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')"
-          node -e "const c=require('./src-tauri/tauri.conf.json'); c.version='$VERSION'; require('fs').writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(c,null,2)+'\n')"
-          sed -i.bak "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+      - name: Assert release version
+        run: node scripts/assert-release-version.js "${{ needs.prepare-release.outputs.tag }}"
 
       - name: Install Linux dependencies
         if: startsWith(matrix.platform, 'ubuntu')
@@ -53,6 +82,14 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+
+      - name: Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -65,6 +102,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          shared-key: preflight-${{ matrix.platform }}
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -83,7 +121,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tauriScript: bun run tauri
-          tagName: ${{ github.event.release.tag_name || inputs.version }}
+          tagName: ${{ needs.prepare-release.outputs.tag }}
           releaseId: ${{ github.event.release.id }}
           includeUpdaterJson: true
           args: ${{ matrix.args }} -vv
@@ -104,7 +142,7 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
@@ -124,7 +162,7 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
@@ -166,18 +204,14 @@ jobs:
 
   update-homebrew-tap:
     name: Update Homebrew Tap
-    needs: publish-tauri
+    needs: [prepare-release, publish-tauri]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' && github.event.action == 'published'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
 
     steps:
-      - name: Extract version
-        id: version
-        run: echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-
       - name: Wait for DMG availability
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
+          TAG="${{ needs.prepare-release.outputs.tag }}"
           VERSION="${TAG#v}"
           DMG_URL="https://github.com/coollabsio/jean/releases/download/$TAG/Jean_${VERSION}_universal.dmg"
 
@@ -200,4 +234,4 @@ jobs:
         run: |
           gh workflow run update-cask.yml \
             --repo coollabsio/homebrew-jean \
-            --field version='${{ steps.version.outputs.tag }}'
+            --field version='${{ needs.prepare-release.outputs.tag }}'

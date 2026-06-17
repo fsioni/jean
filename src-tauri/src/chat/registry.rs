@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use once_cell::sync::Lazy;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(unix)]
+use tauri::Manager;
 
 use super::claude::CancelledEvent;
 use super::run_log;
@@ -361,6 +363,7 @@ pub fn is_session_actively_managed(session_id: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
