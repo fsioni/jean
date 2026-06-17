@@ -122,6 +122,7 @@ export const TerminalTabContent = memo(function TerminalTabContent({
     worktreePath,
     command: terminal.command,
     commandArgs: terminal.commandArgs,
+    sessionId: terminal.sessionId,
   })
   const initialized = useRef(false)
   const canAttach = isVisible && !isCollapsed && isWorktreeActive
