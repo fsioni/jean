@@ -23,7 +23,11 @@ import {
   useRerunJenkinsPipeline,
   useRestartJenkinsIntegration,
 } from '@/services/jenkins'
-import type { JenkinsStage, JenkinsWorktreeStatus } from '@/types/jenkins'
+import type {
+  JenkinsBuild,
+  JenkinsStage,
+  JenkinsWorktreeStatus,
+} from '@/types/jenkins'
 
 interface JenkinsStatusBadgeProps {
   projectId: string
@@ -115,6 +119,21 @@ function stageDotClass(status: string): string {
     default:
       // NOT_EXECUTED and anything unknown
       return 'bg-muted-foreground/40'
+  }
+}
+
+/** Icon for a build's OWN result — independent of the overall/queued state. */
+function buildResultIcon(build: JenkinsBuild): React.ReactNode {
+  if (build.building) {
+    return <Loader2 className="size-3.5 animate-spin text-blue-600" />
+  }
+  switch (build.result) {
+    case 'SUCCESS':
+      return <CheckCircle2 className="size-3.5 text-green-600" />
+    case null:
+      return <CircleDashed className="size-3.5 text-muted-foreground" />
+    default:
+      return <XCircle className="size-3.5 text-red-600" />
   }
 }
 
@@ -223,35 +242,20 @@ export function JenkinsStatusBadge({
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-3 font-sans text-sm">
-        {/* Header: global build-and-test verdict + link + duration */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Overall status — same verdict as the title-bar badge. */}
+        <div className="flex items-center gap-2">
           <span
-            className={cn('inline-flex items-center gap-1 text-xs font-medium', badge.text)}
+            className={cn(
+              'inline-flex items-center gap-1 text-xs font-medium',
+              badge.text
+            )}
           >
             {badge.icon}
             {badge.label}
           </span>
-          <span className="text-xs font-medium text-foreground">
-            build-and-test
-          </span>
-          {pipeline && (
-            <button
-              type="button"
-              onClick={handleOpenPipeline}
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            >
-              #{pipeline.number}
-              <ExternalLink className="h-3 w-3" />
-            </button>
-          )}
-          {pipeline && pipeline.durationMs > 0 && (
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {formatDuration(pipeline.durationMs)}
-            </span>
-          )}
         </div>
 
-        {/* Queue (waiting to start — e.g. serialized behind the integration lock) */}
+        {/* Queue (a NEW run waiting to start — e.g. serialized behind the lock) */}
         {status.queue && (
           <div className="mt-2 flex items-start gap-1.5 rounded bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-500">
             <Hourglass className="mt-0.5 size-3 shrink-0" />
@@ -259,6 +263,31 @@ export function JenkinsStatusBadge({
               {`En file d'attente ${formatSince(status.queue.sinceMs)}`}
               {status.queue.why ? ` — ${status.queue.why}` : ''}
             </span>
+          </div>
+        )}
+
+        {/* The build the stages below belong to. When QUEUED this is the LAST
+            finished run — distinct from the queued new run above. */}
+        {pipeline && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-muted-foreground">
+              {pipeline.building ? 'Build en cours' : 'Dernier build'}
+            </span>
+            <span className="font-medium text-foreground">build-and-test</span>
+            <button
+              type="button"
+              onClick={handleOpenPipeline}
+              className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              #{pipeline.number}
+              <ExternalLink className="h-3 w-3" />
+            </button>
+            {buildResultIcon(pipeline)}
+            {pipeline.durationMs > 0 && (
+              <span className="tabular-nums text-muted-foreground">
+                {formatDuration(pipeline.durationMs)}
+              </span>
+            )}
           </div>
         )}
 
