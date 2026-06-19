@@ -5,13 +5,14 @@
 //! heterogeneous (mixes `{}` placeholders with typed action objects), so we
 //! walk it as `Value` rather than deriving `Deserialize` on a brittle shape.
 
-use super::types::{JenkinsBuild, JenkinsStage};
+use super::types::{JenkinsBuild, JenkinsQueueItem, JenkinsStage};
 use serde_json::Value;
 
 /// Overall state of a worktree's pipeline build.
 pub const STATUS_SUCCESS: &str = "SUCCESS";
 pub const STATUS_FAILURE: &str = "FAILURE";
 pub const STATUS_BUILDING: &str = "BUILDING";
+pub const STATUS_QUEUED: &str = "QUEUED";
 pub const STATUS_UNKNOWN: &str = "UNKNOWN";
 
 /// A meaningful change in a job's result between two polls.
@@ -125,6 +126,66 @@ pub fn parse_stages(json: &str) -> Result<Vec<JenkinsStage>, String> {
         .collect())
 }
 
+/// Find the queue item whose params reference `pr_id` for one of `jobs`.
+///
+/// Queue item `params` are a newline-separated `key=value` blob (different from
+/// the `parameters[name,value]` array on builds). The PR is carried as `PR_ID`
+/// (build-and-test) or `ghprbPullId` (the `*_Launcher-on-pr` entry).
+pub fn find_queued_for_pr(json: &str, pr_id: &str, jobs: &[&str]) -> Option<JenkinsQueueItem> {
+    if pr_id.is_empty() {
+        return None;
+    }
+    let root: Value = serde_json::from_str(json).ok()?;
+    let items = root.get("items")?.as_array()?;
+    for item in items {
+        let task_name = item
+            .get("task")
+            .and_then(|t| t.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !jobs.contains(&task_name) {
+            continue;
+        }
+        let params = item
+            .get("params")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if queue_params_match_pr(params, pr_id) {
+            return Some(JenkinsQueueItem {
+                why: item.get("why").and_then(Value::as_str).map(str::to_string),
+                since_ms: item
+                    .get("inQueueSince")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                blocked: item.get("blocked").and_then(Value::as_bool).unwrap_or(false),
+            });
+        }
+    }
+    None
+}
+
+/// Exact-match a PR id against `PR_ID=` / `ghprbPullId=` lines (avoids 395 ~ 3954).
+fn queue_params_match_pr(params: &str, pr_id: &str) -> bool {
+    params.lines().any(|line| {
+        line.split_once('=')
+            .is_some_and(|(key, value)| (key == "PR_ID" || key == "ghprbPullId") && value == pr_id)
+    })
+}
+
+/// Aggregate, accounting for a pending queue item.
+///
+/// Priority: a running build (`BUILDING`) wins over a queued item (`QUEUED`),
+/// which wins over the last build's verdict.
+pub fn overall_status_with_queue(build: Option<&JenkinsBuild>, queued: bool) -> String {
+    if matches!(build, Some(b) if b.building) {
+        return STATUS_BUILDING.to_string();
+    }
+    if queued {
+        return STATUS_QUEUED.to_string();
+    }
+    overall_status(build)
+}
+
 /// Aggregate a pipeline build into a single overall status string.
 pub fn overall_status(build: Option<&JenkinsBuild>) -> String {
     let Some(build) = build else {
@@ -158,6 +219,8 @@ mod tests {
 
     const BUILDS_FIXTURE: &str = include_str!("tests/fixtures/build-and-test-builds.json");
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
+    const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
+    const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
 
     #[test]
     fn parses_builds_with_parameters() {
@@ -250,6 +313,61 @@ mod tests {
         assert_eq!(overall_status(Some(&success)), "SUCCESS");
 
         assert_eq!(overall_status(None), "UNKNOWN");
+    }
+
+    #[test]
+    fn finds_queued_item_for_a_pr() {
+        // PR 3959 is queued in the fixture (Launcher-on-pr, serialized behind a running build).
+        let item = find_queued_for_pr(QUEUE_FIXTURE, "3959", QUEUE_JOBS).expect("queued");
+        assert!(item.blocked);
+        assert!(item.since_ms > 0);
+        assert!(item
+            .why
+            .as_deref()
+            .unwrap_or_default()
+            .contains("already in progress"));
+    }
+
+    #[test]
+    fn queue_match_is_exact_not_substring() {
+        // "395" must not match "3954"/"3959".
+        assert!(find_queued_for_pr(QUEUE_FIXTURE, "395", QUEUE_JOBS).is_none());
+        assert!(find_queued_for_pr(QUEUE_FIXTURE, "9999", QUEUE_JOBS).is_none());
+        assert!(find_queued_for_pr(QUEUE_FIXTURE, "", QUEUE_JOBS).is_none());
+    }
+
+    #[test]
+    fn queue_respects_job_filter() {
+        // Fixture items are `build-and-test_Launcher-on-pr`; a disjoint job set finds nothing.
+        assert!(find_queued_for_pr(QUEUE_FIXTURE, "3959", &["deploy-preview"]).is_none());
+    }
+
+    #[test]
+    fn overall_status_prioritizes_building_then_queued() {
+        let building = JenkinsBuild {
+            number: 1,
+            result: None,
+            building: true,
+            timestamp_ms: 0,
+            duration_ms: 0,
+            url: String::new(),
+            pr_id: None,
+            branch: None,
+        };
+        // Running build wins even if something is also queued.
+        assert_eq!(overall_status_with_queue(Some(&building), true), "BUILDING");
+
+        let done = JenkinsBuild {
+            building: false,
+            result: Some("FAILURE".into()),
+            ..building.clone()
+        };
+        // Done build + queued new run → QUEUED (the re-run / serialization case).
+        assert_eq!(overall_status_with_queue(Some(&done), true), "QUEUED");
+        assert_eq!(overall_status_with_queue(Some(&done), false), "FAILURE");
+        // Brand-new PR queued with no prior build → QUEUED.
+        assert_eq!(overall_status_with_queue(None, true), "QUEUED");
+        assert_eq!(overall_status_with_queue(None, false), "UNKNOWN");
     }
 
     #[test]

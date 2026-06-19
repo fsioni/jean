@@ -39,6 +39,18 @@ pub struct JenkinsStage {
     pub duration_ms: u64,
 }
 
+/// A pending item in the Jenkins build queue (not yet a build).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JenkinsQueueItem {
+    /// Why the item is waiting, e.g. `"Build #4,798 is already in progress"`.
+    pub why: Option<String>,
+    /// Epoch milliseconds when the item entered the queue.
+    pub since_ms: i64,
+    /// Blocked (e.g. serialized behind a running build / waiting on a lock).
+    pub blocked: bool,
+}
+
 /// Aggregated Jenkins status for a single worktree's PR.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +67,9 @@ pub struct JenkinsWorktreeStatus {
     pub preview: Option<JenkinsBuild>,
     /// Preview admin URL, e.g. `https://3959.preview.example.com/admin`.
     pub preview_url: Option<String>,
-    /// Aggregated state of `pipeline`: `SUCCESS` / `FAILURE` / `BUILDING` / `UNKNOWN`.
+    /// Pending queue item for this PR's pipeline, if it's waiting to start.
+    pub queue: Option<JenkinsQueueItem>,
+    /// Aggregated state: `BUILDING` / `QUEUED` / `SUCCESS` / `FAILURE` / `UNKNOWN`.
     pub overall_status: String,
     /// Epoch seconds when this status was computed.
     pub checked_at: i64,

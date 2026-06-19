@@ -28,6 +28,16 @@ export interface JenkinsStage {
   durationMs: number
 }
 
+/** A pending item in the Jenkins build queue (not yet a build). */
+export interface JenkinsQueueItem {
+  /** Why it's waiting, e.g. "Build #4,798 is already in progress". */
+  why: string | null
+  /** Epoch milliseconds when it entered the queue. */
+  sinceMs: number
+  /** Blocked (serialized behind a running build / waiting on a lock). */
+  blocked: boolean
+}
+
 /** Aggregated Jenkins status for a single worktree / PR. */
 export interface JenkinsWorktreeStatus {
   worktreeId: string
@@ -40,7 +50,9 @@ export interface JenkinsWorktreeStatus {
   preview: JenkinsBuild | null
   /** e.g. "https://3959.preview.example.com/admin" */
   previewUrl: string | null
-  /** "SUCCESS" | "FAILURE" | "BUILDING" | "UNKNOWN" */
+  /** Pending queue item for the PR's pipeline (waiting to start), if any. */
+  queue: JenkinsQueueItem | null
+  /** "BUILDING" | "QUEUED" | "SUCCESS" | "FAILURE" | "UNKNOWN" */
   overallStatus: string
   /** Epoch seconds when this status was checked. */
   checkedAt: number
