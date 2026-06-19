@@ -2944,6 +2944,83 @@ pub async fn dispatch_command(
         }
 
         // =====================================================================
+        // ClickUp integration (isolated, fork-only)
+        // =====================================================================
+        "get_clickup_config" => {
+            let result = crate::projects::get_clickup_config(app.clone()).await?;
+            to_value(result)
+        }
+        "set_clickup_config" => {
+            let token: Option<String> = field_opt(&args, "token", "token")?;
+            let planexpo_list_id: Option<String> =
+                field_opt(&args, "planexpoListId", "planexpo_list_id")?;
+            crate::projects::set_clickup_config(app.clone(), token, planexpo_list_id).await?;
+            Ok(Value::Null)
+        }
+        "get_clickup_task" => {
+            let task_id: String = field(&args, "taskId", "task_id")?;
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let result =
+                crate::projects::get_clickup_task(app.clone(), task_id, project_id).await?;
+            to_value(result)
+        }
+        "update_clickup_task_status" => {
+            let task_id: String = field(&args, "taskId", "task_id")?;
+            let status: String = from_field(&args, "status")?;
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let result = crate::projects::update_clickup_task_status(
+                app.clone(),
+                task_id,
+                status,
+                project_id,
+            )
+            .await?;
+            to_value(result)
+        }
+        "assign_clickup_task_to_me" => {
+            let task_id: String = field(&args, "taskId", "task_id")?;
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let result =
+                crate::projects::assign_clickup_task_to_me(app.clone(), task_id, project_id)
+                    .await?;
+            to_value(result)
+        }
+        "get_clickup_me" => {
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let result = crate::projects::get_clickup_me(app.clone(), project_id).await?;
+            to_value(result)
+        }
+        "list_clickup_tasks" => {
+            let list_id: Option<String> = field_opt(&args, "listId", "list_id")?;
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let result =
+                crate::projects::list_clickup_tasks(app.clone(), list_id, project_id).await?;
+            to_value(result)
+        }
+        "get_clickup_status_options" => {
+            let result = crate::projects::get_clickup_status_options();
+            to_value(result)
+        }
+        "resolve_clickup_task_for_worktree" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let result =
+                crate::projects::resolve_clickup_task_for_worktree(app.clone(), worktree_id)
+                    .await?;
+            to_value(result)
+        }
+        "set_clickup_link" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let task_id: String = field(&args, "taskId", "task_id")?;
+            crate::projects::set_clickup_link(app.clone(), worktree_id, task_id).await?;
+            Ok(Value::Null)
+        }
+        "clear_clickup_link" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            crate::projects::clear_clickup_link(app.clone(), worktree_id).await?;
+            Ok(Value::Null)
+        }
+
+        // =====================================================================
         // CLI Profiles
         // =====================================================================
         "save_cli_profile" => {
