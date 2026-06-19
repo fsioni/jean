@@ -1,6 +1,6 @@
 {
   "scripts": {
     "setup": "bun install",
-    "run": "bun run tauri:dev"
+    "run": "./scripts/jean-dev.sh"
   }
 }
