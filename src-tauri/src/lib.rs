@@ -56,6 +56,9 @@ mod opinionated;
 mod pi_cli;
 mod platform;
 mod projects;
+// --- perso/jenkins ---
+mod jenkins;
+// --- /perso/jenkins ---
 mod terminal;
 
 // Validation functions
@@ -3854,6 +3857,15 @@ pub fn run() {
             auto_fix::scheduler::start_auto_fix_scheduler(app.handle().clone());
             log::trace!("Background task manager initialized");
 
+            // --- perso/jenkins ---
+            let app_handle_jenkins = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = jenkins::start_poller(app_handle_jenkins).await {
+                    log::error!("Jenkins poller stopped: {e}");
+                }
+            });
+            // --- /perso/jenkins ---
+
             // Initialize HTTP server infrastructure
             let (broadcaster, _) = http_server::WsBroadcaster::new();
             app.manage(broadcaster);
@@ -4116,6 +4128,12 @@ pub fn run() {
             projects::get_advisory_context_content,
             // GitHub Actions commands
             projects::list_workflow_runs,
+            // --- perso/jenkins ---
+            jenkins::get_jenkins_status,
+            jenkins::rerun_jenkins_pipeline,
+            jenkins::restart_jenkins_integration,
+            jenkins::save_jenkins_config,
+            // --- /perso/jenkins ---
             // Saved context commands
             projects::attach_saved_context,
             projects::remove_saved_context,

@@ -79,6 +79,12 @@ export interface Project {
   linear_api_key?: string | null
   /** Linear team ID to filter issues (undefined/null = show all teams) */
   linear_team_id?: string | null
+  /** Jenkins base URL for this project (e.g. "https://jenkins.example.com") */
+  jenkins_url?: string | null
+  /** Jenkins username used for authentication */
+  jenkins_user?: string | null
+  /** Jenkins API token (stored per-project) */
+  jenkins_token?: string | null
   /** IDs of linked projects for cross-project context sharing */
   linked_project_ids?: string[]
   /** Per-project automated issue fixing settings */

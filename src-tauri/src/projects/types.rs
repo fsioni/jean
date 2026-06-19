@@ -158,6 +158,17 @@ pub struct Project {
     /// Linear team ID to filter issues (None = show all teams)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linear_team_id: Option<String>,
+    // --- perso/jenkins ---
+    /// Jenkins controller base URL (e.g. `https://jenkins.example.com`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_url: Option<String>,
+    /// Jenkins login (user id) for Basic auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_user: Option<String>,
+    /// Jenkins API token for Basic auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_token: Option<String>,
+    // --- /perso/jenkins ---
     /// IDs of linked projects for cross-project context sharing
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_project_ids: Vec<String>,

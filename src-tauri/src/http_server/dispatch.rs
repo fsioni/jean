@@ -3022,6 +3022,49 @@ pub async fn dispatch_command(
         }
 
         // =====================================================================
+        // --- perso/jenkins ---
+        // =====================================================================
+        "get_jenkins_status" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
+            let branch: Option<String> = from_field_opt(&args, "branch")?;
+            let result = crate::jenkins::get_jenkins_status(
+                app.clone(),
+                project_id,
+                worktree_id,
+                pr_id,
+                branch,
+            )
+            .await?;
+            to_value(result)
+        }
+        "rerun_jenkins_pipeline" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
+            let branch: Option<String> = from_field_opt(&args, "branch")?;
+            crate::jenkins::rerun_jenkins_pipeline(app.clone(), project_id, pr_id, branch).await?;
+            Ok(Value::Null)
+        }
+        "restart_jenkins_integration" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let build_number: u64 = from_field(&args, "buildNumber")?;
+            crate::jenkins::restart_jenkins_integration(app.clone(), project_id, build_number)
+                .await?;
+            Ok(Value::Null)
+        }
+        "save_jenkins_config" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let url: String = from_field(&args, "url")?;
+            let user: String = from_field(&args, "user")?;
+            let token: String = from_field(&args, "token")?;
+            let result =
+                crate::jenkins::save_jenkins_config(app.clone(), project_id, url, user, token)
+                    .await?;
+            to_value(result)
+        }
+
+        // =====================================================================
         // Unknown command
         // =====================================================================
         _ => Err(format!("Unknown command: {command}")),

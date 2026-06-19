@@ -182,6 +182,7 @@ import {
   useWorktreePolling,
   type WorktreePollingInfo,
 } from '@/services/git-status'
+import { useJenkinsStatusEvents } from '@/services/jenkins'
 import {
   useWorktree,
   useProjects,
@@ -358,6 +359,9 @@ export function MainWindow() {
 
   // Listen for git status updates from the background task
   useGitStatusEvents()
+
+  // Listen for Jenkins status updates pushed from the backend
+  useJenkinsStatusEvents()
 
   // Listen for background worktree events (creation/deletion) - must be here
   // (not in sidebar) so events are received even when sidebar is closed

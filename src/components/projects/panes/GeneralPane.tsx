@@ -10,7 +10,8 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react'
-import { convertFileSrc, convertProjectFileSrc } from '@/lib/transport'
+import { convertFileSrc, convertProjectFileSrc, invoke } from '@/lib/transport'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -37,6 +38,7 @@ import {
   useAppDataDir,
   useSetProjectAvatar,
   useRemoveProjectAvatar,
+  projectsQueryKeys,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useLinearTeams, linearQueryKeys } from '@/services/linear'
@@ -112,6 +114,13 @@ export function GeneralPane({
     null
   )
   const [showLinearApiKey, setShowLinearApiKey] = useState(false)
+  const [localJenkinsUrl, setLocalJenkinsUrl] = useState<string | null>(null)
+  const [localJenkinsUser, setLocalJenkinsUser] = useState<string | null>(null)
+  const [localJenkinsToken, setLocalJenkinsToken] = useState<string | null>(
+    null
+  )
+  const [showJenkinsToken, setShowJenkinsToken] = useState(false)
+  const [savingJenkins, setSavingJenkins] = useState(false)
 
   // Linear has access if either project key or global key is set
   const hasLinearAccess =
@@ -242,6 +251,64 @@ export function GeneralPane({
       { onSuccess: () => setLocalLinearApiKey(null) }
     )
   }, [projectId, updateSettings])
+
+  // --- Jenkins integration ---
+  const displayedJenkinsUrl = localJenkinsUrl ?? project?.jenkins_url ?? ''
+  const displayedJenkinsUser = localJenkinsUser ?? project?.jenkins_user ?? ''
+  const displayedJenkinsToken =
+    localJenkinsToken ?? project?.jenkins_token ?? ''
+
+  const jenkinsChanged =
+    (localJenkinsUrl !== null &&
+      localJenkinsUrl !== (project?.jenkins_url ?? '')) ||
+    (localJenkinsUser !== null &&
+      localJenkinsUser !== (project?.jenkins_user ?? '')) ||
+    (localJenkinsToken !== null &&
+      localJenkinsToken !== (project?.jenkins_token ?? ''))
+
+  const jenkinsConfigured =
+    !!project?.jenkins_url ||
+    !!project?.jenkins_user ||
+    !!project?.jenkins_token
+
+  const saveJenkinsConfig = useCallback(
+    async (url: string, user: string, token: string) => {
+      setSavingJenkins(true)
+      try {
+        await invoke('save_jenkins_config', { projectId, url, user, token })
+        await queryClient.invalidateQueries({
+          queryKey: projectsQueryKeys.list(),
+        })
+        setLocalJenkinsUrl(null)
+        setLocalJenkinsUser(null)
+        setLocalJenkinsToken(null)
+        toast.success('Jenkins settings saved')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        toast.error('Failed to save Jenkins settings', { description: message })
+      } finally {
+        setSavingJenkins(false)
+      }
+    },
+    [projectId, queryClient]
+  )
+
+  const handleSaveJenkins = useCallback(() => {
+    saveJenkinsConfig(
+      displayedJenkinsUrl.trim(),
+      displayedJenkinsUser.trim(),
+      displayedJenkinsToken.trim()
+    )
+  }, [
+    saveJenkinsConfig,
+    displayedJenkinsUrl,
+    displayedJenkinsUser,
+    displayedJenkinsToken,
+  ])
+
+  const handleRemoveJenkins = useCallback(() => {
+    saveJenkinsConfig('', '', '')
+  }, [saveJenkinsConfig])
 
   const handleTeamChange = useCallback(
     (value: string) => {
@@ -622,6 +689,72 @@ export function GeneralPane({
             </div>
           </InlineField>
         )}
+      </SettingsSection>
+
+      <SettingsSection title="Jenkins Integration">
+        <InlineField
+          label="Server URL"
+          description="Base URL of your Jenkins server used to fetch pipeline and preview status."
+        >
+          <Input
+            placeholder="https://jenkins.example.com"
+            value={displayedJenkinsUrl}
+            onChange={e => setLocalJenkinsUrl(e.target.value)}
+            className="flex-1 text-base md:text-sm"
+          />
+        </InlineField>
+
+        <InlineField label="User">
+          <Input
+            placeholder="ci-user"
+            value={displayedJenkinsUser}
+            onChange={e => setLocalJenkinsUser(e.target.value)}
+            className="flex-1 text-base md:text-sm"
+          />
+        </InlineField>
+
+        <InlineField
+          label="API Token"
+          description="Jenkins API token for this user. Stored per project."
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              type={showJenkinsToken ? 'text' : 'password'}
+              placeholder="•••••••••••••••"
+              value={displayedJenkinsToken}
+              onChange={e => setLocalJenkinsToken(e.target.value)}
+              className="flex-1 text-base md:text-sm font-mono"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowJenkinsToken(!showJenkinsToken)}
+            >
+              {showJenkinsToken ? 'Hide' : 'Show'}
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={handleSaveJenkins}
+              disabled={!jenkinsChanged || savingJenkins}
+            >
+              {savingJenkins && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+            {jenkinsConfigured && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRemoveJenkins}
+                disabled={savingJenkins}
+              >
+                <RotateCcw className="h-4 w-4" />
+                Remove
+              </Button>
+            )}
+          </div>
+        </InlineField>
       </SettingsSection>
 
       <SettingsSection title="System Prompt">

@@ -1,0 +1,14 @@
+{
+  "name": "build-and-test",
+  "status": "FAILED",
+  "stages": [
+    { "name": "Checkout", "status": "SUCCESS", "durationMillis": 5000 },
+    { "name": "Unit tests", "status": "SUCCESS", "durationMillis": 60000 },
+    { "name": "Lint", "status": "SUCCESS", "durationMillis": 15000 },
+    { "name": "Build", "status": "SUCCESS", "durationMillis": 120000 },
+    { "name": "Integration tests", "status": "FAILED", "durationMillis": 300000 },
+    { "name": "Deploy preview", "status": "NOT_EXECUTED", "durationMillis": 0 },
+    { "name": "E2E tests", "status": "NOT_EXECUTED", "durationMillis": 0 },
+    { "name": "Cleanup", "status": "SUCCESS", "durationMillis": 3000 }
+  ]
+}

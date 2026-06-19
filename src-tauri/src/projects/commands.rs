@@ -495,6 +495,9 @@ pub async fn add_project(
         worktrees_dir: None,
         linear_api_key: None,
         linear_team_id: None,
+        jenkins_url: None,
+        jenkins_user: None,
+        jenkins_token: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -654,6 +657,9 @@ pub async fn init_project(
         worktrees_dir: None,
         linear_api_key: None,
         linear_team_id: None,
+        jenkins_url: None,
+        jenkins_user: None,
+        jenkins_token: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -710,6 +716,9 @@ pub async fn clone_project(
         worktrees_dir: None,
         linear_api_key: None,
         linear_team_id: None,
+        jenkins_url: None,
+        jenkins_user: None,
+        jenkins_token: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -10099,6 +10108,9 @@ pub async fn create_folder(
         worktrees_dir: None,
         linear_api_key: None,
         linear_team_id: None,
+        jenkins_url: None,
+        jenkins_user: None,
+        jenkins_token: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -11443,6 +11455,9 @@ mod tests {
             worktrees_dir: None,
             linear_api_key: None,
             linear_team_id: None,
+            jenkins_url: None,
+            jenkins_user: None,
+            jenkins_token: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings: None,
         };

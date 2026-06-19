@@ -72,6 +72,7 @@ import { ChatWindow } from './ChatWindow'
 import { ModalTerminalDrawer } from './ModalTerminalDrawer'
 import { ModalBrowserDrawer } from '@/components/browser/ModalBrowserDrawer'
 import { OpenInButton } from '@/components/open-in/OpenInButton'
+import { JenkinsStatusBadge } from '@/components/jenkins/JenkinsStatusBadge'
 import { DevToolsDropdown } from './DevToolsDropdown'
 import {
   DropdownMenu,
@@ -913,6 +914,19 @@ export function SessionChatModal({
                       projectId={project.id}
                     />
                     <FailedRunsBadge projectPath={project.path} />
+                    {/* --- perso/jenkins --- build-and-test verdict for this worktree's PR */}
+                    {worktree && (
+                      <JenkinsStatusBadge
+                        projectId={project.id}
+                        worktreeId={worktreeId}
+                        prId={
+                          worktree.pr_number != null
+                            ? String(worktree.pr_number)
+                            : null
+                        }
+                        branch={worktree.branch ?? null}
+                      />
+                    )}
                   </div>
                 )}
                 {worktree && project && (
