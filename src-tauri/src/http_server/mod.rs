@@ -17,11 +17,14 @@ static EVENT_SEQ: AtomicU64 = AtomicU64::new(1);
 const SESSION_BUFFER_CAP: usize = 2000;
 
 /// Maximum events buffered per terminal for replay on reconnect.
-/// Terminals can stream high-volume output; cap protects memory.
-/// At ~256 bytes/event, 12000 ≈ 3MB per terminal — fine for the typical
-/// worktree (≤ a handful of concurrent shells). Tune down on memory-constrained
-/// hosts.
-const TERMINAL_BUFFER_CAP: usize = 12000;
+/// Keeps tiny output bursts bounded by count even when byte usage is low.
+const TERMINAL_BUFFER_MAX_EVENTS: usize = 12000;
+
+/// Maximum serialized JSON bytes buffered per terminal for replay on reconnect.
+/// Terminal output chunks can be several KiB each, so this byte budget is the
+/// real per-terminal memory guard; the event cap above is only a secondary
+/// small-event guard.
+const TERMINAL_BUFFER_MAX_BYTES: usize = 3 * 1024 * 1024;
 
 /// Events that are worth buffering for replay on reconnect.
 const REPLAYABLE_EVENTS: &[&str] = &[
@@ -55,7 +58,7 @@ pub struct WsBroadcaster {
     session_buffers: Mutex<HashMap<String, VecDeque<(u64, Arc<str>)>>>,
     /// Per-terminal ring buffer for terminal event replay on reconnect.
     /// Key: terminal_id extracted from the event payload.
-    terminal_buffers: Mutex<HashMap<String, VecDeque<(u64, Arc<str>)>>>,
+    terminal_buffers: Mutex<HashMap<String, TerminalReplayBuffer>>,
 }
 
 /// A pre-serialized WebSocket event.
@@ -77,6 +80,48 @@ struct WsEnvelope<'a, S: Serialize> {
     payload: &'a S,
     /// Monotonic sequence number for replay ordering.
     seq: u64,
+}
+
+#[derive(Debug, Default)]
+struct TerminalReplayBuffer {
+    events: VecDeque<(u64, Arc<str>)>,
+    bytes: usize,
+}
+
+impl TerminalReplayBuffer {
+    fn push(&mut self, seq: u64, json: Arc<str>) {
+        let event_bytes = json.len();
+
+        // A single oversize event cannot be represented without violating the
+        // per-terminal memory budget. Drop it from replay instead of retaining
+        // an unbounded terminal buffer; live clients still receive it through
+        // the broadcast channel below.
+        if event_bytes > TERMINAL_BUFFER_MAX_BYTES {
+            self.events.clear();
+            self.bytes = 0;
+            return;
+        }
+
+        while !self.events.is_empty()
+            && (self.events.len() >= TERMINAL_BUFFER_MAX_EVENTS
+                || self.bytes + event_bytes > TERMINAL_BUFFER_MAX_BYTES)
+        {
+            if let Some((_, old_json)) = self.events.pop_front() {
+                self.bytes = self.bytes.saturating_sub(old_json.len());
+            }
+        }
+
+        self.bytes += event_bytes;
+        self.events.push_back((seq, json));
+    }
+
+    fn replay_after(&self, after_seq: u64) -> Vec<(u64, Arc<str>)> {
+        self.events
+            .iter()
+            .filter(|(seq, _)| *seq > after_seq)
+            .cloned()
+            .collect()
+    }
 }
 
 impl WsBroadcaster {
@@ -149,13 +194,10 @@ impl WsBroadcaster {
             if let Ok(val) = serde_json::to_value(payload) {
                 if let Some(tid) = val.get("terminal_id").and_then(|v| v.as_str()) {
                     if let Ok(mut buffers) = self.terminal_buffers.lock() {
-                        let buf = buffers
+                        buffers
                             .entry(tid.to_string())
-                            .or_insert_with(|| VecDeque::with_capacity(TERMINAL_BUFFER_CAP));
-                        if buf.len() >= TERMINAL_BUFFER_CAP {
-                            buf.pop_front();
-                        }
-                        buf.push_back((seq, json_arc.clone()));
+                            .or_default()
+                            .push(seq, json_arc.clone());
                     }
                 }
             }
@@ -211,11 +253,7 @@ impl WsBroadcaster {
             Err(_) => return Vec::new(),
         };
         match buffers.get(terminal_id) {
-            Some(buf) => buf
-                .iter()
-                .filter(|(seq, _)| *seq > after_seq)
-                .cloned()
-                .collect(),
+            Some(buf) => buf.replay_after(after_seq),
             None => Vec::new(),
         }
     }
@@ -333,5 +371,37 @@ mod tests {
         );
 
         assert!(broadcaster.replay_terminal_events("term-1", 0).is_empty());
+    }
+
+    #[test]
+    fn terminal_replay_buffer_is_capped_by_payload_bytes() {
+        let (broadcaster, _tx) = WsBroadcaster::new();
+        const REPLAY_PAYLOAD_BUDGET_BYTES: usize = 3 * 1024 * 1024;
+        const CHUNK_BYTES: usize = 4096;
+        let chunk = "x".repeat(CHUNK_BYTES);
+        let event_count = (REPLAY_PAYLOAD_BUDGET_BYTES / CHUNK_BYTES) + 128;
+
+        for _ in 0..event_count {
+            broadcaster.broadcast(
+                "terminal:output",
+                &json!({ "terminal_id": "term-1", "data": chunk }),
+            );
+        }
+
+        let replayed_payload_bytes: usize = broadcaster
+            .replay_terminal_events("term-1", 0)
+            .iter()
+            .map(|(_, event)| {
+                parse_event(event)["payload"]["data"]
+                    .as_str()
+                    .expect("terminal output data should be string")
+                    .len()
+            })
+            .sum();
+
+        assert!(
+            replayed_payload_bytes <= REPLAY_PAYLOAD_BUDGET_BYTES,
+            "terminal replay retained {replayed_payload_bytes} bytes, expected at most {REPLAY_PAYLOAD_BUDGET_BYTES}"
+        );
     }
 }
