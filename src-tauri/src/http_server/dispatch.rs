@@ -2954,7 +2954,10 @@ pub async fn dispatch_command(
             let token: Option<String> = field_opt(&args, "token", "token")?;
             let planexpo_list_id: Option<String> =
                 field_opt(&args, "planexpoListId", "planexpo_list_id")?;
-            crate::projects::set_clickup_config(app.clone(), token, planexpo_list_id).await?;
+            let sprint_list_id: Option<String> =
+                field_opt(&args, "sprintListId", "sprint_list_id")?;
+            crate::projects::set_clickup_config(app.clone(), token, planexpo_list_id, sprint_list_id)
+                .await?;
             Ok(Value::Null)
         }
         "get_clickup_task" => {

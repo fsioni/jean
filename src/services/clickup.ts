@@ -239,10 +239,15 @@ export function useClearClickUpLink() {
 export function useSaveClickUpConfig() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (vars: { token?: string; planexpoListId?: string }) => {
+    mutationFn: async (vars: {
+      token?: string
+      planexpoListId?: string
+      sprintListId?: string
+    }) => {
       await invoke('set_clickup_config', {
         token: vars.token,
         planexpoListId: vars.planexpoListId,
+        sprintListId: vars.sprintListId,
       })
     },
     onSuccess: () => {

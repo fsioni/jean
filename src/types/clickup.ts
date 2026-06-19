@@ -47,4 +47,5 @@ export interface ClickUpConfig {
   token?: string
   projectTokens: Record<string, string>
   planexpoListId?: string
+  sprintListId?: string
 }
