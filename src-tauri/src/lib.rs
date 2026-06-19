@@ -4101,6 +4101,18 @@ pub fn run() {
             projects::list_loaded_linear_issue_contexts,
             projects::get_linear_issue_context_contents,
             projects::remove_linear_issue_context,
+            // ClickUp integration commands (isolated, fork-only)
+            projects::get_clickup_config,
+            projects::set_clickup_config,
+            projects::get_clickup_task,
+            projects::update_clickup_task_status,
+            projects::assign_clickup_task_to_me,
+            projects::get_clickup_me,
+            projects::list_clickup_tasks,
+            projects::get_clickup_status_options,
+            projects::resolve_clickup_task_for_worktree,
+            projects::set_clickup_link,
+            projects::clear_clickup_link,
             // GitHub PR commands
             projects::list_github_prs,
             projects::search_github_prs,

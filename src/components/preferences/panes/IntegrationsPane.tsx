@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Loader2 } from 'lucide-react'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { SettingsSection } from '../SettingsSection'
+import { ClickUpSettings } from '@/components/clickup/ClickUpSettings'
 
 const InlineField: React.FC<{
   label: string
@@ -114,6 +115,8 @@ export const IntegrationsPane: React.FC = () => {
           </div>
         </InlineField>
       </SettingsSection>
+
+      <ClickUpSettings />
     </div>
   )
 }

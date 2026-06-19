@@ -100,6 +100,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { WorktreeDropdownMenu } from '@/components/projects/WorktreeDropdownMenu'
+import { ClickUpTaskWidget } from '@/components/clickup/ClickUpTaskWidget'
 import { LabelModal } from './LabelModal'
 import { useSessionArchive } from './hooks/useSessionArchive'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -940,6 +941,14 @@ export function SessionChatModal({
                     branchDiffRemoved={isBase ? 0 : branchDiffRemoved}
                     onUncommittedDiffClick={handleUncommittedDiffClick}
                     onBranchDiffClick={handleBranchDiffClick}
+                  />
+                )}
+                {/* ClickUp task context (fork-only, isolated) */}
+                {project && (
+                  <ClickUpTaskWidget
+                    worktreeId={worktreeId}
+                    projectId={project.id}
+                    showTitle={false}
                   />
                 )}
               </div>
