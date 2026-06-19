@@ -39,6 +39,20 @@ export const ClickUpTaskTab: React.FC<ClickUpTaskTabProps> = ({
   const [search, setSearch] = useState('')
   const [tasks, setTasks] = useState<ClickUpTask[] | null>(null)
   const [loadingTasks, setLoadingTasks] = useState(false)
+  const [listKey, setListKey] = useState<'planexpo' | 'sprint'>('planexpo')
+
+  // Lists available for browsing, derived from the saved config.
+  const lists = useMemo(() => {
+    const out: { key: 'planexpo' | 'sprint'; label: string; id: string }[] = []
+    if (config?.planexpoListId)
+      out.push({ key: 'planexpo', label: 'Planexpo', id: config.planexpoListId })
+    if (config?.sprintListId)
+      out.push({ key: 'sprint', label: 'Sprint', id: config.sprintListId })
+    return out
+  }, [config])
+
+  // Selected list (falls back to the first configured one).
+  const activeList = lists.find(l => l.key === listKey) ?? lists[0] ?? null
 
   const handleLink = useCallback(
     (taskId: string) => {
@@ -69,16 +83,17 @@ export const ClickUpTaskTab: React.FC<ClickUpTaskTabProps> = ({
   }, [worktreeId, clearLink])
 
   const handleBrowse = useCallback(async () => {
+    if (!activeList) return
     setLoadingTasks(true)
     try {
-      const result = await listClickUpTasks(undefined, projectId ?? undefined)
+      const result = await listClickUpTasks(activeList.id, projectId ?? undefined)
       setTasks(result)
     } catch (e) {
       toast.error(`Échec du chargement de la liste : ${e}`)
     } finally {
       setLoadingTasks(false)
     }
-  }, [projectId])
+  }, [activeList, projectId])
 
   const filteredTasks = useMemo(() => {
     if (!tasks) return []
@@ -159,18 +174,18 @@ export const ClickUpTaskTab: React.FC<ClickUpTaskTabProps> = ({
         </div>
       </div>
 
-      {/* Browse configured list */}
+      {/* Browse configured lists (Planexpo + Sprint) */}
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div className="text-xs font-medium text-muted-foreground">
-            Parcourir la liste Planexpo
+            Parcourir une liste
           </div>
           <Button
             variant="ghost"
             size="sm"
             className="h-7 gap-1 text-xs"
             onClick={handleBrowse}
-            disabled={loadingTasks || !config?.planexpoListId}
+            disabled={loadingTasks || !activeList}
           >
             {loadingTasks ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -181,10 +196,26 @@ export const ClickUpTaskTab: React.FC<ClickUpTaskTabProps> = ({
           </Button>
         </div>
 
-        {!config?.planexpoListId && (
+        {lists.length > 1 && (
+          <div className="flex items-center gap-1">
+            {lists.map(l => (
+              <Button
+                key={l.key}
+                variant={activeList?.key === l.key ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setListKey(l.key)}
+              >
+                {l.label}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        {lists.length === 0 && (
           <div className="text-xs text-muted-foreground">
-            Configure une liste Planexpo dans Réglages → Intégrations pour
-            parcourir les tâches.
+            Configure une liste (Planexpo ou Sprint) dans Réglages →
+            Intégrations pour parcourir les tâches.
           </div>
         )}
 

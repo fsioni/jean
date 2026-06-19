@@ -24,6 +24,9 @@ pub struct ClickUpConfig {
     /// Default list id used to browse/pick tasks (e.g. the Planexpo list).
     #[serde(default)]
     pub planexpo_list_id: Option<String>,
+    /// Secondary list id (the Sprint list) used to browse/pick tasks.
+    #[serde(default)]
+    pub sprint_list_id: Option<String>,
 }
 
 /// Directory holding the ClickUp sidecar files.
@@ -116,16 +119,18 @@ pub async fn get_clickup_config(app: AppHandle) -> Result<ClickUpConfig, String>
     load_clickup_config(&app)
 }
 
-/// Update the global token and Planexpo list id. `None` clears a value.
+/// Update the global token and list ids (Planexpo + Sprint). `None` clears a value.
 #[tauri::command]
 pub async fn set_clickup_config(
     app: AppHandle,
     token: Option<String>,
     planexpo_list_id: Option<String>,
+    sprint_list_id: Option<String>,
 ) -> Result<(), String> {
     let mut config = load_clickup_config(&app)?;
     config.token = token.filter(|t| !t.trim().is_empty());
     config.planexpo_list_id = planexpo_list_id.filter(|t| !t.trim().is_empty());
+    config.sprint_list_id = sprint_list_id.filter(|t| !t.trim().is_empty());
     save_clickup_config(&app, &config)
 }
 
@@ -141,6 +146,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             planexpo_list_id: None,
+            sprint_list_id: None,
         }
     }
 

@@ -34,20 +34,25 @@ export const ClickUpSettings: React.FC = () => {
   const [showToken, setShowToken] = useState(false)
   const [localToken, setLocalToken] = useState<string | null>(null)
   const [localPlanexpo, setLocalPlanexpo] = useState<string | null>(null)
+  const [localSprint, setLocalSprint] = useState<string | null>(null)
 
   const currentToken = config?.token ?? ''
   const currentPlanexpo = config?.planexpoListId ?? ''
+  const currentSprint = config?.sprintListId ?? ''
 
   const token = localToken ?? currentToken
   const planexpo = localPlanexpo ?? currentPlanexpo
+  const sprint = localSprint ?? currentSprint
 
   const changed =
     (localToken !== null && localToken !== currentToken) ||
-    (localPlanexpo !== null && localPlanexpo !== currentPlanexpo)
+    (localPlanexpo !== null && localPlanexpo !== currentPlanexpo) ||
+    (localSprint !== null && localSprint !== currentSprint)
 
   const resetLocal = () => {
     setLocalToken(null)
     setLocalPlanexpo(null)
+    setLocalSprint(null)
   }
 
   const handleSave = () => {
@@ -55,6 +60,7 @@ export const ClickUpSettings: React.FC = () => {
       {
         token: token.trim() || undefined,
         planexpoListId: planexpo.trim() || undefined,
+        sprintListId: sprint.trim() || undefined,
       },
       {
         onSuccess: () => {
@@ -71,6 +77,7 @@ export const ClickUpSettings: React.FC = () => {
       {
         token: undefined,
         planexpoListId: planexpo.trim() || undefined,
+        sprintListId: sprint.trim() || undefined,
       },
       {
         onSuccess: () => {
@@ -130,6 +137,18 @@ export const ClickUpSettings: React.FC = () => {
           placeholder="123456789"
           value={planexpo}
           onChange={e => setLocalPlanexpo(e.target.value)}
+          className="text-base md:text-sm font-mono"
+        />
+      </Field>
+
+      <Field
+        label="Liste Sprint (list id)"
+        description="Liste ClickUp du sprint en cours (optionnelle) pour parcourir/lier les tâches."
+      >
+        <Input
+          placeholder="987654321"
+          value={sprint}
+          onChange={e => setLocalSprint(e.target.value)}
           className="text-base md:text-sm font-mono"
         />
       </Field>
