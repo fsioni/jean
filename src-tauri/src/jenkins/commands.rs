@@ -9,8 +9,10 @@ use tauri::AppHandle;
 
 use super::client::JenkinsClient;
 use super::config;
+use super::freshness::{self, PreviewFreshness};
 use super::parse;
 use super::types::{JenkinsBuild, JenkinsStage, JenkinsWorktreeStatus};
+use crate::gh_cli::config::resolve_gh_binary;
 use crate::projects::storage::{load_projects_data, save_projects_data};
 use crate::projects::types::Project;
 
@@ -103,10 +105,32 @@ pub async fn assemble_status(
         stages,
         preview,
         preview_url,
+        // Filled by the caller (needs the worktree repo path + a `gh` read).
+        preview_freshness: None,
         queue,
         overall_status,
         checked_at: now_secs(),
     }
+}
+
+/// Compute preview freshness off the async runtime — the `gh` reads block.
+///
+/// Returns `None` (badge hidden) when there is no preview build to compare.
+pub(super) async fn resolve_preview_freshness(
+    app: &AppHandle,
+    repo_path: &str,
+    pr_number: Option<u32>,
+    preview: Option<JenkinsBuild>,
+) -> Option<PreviewFreshness> {
+    preview.as_ref()?;
+    let gh = resolve_gh_binary(app);
+    let repo_path = repo_path.to_string();
+    tokio::task::spawn_blocking(move || {
+        freshness::resolve_freshness(&repo_path, pr_number, preview.as_ref(), &gh)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Live Jenkins status for the worktree's PR/branch.
@@ -118,14 +142,19 @@ pub async fn get_jenkins_status(
     pr_id: Option<String>,
     branch: Option<String>,
 ) -> Result<JenkinsWorktreeStatus, String> {
-    let cfg = config::load_config(&app, &project_id)?;
+    // Load data once: Jenkins config + the worktree (repo path / PR for freshness).
+    let data = load_projects_data(&app)?;
+    let project = data
+        .find_project(&project_id)
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    let cfg = config::config_from_project(project)?;
     let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
     let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
 
-    Ok(assemble_status(
+    let mut status = assemble_status(
         &client,
         &pipeline_builds,
         &preview_builds,
@@ -134,7 +163,19 @@ pub async fn get_jenkins_status(
         pr_id.as_deref(),
         branch.as_deref(),
     )
-    .await)
+    .await;
+
+    if let Some(worktree) = data.worktrees.iter().find(|w| w.id == worktree_id) {
+        status.preview_freshness = resolve_preview_freshness(
+            &app,
+            &worktree.path,
+            worktree.pr_number,
+            status.preview.clone(),
+        )
+        .await;
+    }
+
+    Ok(status)
 }
 
 /// Re-run the whole `build-and-test` pipeline, replaying the last build's parameters.
@@ -225,6 +266,7 @@ mod tests {
             url: String::new(),
             pr_id: pr.map(str::to_string),
             branch: branch.map(str::to_string),
+            commit_sha: None,
         }
     }
 

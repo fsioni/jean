@@ -17,6 +17,25 @@ export interface JenkinsBuild {
   url: string
   prId: string | null
   branch: string | null
+  /** Git commit this build was built from (for preview freshness), or null. */
+  commitSha: string | null
+}
+
+/**
+ * Whether the deployed preview matches the PR head.
+ *
+ * The "deploy-preview" job builds the PR's source branch, so its commit is
+ * comparable to the PR's GitHub head (headRefOid).
+ */
+export interface PreviewFreshness {
+  /** "UP_TO_DATE" | "STALE" | "BUILDING" | "NO_PREVIEW" | "UNKNOWN" */
+  status: string
+  /** Commit the latest deploy-preview build was built from. */
+  previewSha: string | null
+  /** Current PR head commit (headRefOid). */
+  prHeadSha: string | null
+  /** How many commits the PR head is ahead of the preview (best-effort). */
+  behindBy: number | null
 }
 
 /** A single stage within a Jenkins pipeline build. */
@@ -50,6 +69,8 @@ export interface JenkinsWorktreeStatus {
   preview: JenkinsBuild | null
   /** e.g. "https://3959.preview.example.com/admin" */
   previewUrl: string | null
+  /** Whether the preview is up to date with the PR head (null until computed). */
+  previewFreshness: PreviewFreshness | null
   /** Pending queue item for the PR's pipeline (waiting to start), if any. */
   queue: JenkinsQueueItem | null
   /** "BUILDING" | "QUEUED" | "SUCCESS" | "FAILURE" | "UNKNOWN" */

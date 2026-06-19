@@ -10,8 +10,12 @@ use super::parse;
 use super::types::{JenkinsBuild, JenkinsStage};
 
 /// `tree` filter for the builds listing — keeps the payload small.
+///
+/// `lastBuiltRevision[SHA1,branch[name,SHA1]]` exposes the git commit the build
+/// was built from (git plugin `BuildData`), used for preview freshness.
 const BUILDS_TREE: &str = "builds[number,result,building,timestamp,duration,url,\
-actions[parameters[name,value],causes[shortDescription,upstreamProject,upstreamBuild]]]{0,30}";
+actions[parameters[name,value],lastBuiltRevision[SHA1,branch[name,SHA1]],remoteUrls,\
+causes[shortDescription,upstreamProject,upstreamBuild]]]{0,30}";
 
 /// Async Jenkins client scoped to one controller + credentials.
 pub struct JenkinsClient {

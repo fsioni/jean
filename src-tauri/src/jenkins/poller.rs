@@ -13,7 +13,7 @@ use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
 use super::client::JenkinsClient;
-use super::commands::{assemble_status, PIPELINE_JOB, PREVIEW_JOB};
+use super::commands::{assemble_status, resolve_preview_freshness, PIPELINE_JOB, PREVIEW_JOB};
 use super::parse::{self, Transition, STATUS_FAILURE, STATUS_SUCCESS};
 use super::{config, types::JenkinsWorktreeStatus};
 use crate::http_server::EmitExt;
@@ -66,7 +66,7 @@ async fn poll_cycle(
             };
             let pr_id = pr_number.to_string();
 
-            let status = assemble_status(
+            let mut status = assemble_status(
                 &client,
                 &pipeline_builds,
                 &preview_builds,
@@ -74,6 +74,14 @@ async fn poll_cycle(
                 &worktree.id,
                 Some(&pr_id),
                 Some(&worktree.branch),
+            )
+            .await;
+
+            status.preview_freshness = resolve_preview_freshness(
+                app,
+                &worktree.path,
+                worktree.pr_number,
+                status.preview.clone(),
             )
             .await;
 
