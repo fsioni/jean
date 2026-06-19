@@ -51,6 +51,7 @@ function notConfiguredStatus(
     stages: [],
     preview: null,
     previewUrl: null,
+    queue: null,
     overallStatus: 'UNKNOWN',
     checkedAt: Math.floor(Date.now() / 1000),
   }

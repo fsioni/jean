@@ -16,10 +16,14 @@ use crate::projects::types::Project;
 
 /// Umbrella pipeline job for a PR (covers unit / elm / integration / deploy stages).
 pub const PIPELINE_JOB: &str = "build-and-test";
+/// FreeStyle entry job triggered by the GitHub PR (serializes; queues first).
+pub const LAUNCHER_JOB: &str = "build-and-test_Launcher-on-pr";
 /// Standalone job that deploys the PR preview environment.
 pub const PREVIEW_JOB: &str = "deploy-preview";
 /// The flaky stage Farès re-runs most.
 pub const INTEGRATION_STAGE: &str = "Integration tests";
+/// Jobs whose queue items mean "the PR's pipeline is waiting to start".
+const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
 
 /// Build the preview admin URL for a PR (e.g. `https://3959.preview.example.com/admin`).
 pub fn preview_url(pr_id: &str) -> String {
@@ -59,6 +63,7 @@ pub async fn assemble_status(
     client: &JenkinsClient,
     pipeline_builds: &[JenkinsBuild],
     preview_builds: &[JenkinsBuild],
+    queue_json: &str,
     worktree_id: &str,
     pr_id: Option<&str>,
     branch: Option<&str>,
@@ -82,8 +87,14 @@ pub async fn assemble_status(
         .or_else(|| preview.as_ref().and_then(|b| b.pr_id.clone()))
         .or_else(|| pr_id.filter(|p| !p.is_empty()).map(str::to_string));
 
+    // A queued pipeline (not yet a build) for this PR — e.g. waiting on the
+    // serialized integration-test lock after a re-run.
+    let queue = resolved_pr
+        .as_deref()
+        .and_then(|pr| parse::find_queued_for_pr(queue_json, pr, QUEUE_JOBS));
+
     let preview_url = resolved_pr.as_deref().map(preview_url);
-    let overall_status = parse::overall_status(pipeline.as_ref());
+    let overall_status = parse::overall_status_with_queue(pipeline.as_ref(), queue.is_some());
 
     JenkinsWorktreeStatus {
         worktree_id: worktree_id.to_string(),
@@ -92,6 +103,7 @@ pub async fn assemble_status(
         stages,
         preview,
         preview_url,
+        queue,
         overall_status,
         checked_at: now_secs(),
     }
@@ -111,11 +123,13 @@ pub async fn get_jenkins_status(
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
     let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
+    let queue_json = client.fetch_queue().await.unwrap_or_default();
 
     Ok(assemble_status(
         &client,
         &pipeline_builds,
         &preview_builds,
+        &queue_json,
         &worktree_id,
         pr_id.as_deref(),
         branch.as_deref(),

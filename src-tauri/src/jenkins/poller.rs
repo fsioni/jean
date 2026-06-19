@@ -57,6 +57,7 @@ async fn poll_cycle(
             continue;
         };
         let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
+        let queue_json = client.fetch_queue().await.unwrap_or_default();
 
         for worktree in data.worktrees.iter().filter(|w| w.project_id == project.id) {
             // v1: only track worktrees linked to a PR.
@@ -69,6 +70,7 @@ async fn poll_cycle(
                 &client,
                 &pipeline_builds,
                 &preview_builds,
+                &queue_json,
                 &worktree.id,
                 Some(&pr_id),
                 Some(&worktree.branch),

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCcw,
   FlaskConical,
+  Hourglass,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -44,6 +45,16 @@ function formatDuration(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+/** Human "time in queue" since an epoch-ms timestamp. */
+function formatSince(ms: number): string {
+  const elapsed = Date.now() - ms
+  if (!ms || elapsed < 0) return ''
+  const min = Math.floor(elapsed / 60000)
+  if (min < 1) return "à l'instant"
+  if (min < 60) return `depuis ${min} min`
+  return `depuis ${Math.floor(min / 60)} h ${min % 60} min`
+}
+
 /** Visual treatment for the global build-and-test verdict. */
 function overallBadge(status: string): {
   label: string
@@ -72,6 +83,13 @@ function overallBadge(status: string): {
         icon: <Loader2 className="size-3.5 animate-spin" />,
         text: 'text-blue-600',
         hover: 'hover:bg-blue-500/10',
+      }
+    case 'QUEUED':
+      return {
+        label: 'Queued',
+        icon: <Hourglass className="size-3.5" />,
+        text: 'text-amber-600',
+        hover: 'hover:bg-amber-500/10',
       }
     default:
       return {
@@ -232,6 +250,17 @@ export function JenkinsStatusBadge({
             </span>
           )}
         </div>
+
+        {/* Queue (waiting to start — e.g. serialized behind the integration lock) */}
+        {status.queue && (
+          <div className="mt-2 flex items-start gap-1.5 rounded bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-500">
+            <Hourglass className="mt-0.5 size-3 shrink-0" />
+            <span className="min-w-0">
+              {`En file d'attente ${formatSince(status.queue.sinceMs)}`}
+              {status.queue.why ? ` — ${status.queue.why}` : ''}
+            </span>
+          </div>
+        )}
 
         {/* Stages */}
         {status.stages.length > 0 && (

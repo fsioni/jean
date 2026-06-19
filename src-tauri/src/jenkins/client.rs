@@ -63,6 +63,19 @@ impl JenkinsClient {
         parse::parse_builds(&body)
     }
 
+    /// Fetch the controller build queue as raw JSON (parsed by `parse::find_queued_for_pr`).
+    pub async fn fetch_queue(&self) -> Result<String, String> {
+        let url = format!("{}/queue/api/json", self.base_url);
+        self.get_text(
+            &url,
+            &[(
+                "tree",
+                "items[id,why,blocked,buildable,stuck,inQueueSince,task[name],params]",
+            )],
+        )
+        .await
+    }
+
     /// Fetch the declarative-pipeline stage breakdown of a build.
     pub async fn fetch_stages(&self, job: &str, build: u64) -> Result<Vec<JenkinsStage>, String> {
         let url = format!("{}/{build}/wfapi/describe", self.job_url(job));
