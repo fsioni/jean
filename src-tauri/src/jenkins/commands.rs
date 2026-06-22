@@ -35,12 +35,21 @@ const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
 /// freshness `/version` probe are derived from this single base.
 pub fn preview_base_url(template: Option<&str>, pr_id: &str) -> Option<String> {
     let template = template.map(str::trim).filter(|t| !t.is_empty())?;
-    Some(
-        template
-            .replace("{pr}", pr_id)
-            .trim_end_matches('/')
-            .to_string(),
-    )
+    let resolved = template.replace("{pr}", pr_id);
+    let base = resolved.trim_end_matches('/');
+
+    // Tolerate a template that already includes the `/admin` suffix: the admin
+    // link and the `/version` probe are BOTH derived from the base, so a trailing
+    // `/admin` would build `/admin/admin` and probe `/admin/version` — which the
+    // admin SPA happily answers with index.html (HTTP 200, no `commit <sha>`),
+    // masking the preview freshness as UNKNOWN (grey). Strip it so either the
+    // base or the admin URL works.
+    let base = match base.len().checked_sub("/admin".len()) {
+        Some(cut) if base[cut..].eq_ignore_ascii_case("/admin") => &base[..cut],
+        _ => base,
+    };
+
+    Some(base.trim_end_matches('/').to_string())
 }
 
 /// Build the preview admin URL for a PR (preview base + `/admin`).
@@ -320,6 +329,31 @@ mod tests {
         // No template configured → nothing (nothing hardcoded).
         assert_eq!(preview_url(None, "3959"), None);
         assert_eq!(preview_base_url(Some("   "), "3959"), None);
+    }
+
+    #[test]
+    fn preview_base_strips_trailing_admin_suffix() {
+        // A template that already ends in `/admin` must not double up or probe
+        // `/admin/version` — the base is normalized back to the host root.
+        let tpl = Some("https://{pr}.preview.example.com/admin");
+        assert_eq!(
+            preview_base_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com")
+        );
+        assert_eq!(
+            preview_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com/admin")
+        );
+        // Case-insensitive + trailing slash variants normalize the same way.
+        assert_eq!(
+            preview_base_url(Some("https://{pr}.preview.example.com/Admin/"), "42").as_deref(),
+            Some("https://42.preview.example.com")
+        );
+        // A path that merely contains "admin" elsewhere is left untouched.
+        assert_eq!(
+            preview_base_url(Some("https://admin.example.com/{pr}"), "42").as_deref(),
+            Some("https://admin.example.com/42")
+        );
     }
 
     #[test]

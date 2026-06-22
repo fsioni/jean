@@ -45,15 +45,30 @@ async fn poll_cycle(
 ) -> Result<(), String> {
     let data = load_projects_data(app)?;
 
+    // Per-cycle observability: how many projects are Jenkins-configured and how
+    // many PR-linked worktrees we actually polled. Logged at info so the poller
+    // is visible in prod without trace logging (notif-diagnostic cause D).
+    let mut configured_projects = 0usize;
+    let mut polled_worktrees = 0usize;
+
     for project in &data.projects {
         // Skip projects without Jenkins configured.
         let Ok(cfg) = config::config_from_project(project) else {
+            log::debug!(
+                "Jenkins poll: skip project '{}' — no Jenkins config",
+                project.name
+            );
             continue;
         };
+        configured_projects += 1;
         let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
 
         // Fetch each job's builds once per project, then match per worktree.
         let Ok(pipeline_builds) = client.fetch_builds(PIPELINE_JOB).await else {
+            log::debug!(
+                "Jenkins poll: project '{}' — failed to fetch {PIPELINE_JOB} builds",
+                project.name
+            );
             continue;
         };
         let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
@@ -62,8 +77,13 @@ async fn poll_cycle(
         for worktree in data.worktrees.iter().filter(|w| w.project_id == project.id) {
             // v1: only track worktrees linked to a PR.
             let Some(pr_number) = worktree.pr_number else {
+                log::debug!(
+                    "Jenkins poll: skip worktree '{}' — no linked PR",
+                    worktree.name
+                );
                 continue;
             };
+            polled_worktrees += 1;
             let pr_id = pr_number.to_string();
 
             let mut status = assemble_status(
@@ -91,6 +111,10 @@ async fn poll_cycle(
             track_transition(app, last_results, &project.id, &pr_id, &status);
         }
     }
+
+    log::info!(
+        "Jenkins poll cycle: {configured_projects} configured project(s), {polled_worktrees} PR-linked worktree(s) polled"
+    );
 
     Ok(())
 }
@@ -120,6 +144,14 @@ fn track_transition(
 
     if let Some(transition) = parse::detect_transition(previous, new_status) {
         notify(app, transition, pr_id, status);
+    } else if previous.is_none() {
+        // First terminal result seen for this PR since startup: recorded as the
+        // baseline, no notification (anti-spam). We only notify on a flip while
+        // the app is running. Logged so this expected silence is observable
+        // (notif-diagnostic cause A).
+        log::debug!(
+            "Jenkins poll: PR #{pr_id} baseline = {new_status} (no notification at startup)"
+        );
     }
     last_results.insert(key, new_status.to_string());
 }
@@ -144,6 +176,7 @@ fn notify(app: &AppHandle, transition: Transition, pr_id: &str, status: &Jenkins
         ),
     };
 
+    log::info!("Jenkins notification (PR #{pr_id}): {title}");
     if let Err(e) = app
         .notification()
         .builder()
@@ -151,6 +184,6 @@ fn notify(app: &AppHandle, transition: Transition, pr_id: &str, status: &Jenkins
         .body(&body)
         .show()
     {
-        log::trace!("Failed to show Jenkins notification: {e}");
+        log::warn!("Failed to show Jenkins notification: {e}");
     }
 }

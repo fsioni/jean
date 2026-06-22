@@ -13,6 +13,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
+import { WorktreeStatusDot } from '@/components/jenkins/WorktreeStatusDot'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -704,6 +705,16 @@ export function WorktreeItem({
               <TooltipContent>{`Uncommitted: +${uncommittedAdded}/-${uncommittedRemoved} lines`}</TooltipContent>
             </Tooltip>
           )}
+
+          {/* Jenkins build-and-test verdict + preview freshness (cache-only,
+              visible without entering the worktree). */}
+          <WorktreeStatusDot
+            projectId={projectId}
+            worktreeId={worktree.id}
+            prId={
+              worktree.pr_number != null ? String(worktree.pr_number) : null
+            }
+          />
         </div>
       </WorktreeContextMenu>
 

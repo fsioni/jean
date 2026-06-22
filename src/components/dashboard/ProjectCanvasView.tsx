@@ -77,6 +77,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { GitStatusBadges } from '@/components/ui/git-status-badges'
+import { WorktreeStatusDot } from '@/components/jenkins/WorktreeStatusDot'
 import {
   useWorktrees,
   useProjects,
@@ -679,6 +680,16 @@ function WorktreeSectionHeader({
                   onDiffClick={handleDiffClick}
                 />
               </span>
+              {/* Jenkins build-and-test verdict + preview freshness (cache-only). */}
+              <WorktreeStatusDot
+                projectId={projectId}
+                worktreeId={worktree.id}
+                prId={
+                  worktree.pr_number != null
+                    ? String(worktree.pr_number)
+                    : null
+                }
+              />
             </span>
             {displayBranch && (
               <span className="inline-flex max-w-full items-center gap-1 self-start rounded border border-border/50 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground sm:hidden">

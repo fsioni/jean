@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import {
+  Bell,
   Check,
   ChevronsUpDown,
   FolderOpen,
@@ -10,6 +11,11 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react'
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification'
 import { convertFileSrc, convertProjectFileSrc, invoke } from '@/lib/transport'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -39,6 +45,7 @@ import {
   useSetProjectAvatar,
   useRemoveProjectAvatar,
   projectsQueryKeys,
+  isTauri,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useLinearTeams, linearQueryKeys } from '@/services/linear'
@@ -331,6 +338,41 @@ export function GeneralPane({
   const handleRemoveJenkins = useCallback(() => {
     saveJenkinsConfig('', '', '', '')
   }, [saveJenkinsConfig])
+
+  // Isolate the OS notification channel from the Jenkins pipeline: fire a test
+  // notification on demand so it's clear whether a missing pipeline notif is a
+  // permission/OS problem or a poller/transition one (notif-diagnostic cause E).
+  const [testingNotif, setTestingNotif] = useState(false)
+  const handleTestNotification = useCallback(async () => {
+    if (!isTauri()) {
+      toast.error('Notifications indisponibles dans ce contexte')
+      return
+    }
+    setTestingNotif(true)
+    try {
+      let granted = await isPermissionGranted()
+      if (!granted) {
+        granted = (await requestPermission()) === 'granted'
+      }
+      if (!granted) {
+        toast.error('Permission de notification refusée', {
+          description:
+            "Autorisez les notifications pour Jean dans les réglages de l'OS.",
+        })
+        return
+      }
+      await sendNotification({
+        title: '🔔 Test de notification Jean',
+        body: 'Si vous voyez ceci, le canal de notifications OS fonctionne.',
+      })
+      toast.success('Notification test envoyée')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error('Échec de la notification test', { description: message })
+    } finally {
+      setTestingNotif(false)
+    }
+  }, [])
 
   const handleTeamChange = useCallback(
     (value: string) => {
@@ -737,7 +779,7 @@ export function GeneralPane({
 
         <InlineField
           label="Preview URL template"
-          description="Base URL of a PR preview (use {pr} for the PR id). The admin link and the freshness check derive /admin and /version from it. Stored per project; leave empty to disable."
+          description="Base URL of a PR preview (use {pr} for the PR id). The admin link and the freshness check derive /admin and /version from it — a trailing /admin is tolerated. Stored per project; leave empty to disable."
         >
           <Input
             placeholder="https://{pr}.preview.example.com"
@@ -788,6 +830,25 @@ export function GeneralPane({
               </Button>
             )}
           </div>
+        </InlineField>
+
+        <InlineField
+          label="Notifications"
+          description="Le poller notifie au passage rouge↔vert du pipeline. Ce bouton teste le canal de notifications de l'OS, indépendamment de Jenkins."
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleTestNotification}
+            disabled={testingNotif}
+          >
+            {testingNotif ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Bell className="h-4 w-4" />
+            )}
+            Envoyer une notif test
+          </Button>
         </InlineField>
       </SettingsSection>
 
