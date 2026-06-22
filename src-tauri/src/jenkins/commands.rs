@@ -113,24 +113,17 @@ pub async fn assemble_status(
     }
 }
 
-/// Compute preview freshness off the async runtime — the `gh` reads block.
-///
-/// Returns `None` (badge hidden) when there is no preview build to compare.
+/// Resolve live preview freshness for a worktree's PR (probe `/version`, compare
+/// to the PR head). Returns `None` when there is no PR to attach a preview to.
 pub(super) async fn resolve_preview_freshness(
     app: &AppHandle,
     repo_path: &str,
+    pr_id: Option<&str>,
     pr_number: Option<u32>,
-    preview: Option<JenkinsBuild>,
 ) -> Option<PreviewFreshness> {
-    preview.as_ref()?;
+    let pr_id = pr_id.filter(|p| !p.is_empty())?;
     let gh = resolve_gh_binary(app);
-    let repo_path = repo_path.to_string();
-    tokio::task::spawn_blocking(move || {
-        freshness::resolve_freshness(&repo_path, pr_number, preview.as_ref(), &gh)
-    })
-    .await
-    .ok()
-    .flatten()
+    Some(freshness::resolve_freshness(repo_path, pr_id, pr_number, gh).await)
 }
 
 /// Live Jenkins status for the worktree's PR/branch.
@@ -169,8 +162,8 @@ pub async fn get_jenkins_status(
         status.preview_freshness = resolve_preview_freshness(
             &app,
             &worktree.path,
+            status.pr_id.as_deref(),
             worktree.pr_number,
-            status.preview.clone(),
         )
         .await;
     }
@@ -266,7 +259,6 @@ mod tests {
             url: String::new(),
             pr_id: pr.map(str::to_string),
             branch: branch.map(str::to_string),
-            commit_sha: None,
         }
     }
 

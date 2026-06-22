@@ -80,8 +80,8 @@ async fn poll_cycle(
             status.preview_freshness = resolve_preview_freshness(
                 app,
                 &worktree.path,
+                status.pr_id.as_deref(),
                 worktree.pr_number,
-                status.preview.clone(),
             )
             .await;
 

@@ -38,29 +38,28 @@ function freshnessView(freshness: PreviewFreshness | null): {
       }
     case 'STALE': {
       const behind = freshness.behindBy
-      const label =
-        behind != null && behind > 0 ? `en retard de ${behind}` : 'en retard'
       const count =
         behind != null && behind > 0
           ? `en retard de ${behind} commit${behind > 1 ? 's' : ''}`
           : 'en retard sur la PR'
       return {
         dot: 'bg-amber-500',
-        label,
-        title: `Preview ${count} (${shas})`,
+        label: 'périmée',
+        title: `Preview périmée — ${count} (${shas})`,
       }
     }
-    case 'BUILDING':
+    case 'DOWN':
       return {
-        dot: 'bg-blue-500 animate-pulse',
-        label: 'déploiement…',
-        title: 'Déploiement de la preview en cours',
+        dot: 'bg-red-500',
+        label: 'hors ligne',
+        title: 'Preview hors ligne (injoignable)',
       }
     default:
-      // NO_PREVIEW / UNKNOWN / null — URL is reachable but freshness is unknown.
+      // UNKNOWN / null — reachable but no SHA to compare (e.g. PR head unknown).
+      // No label: the dot alone avoids a redundant "Preview · preview".
       return {
         dot: 'bg-muted-foreground/40',
-        label: 'preview',
+        label: '',
         title: `Fraîcheur de la preview inconnue (${shas})`,
       }
   }
@@ -106,9 +105,11 @@ export function PreviewBadge({
       <Globe className="size-3.5" />
       <span className="hidden lg:inline">Preview</span>
       <span className={cn('h-2 w-2 shrink-0 rounded-full', view.dot)} />
-      <span className="hidden text-[11px] text-muted-foreground lg:inline">
-        {view.label}
-      </span>
+      {view.label && (
+        <span className="hidden text-[11px] text-muted-foreground lg:inline">
+          {view.label}
+        </span>
+      )}
     </button>
   )
 }
