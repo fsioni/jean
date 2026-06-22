@@ -25,9 +25,6 @@ pub struct JenkinsBuild {
     pub pr_id: Option<String>,
     /// `BRANCH` build parameter, when set (empty parameter → `None`).
     pub branch: Option<String>,
-    /// Git commit this build was built from, when resolvable (git plugin
-    /// `lastBuiltRevision.SHA1` or a ghprb param). Used for preview freshness.
-    pub commit_sha: Option<String>,
 }
 
 /// One stage of a declarative pipeline build (from the `wfapi/describe` view).
@@ -70,7 +67,7 @@ pub struct JenkinsWorktreeStatus {
     pub preview: Option<JenkinsBuild>,
     /// Preview admin URL, e.g. `https://3959.preview.example.com/admin`.
     pub preview_url: Option<String>,
-    /// Whether the preview is up to date with the PR head (`None` until computed).
+    /// Live preview freshness vs the PR head (`None` until/unless computed).
     pub preview_freshness: Option<super::freshness::PreviewFreshness>,
     /// Pending queue item for this PR's pipeline, if it's waiting to start.
     pub queue: Option<JenkinsQueueItem>,

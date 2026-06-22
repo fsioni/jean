@@ -1,38 +1,48 @@
-//! Preview freshness: is the deployed `deploy-preview` up to date with the PR?
+//! Preview freshness: is the live PR preview up to date with the PR head?
 //!
-//! The `deploy-preview` job checks out the PR's source branch, so the commit it
-//! built (`JenkinsBuild.commit_sha`) is directly comparable to the PR's GitHub
-//! head (`headRefOid`). When they differ, the live preview is stale.
+//! Jenkins exposes no commit SHA for planexpo builds (no git `BuildData`, no
+//! changesets, and the `deploy-preview` job is unused — the preview is deployed
+//! by the `Deploy preview` stage of `build-and-test`). So instead of asking
+//! Jenkins, we ask the **preview itself**: every preview serves a `/version`
+//! endpoint whose first line is `commit <sha>` (a `git log -1` dump). We compare
+//! that deployed SHA to the PR head (`headRefOid` from GitHub) and get three
+//! actionable states:
 //!
-//! Classification is pure ([`compute_freshness`], unit-tested). The GitHub reads
-//! ([`fetch_pr_head_sha`], [`fetch_behind_by`]) shell out to `gh` like
-//! `projects::pr_status`, so they run inside `spawn_blocking` from async callers.
+//! - **UP_TO_DATE** — preview reachable and serving the PR head commit.
+//! - **STALE** — preview reachable but serving an older commit (périmée).
+//! - **DOWN** — preview unreachable (env down / not deployed).
+//! - **UNKNOWN** — reachable but we couldn't resolve a SHA to compare.
+//!
+//! Classification ([`classify`]) and parsing ([`parse_version_sha`]) are pure
+//! and unit-tested. The PR head read shells out to `gh` like
+//! `projects::pr_status`, so it runs inside `spawn_blocking` from async callers.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
-use super::types::JenkinsBuild;
 use crate::platform::silent_command;
 
-/// Preview is built from the current PR head.
+/// Preview is reachable and serving the current PR head commit.
 pub const FRESH_UP_TO_DATE: &str = "UP_TO_DATE";
-/// Preview is built from an older commit than the PR head.
+/// Preview is reachable but serving an older commit than the PR head.
 pub const FRESH_STALE: &str = "STALE";
-/// A preview deploy is currently running.
-pub const FRESH_BUILDING: &str = "BUILDING";
-/// No `deploy-preview` build exists for this PR yet.
-pub const FRESH_NO_PREVIEW: &str = "NO_PREVIEW";
-/// Could not resolve one of the two SHAs to compare.
+/// Preview is unreachable (env down or never deployed).
+pub const FRESH_DOWN: &str = "DOWN";
+/// Reachable, but a SHA to compare couldn't be resolved.
 pub const FRESH_UNKNOWN: &str = "UNKNOWN";
+
+/// How long to wait on the preview `/version` probe before calling it down.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Whether the live preview matches the PR head, surfaced to the UI.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewFreshness {
-    /// `UP_TO_DATE` / `STALE` / `BUILDING` / `NO_PREVIEW` / `UNKNOWN`.
+    /// `UP_TO_DATE` / `STALE` / `DOWN` / `UNKNOWN`.
     pub status: String,
-    /// Commit the latest `deploy-preview` build was built from.
+    /// Commit the preview is actually serving (from its `/version` endpoint).
     pub preview_sha: Option<String>,
     /// Current PR head commit (`headRefOid`).
     pub pr_head_sha: Option<String>,
@@ -40,50 +50,62 @@ pub struct PreviewFreshness {
     pub behind_by: Option<u32>,
 }
 
-/// Classify freshness from the preview build's commit vs the PR head SHA. Pure.
-pub fn compute_freshness(
-    preview: Option<&JenkinsBuild>,
+/// The preview `/version` URL for a PR (e.g. `https://3959.preview.example.com/version`).
+fn preview_version_url(pr_id: &str) -> String {
+    format!("https://{pr_id}.preview.example.com/version")
+}
+
+/// Parse the deployed commit SHA from a `/version` body.
+///
+/// The endpoint returns a `git log -1` dump whose first line is `commit <sha>`.
+pub fn parse_version_sha(body: &str) -> Option<String> {
+    let first = body.lines().next()?.trim();
+    let sha = first.strip_prefix("commit ")?.trim();
+    is_sha(sha).then(|| sha.to_string())
+}
+
+/// A plausible git SHA: 7–40 hex chars.
+fn is_sha(value: &str) -> bool {
+    let len = value.len();
+    (7..=40).contains(&len) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Classify freshness from the probe result and the PR head SHA. Pure.
+pub fn classify(
+    reachable: bool,
+    preview_sha: Option<&str>,
     pr_head_sha: Option<&str>,
     behind_by: Option<u32>,
 ) -> PreviewFreshness {
     let head = pr_head_sha.map(str::to_string);
 
-    let Some(preview) = preview else {
+    if !reachable {
         return PreviewFreshness {
-            status: FRESH_NO_PREVIEW.to_string(),
+            status: FRESH_DOWN.to_string(),
             preview_sha: None,
-            pr_head_sha: head,
-            behind_by: None,
-        };
-    };
-
-    let preview_sha = preview.commit_sha.clone();
-
-    if preview.building {
-        return PreviewFreshness {
-            status: FRESH_BUILDING.to_string(),
-            preview_sha,
             pr_head_sha: head,
             behind_by: None,
         };
     }
 
-    match (preview_sha.as_deref(), pr_head_sha) {
+    let preview = preview_sha.map(str::to_string);
+
+    match (preview_sha, pr_head_sha) {
         (Some(p), Some(h)) if sha_matches(p, h) => PreviewFreshness {
             status: FRESH_UP_TO_DATE.to_string(),
-            preview_sha,
+            preview_sha: preview,
             pr_head_sha: head,
             behind_by: Some(0),
         },
         (Some(_), Some(_)) => PreviewFreshness {
             status: FRESH_STALE.to_string(),
-            preview_sha,
+            preview_sha: preview,
             pr_head_sha: head,
             behind_by,
         },
         _ => PreviewFreshness {
             status: FRESH_UNKNOWN.to_string(),
-            preview_sha,
+            preview_sha: preview,
             pr_head_sha: head,
             behind_by: None,
         },
@@ -97,35 +119,69 @@ fn sha_matches(a: &str, b: &str) -> bool {
     n >= 7 && a[..n].eq_ignore_ascii_case(&b[..n])
 }
 
-/// Resolve freshness for a worktree's preview: fetch the PR head, compare, and
-/// (only when stale) count how many commits behind. Returns `None` when there is
-/// no preview build or no PR to compare against — callers then skip the badge.
-pub fn resolve_freshness(
+/// Resolve freshness for a PR's preview: probe `/version`, fetch the PR head,
+/// compare, and (only when stale) count how many commits behind.
+pub async fn resolve_freshness(
     repo_path: &str,
+    pr_id: &str,
     pr_number: Option<u32>,
-    preview: Option<&JenkinsBuild>,
-    gh_binary: &Path,
-) -> Option<PreviewFreshness> {
-    preview?;
-    let pr_number = pr_number?;
-
-    let head = fetch_pr_head_sha(repo_path, pr_number, gh_binary);
-    let freshness = compute_freshness(preview, head.as_deref(), None);
-
-    if freshness.status == FRESH_STALE {
-        if let (Some(base), Some(head)) = (freshness.preview_sha.as_deref(), head.as_deref()) {
-            let behind_by = fetch_behind_by(repo_path, base, head, gh_binary);
-            return Some(PreviewFreshness {
-                behind_by,
-                ..freshness
-            });
-        }
+    gh_binary: PathBuf,
+) -> PreviewFreshness {
+    let (reachable, preview_sha) = probe_preview(pr_id).await;
+    if !reachable {
+        return classify(false, None, None, None);
     }
-    Some(freshness)
+
+    // The PR head read + behind-count shell out to `gh` (blocking).
+    let repo = repo_path.to_string();
+    let probe_sha = preview_sha.clone();
+    let (head, behind_by) = tokio::task::spawn_blocking(move || {
+        let head = fetch_pr_head_sha(&repo, pr_number, &gh_binary);
+        let behind = match (probe_sha.as_deref(), head.as_deref()) {
+            (Some(p), Some(h)) if !sha_matches(p, h) => fetch_behind_by(&repo, p, h, &gh_binary),
+            _ => None,
+        };
+        (head, behind)
+    })
+    .await
+    .unwrap_or((None, None));
+
+    classify(true, preview_sha.as_deref(), head.as_deref(), behind_by)
+}
+
+/// Probe the preview `/version` endpoint.
+///
+/// Returns `(reachable, deployed_sha)`. A connection error / timeout / non-2xx
+/// means the preview is down. Preview envs are internal (`*.preview.example.com`) and
+/// may use self-signed certs, so cert validation is relaxed for this probe only.
+async fn probe_preview(pr_id: &str) -> (bool, Option<String>) {
+    let client = match reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return (false, None),
+    };
+
+    // Only the first line (`commit <sha>`) is needed; ask for a small range.
+    match client
+        .get(preview_version_url(pr_id))
+        .header("Range", "bytes=0-127")
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let body = resp.text().await.unwrap_or_default();
+            (true, parse_version_sha(&body))
+        }
+        _ => (false, None),
+    }
 }
 
 /// Fetch the PR head commit via `gh pr view <n> --json headRefOid`.
-fn fetch_pr_head_sha(repo_path: &str, pr_number: u32, gh_binary: &Path) -> Option<String> {
+fn fetch_pr_head_sha(repo_path: &str, pr_number: Option<u32>, gh_binary: &Path) -> Option<String> {
+    let pr_number = pr_number?;
     let output = silent_command(gh_binary)
         .args([
             "pr",
@@ -172,44 +228,43 @@ fn fetch_behind_by(repo_path: &str, base: &str, head: &str, gh_binary: &Path) ->
 mod tests {
     use super::*;
 
-    fn preview(building: bool, sha: Option<&str>) -> JenkinsBuild {
-        JenkinsBuild {
-            number: 221,
-            result: if building {
-                None
-            } else {
-                Some("SUCCESS".into())
-            },
-            building,
-            timestamp_ms: 0,
-            duration_ms: 0,
-            url: String::new(),
-            pr_id: Some("3959".into()),
-            branch: Some("feat".into()),
-            commit_sha: sha.map(str::to_string),
-        }
-    }
-
-    const SHA_A: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    const SHA_A: &str = "9a54f3bafc2fa898b06a5fb0b48bae73af92963f";
     const SHA_B: &str = "ffffffffffffffffffffffffffffffffffffffff";
 
     #[test]
+    fn parses_sha_from_version_dump() {
+        // The real `/version` body is a `git log -1 --stat` dump.
+        let body = "commit 9a54f3bafc2fa898b06a5fb0b48bae73af92963f\n\
+                    Author: Nabil <nabil@example.com>\n\
+                    Date:   Fri Jun 19 17:58:08 2026 +0200\n\n    Revert ...\n\nM\tfront/app.elm\n";
+        assert_eq!(parse_version_sha(body).as_deref(), Some(SHA_A));
+    }
+
+    #[test]
+    fn rejects_non_commit_first_line() {
+        assert_eq!(parse_version_sha("<html>403 Forbidden</html>"), None);
+        assert_eq!(parse_version_sha("commit not-a-sha"), None);
+        assert_eq!(parse_version_sha(""), None);
+    }
+
+    #[test]
     fn up_to_date_when_shas_match() {
-        let f = compute_freshness(Some(&preview(false, Some(SHA_A))), Some(SHA_A), None);
+        let f = classify(true, Some(SHA_A), Some(SHA_A), None);
         assert_eq!(f.status, FRESH_UP_TO_DATE);
         assert_eq!(f.behind_by, Some(0));
+        assert_eq!(f.preview_sha.as_deref(), Some(SHA_A));
     }
 
     #[test]
     fn up_to_date_tolerates_short_head() {
         // GitHub head given as an abbreviated SHA still matches the full preview SHA.
-        let f = compute_freshness(Some(&preview(false, Some(SHA_A))), Some(&SHA_A[..10]), None);
+        let f = classify(true, Some(SHA_A), Some(&SHA_A[..10]), None);
         assert_eq!(f.status, FRESH_UP_TO_DATE);
     }
 
     #[test]
     fn stale_when_shas_differ() {
-        let f = compute_freshness(Some(&preview(false, Some(SHA_A))), Some(SHA_B), Some(3));
+        let f = classify(true, Some(SHA_A), Some(SHA_B), Some(3));
         assert_eq!(f.status, FRESH_STALE);
         assert_eq!(f.preview_sha.as_deref(), Some(SHA_A));
         assert_eq!(f.pr_head_sha.as_deref(), Some(SHA_B));
@@ -217,26 +272,22 @@ mod tests {
     }
 
     #[test]
-    fn building_preview_reports_building() {
-        let f = compute_freshness(Some(&preview(true, Some(SHA_A))), Some(SHA_B), None);
-        assert_eq!(f.status, FRESH_BUILDING);
-        assert_eq!(f.behind_by, None);
-    }
-
-    #[test]
-    fn no_preview_build() {
-        let f = compute_freshness(None, Some(SHA_A), None);
-        assert_eq!(f.status, FRESH_NO_PREVIEW);
+    fn down_when_unreachable() {
+        let f = classify(false, None, Some(SHA_A), None);
+        assert_eq!(f.status, FRESH_DOWN);
+        assert_eq!(f.preview_sha, None);
+        // PR head is still surfaced for context.
+        assert_eq!(f.pr_head_sha.as_deref(), Some(SHA_A));
     }
 
     #[test]
     fn unknown_when_a_sha_is_missing() {
         assert_eq!(
-            compute_freshness(Some(&preview(false, None)), Some(SHA_A), None).status,
+            classify(true, None, Some(SHA_A), None).status,
             FRESH_UNKNOWN
         );
         assert_eq!(
-            compute_freshness(Some(&preview(false, Some(SHA_A))), None, None).status,
+            classify(true, Some(SHA_A), None, None).status,
             FRESH_UNKNOWN
         );
     }

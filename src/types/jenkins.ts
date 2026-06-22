@@ -17,20 +17,19 @@ export interface JenkinsBuild {
   url: string
   prId: string | null
   branch: string | null
-  /** Git commit this build was built from (for preview freshness), or null. */
-  commitSha: string | null
 }
 
 /**
- * Whether the deployed preview matches the PR head.
+ * Whether the live PR preview is up to date with the PR head.
  *
- * The "deploy-preview" job builds the PR's source branch, so its commit is
- * comparable to the PR's GitHub head (headRefOid).
+ * Resolved by probing the preview's `/version` endpoint (first line
+ * `commit <sha>`) and comparing the deployed commit to the PR's GitHub head
+ * (headRefOid).
  */
 export interface PreviewFreshness {
-  /** "UP_TO_DATE" | "STALE" | "BUILDING" | "NO_PREVIEW" | "UNKNOWN" */
+  /** "UP_TO_DATE" | "STALE" | "DOWN" | "UNKNOWN" */
   status: string
-  /** Commit the latest deploy-preview build was built from. */
+  /** Commit the preview is actually serving (from `/version`). */
   previewSha: string | null
   /** Current PR head commit (headRefOid). */
   prHeadSha: string | null

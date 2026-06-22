@@ -39,7 +39,6 @@ pub fn parse_builds(json: &str) -> Result<Vec<JenkinsBuild>, String> {
 pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
     let number = build.get("number").and_then(Value::as_u64)?;
     let params = extract_parameters(build.get("actions"));
-    let branch = non_empty(params.iter().find(|(n, _)| n == "BRANCH").map(|(_, v)| v));
 
     Some(JenkinsBuild {
         number,
@@ -59,72 +58,8 @@ pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
             .unwrap_or_default()
             .to_string(),
         pr_id: non_empty(params.iter().find(|(n, _)| n == "PR_ID").map(|(_, v)| v)),
-        commit_sha: extract_commit_sha(build.get("actions"), &params, branch.as_deref()),
-        branch,
+        branch: non_empty(params.iter().find(|(n, _)| n == "BRANCH").map(|(_, v)| v)),
     })
-}
-
-/// Resolve the git commit a build was built from, for preview-freshness checks.
-///
-/// Preference: an explicit ghprb/git parameter (`ghprbActualCommit` / `GIT_COMMIT`),
-/// then the git plugin's `lastBuiltRevision.SHA1`. When several `BuildData`
-/// actions exist (e.g. the app repo plus a shared library), prefer the one whose
-/// `branch[].name` matches the build's `BRANCH` so we read the PR's commit, not
-/// the library's.
-fn extract_commit_sha(
-    actions: Option<&Value>,
-    params: &[(String, String)],
-    branch: Option<&str>,
-) -> Option<String> {
-    for key in ["ghprbActualCommit", "GIT_COMMIT"] {
-        if let Some(sha) = params
-            .iter()
-            .find(|(n, _)| n == key)
-            .map(|(_, v)| v.as_str())
-            .filter(|v| is_sha(v))
-        {
-            return Some(sha.to_string());
-        }
-    }
-
-    let actions = actions.and_then(Value::as_array)?;
-    let revisions: Vec<(&str, Vec<&str>)> = actions
-        .iter()
-        .filter_map(|a| a.get("lastBuiltRevision"))
-        .filter_map(|rev| {
-            let sha = rev
-                .get("SHA1")
-                .and_then(Value::as_str)
-                .filter(|s| is_sha(s))?;
-            let names = rev
-                .get("branch")
-                .and_then(Value::as_array)
-                .map(|b| {
-                    b.iter()
-                        .filter_map(|e| e.get("name").and_then(Value::as_str))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some((sha, names))
-        })
-        .collect();
-
-    // Prefer the revision whose branch matches the PR branch (skip the library's).
-    if let Some(branch) = branch.filter(|b| !b.is_empty()) {
-        if let Some((sha, _)) = revisions
-            .iter()
-            .find(|(_, names)| names.iter().any(|n| n.ends_with(branch)))
-        {
-            return Some((*sha).to_string());
-        }
-    }
-    revisions.first().map(|(sha, _)| (*sha).to_string())
-}
-
-/// A plausible git SHA: 7–40 hex chars (rejects refs like `origin/pr/3959/merge`).
-fn is_sha(value: &str) -> bool {
-    let len = value.len();
-    (7..=40).contains(&len) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Collect `(name, value)` pairs from the `ParametersAction` inside `actions[]`.
@@ -286,7 +221,6 @@ mod tests {
     use super::*;
 
     const BUILDS_FIXTURE: &str = include_str!("tests/fixtures/build-and-test-builds.json");
-    const PREVIEW_FIXTURE: &str = include_str!("tests/fixtures/deploy-preview-builds.json");
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
     const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
     const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
@@ -330,52 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_preview_commit_from_matching_build_data() {
-        // deploy-preview build #221 (PR 3959) carries two BuildData actions: the
-        // app repo (branch matches BRANCH) and a shared library. We must pick the
-        // app repo's SHA, not the library's.
-        let builds = parse_builds(PREVIEW_FIXTURE).expect("parse");
-        let latest = find_build_for_pr(&builds, "3959").expect("3959");
-        assert_eq!(latest.number, 221);
-        assert_eq!(
-            latest.commit_sha.as_deref(),
-            Some("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678")
-        );
-    }
-
-    #[test]
-    fn is_sha_rejects_refs_and_short_values() {
-        assert!(is_sha("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"));
-        assert!(is_sha("a1b2c3d")); // 7 chars, short SHA
-        assert!(!is_sha("origin/pr/3959/merge"));
-        assert!(!is_sha("master"));
-        assert!(!is_sha("abc")); // too short
-        assert!(!is_sha(""));
-    }
-
-    #[test]
-    fn extract_commit_sha_prefers_ghprb_param() {
-        let actions = serde_json::json!([
-            { "lastBuiltRevision": { "SHA1": "ffffffffffffffffffffffffffffffffffffffff",
-                                     "branch": [{ "name": "origin/feat" }] } }
-        ]);
-        let params = vec![(
-            "ghprbActualCommit".to_string(),
-            "1234567890abcdef1234567890abcdef12345678".to_string(),
-        )];
-        assert_eq!(
-            extract_commit_sha(Some(&actions), &params, Some("feat")).as_deref(),
-            Some("1234567890abcdef1234567890abcdef12345678")
-        );
-    }
-
-    #[test]
-    fn extract_commit_sha_none_when_no_revision() {
-        let actions = serde_json::json!([{ "_class": "hudson.model.CauseAction" }, {}]);
-        assert_eq!(extract_commit_sha(Some(&actions), &[], Some("feat")), None);
-    }
-
-    #[test]
     fn parses_pipeline_stages() {
         let stages = parse_stages(WFAPI_FIXTURE).expect("parse");
         assert_eq!(stages.len(), 8);
@@ -405,7 +293,6 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
-            commit_sha: None,
         };
         assert_eq!(overall_status(Some(&building)), "BUILDING");
 
@@ -469,7 +356,6 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
-            commit_sha: None,
         };
         // Running build wins even if something is also queued.
         assert_eq!(overall_status_with_queue(Some(&building), true), "BUILDING");
