@@ -358,8 +358,14 @@ mod tests {
         let builds = parse::parse_builds(LAUNCHER_BUILDS_FIXTURE).expect("parse launcher builds");
 
         // Same PR-matching logic the re-run uses to pick the build to replay.
+        // Real Launcher builds carry NO PR_ID/BRANCH — only ghprb params — so this
+        // match only succeeds because parse_build derives pr_id from `ghprbPullId`
+        // and branch from `ghprbSourceBranch` (the regression behind the toast
+        // "No previous Launcher build found").
         let last = match_build(&builds, Some("3959"), Some("feat-login")).expect("launcher build");
         assert_eq!(last.number, 1234);
+        assert_eq!(last.pr_id.as_deref(), Some("3959"));
+        assert_eq!(last.branch.as_deref(), Some("feat-login"));
 
         // Pull the full parameter set off that build (mirrors fetch_build_parameters).
         let root: Value = serde_json::from_str(LAUNCHER_BUILDS_FIXTURE).expect("json");
