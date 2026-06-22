@@ -22,14 +22,39 @@ pub const PIPELINE_JOB: &str = "build-and-test";
 pub const LAUNCHER_JOB: &str = "build-and-test_Launcher-on-pr";
 /// Standalone job that deploys the PR preview environment.
 pub const PREVIEW_JOB: &str = "deploy-preview";
-/// The flaky stage Farès re-runs most.
+/// The flaky stage that gets re-run most often.
 pub const INTEGRATION_STAGE: &str = "Integration tests";
 /// Jobs whose queue items mean "the PR's pipeline is waiting to start".
 const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
 
-/// Build the preview admin URL for a PR (e.g. `https://3959.preview.example.com/admin`).
-pub fn preview_url(pr_id: &str) -> String {
-    format!("https://{pr_id}.preview.example.com/admin")
+/// Resolve the preview **base** URL for a PR from the project's configured
+/// template (`{pr}` placeholder, e.g. `https://{pr}.preview.example.com`).
+///
+/// Returns `None` when no template is configured, so the real internal preview
+/// domain never has to be hardcoded in source. Both the admin link and the
+/// freshness `/version` probe are derived from this single base.
+pub fn preview_base_url(template: Option<&str>, pr_id: &str) -> Option<String> {
+    let template = template.map(str::trim).filter(|t| !t.is_empty())?;
+    let resolved = template.replace("{pr}", pr_id);
+    let base = resolved.trim_end_matches('/');
+
+    // Tolerate a template that already includes the `/admin` suffix: the admin
+    // link and the `/version` probe are BOTH derived from the base, so a trailing
+    // `/admin` would build `/admin/admin` and probe `/admin/version` — which the
+    // admin SPA happily answers with index.html (HTTP 200, no `commit <sha>`),
+    // masking the preview freshness as UNKNOWN (grey). Strip it so either the
+    // base or the admin URL works.
+    let base = match base.len().checked_sub("/admin".len()) {
+        Some(cut) if base[cut..].eq_ignore_ascii_case("/admin") => &base[..cut],
+        _ => base,
+    };
+
+    Some(base.trim_end_matches('/').to_string())
+}
+
+/// Build the preview admin URL for a PR (preview base + `/admin`).
+pub fn preview_url(template: Option<&str>, pr_id: &str) -> Option<String> {
+    preview_base_url(template, pr_id).map(|base| format!("{base}/admin"))
 }
 
 fn now_secs() -> i64 {
@@ -69,6 +94,7 @@ pub async fn assemble_status(
     worktree_id: &str,
     pr_id: Option<&str>,
     branch: Option<&str>,
+    preview_url_template: Option<&str>,
 ) -> JenkinsWorktreeStatus {
     let pipeline = match_build(pipeline_builds, pr_id, branch).cloned();
 
@@ -95,7 +121,9 @@ pub async fn assemble_status(
         .as_deref()
         .and_then(|pr| parse::find_queued_for_pr(queue_json, pr, QUEUE_JOBS));
 
-    let preview_url = resolved_pr.as_deref().map(preview_url);
+    let preview_url = resolved_pr
+        .as_deref()
+        .and_then(|pr| preview_url(preview_url_template, pr));
     let overall_status = parse::overall_status_with_queue(pipeline.as_ref(), queue.is_some());
 
     JenkinsWorktreeStatus {
@@ -120,10 +148,13 @@ pub(super) async fn resolve_preview_freshness(
     repo_path: &str,
     pr_id: Option<&str>,
     pr_number: Option<u32>,
+    preview_url_template: Option<&str>,
 ) -> Option<PreviewFreshness> {
     let pr_id = pr_id.filter(|p| !p.is_empty())?;
+    // No configured preview domain → nothing to probe (and nothing hardcoded).
+    let version_url = format!("{}/version", preview_base_url(preview_url_template, pr_id)?);
     let gh = resolve_gh_binary(app);
-    Some(freshness::resolve_freshness(repo_path, pr_id, pr_number, gh).await)
+    Some(freshness::resolve_freshness(repo_path, pr_id, pr_number, gh, &version_url).await)
 }
 
 /// Live Jenkins status for the worktree's PR/branch.
@@ -155,6 +186,7 @@ pub async fn get_jenkins_status(
         &worktree_id,
         pr_id.as_deref(),
         branch.as_deref(),
+        cfg.preview_url_template.as_deref(),
     )
     .await;
 
@@ -164,6 +196,7 @@ pub async fn get_jenkins_status(
             &worktree.path,
             status.pr_id.as_deref(),
             worktree.pr_number,
+            cfg.preview_url_template.as_deref(),
         )
         .await;
     }
@@ -218,7 +251,8 @@ pub async fn restart_jenkins_integration(
         .map_err(|e| format!("Could not restart the Integration tests stage ({e}). Use “Re-run pipeline” instead."))
 }
 
-/// Persist per-project Jenkins config (URL + user + token). Empty → cleared.
+/// Persist per-project Jenkins config (URL + user + token + preview template).
+/// Empty values → cleared. `preview_url_template` is optional (defaults to unset).
 #[tauri::command]
 pub async fn save_jenkins_config(
     app: AppHandle,
@@ -226,6 +260,7 @@ pub async fn save_jenkins_config(
     url: String,
     user: String,
     token: String,
+    preview_url_template: Option<String>,
 ) -> Result<Project, String> {
     let mut data = load_projects_data(&app)?;
     let project = data
@@ -235,6 +270,7 @@ pub async fn save_jenkins_config(
     project.jenkins_url = clean(url);
     project.jenkins_user = clean(user);
     project.jenkins_token = clean(token);
+    project.jenkins_preview_url_template = preview_url_template.and_then(clean);
 
     let updated = data
         .find_project(&project_id)
@@ -275,8 +311,49 @@ mod tests {
     }
 
     #[test]
-    fn preview_url_uses_pr_id() {
-        assert_eq!(preview_url("3959"), "https://3959.preview.example.com/admin");
+    fn preview_urls_derive_from_base_template() {
+        let tpl = Some("https://{pr}.preview.example.com");
+        assert_eq!(
+            preview_base_url(tpl, "3959").as_deref(),
+            Some("https://3959.preview.example.com")
+        );
+        assert_eq!(
+            preview_url(tpl, "3959").as_deref(),
+            Some("https://3959.preview.example.com/admin")
+        );
+        // Trailing slash in the template doesn't double up.
+        assert_eq!(
+            preview_url(Some("https://{pr}.preview.example.com/"), "42").as_deref(),
+            Some("https://42.preview.example.com/admin")
+        );
+        // No template configured → nothing (nothing hardcoded).
+        assert_eq!(preview_url(None, "3959"), None);
+        assert_eq!(preview_base_url(Some("   "), "3959"), None);
+    }
+
+    #[test]
+    fn preview_base_strips_trailing_admin_suffix() {
+        // A template that already ends in `/admin` must not double up or probe
+        // `/admin/version` — the base is normalized back to the host root.
+        let tpl = Some("https://{pr}.preview.example.com/admin");
+        assert_eq!(
+            preview_base_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com")
+        );
+        assert_eq!(
+            preview_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com/admin")
+        );
+        // Case-insensitive + trailing slash variants normalize the same way.
+        assert_eq!(
+            preview_base_url(Some("https://{pr}.preview.example.com/Admin/"), "42").as_deref(),
+            Some("https://42.preview.example.com")
+        );
+        // A path that merely contains "admin" elsewhere is left untouched.
+        assert_eq!(
+            preview_base_url(Some("https://admin.example.com/{pr}"), "42").as_deref(),
+            Some("https://admin.example.com/42")
+        );
     }
 
     #[test]

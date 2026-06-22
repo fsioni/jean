@@ -141,6 +141,31 @@ export function useJenkinsStatus(
   })
 }
 
+/**
+ * Cache-only read of a worktree's Jenkins status — **never fetches**.
+ *
+ * The global poller (`jenkins::start_poller`) already broadcasts every PR-linked
+ * worktree's status every 60s; `useJenkinsStatusEvents()` writes those payloads
+ * into the same query key via `setQueryData`. List rows consume that cache
+ * passively: subscribing here re-renders the row when a fresh status lands,
+ * with zero extra `get_jenkins_status` invocations (which would be N redundant
+ * fetches at mount + every cycle).
+ *
+ * Returns `undefined` until the poller has populated the cache for this worktree.
+ */
+export function useJenkinsStatusCached(worktreeId: string | null) {
+  return useQuery<JenkinsWorktreeStatus>({
+    queryKey: jenkinsQueryKeys.status(worktreeId ?? ''),
+    // Never invoked: enabled is false. The cache is filled by the poller events.
+    queryFn: () => {
+      throw new Error('useJenkinsStatusCached is cache-only')
+    },
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 5,
+  })
+}
+
 // ============================================================================
 // Status Events
 // ============================================================================
