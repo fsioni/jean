@@ -1,6 +1,6 @@
 //! Preview freshness: is the live PR preview up to date with the PR head?
 //!
-//! Jenkins exposes no commit SHA for planexpo builds (no git `BuildData`, no
+//! Jenkins exposes no commit SHA for these builds (no git `BuildData`, no
 //! changesets, and the `deploy-preview` job is unused — the preview is deployed
 //! by the `Deploy preview` stage of `build-and-test`). So instead of asking
 //! Jenkins, we ask the **preview itself**: every preview serves a `/version`
@@ -48,11 +48,6 @@ pub struct PreviewFreshness {
     pub pr_head_sha: Option<String>,
     /// How many commits the PR head is ahead of the preview (best-effort).
     pub behind_by: Option<u32>,
-}
-
-/// The preview `/version` URL for a PR (e.g. `https://3959.preview.example.com/version`).
-fn preview_version_url(pr_id: &str) -> String {
-    format!("https://{pr_id}.preview.example.com/version")
 }
 
 /// Parse the deployed commit SHA from a `/version` body.
@@ -126,8 +121,9 @@ pub async fn resolve_freshness(
     pr_id: &str,
     pr_number: Option<u32>,
     gh_binary: PathBuf,
+    version_url: &str,
 ) -> PreviewFreshness {
-    let (reachable, preview_sha) = probe_preview(pr_id).await;
+    let (reachable, preview_sha) = probe_preview(version_url).await;
     if !reachable {
         return classify(false, None, None, None);
     }
@@ -152,9 +148,9 @@ pub async fn resolve_freshness(
 /// Probe the preview `/version` endpoint.
 ///
 /// Returns `(reachable, deployed_sha)`. A connection error / timeout / non-2xx
-/// means the preview is down. Preview envs are internal (`*.preview.example.com`) and
-/// may use self-signed certs, so cert validation is relaxed for this probe only.
-async fn probe_preview(pr_id: &str) -> (bool, Option<String>) {
+/// means the preview is down. Preview envs are internal and may use self-signed
+/// certs, so cert validation is relaxed for this probe only.
+async fn probe_preview(version_url: &str) -> (bool, Option<String>) {
     let client = match reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
         .danger_accept_invalid_certs(true)
@@ -166,7 +162,7 @@ async fn probe_preview(pr_id: &str) -> (bool, Option<String>) {
 
     // Only the first line (`commit <sha>`) is needed; ask for a small range.
     match client
-        .get(preview_version_url(pr_id))
+        .get(version_url)
         .header("Range", "bytes=0-127")
         .send()
         .await
@@ -235,7 +231,7 @@ mod tests {
     fn parses_sha_from_version_dump() {
         // The real `/version` body is a `git log -1 --stat` dump.
         let body = "commit 9a54f3bafc2fa898b06a5fb0b48bae73af92963f\n\
-                    Author: Nabil <nabil@example.com>\n\
+                    Author: Dev <dev@example.com>\n\
                     Date:   Fri Jun 19 17:58:08 2026 +0200\n\n    Revert ...\n\nM\tfront/app.elm\n";
         assert_eq!(parse_version_sha(body).as_deref(), Some(SHA_A));
     }

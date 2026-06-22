@@ -498,6 +498,7 @@ pub async fn add_project(
         jenkins_url: None,
         jenkins_user: None,
         jenkins_token: None,
+        jenkins_preview_url_template: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -660,6 +661,7 @@ pub async fn init_project(
         jenkins_url: None,
         jenkins_user: None,
         jenkins_token: None,
+        jenkins_preview_url_template: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -719,6 +721,7 @@ pub async fn clone_project(
         jenkins_url: None,
         jenkins_user: None,
         jenkins_token: None,
+        jenkins_preview_url_template: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -10111,6 +10114,7 @@ pub async fn create_folder(
         jenkins_url: None,
         jenkins_user: None,
         jenkins_token: None,
+        jenkins_preview_url_template: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     };
@@ -11458,6 +11462,7 @@ mod tests {
             jenkins_url: None,
             jenkins_user: None,
             jenkins_token: None,
+            jenkins_preview_url_template: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings: None,
         };

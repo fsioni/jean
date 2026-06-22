@@ -74,6 +74,7 @@ async fn poll_cycle(
                 &worktree.id,
                 Some(&pr_id),
                 Some(&worktree.branch),
+                cfg.preview_url_template.as_deref(),
             )
             .await;
 
@@ -82,6 +83,7 @@ async fn poll_cycle(
                 &worktree.path,
                 status.pr_id.as_deref(),
                 worktree.pr_number,
+                cfg.preview_url_template.as_deref(),
             )
             .await;
 

@@ -6,7 +6,7 @@
  *
  * Backend contract:
  * - get_jenkins_status({ projectId, worktreeId, prId?, branch? }) -> JenkinsWorktreeStatus
- * - save_jenkins_config({ projectId, url, user, token }) -> Project
+ * - save_jenkins_config({ projectId, url, user, token, previewUrlTemplate? }) -> Project
  * - rerun_jenkins_pipeline({ projectId, prId?, branch? }) -> void
  * - restart_jenkins_integration({ projectId, buildNumber }) -> void
  * - event "jenkins:status-update" -> JenkinsWorktreeStatus

@@ -76,11 +76,12 @@ pub struct ClickUpStatusOption {
     pub label: String,
 }
 
-/// Hard-coded Planexpo status transitions (`value`, `label`).
+/// Hard-coded status transitions (`value`, `label`).
 ///
-/// `value` is the exact status name as configured in the ClickUp Planexpo space
-/// (team 111111, list 123456789) — verified against the live workspace. `label`
-/// is the uppercased display form. Order matches the space's `orderindex`.
+/// `value` is the exact status name as configured in the project's ClickUp
+/// space. The workspace/list ids are entered in Settings and stored in local
+/// config — never hardcoded here. `label` is the uppercased display form.
+/// Order matches the space's `orderindex`.
 const PLANEXPO_STATUSES: &[(&str, &str)] = &[
     ("backlog", "BACKLOG"),
     ("shortlist", "SHORTLIST"),

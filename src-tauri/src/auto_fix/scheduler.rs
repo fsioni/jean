@@ -599,6 +599,7 @@ fn project_from_pending_auto_yolo(entry: &PendingAutoYolo) -> Project {
         jenkins_url: None,
         jenkins_user: None,
         jenkins_token: None,
+        jenkins_preview_url_template: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     }

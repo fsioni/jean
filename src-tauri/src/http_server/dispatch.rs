@@ -3138,9 +3138,17 @@ pub async fn dispatch_command(
             let url: String = from_field(&args, "url")?;
             let user: String = from_field(&args, "user")?;
             let token: String = from_field(&args, "token")?;
-            let result =
-                crate::jenkins::save_jenkins_config(app.clone(), project_id, url, user, token)
-                    .await?;
+            let preview_url_template: Option<String> =
+                field_opt(&args, "previewUrlTemplate", "preview_url_template")?;
+            let result = crate::jenkins::save_jenkins_config(
+                app.clone(),
+                project_id,
+                url,
+                user,
+                token,
+                preview_url_template,
+            )
+            .await?;
             to_value(result)
         }
 

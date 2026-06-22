@@ -120,6 +120,8 @@ export function GeneralPane({
     null
   )
   const [showJenkinsToken, setShowJenkinsToken] = useState(false)
+  const [localJenkinsPreviewTemplate, setLocalJenkinsPreviewTemplate] =
+    useState<string | null>(null)
   const [savingJenkins, setSavingJenkins] = useState(false)
 
   // Linear has access if either project key or global key is set
@@ -257,6 +259,8 @@ export function GeneralPane({
   const displayedJenkinsUser = localJenkinsUser ?? project?.jenkins_user ?? ''
   const displayedJenkinsToken =
     localJenkinsToken ?? project?.jenkins_token ?? ''
+  const displayedJenkinsPreviewTemplate =
+    localJenkinsPreviewTemplate ?? project?.jenkins_preview_url_template ?? ''
 
   const jenkinsChanged =
     (localJenkinsUrl !== null &&
@@ -264,24 +268,40 @@ export function GeneralPane({
     (localJenkinsUser !== null &&
       localJenkinsUser !== (project?.jenkins_user ?? '')) ||
     (localJenkinsToken !== null &&
-      localJenkinsToken !== (project?.jenkins_token ?? ''))
+      localJenkinsToken !== (project?.jenkins_token ?? '')) ||
+    (localJenkinsPreviewTemplate !== null &&
+      localJenkinsPreviewTemplate !==
+        (project?.jenkins_preview_url_template ?? ''))
 
   const jenkinsConfigured =
     !!project?.jenkins_url ||
     !!project?.jenkins_user ||
-    !!project?.jenkins_token
+    !!project?.jenkins_token ||
+    !!project?.jenkins_preview_url_template
 
   const saveJenkinsConfig = useCallback(
-    async (url: string, user: string, token: string) => {
+    async (
+      url: string,
+      user: string,
+      token: string,
+      previewUrlTemplate: string
+    ) => {
       setSavingJenkins(true)
       try {
-        await invoke('save_jenkins_config', { projectId, url, user, token })
+        await invoke('save_jenkins_config', {
+          projectId,
+          url,
+          user,
+          token,
+          previewUrlTemplate: previewUrlTemplate || null,
+        })
         await queryClient.invalidateQueries({
           queryKey: projectsQueryKeys.list(),
         })
         setLocalJenkinsUrl(null)
         setLocalJenkinsUser(null)
         setLocalJenkinsToken(null)
+        setLocalJenkinsPreviewTemplate(null)
         toast.success('Jenkins settings saved')
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -297,17 +317,19 @@ export function GeneralPane({
     saveJenkinsConfig(
       displayedJenkinsUrl.trim(),
       displayedJenkinsUser.trim(),
-      displayedJenkinsToken.trim()
+      displayedJenkinsToken.trim(),
+      displayedJenkinsPreviewTemplate.trim()
     )
   }, [
     saveJenkinsConfig,
     displayedJenkinsUrl,
     displayedJenkinsUser,
     displayedJenkinsToken,
+    displayedJenkinsPreviewTemplate,
   ])
 
   const handleRemoveJenkins = useCallback(() => {
-    saveJenkinsConfig('', '', '')
+    saveJenkinsConfig('', '', '', '')
   }, [saveJenkinsConfig])
 
   const handleTeamChange = useCallback(
@@ -710,6 +732,18 @@ export function GeneralPane({
             value={displayedJenkinsUser}
             onChange={e => setLocalJenkinsUser(e.target.value)}
             className="flex-1 text-base md:text-sm"
+          />
+        </InlineField>
+
+        <InlineField
+          label="Preview URL template"
+          description="Base URL of a PR preview (use {pr} for the PR id). The admin link and the freshness check derive /admin and /version from it. Stored per project; leave empty to disable."
+        >
+          <Input
+            placeholder="https://{pr}.preview.example.com"
+            value={displayedJenkinsPreviewTemplate}
+            onChange={e => setLocalJenkinsPreviewTemplate(e.target.value)}
+            className="flex-1 text-base md:text-sm font-mono"
           />
         </InlineField>
 

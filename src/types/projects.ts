@@ -85,6 +85,8 @@ export interface Project {
   jenkins_user?: string | null
   /** Jenkins API token (stored per-project) */
   jenkins_token?: string | null
+  /** Preview base URL template; "{pr}" → PR id (e.g. "https://{pr}.preview.example.com"). Admin link + freshness derive /admin and /version. Kept in local config, not source. */
+  jenkins_preview_url_template?: string | null
   /** IDs of linked projects for cross-project context sharing */
   linked_project_ids?: string[]
   /** Per-project automated issue fixing settings */

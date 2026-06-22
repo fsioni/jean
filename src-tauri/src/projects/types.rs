@@ -168,6 +168,12 @@ pub struct Project {
     /// Jenkins API token for Basic auth.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jenkins_token: Option<String>,
+    /// Preview base URL template. `{pr}` is replaced by the PR id
+    /// (e.g. `https://{pr}.preview.example.com`); the admin link and the
+    /// freshness probe derive `/admin` and `/version` from it. `None` → disabled.
+    /// Kept out of source so the real internal domain lives only in local config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_preview_url_template: Option<String>,
     // --- /perso/jenkins ---
     /// IDs of linked projects for cross-project context sharing
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
