@@ -12,6 +12,7 @@ import {
   DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
   DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptProvider,
 } from '@/types/preferences'
 import { logger } from '@/lib/logger'
@@ -289,26 +290,31 @@ const investigationConfig = {
     modelKey: 'investigate_issue_model',
     providerKey: 'investigate_issue_provider',
     effortKey: 'investigate_issue_effort',
+    modeKey: 'investigate_issue_mode',
   },
   pr: {
     modelKey: 'investigate_pr_model',
     providerKey: 'investigate_pr_provider',
     effortKey: 'investigate_pr_effort',
+    modeKey: 'investigate_pr_mode',
   },
   'security-alert': {
     modelKey: 'investigate_security_alert_model',
     providerKey: 'investigate_security_alert_provider',
     effortKey: 'investigate_security_alert_effort',
+    modeKey: 'investigate_security_alert_mode',
   },
   advisory: {
     modelKey: 'investigate_advisory_model',
     providerKey: 'investigate_advisory_provider',
     effortKey: 'investigate_advisory_effort',
+    modeKey: 'investigate_advisory_mode',
   },
   'linear-issue': {
     modelKey: 'investigate_linear_issue_model',
     providerKey: 'investigate_linear_issue_provider',
     effortKey: 'investigate_linear_issue_effort',
+    modeKey: 'investigate_linear_issue_mode',
   },
 } as const satisfies Record<
   InvestigationType,
@@ -322,6 +328,9 @@ const investigationConfig = {
     effortKey: keyof NonNullable<
       ReturnType<typeof usePreferences>['data']
     >['magic_prompt_efforts']
+    modeKey: keyof NonNullable<
+      ReturnType<typeof usePreferences>['data']
+    >['magic_prompt_modes']
   }
 >
 
@@ -353,7 +362,8 @@ async function processBackgroundInvestigation(
   const prompt = await buildPrompt(worktreeId, type, preferences, projectId)
 
   // Resolve model, provider, backend
-  const { modelKey, providerKey, effortKey } = investigationConfig[type]
+  const { modelKey, providerKey, effortKey, modeKey } =
+    investigationConfig[type]
 
   const selectedModel =
     preferences?.magic_prompt_models?.[modelKey] ??
@@ -382,6 +392,9 @@ async function processBackgroundInvestigation(
   const effortLevel =
     preferences?.magic_prompt_efforts?.[effortKey] ??
     (useAdaptive ? 'high' : undefined)
+  const executionMode =
+    preferences?.magic_prompt_modes?.[modeKey] ??
+    DEFAULT_MAGIC_PROMPT_MODES[modeKey]
 
   const result = await invoke<{
     sessionId: string
@@ -402,6 +415,7 @@ async function processBackgroundInvestigation(
       : undefined,
     chromeEnabled: preferences?.chrome_enabled ?? false,
     aiLanguage: preferences?.ai_language,
+    executionMode,
   })
 
   const sessionId = result.sessionId
@@ -432,7 +446,7 @@ async function processBackgroundInvestigation(
   setSelectedModel(sessionId, selectedModel)
   setSelectedProvider(sessionId, provider)
   setSelectedBackend(sessionId, backend)
-  setExecutingMode(sessionId, 'plan')
+  setExecutingMode(sessionId, executionMode)
   clearStreamingContent(sessionId)
   clearToolCalls(sessionId)
   clearStreamingContentBlocks(sessionId)

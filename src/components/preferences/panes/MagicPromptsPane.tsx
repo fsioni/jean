@@ -58,6 +58,7 @@ import {
   DEFAULT_MAGIC_PROMPT_MODELS,
   DEFAULT_MAGIC_PROMPT_PROVIDERS,
   DEFAULT_MAGIC_PROMPT_BACKENDS,
+  DEFAULT_MAGIC_PROMPT_MODES,
   CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS,
   CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS,
   OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
@@ -73,6 +74,8 @@ import {
   type MagicPromptProviders,
   type MagicPromptBackends,
   type MagicPromptModel,
+  type MagicPromptModes,
+  type MagicPromptExecutionMode,
 } from '@/types/preferences'
 import { cn } from '@/lib/utils'
 import { BackendLabel } from '@/components/ui/backend-label'
@@ -87,6 +90,7 @@ interface PromptConfig {
   modelKey?: keyof MagicPromptModels
   providerKey?: keyof MagicPromptProviders
   backendKey?: keyof MagicPromptBackends
+  modeKey?: keyof MagicPromptModes
   label: string
   description: string
   variables: VariableInfo[]
@@ -108,6 +112,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_issue_model',
         providerKey: 'investigate_issue_provider',
         backendKey: 'investigate_issue_backend',
+        modeKey: 'investigate_issue_mode',
         label: 'Investigate Issue',
         description:
           'Prompt for analyzing GitHub issues loaded into the context.',
@@ -129,6 +134,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_pr_model',
         providerKey: 'investigate_pr_provider',
         backendKey: 'investigate_pr_backend',
+        modeKey: 'investigate_pr_mode',
         label: 'Investigate PR',
         description:
           'Prompt for analyzing GitHub pull requests loaded into the context.',
@@ -150,6 +156,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_workflow_run_model',
         providerKey: 'investigate_workflow_run_provider',
         backendKey: 'investigate_workflow_run_backend',
+        modeKey: 'investigate_workflow_run_mode',
         label: 'Investigate Workflow Run',
         description:
           'Prompt for investigating failed GitHub Actions workflow runs.',
@@ -177,6 +184,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_security_alert_model',
         providerKey: 'investigate_security_alert_provider',
         backendKey: 'investigate_security_alert_backend',
+        modeKey: 'investigate_security_alert_mode',
         label: 'Investigate Dependabot Alert',
         description:
           'Prompt for investigating Dependabot vulnerability alerts in dependencies.',
@@ -199,6 +207,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_advisory_model',
         providerKey: 'investigate_advisory_provider',
         backendKey: 'investigate_advisory_backend',
+        modeKey: 'investigate_advisory_mode',
         label: 'Investigate Security Advisory',
         description: 'Prompt for investigating repository security advisories.',
         variables: [
@@ -219,6 +228,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'investigate_linear_issue_model',
         providerKey: 'investigate_linear_issue_provider',
         backendKey: 'investigate_linear_issue_backend',
+        modeKey: 'investigate_linear_issue_mode',
         label: 'Investigate Linear Issue',
         description:
           'Prompt for analyzing Linear issues. Issue content is embedded directly since Claude CLI cannot access the Linear API.',
@@ -271,6 +281,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'review_comments_model',
         providerKey: 'review_comments_provider',
         backendKey: 'review_comments_backend',
+        modeKey: 'review_comments_mode',
         label: 'Review Comments',
         description:
           'Prompt for addressing inline PR review comments selected from the Review Comments dialog.',
@@ -352,6 +363,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         modelKey: 'resolve_conflicts_model',
         providerKey: 'resolve_conflicts_provider',
         backendKey: 'resolve_conflicts_backend',
+        modeKey: 'resolve_conflicts_mode',
         label: 'Resolve Conflicts',
         description: 'Instructions appended to conflict resolution prompts.',
         variables: [],
@@ -494,9 +506,14 @@ export function getMagicPromptItemId(key: keyof MagicPrompts): string {
 
 const CLAUDE_MODEL_OPTIONS: { value: MagicPromptModel; label: string }[] = [
   { value: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
+  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Opus 4.7 (1M)' },
+  { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
-  { value: 'sonnet', label: 'Sonnet 4.6' },
+  { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 (1M)' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { value: 'sonnet', label: 'Sonnet 4.6 (provider alias)' },
   { value: 'haiku', label: 'Haiku' },
 ]
 
@@ -589,6 +606,8 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     preferences?.magic_prompt_providers ?? DEFAULT_MAGIC_PROMPT_PROVIDERS
   const currentBackends =
     preferences?.magic_prompt_backends ?? DEFAULT_MAGIC_PROMPT_BACKENDS
+  const currentModes =
+    preferences?.magic_prompt_modes ?? DEFAULT_MAGIC_PROMPT_MODES
   const profiles = useMemo(
     () => preferences?.custom_cli_profiles ?? [],
     [preferences?.custom_cli_profiles]
@@ -605,6 +624,10 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     : undefined
   const currentBackend = selectedConfig.backendKey
     ? (currentBackends[selectedConfig.backendKey] ?? null)
+    : undefined
+  const currentMode = selectedConfig.modeKey
+    ? (currentModes[selectedConfig.modeKey] ??
+      DEFAULT_MAGIC_PROMPT_MODES[selectedConfig.modeKey])
     : undefined
   // Resolve effective backend for model filtering: per-operation override > global default_backend
   const effectiveBackend =
@@ -855,6 +878,19 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     ]
   )
 
+  const handleModeChange = useCallback(
+    (mode: MagicPromptExecutionMode) => {
+      if (!preferences || !selectedConfig.modeKey) return
+      patchPreferences.mutate({
+        magic_prompt_modes: {
+          ...currentModes,
+          [selectedConfig.modeKey]: mode,
+        },
+      })
+    },
+    [preferences, patchPreferences, currentModes, selectedConfig.modeKey]
+  )
+
   const handleApplyClaudeDefaults = useCallback(() => {
     if (!preferences) return
     patchPreferences.mutate({
@@ -919,7 +955,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   return (
     <div className="flex flex-col min-h-0 flex-1">
       {/* Preset buttons */}
-      <div className="flex items-center gap-2 mb-3 shrink-0">
+      <div className="flex items-center gap-2 mb-3 shrink-0 overflow-x-auto pb-1">
         <span className="text-xs text-muted-foreground">Presets:</span>
         <Button
           variant="outline"
@@ -960,9 +996,34 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
       </div>
 
       {/* Master-detail layout */}
-      <div className="flex flex-1 min-h-0 gap-4">
+      <div className="flex flex-1 min-h-0 flex-col gap-3 md:flex-row md:gap-4">
+        <div className="md:hidden shrink-0">
+          <Select
+            value={selectedKey}
+            onValueChange={value => setSelectedKey(value as keyof MagicPrompts)}
+          >
+            <SelectTrigger aria-label="Magic prompt" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROMPT_SECTIONS.map(section => (
+                <React.Fragment key={section.label}>
+                  {section.configs.map(config => (
+                    <SelectItem key={config.key} value={config.key}>
+                      {config.label}
+                    </SelectItem>
+                  ))}
+                </React.Fragment>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {/* Sidebar list */}
-        <div className="w-[260px] shrink-0 overflow-y-auto pr-1">
+        <div
+          data-testid="magic-prompts-sidebar"
+          className="hidden w-[260px] shrink-0 overflow-y-auto pr-1 md:block"
+        >
           {PROMPT_SECTIONS.map((section, sectionIdx) => (
             <div key={section.label} className={sectionIdx > 0 ? 'mt-3' : ''}>
               <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1 px-2">
@@ -1008,7 +1069,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           </div>
 
           {/* Backend / Model / Provider / Reset row */}
-          <div className="flex items-center gap-2 mb-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 mb-2 shrink-0">
             {currentBackend !== undefined && (
               <>
                 <span className="text-xs text-muted-foreground">Backend</span>
@@ -1017,6 +1078,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                   onValueChange={handleBackendChange}
                 >
                   <SelectTrigger
+                    aria-label="Backend"
                     size="sm"
                     className="w-[120px] text-xs"
                     hideIcon={installedBackends.length <= 1}
@@ -1065,7 +1127,11 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     value={currentProvider ?? 'anthropic'}
                     onValueChange={handleProviderChange}
                   >
-                    <SelectTrigger size="sm" className="w-[130px] text-xs">
+                    <SelectTrigger
+                      aria-label="Provider"
+                      size="sm"
+                      className="w-[130px] text-xs"
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1090,6 +1156,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     <Button
                       variant="outline"
                       role="combobox"
+                      aria-label="Model"
                       aria-expanded={modelPopoverOpen}
                       className="w-[160px] h-8 text-xs justify-between font-normal"
                     >
@@ -1268,6 +1335,24 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     </Command>
                   </PopoverContent>
                 </Popover>
+              </>
+            )}
+            {currentMode && (
+              <>
+                <span className="text-xs text-muted-foreground">Mode</span>
+                <Select value={currentMode} onValueChange={handleModeChange}>
+                  <SelectTrigger
+                    aria-label="Default mode"
+                    size="sm"
+                    className="w-[110px] text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="plan">Plan</SelectItem>
+                    <SelectItem value="yolo">Yolo</SelectItem>
+                  </SelectContent>
+                </Select>
               </>
             )}
             <Button

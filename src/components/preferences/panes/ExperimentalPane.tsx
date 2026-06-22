@@ -10,7 +10,7 @@ const InlineField: React.FC<{
   children: React.ReactNode
 }> = ({ label, description, children }) => (
   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-    <div className="space-y-0.5 sm:w-96 sm:shrink-0">
+    <div className="space-y-0.5 sm:w-56 sm:shrink-0 lg:w-72">
       <Label className="text-sm text-foreground">{label}</Label>
       {description && (
         <div className="text-xs text-muted-foreground">{description}</div>

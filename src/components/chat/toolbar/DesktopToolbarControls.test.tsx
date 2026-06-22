@@ -170,6 +170,22 @@ describe('DesktopToolbarControls', () => {
     expect(screen.getByRole('button', { name: /^plan$/i })).toBeEnabled()
   })
 
+  it('keeps Claude provider switcher available after messages exist', () => {
+    renderDesktopToolbarControls({
+      selectedBackend: 'claude',
+      selectedModel: 'sonnet',
+      selectedProvider: null,
+      customCliProfiles: [{ name: 'OpenRouter', settings_json: '{}' }],
+      providerLocked: true,
+      sessionHasMessages: true,
+      isCodex: false,
+    })
+
+    expect(
+      screen.getByRole('button', { name: /anthropic/i })
+    ).toBeInTheDocument()
+  })
+
   it('hides reasoning control for Command Code on desktop', () => {
     renderDesktopToolbarControls({
       selectedBackend: 'commandcode',

@@ -42,7 +42,7 @@ const InlineField: React.FC<{
   children: React.ReactNode
 }> = ({ label, description, children }) => (
   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-    <div className="space-y-0.5 sm:w-96 sm:shrink-0">
+    <div className="space-y-0.5 sm:w-56 sm:shrink-0 lg:w-72">
       <Label className="text-sm text-foreground">{label}</Label>
       {description && (
         <p className="text-xs text-muted-foreground">{description}</p>
@@ -259,7 +259,7 @@ export const AppearancePane: React.FC = () => {
               onValueChange={handleThemeChange}
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-full sm:min-w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select theme" />
               </SelectTrigger>
               <SelectContent>
@@ -284,7 +284,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select theme" />
               </SelectTrigger>
               <SelectContent>
@@ -311,7 +311,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select theme" />
               </SelectTrigger>
               <SelectContent>
@@ -350,7 +350,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select" />
               </SelectTrigger>
               <SelectContent>
@@ -402,7 +402,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select font" />
               </SelectTrigger>
               <SelectContent>
@@ -423,7 +423,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select font" />
               </SelectTrigger>
               <SelectContent>
@@ -506,7 +506,7 @@ export const AppearancePane: React.FC = () => {
               }
               disabled={patchPreferences.isPending}
             >
-              <SelectTrigger className="w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select mode" />
               </SelectTrigger>
               <SelectContent>

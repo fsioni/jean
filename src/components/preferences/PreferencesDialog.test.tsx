@@ -103,7 +103,7 @@ describe('PreferencesDialog', () => {
 
     const dialog = screen.getByRole('dialog')
     const desktopHeaderActions = dialog.querySelector<HTMLElement>(
-      'div[class~="ml-auto"][class~="md:flex"]'
+      'div[class~="ml-auto"][class~="lg:flex"]'
     )
 
     if (!desktopHeaderActions) {
@@ -173,7 +173,7 @@ describe('PreferencesDialog', () => {
 
     const dialog = screen.getByRole('dialog')
     const desktopHeaderActions = dialog.querySelector<HTMLElement>(
-      'div[class~="ml-auto"][class~="md:flex"]'
+      'div[class~="ml-auto"][class~="lg:flex"]'
     )
 
     if (!desktopHeaderActions) {
@@ -230,7 +230,7 @@ describe('PreferencesDialog', () => {
 
     const dialog = screen.getByRole('dialog')
     const desktopHeaderActions = dialog.querySelector<HTMLElement>(
-      'div[class~="ml-auto"][class~="md:flex"]'
+      'div[class~="ml-auto"][class~="lg:flex"]'
     )
 
     if (!desktopHeaderActions) {

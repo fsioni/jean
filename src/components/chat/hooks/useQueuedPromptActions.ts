@@ -82,13 +82,13 @@ export function useQueuedPromptActions() {
         return
       }
 
-      // Busy Codex/OpenCode/Pi session: steer the running turn. Attachments can't be
-      // injected mid-turn, so those messages use the cancel+send path.
+      // Busy Codex/OpenCode/Pi session: steer the running turn. Codex accepts
+      // structured attachment input; other backends still use text-only steer.
       const backend = store.selectedBackends[sessionId] ?? 'claude'
       if (
         (backend === 'codex' || backend === 'opencode' || backend === 'pi') &&
         isSending &&
-        !hasAttachments(msg)
+        (backend === 'codex' || !hasAttachments(msg))
       ) {
         try {
           if (backend === 'pi') {
@@ -100,6 +100,8 @@ export function useQueuedPromptActions() {
               sessionId,
               msg.message
             )
+          } else if (hasAttachments(msg)) {
+            await steerCodexTurn(worktreeId, sessionId, msg.message, msg)
           } else {
             await steerCodexTurn(worktreeId, sessionId, msg.message)
           }

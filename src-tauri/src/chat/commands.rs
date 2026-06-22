@@ -1039,20 +1039,7 @@ fn build_queued_message_with_refs(queued: &Value) -> Result<String, String> {
         let refs = pending_files
             .iter()
             .map(|file| {
-                let relative_path = file
-                    .get("relativePath")
-                    .and_then(Value::as_str)
-                    .or_else(|| file.get("path").and_then(Value::as_str))
-                    .ok_or_else(|| "pendingFiles item missing relativePath/path".to_string())?;
-                let path = if let Some(root) = file.get("sourceRootPath").and_then(Value::as_str) {
-                    format!(
-                        "{}/{}",
-                        root.trim_end_matches('/'),
-                        relative_path.trim_start_matches('/')
-                    )
-                } else {
-                    relative_path.to_string()
-                };
+                let path = queued_file_path(file)?;
                 let is_directory = file
                     .get("isDirectory")
                     .and_then(Value::as_bool)
@@ -1143,6 +1130,148 @@ fn build_queued_message_with_refs(queued: &Value) -> Result<String, String> {
     }
 
     Ok(message)
+}
+
+fn queued_file_path(file: &Value) -> Result<String, String> {
+    let relative_path = file
+        .get("relativePath")
+        .and_then(Value::as_str)
+        .or_else(|| file.get("path").and_then(Value::as_str))
+        .ok_or_else(|| "pendingFiles item missing relativePath/path".to_string())?;
+    if let Some(root) = file.get("sourceRootPath").and_then(Value::as_str) {
+        Ok(format!(
+            "{}/{}",
+            root.trim_end_matches('/'),
+            relative_path.trim_start_matches('/')
+        ))
+    } else {
+        Ok(relative_path.to_string())
+    }
+}
+
+fn queued_message_base_prompt(queued: &Value) -> String {
+    let mut message = queued
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if message.is_empty()
+        && queued
+            .get("pendingImages")
+            .and_then(Value::as_array)
+            .is_some_and(|images| !images.is_empty())
+    {
+        message = IMAGE_ONLY_DEFAULT_PROMPT.to_string();
+    }
+    if message.is_empty()
+        && queued
+            .get("pendingTextFiles")
+            .and_then(Value::as_array)
+            .is_some_and(|files| !files.is_empty())
+    {
+        message = TEXT_ONLY_DEFAULT_PROMPT.to_string();
+    }
+    message
+}
+
+fn codex_steer_input_from_queued_message(queued: &Value) -> Result<Vec<Value>, String> {
+    let mut input = Vec::new();
+    let message = queued_message_base_prompt(queued);
+    if !message.trim().is_empty() {
+        input.push(serde_json::json!({
+            "type": "text",
+            "text": message,
+            "text_elements": [],
+        }));
+    }
+
+    for file in queued
+        .get("pendingFiles")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        let path = queued_file_path(file)?;
+        let name = file
+            .get("relativePath")
+            .and_then(Value::as_str)
+            .or_else(|| file.get("path").and_then(Value::as_str))
+            .and_then(|path| path.rsplit('/').next())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&path);
+        input.push(serde_json::json!({
+            "type": "mention",
+            "name": name,
+            "path": path,
+        }));
+    }
+
+    for skill in queued
+        .get("pendingSkills")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        let path = skill
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "pendingSkills item missing path".to_string())?;
+        let name = skill
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .or_else(|| path.rsplit('/').next())
+            .unwrap_or("skill");
+        input.push(serde_json::json!({
+            "type": "skill",
+            "name": name,
+            "path": path,
+        }));
+    }
+
+    for image in queued
+        .get("pendingImages")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        let path = image
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "pendingImages item missing path".to_string())?;
+        input.push(serde_json::json!({
+            "type": "localImage",
+            "path": path,
+        }));
+    }
+
+    for text_file in queued
+        .get("pendingTextFiles")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        let path = text_file
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "pendingTextFiles item missing path".to_string())?;
+        let name = text_file
+            .get("filename")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .or_else(|| path.rsplit('/').next())
+            .unwrap_or("attachment.txt");
+        input.push(serde_json::json!({
+            "type": "mention",
+            "name": name,
+            "path": path,
+        }));
+    }
+
+    if input.is_empty() {
+        return Err("queued message is empty".to_string());
+    }
+    Ok(input)
 }
 
 fn append_refs(message: String, refs: String) -> String {
@@ -2518,14 +2647,25 @@ pub async fn send_chat_message(
         });
     }
 
-    let previous_backend = load_metadata(&app, &session_id)
-        .ok()
-        .flatten()
-        .and_then(|metadata| super::handoff::latest_completed_backend(&metadata));
-    let message_for_backend = if super::handoff::should_inject_handoff(
-        previous_backend.as_ref(),
+    let previous_metadata = load_metadata(&app, &session_id).ok().flatten();
+    let previous_backend = previous_metadata
+        .as_ref()
+        .and_then(super::handoff::latest_completed_backend);
+    let previous_custom_profile = previous_metadata
+        .as_ref()
+        .and_then(super::handoff::latest_completed_custom_profile);
+    let backend_handoff =
+        super::handoff::should_inject_handoff(previous_backend.as_ref(), &effective_backend);
+    let claude_profile_changed = effective_backend == Backend::Claude
+        && claude_session_id.is_some()
+        && previous_custom_profile.as_deref() != custom_profile_name.as_deref();
+    let profile_handoff = super::handoff::should_inject_claude_profile_handoff(
         &effective_backend,
-    ) {
+        previous_backend.as_ref(),
+        previous_custom_profile.as_deref(),
+        custom_profile_name.as_deref(),
+    );
+    let message_for_backend = if backend_handoff || profile_handoff {
         let history = run_log::load_session_messages_window(&app, &session_id, Some(20), None)
             .map(|loaded| super::handoff::format_handoff_history(&loaded.messages, 30_000))
             .unwrap_or_default();
@@ -2537,12 +2677,21 @@ pub async fn send_chat_message(
                 .and_then(|prefs| prefs.magic_prompts.provider_switch_handoff)
                 .filter(|prompt| !prompt.trim().is_empty())
                 .unwrap_or_else(crate::default_provider_switch_handoff_prompt);
-            let handoff_prompt = super::handoff::build_handoff_prompt(
-                &template,
-                previous_backend,
-                &effective_backend,
-                &history,
-            );
+            let handoff_prompt = if profile_handoff {
+                super::handoff::build_claude_profile_handoff_prompt(
+                    &template,
+                    previous_custom_profile.as_deref(),
+                    custom_profile_name.as_deref(),
+                    &history,
+                )
+            } else {
+                super::handoff::build_handoff_prompt(
+                    &template,
+                    previous_backend,
+                    &effective_backend,
+                    &history,
+                )
+            };
             log::info!(
                     "[SendChat] injecting hidden provider-switch handoff session={session_id} previous={previous_backend:?} current={effective_backend:?}"
                 );
@@ -2552,6 +2701,11 @@ pub async fn send_chat_message(
         }
     } else {
         message.clone()
+    };
+    let claude_session_id = if claude_profile_changed {
+        None
+    } else {
+        claude_session_id
     };
 
     // Cursor CLI doesn't support thinking/effort levels
@@ -2592,6 +2746,7 @@ pub async fn send_chat_message(
         run_thinking_level.as_deref(),
         run_effort_level,
         Some(effective_backend.clone()),
+        custom_profile_name.as_deref(),
     )?;
 
     // Get file paths for detached execution
@@ -7775,8 +7930,15 @@ pub async fn steer_codex_turn(
     worktree_id: String,
     session_id: String,
     message: String,
+    queued_message: Option<Value>,
 ) -> Result<(), String> {
-    steer_text_into_codex_turn(&app, &worktree_id, &session_id, &message).await
+    if let Some(queued_message) = queued_message {
+        let input = codex_steer_input_from_queued_message(&queued_message)?;
+        let display_text = build_queued_message_with_refs(&queued_message)?;
+        steer_input_into_codex_turn(&app, &worktree_id, &session_id, input, &display_text).await
+    } else {
+        steer_text_into_codex_turn(&app, &worktree_id, &session_id, &message).await
+    }
 }
 
 /// Inject a text-only user message into a running OpenCode session via
@@ -7924,6 +8086,21 @@ async fn steer_text_into_codex_turn(
     session_id: &str,
     message: &str,
 ) -> Result<(), String> {
+    let input = vec![serde_json::json!({
+        "type": "text",
+        "text": message,
+        "text_elements": [],
+    })];
+    steer_input_into_codex_turn(app, worktree_id, session_id, input, message).await
+}
+
+async fn steer_input_into_codex_turn(
+    app: &AppHandle,
+    worktree_id: &str,
+    session_id: &str,
+    input: Vec<Value>,
+    display_text: &str,
+) -> Result<(), String> {
     let (thread_id, turn_id) = super::registry::get_codex_turn(session_id)
         .ok_or_else(|| format!("No active Codex turn for session: {session_id}"))?;
     // Turn registered with empty id before turn/started arrives — too early to steer.
@@ -7942,7 +8119,7 @@ async fn steer_text_into_codex_turn(
         .ok_or_else(|| format!("No running run for session: {session_id}"))?;
 
     // send_request blocks on a oneshot channel — must not run on the async runtime.
-    let params = super::codex::build_turn_steer_params(&thread_id, &turn_id, message);
+    let params = super::codex::build_turn_steer_params_with_input(&thread_id, &turn_id, input);
     tauri::async_runtime::spawn_blocking(move || {
         super::codex_server::send_request("turn/steer", params)
     })
@@ -7956,7 +8133,7 @@ async fn steer_text_into_codex_turn(
         Ok(mut writer) => {
             let line = serde_json::json!({
                 "type": "steered_user_message",
-                "text": message,
+                "text": display_text,
             });
             if let Err(e) = writer.write_line(&line.to_string()) {
                 log::warn!("Failed to persist steered message for session {session_id}: {e}");
@@ -7971,7 +8148,7 @@ async fn steer_text_into_codex_turn(
         &serde_json::json!({
             "session_id": session_id,
             "worktree_id": worktree_id,
-            "text": message,
+            "text": display_text,
         }),
     )
     .ok();
@@ -7979,9 +8156,10 @@ async fn steer_text_into_codex_turn(
     Ok(())
 }
 
-/// A queued message can be steered into a running Codex turn only when:
-/// - it carries no attachments (images/files/skills can't be injected mid-turn), AND
-/// - its captured backend is Codex. A message queued with a different backend
+/// A queued message can be steered into a running Codex turn when its captured
+/// backend is Codex. Codex `turn/steer` accepts structured user input, so queued
+/// images/files/skills are forwarded as structured attachments. A message queued
+/// with a different backend
 ///   selected (the user switched mid-run) must NOT be injected into the Codex
 ///   turn — it runs as its own backend once the current run finishes.
 ///
@@ -7995,6 +8173,10 @@ fn queued_message_is_steerable_for_backend(msg: &serde_json::Value, backend: &st
     let backend_matches = msg.get("backend").and_then(Value::as_str) == Some(backend);
     if !backend_matches {
         return false;
+    }
+
+    if backend == "codex" {
+        return true;
     }
 
     const ATTACHMENT_KEYS: [&str; 4] = [
@@ -8133,18 +8315,27 @@ async fn drain_queue_into_codex_turn(app: &AppHandle, worktree_id: &str, session
         };
 
         let Some(msg) = popped else { return };
-        let text = msg
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if text.is_empty() {
-            continue;
-        }
+        let input = match codex_steer_input_from_queued_message(&msg) {
+            Ok(input) => input,
+            Err(e) => {
+                log::warn!(
+                    "[CodexSteer] invalid queued message, skipping session={session_id}: {e}"
+                );
+                continue;
+            }
+        };
+        let display_text = match build_queued_message_with_refs(&msg) {
+            Ok(text) => text,
+            Err(e) => {
+                log::warn!("[CodexSteer] invalid queued message display text, skipping session={session_id}: {e}");
+                continue;
+            }
+        };
 
         log::info!("[CodexSteer] steering queued message into running turn session={session_id}");
-        if let Err(e) = steer_text_into_codex_turn(app, worktree_id, session_id, &text).await {
+        if let Err(e) =
+            steer_input_into_codex_turn(app, worktree_id, session_id, input, &display_text).await
+        {
             // Turn ended mid-drain — put the message back so the normal
             // queue path sends it when the run completes.
             log::warn!("[CodexSteer] steer failed, requeueing at front session={session_id}: {e}");
@@ -8445,7 +8636,7 @@ mod tests {
     }
 
     #[test]
-    fn queued_message_steerable_requires_codex_backend_and_no_attachments() {
+    fn queued_message_steerable_allows_codex_attachments() {
         // Codex backend, no attachments → steerable
         let codex_plain = serde_json::json!({
             "id": "m1", "message": "hello", "backend": "codex",
@@ -8463,14 +8654,14 @@ mod tests {
         });
         assert!(queued_message_is_steerable(&codex_empty_attachments));
 
-        // Codex backend but with attachments → not steerable
+        // Codex backend with attachments → steerable as structured Codex input
         let codex_with_image = serde_json::json!({
             "id": "m3",
             "message": "hello",
             "backend": "codex",
             "pendingImages": [{ "id": "img-1", "path": "/tmp/a.png" }],
         });
-        assert!(!queued_message_is_steerable(&codex_with_image));
+        assert!(queued_message_is_steerable(&codex_with_image));
 
         // Different backend selected mid-run → never steer into the codex turn
         let claude_default = serde_json::json!({ "id": "m4", "message": "hello" });
@@ -8780,6 +8971,63 @@ mod tests {
         assert!(!queued_prompt_skips_plan_wait(false, false, true));
         assert!(!queued_prompt_skips_plan_wait(true, true, true));
         assert!(!queued_prompt_skips_plan_wait(true, false, false));
+    }
+
+    #[test]
+    fn codex_steer_input_from_queued_message_preserves_attachments() {
+        let queued = serde_json::json!({
+            "message": "Please inspect",
+            "pendingFiles": [{
+                "relativePath": "src/main.rs",
+                "sourceRootPath": "/repo",
+                "isDirectory": false
+            }],
+            "pendingSkills": [{
+                "name": "rust-async-patterns",
+                "path": "/skills/rust-async-patterns/SKILL.md"
+            }],
+            "pendingImages": [{ "path": "/tmp/screenshot.png" }],
+            "pendingTextFiles": [{
+                "filename": "notes.txt",
+                "path": "/tmp/notes.txt"
+            }]
+        });
+
+        let input = codex_steer_input_from_queued_message(&queued).unwrap();
+
+        assert_eq!(input[0]["type"], "text");
+        assert_eq!(input[0]["text"], "Please inspect");
+        assert_eq!(
+            input[1],
+            serde_json::json!({
+                "type": "mention",
+                "name": "main.rs",
+                "path": "/repo/src/main.rs",
+            })
+        );
+        assert_eq!(
+            input[2],
+            serde_json::json!({
+                "type": "skill",
+                "name": "rust-async-patterns",
+                "path": "/skills/rust-async-patterns/SKILL.md",
+            })
+        );
+        assert_eq!(
+            input[3],
+            serde_json::json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png",
+            })
+        );
+        assert_eq!(
+            input[4],
+            serde_json::json!({
+                "type": "mention",
+                "name": "notes.txt",
+                "path": "/tmp/notes.txt",
+            })
+        );
     }
 
     #[test]

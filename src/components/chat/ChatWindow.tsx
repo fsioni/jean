@@ -2174,6 +2174,21 @@ export function ChatWindow({
     }
   }, [])
 
+  const handleCopySteeredText = useCallback(
+    (text: string) => {
+      void handleCopyToInput({
+        id: `${activeSessionId ?? 'streaming'}-steered-copy`,
+        session_id: activeSessionId ?? '',
+        role: 'user',
+        content: text,
+        timestamp: Date.now(),
+        content_blocks: [],
+        tool_calls: [],
+      })
+    },
+    [activeSessionId, handleCopyToInput]
+  )
+
   // Window event listeners (focus, plan, git-diff, cancel, create-session, plan approval, etc.)
   useChatWindowEvents({
     inputRef,
@@ -2702,6 +2717,7 @@ export function ChatWindow({
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
+                                      onCopySteeredText={handleCopySteeredText}
                                     />
                                   ) : (
                                     <StreamingMessage
@@ -2717,6 +2733,7 @@ export function ChatWindow({
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
+                                      onCopySteeredText={handleCopySteeredText}
                                     />
                                   ))}
                                 <StreamingStatusBar

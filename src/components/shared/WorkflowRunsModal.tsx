@@ -52,6 +52,7 @@ import { resolveBackend } from '@/lib/model-utils'
 import {
   DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptProvider,
 } from '@/types/preferences'
 import type { WorkflowRun } from '@/types/github'
@@ -310,6 +311,9 @@ export function WorkflowRunsModal() {
       const investigateModel =
         preferences?.magic_prompt_models?.investigate_workflow_run_model ??
         currentModel
+      const investigateMode =
+        preferences?.magic_prompt_modes?.investigate_workflow_run_mode ??
+        DEFAULT_MAGIC_PROMPT_MODES.investigate_workflow_run_mode
       const investigateProvider = resolveMagicPromptProvider(
         preferences?.magic_prompt_providers,
         'investigate_workflow_run_provider',
@@ -441,8 +445,8 @@ export function WorkflowRunsModal() {
         setSelectedModel(sessionId, investigateModel)
         setSelectedProvider(sessionId, investigateProvider)
         setSelectedBackend(sessionId, investigateBackend)
-        setExecutionMode(sessionId, 'yolo')
-        setExecutingMode(sessionId, 'yolo')
+        setExecutionMode(sessionId, investigateMode)
+        setExecutingMode(sessionId, investigateMode)
 
         // Persist model/backend/provider to session on disk
         setSessionBackend.mutate({
@@ -470,7 +474,7 @@ export function WorkflowRunsModal() {
           worktreePath,
           message: prompt,
           model: investigateModel,
-          executionMode: 'yolo',
+          executionMode: investigateMode,
           thinkingLevel: 'think',
           backend: investigateBackend,
           customProfileName: investigateCustomProfile,

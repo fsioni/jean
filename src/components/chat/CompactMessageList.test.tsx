@@ -1,4 +1,5 @@
 import { createRef } from 'react'
+import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@/test/test-utils'
 import { CompactMessageList } from './CompactMessageList'
@@ -41,7 +42,10 @@ function message(
   }
 }
 
-function renderCompact(messages: ChatMessage[]) {
+function renderCompact(
+  messages: ChatMessage[],
+  props: Partial<ComponentProps<typeof CompactMessageList>> = {}
+) {
   return render(
     <CompactMessageList
       messages={messages}
@@ -62,6 +66,7 @@ function renderCompact(messages: ChatMessage[]) {
       getSubmittedAnswers={vi.fn(() => undefined)}
       areQuestionsSkipped={vi.fn(() => false)}
       isFindingFixed={vi.fn(() => false)}
+      {...props}
     />
   )
 }
@@ -124,6 +129,98 @@ describe('CompactMessageList', () => {
 
     expect(activityCard).not.toBeNull()
     expect(activityCard).not.toContainElement(cancelledMarker)
+  })
+
+  it('keeps cancelled intermediate assistant text inside the collapsed activity row', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'reset the env'),
+      message(
+        'assistant-1',
+        'assistant',
+        104,
+        'Starting reset.Polling VM.Final partial status.',
+        {
+          cancelled: true,
+          tool_calls: [
+            {
+              id: 'tool-1',
+              name: 'Bash',
+              input: { command: 'rtk ./scripts/dev.sh fresh' },
+              output: 'running',
+            },
+            {
+              id: 'tool-2',
+              name: 'Bash',
+              input: { command: 'rtk limactl list' },
+              output: 'running',
+            },
+          ],
+          content_blocks: [
+            { type: 'text', text: 'Starting reset.' },
+            { type: 'tool_use', tool_call_id: 'tool-1' },
+            { type: 'text', text: 'Polling VM.' },
+            { type: 'tool_use', tool_call_id: 'tool-2' },
+            { type: 'text', text: 'Final partial status.' },
+          ],
+        }
+      ),
+    ])
+
+    const compactTrigger = screen.getByRole('button', {
+      name: /Final partial status/,
+    })
+
+    expect(compactTrigger).toBeVisible()
+    expect(screen.getByText('2 steps')).toBeVisible()
+    expect(screen.getByText('(cancelled)')).toBeVisible()
+    expect(screen.queryByText('Starting reset.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Polling VM.')).not.toBeInTheDocument()
+
+    fireEvent.click(compactTrigger)
+
+    expect(screen.getByText('Starting reset.')).toBeVisible()
+    expect(screen.getByText('Polling VM.')).toBeVisible()
+  })
+
+  it('surfaces only the latest text for non-cancelled compact activity groups', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'reset the env'),
+      message(
+        'assistant-1',
+        'assistant',
+        104,
+        'Starting reset.Polling VM.Final status.',
+        {
+          tool_calls: [
+            {
+              id: 'tool-1',
+              name: 'Bash',
+              input: { command: 'rtk ./scripts/dev.sh fresh' },
+              output: 'running',
+            },
+            {
+              id: 'tool-2',
+              name: 'Bash',
+              input: { command: 'rtk limactl list' },
+              output: 'running',
+            },
+          ],
+          content_blocks: [
+            { type: 'text', text: 'Starting reset.' },
+            { type: 'tool_use', tool_call_id: 'tool-1' },
+            { type: 'text', text: 'Polling VM.' },
+            { type: 'tool_use', tool_call_id: 'tool-2' },
+            { type: 'text', text: 'Final status.' },
+          ],
+        }
+      ),
+    ])
+
+    expect(screen.getAllByText('Final status.').length).toBeGreaterThanOrEqual(
+      1
+    )
+    expect(screen.queryByText('Starting reset.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Polling VM.')).not.toBeInTheDocument()
   })
 
   it('surfaces steered user prompts as separate visible rows', () => {
@@ -190,5 +287,40 @@ describe('CompactMessageList', () => {
         isIt.compareDocumentPosition(activity) &
           Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('copies each steered prompt from a connected group', () => {
+    const onCopyToInput = vi.fn()
+
+    renderCompact(
+      [
+        message('user-1', 'user', 100, 'hello'),
+        message('assistant-1', 'assistant', 104, 'All received', {
+          content_blocks: [
+            { type: 'user_input', text: 'first queued prompt' },
+            { type: 'user_input', text: 'second queued prompt' },
+          ],
+        }),
+      ],
+      { onCopyToInput }
+    )
+
+    const copyButtons = screen.getAllByRole('button', {
+      name: 'Copy steered prompt',
+    })
+
+    expect(copyButtons).toHaveLength(2)
+
+    const secondCopyButton = copyButtons[1]
+    if (!secondCopyButton) throw new Error('Expected second copy button')
+    fireEvent.click(secondCopyButton)
+
+    expect(onCopyToInput).toHaveBeenCalledTimes(1)
+    expect(onCopyToInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        content: 'second queued prompt',
+      })
+    )
   })
 })

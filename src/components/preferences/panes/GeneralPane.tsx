@@ -193,7 +193,7 @@ const InlineField: React.FC<{
   children: React.ReactNode
 }> = ({ label, description, children }) => (
   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-    <div className="space-y-0.5 sm:w-96 sm:shrink-0">
+    <div className="space-y-0.5 sm:w-56 sm:shrink-0 lg:w-72">
       <Label className="text-sm text-foreground">{label}</Label>
       {description && (
         <div className="text-xs text-muted-foreground break-words">
@@ -1514,7 +1514,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.claude_cli_source ?? 'jean'}
                 onValueChange={handleClaudeSourceChange}
               >
-                <SelectTrigger className="w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1661,7 +1661,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.gh_cli_source ?? 'jean'}
                 onValueChange={handleGhSourceChange}
               >
-                <SelectTrigger className="w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1819,7 +1819,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     value={preferences?.coderabbit_cli_source ?? 'jean'}
                     onValueChange={handleCodeRabbitSourceChange}
                   >
-                    <SelectTrigger className="w-96">
+                    <SelectTrigger className="w-full sm:w-80">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1982,7 +1982,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.codex_cli_source ?? 'jean'}
                 onValueChange={handleCodexSourceChange}
               >
-                <SelectTrigger className="w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2140,7 +2140,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.opencode_cli_source ?? 'jean'}
                 onValueChange={handleOpencodeSourceChange}
               >
-                <SelectTrigger className="w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2271,7 +2271,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   Select is disabled but kept for visual parity with the
                   other CLI rows. */}
               <Select value="path" disabled>
-                <SelectTrigger className="w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2383,7 +2383,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={preferences?.pi_cli_source ?? 'jean'}
                   onValueChange={handlePiSourceChange}
                 >
-                  <SelectTrigger className="w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2526,7 +2526,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={preferences?.commandcode_cli_source ?? 'jean'}
                   onValueChange={handleCommandCodeSourceChange}
                 >
-                  <SelectTrigger className="w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2585,7 +2585,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.selected_model ?? 'claude-opus-4-8[1m]'}
                 onValueChange={handleModelChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2606,7 +2606,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.thinking_level ?? 'off'}
                 onValueChange={handleThinkingLevelChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2627,7 +2627,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.default_effort_level ?? 'high'}
                 onValueChange={handleEffortLevelChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2673,7 +2673,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.selected_codex_model ?? 'gpt-5.5'}
                 onValueChange={handleCodexModelChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2694,7 +2694,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.default_codex_reasoning_effort ?? 'high'}
                 onValueChange={handleCodexReasoningChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2715,7 +2715,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.codex_goal_execution_mode ?? 'build'}
                 onValueChange={handleCodexGoalExecutionModeChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3030,7 +3030,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={selectedCommandCodeModel}
                 onValueChange={handleCommandCodeModelChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3061,7 +3061,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 onValueChange={handleBackendChange}
               >
                 <SelectTrigger
-                  className="w-full sm:min-w-96"
+                  className="w-full sm:w-80"
                   hideIcon={installedBackendOptions.length <= 1}
                 >
                   <SelectValue />
@@ -3086,7 +3086,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   patchPreferences.mutate({ default_execution_mode: value })
                 }}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3131,7 +3131,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               label="Build execution"
               description="Backend, model, thinking, and effort override when approving plans"
             >
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <Select
                     value={preferences?.build_backend ?? 'default'}
@@ -3375,7 +3375,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               label="Yolo execution"
               description="Backend, model, thinking, and effort override when yolo-approving plans"
             >
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <Select
                     value={preferences?.yolo_backend ?? 'default'}
@@ -3645,7 +3645,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={preferences?.editor ?? 'zed'}
                   onValueChange={handleEditorChange}
                 >
-                  <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -3668,7 +3668,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={preferences?.terminal ?? 'terminal'}
                   onValueChange={handleTerminalChange}
                 >
-                  <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -3691,7 +3691,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={preferences?.open_in ?? 'editor'}
                   onValueChange={handleOpenInChange}
                 >
-                  <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -3713,7 +3713,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={preferences?.default_new_session_kind ?? 'chat'}
                 onValueChange={handleNewSessionKindChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3734,7 +3734,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={String(preferences?.git_poll_interval ?? 60)}
                 onValueChange={handleGitPollIntervalChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3755,7 +3755,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 value={String(preferences?.remote_poll_interval ?? 60)}
                 onValueChange={handleRemotePollIntervalChange}
               >
-                <SelectTrigger className="w-full sm:min-w-96">
+                <SelectTrigger className="w-full sm:w-80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -3822,7 +3822,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     value={preferences?.waiting_sound ?? 'none'}
                     onValueChange={handleWaitingSoundChange}
                   >
-                    <SelectTrigger className="w-full sm:min-w-96">
+                    <SelectTrigger className="w-full sm:w-80">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -3862,7 +3862,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     value={preferences?.review_sound ?? 'none'}
                     onValueChange={handleReviewSoundChange}
                   >
-                    <SelectTrigger className="w-full sm:min-w-96">
+                    <SelectTrigger className="w-full sm:w-80">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -4045,7 +4045,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     }
                   }}
                 >
-                  <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -4082,7 +4082,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   value={String(preferences?.archive_retention_days ?? 30)}
                   onValueChange={handleArchiveRetentionChange}
                 >
-                  <SelectTrigger className="w-full sm:min-w-96">
+                  <SelectTrigger className="w-full sm:w-80">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -4398,7 +4398,7 @@ export const WslSettingsSection: FC<{
                     )
                   }}
                 >
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger className="w-full sm:w-48">
                     <SelectValue placeholder="Select distro" />
                   </SelectTrigger>
                   <SelectContent>

@@ -137,7 +137,6 @@ interface MobileSettingsMenuProps {
 
 export function MobileSettingsMenu({
   isDisabled,
-  providerLocked,
   selectedBackend,
   selectedProvider,
   backendModelLabel,
@@ -348,9 +347,7 @@ export function MobileSettingsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={isMobile ? 'end' : 'start'} className="w-72">
-        {customCliProfiles.length > 0 &&
-          !providerLocked &&
-          selectedBackend === 'claude' && (
+        {customCliProfiles.length > 0 && selectedBackend === 'claude' && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Sparkles className="mr-2 h-4 w-4 text-muted-foreground" />

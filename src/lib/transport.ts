@@ -150,17 +150,18 @@ export async function listen<T>(
 // ---------------------------------------------------------------------------
 
 export interface InitialData {
-  projects: unknown[]
+  projects?: unknown[]
   // Tiered payload: worktrees/sessions are present only for the selected
   // project; other projects are lazy-loaded by TanStack Query hooks on
   // navigation.
   worktreesByProject?: Record<string, unknown[]>
   sessionsByWorktree?: Record<string, unknown> // worktreeId -> WorktreeSessions
   activeSessions?: Record<string, unknown> // sessionId -> Session (with messages)
+  activeSessionWorktreeIds?: Record<string, string> // sessionId -> worktreeId
   runningSessions?: string[] // sessionIds with active CLI processes
   replayEvents?: BootstrapEvent[]
-  preferences: unknown
-  uiState: unknown
+  preferences?: unknown
+  uiState?: unknown
   appDataDir?: string
   webBuildId?: string
   appVersion?: string
@@ -174,6 +175,7 @@ let initialDataResolved = false
  * Centralizes token + selected_project + active_sessions encoding.
  */
 function buildInitUrl(opts: {
+  mode?: 'initial' | 'reconnect'
   selectedProjectId?: string | null
   activeSessionIds?: Record<string, string>
 }): string {
@@ -182,6 +184,7 @@ function buildInitUrl(opts: {
 
   const params = new URLSearchParams()
   if (token) params.set('token', token)
+  if (opts.mode === 'reconnect') params.set('mode', 'reconnect')
   if (opts.selectedProjectId) {
     params.set('selected_project', opts.selectedProjectId)
   }
@@ -250,7 +253,11 @@ export async function refetchInitialData(
   if (isNativeApp()) return null
 
   try {
-    const url = buildInitUrl({ selectedProjectId, activeSessionIds })
+    const url = buildInitUrl({
+      mode: 'reconnect',
+      selectedProjectId,
+      activeSessionIds,
+    })
     const response = await fetch(url)
     if (!response.ok) return null
     return (await response.json()) as InitialData

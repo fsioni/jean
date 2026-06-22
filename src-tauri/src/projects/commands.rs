@@ -6043,6 +6043,97 @@ fn extract_structured_output(output: &str) -> Result<String, String> {
     Err("No structured output found in Claude response".to_string())
 }
 
+fn extract_claude_stream_error(stdout: &str) -> Option<String> {
+    let mut assistant_text = String::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("result")
+            && parsed.get("is_error").and_then(|v| v.as_bool()) == Some(true)
+        {
+            if parsed.get("subtype").and_then(|v| v.as_str()) == Some("error_max_turns") {
+                return Some("reached max turns before producing structured output".to_string());
+            }
+
+            if let Some(result) = parsed.get("result").and_then(|v| v.as_str()) {
+                let result = result.trim();
+                if !result.is_empty() {
+                    return Some(result.to_string());
+                }
+            }
+        }
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+            if let Some(content) = parsed
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            assistant_text.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let assistant_text = assistant_text.trim();
+    let lower = assistant_text.to_lowercase();
+    let looks_like_error = lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("authenticate")
+        || lower.contains("unauthorized");
+
+    if assistant_text.is_empty() || !looks_like_error {
+        None
+    } else {
+        Some(assistant_text.to_string())
+    }
+}
+
+fn truncate_error_context(value: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 600;
+    let value = value.trim();
+    if value.chars().count() <= MAX_ERROR_CHARS {
+        value.to_string()
+    } else {
+        format!(
+            "{}…",
+            value.chars().take(MAX_ERROR_CHARS).collect::<String>()
+        )
+    }
+}
+
+fn format_claude_cli_failure(stderr: &str, stdout: &str) -> String {
+    if let Some(error) = extract_claude_stream_error(stdout) {
+        return format!("Claude CLI failed: {error}");
+    }
+
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stderr));
+    }
+
+    let stdout = stdout.trim();
+    if !stdout.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stdout));
+    }
+
+    "Claude CLI failed with no output".to_string()
+}
+
 /// Extract the first complete, balanced top-level JSON object from arbitrary
 /// text (PI/other CLIs may wrap JSON in prose). Brace-counts while respecting
 /// string literals and escapes, so braces inside strings don't break bounds.
@@ -6114,11 +6205,9 @@ fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -
         "--tools".to_string(),
         tools.to_string(),
         "--max-turns".to_string(),
-        "2".to_string(),
+        "3".to_string(),
         "--json-schema".to_string(),
         schema.to_string(),
-        "--permission-mode".to_string(),
-        "plan".to_string(),
     ]
 }
 
@@ -6871,11 +6960,7 @@ fn generate_pr_content_from_inputs(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7493,11 +7578,7 @@ fn generate_commit_message_once(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -8030,11 +8111,7 @@ fn generate_review(
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -9109,11 +9186,7 @@ fn generate_release_notes_content(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11588,6 +11661,35 @@ Body
     }
 
     #[test]
+    fn format_claude_cli_failure_extracts_stream_json_auth_error() {
+        let stdout = r#"{"type":"system","subtype":"hook_response","output":"startup hook"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}]},"error":"authentication_failed"}
+{"type":"result","is_error":true,"result":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: Failed to authenticate. API Error: 401 Invalid authentication credentials"
+        );
+        assert!(!result.contains("hook_response"));
+    }
+
+    #[test]
+    fn format_claude_cli_failure_does_not_report_max_turns_summary_as_error() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: reached max turns before producing structured output"
+        );
+        assert!(!result.contains("Looking at the diff"));
+    }
+
+    #[test]
     fn validate_commit_message_rejects_commit_guidance_meta_subject() {
         let result = validate_commit_message(
             "chore: inspect commit message guidance",
@@ -11690,14 +11792,13 @@ Body
         let first = CommitMessageResponse {
             message: "fix: first".into(),
         };
-        let empty = CommitMessageResponse {
-            message: "".into(),
-        };
-        assert_eq!(pick_fallback_commit_message(first, empty).message, "fix: first");
+        let empty = CommitMessageResponse { message: "".into() };
+        assert_eq!(
+            pick_fallback_commit_message(first, empty).message,
+            "fix: first"
+        );
 
-        let empty1 = CommitMessageResponse {
-            message: "".into(),
-        };
+        let empty1 = CommitMessageResponse { message: "".into() };
         let empty2 = CommitMessageResponse {
             message: "   ".into(),
         };
@@ -11719,11 +11820,11 @@ Body
     }
 
     #[test]
-    fn test_build_claude_structured_output_args_uses_two_turns_and_plan_mode() {
+    fn test_build_claude_structured_output_args_disables_tools_without_plan_mode() {
         let args = build_claude_structured_output_args("sonnet", "none", REVIEW_SCHEMA);
 
-        assert!(args.windows(2).any(|w| w == ["--max-turns", "2"]));
-        assert!(args.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(args.windows(2).any(|w| w == ["--max-turns", "3"]));
+        assert!(!args.iter().any(|arg| arg == "--permission-mode"));
         assert!(args.windows(2).any(|w| w == ["--tools", "none"]));
         assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
         assert!(args

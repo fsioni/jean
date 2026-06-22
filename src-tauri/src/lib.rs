@@ -140,7 +140,7 @@ fn is_wsl_available() -> bool {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
+    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-8, haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -199,6 +199,8 @@ pub struct AppPreferences {
     pub magic_prompt_backends: MagicPromptBackends, // Per-prompt backend overrides (None = use project/global default_backend)
     #[serde(default)]
     pub magic_prompt_efforts: MagicPromptReasoningEfforts, // Per-prompt reasoning effort overrides
+    #[serde(default)]
+    pub magic_prompt_modes: MagicPromptModes, // Per-prompt execution modes for chat-style magic prompts
     #[serde(default)]
     pub magic_models_auto_initialized: bool, // Whether magic prompt models were auto-set based on installed backends
     #[serde(default = "default_file_edit_mode")]
@@ -454,11 +456,8 @@ fn default_model() -> String {
 
 fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
     match model {
-        "claude-opus-4-8" => Some("claude-opus-4-8[1m]"),
-        "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
         "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
-        "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
         "sonnet" => Some("claude-sonnet-4-6[1m]"),
         _ => None,
@@ -725,6 +724,13 @@ mod tests {
     }
 
     #[test]
+    fn migrate_default_claude_model_keeps_standard_non_1m_models() {
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-8"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-7"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-6"), None);
+    }
+
+    #[test]
     fn app_preferences_default_web_access_sounds_enabled_for_existing_prefs() {
         let mut prefs_json = serde_json::to_value(AppPreferences::default()).unwrap();
         prefs_json
@@ -818,6 +824,13 @@ mod tests {
                 "review_comments_effort": "medium",
             }),
         );
+        object.insert(
+            "magic_prompt_modes".to_string(),
+            json!({
+                "investigate_issue_mode": "yolo",
+                "review_comments_mode": "plan"
+            }),
+        );
 
         let prefs: AppPreferences = serde_json::from_value(prefs_json).unwrap();
 
@@ -840,6 +853,8 @@ mod tests {
             prefs.magic_prompt_efforts.review_comments_effort.as_deref(),
             Some("medium")
         );
+        assert_eq!(prefs.magic_prompt_modes.investigate_issue_mode, "yolo");
+        assert_eq!(prefs.magic_prompt_modes.review_comments_mode, "plan");
     }
 }
 
@@ -1729,6 +1744,50 @@ pub struct MagicPromptReasoningEfforts {
     pub review_comments_effort: Option<String>,
 }
 
+fn default_magic_prompt_plan_mode() -> String {
+    "plan".to_string()
+}
+
+fn default_magic_prompt_yolo_mode() -> String {
+    "yolo".to_string()
+}
+
+/// Per-prompt execution mode overrides for magic prompts that send chat turns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MagicPromptModes {
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_pr_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub investigate_workflow_run_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_security_alert_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_advisory_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_linear_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub review_comments_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub resolve_conflicts_mode: String,
+}
+
+impl Default for MagicPromptModes {
+    fn default() -> Self {
+        Self {
+            investigate_issue_mode: default_magic_prompt_plan_mode(),
+            investigate_pr_mode: default_magic_prompt_plan_mode(),
+            investigate_workflow_run_mode: default_magic_prompt_yolo_mode(),
+            investigate_security_alert_mode: default_magic_prompt_plan_mode(),
+            investigate_advisory_mode: default_magic_prompt_plan_mode(),
+            investigate_linear_issue_mode: default_magic_prompt_plan_mode(),
+            review_comments_mode: default_magic_prompt_plan_mode(),
+            resolve_conflicts_mode: default_magic_prompt_yolo_mode(),
+        }
+    }
+}
+
 impl MagicPrompts {
     /// Migrate prompts that match the current default to None.
     /// This ensures users who never customized a prompt get auto-updated defaults.
@@ -1830,6 +1889,7 @@ impl Default for AppPreferences {
             magic_prompt_providers: MagicPromptProviders::default(),
             magic_prompt_backends: MagicPromptBackends::default(),
             magic_prompt_efforts: MagicPromptReasoningEfforts::default(),
+            magic_prompt_modes: MagicPromptModes::default(),
             magic_models_auto_initialized: false,
             file_edit_mode: default_file_edit_mode(),
             ai_language: String::new(),

@@ -158,7 +158,7 @@ describe('useQueuedPromptActions', () => {
     expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
   })
 
-  it('busy codex session with attachments: skips steer, cancels instead', async () => {
+  it('busy codex session with attachments: steers the running turn', async () => {
     useChatStore.setState({
       messageQueues: {
         'session-1': [
@@ -176,8 +176,13 @@ describe('useQueuedPromptActions', () => {
       await result.current.handleSendQueuedNow('session-1', 'msg-1')
     })
 
-    expect(steerCodexTurn).not.toHaveBeenCalled()
-    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+    expect(steerCodexTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      'prompt msg-1',
+      expect.objectContaining({ id: 'msg-1' })
+    )
+    expect(cancelChatMessage).not.toHaveBeenCalled()
   })
 
   it('busy pi session: steers the running turn and removes the message', async () => {

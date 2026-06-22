@@ -74,6 +74,17 @@ describe('transport bootstrap', () => {
     vi.doUnmock('./environment')
   })
 
+
+  it('uses reconnect mode when refetching initial data after reconnect', async () => {
+    const transport = await loadTransportModule()
+
+    await transport.refetchInitialData({ 'worktree-1': 'session-1' }, 'project-1')
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
+    )
+  })
+
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 
