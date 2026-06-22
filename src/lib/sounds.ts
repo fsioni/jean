@@ -40,6 +40,10 @@ const fallbackBeepMap: Partial<
 let audioContext: AudioContext | null = null
 // Currently playing source, stopped before a new sound to prevent overlap.
 let currentSource: AudioBufferSourceNode | null = null
+// Monotonic id for the latest playback request. The async load below resolves
+// out of order (cached sounds resolve before ones still being fetched/decoded),
+// so a stale completion must not start playback after a newer request.
+let playRequestId = 0
 // Decoded buffers, keyed by sound, for instant repeat playback.
 const bufferCache = new Map<NotificationSound, AudioBuffer>()
 // In-flight decode promises, to dedupe concurrent loads of the same sound.
@@ -165,18 +169,26 @@ export function playNotificationSound(
   const ctx = getAudioContext()
   if (!ctx) return
 
+  // Claim the latest request slot so stale async loads can be discarded.
+  const requestId = ++playRequestId
+
   // Stop any currently playing sound to prevent overlap.
   stopCurrentSource()
 
   loadBuffer(sound, ctx)
     .then(buffer => {
+      // A newer request superseded this one — drop the stale completion.
+      if (requestId !== playRequestId) return
       if (buffer) {
         playBuffer(ctx, buffer)
       } else {
         playFallbackBeep(ctx, sound)
       }
     })
-    .catch(() => playFallbackBeep(ctx, sound))
+    .catch(() => {
+      if (requestId !== playRequestId) return
+      playFallbackBeep(ctx, sound)
+    })
 }
 
 /**
