@@ -1,0 +1,44 @@
+{
+  "builds": [
+    {
+      "number": 1235,
+      "result": "SUCCESS",
+      "building": false,
+      "timestamp": 1718895000000,
+      "duration": 5000,
+      "url": "http://jenkins.example.internal/job/build-and-test_Launcher-on-pr/1235/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "ghprbPullId", "value": "3960" },
+            { "name": "PR_ID", "value": "3960" },
+            { "name": "BRANCH", "value": "feat-pagination" },
+            { "name": "sha1", "value": "origin/pr/3960/merge" },
+            { "name": "ghprbActualCommit", "value": "cafe1234cafe1234cafe1234cafe1234cafe1234" },
+            { "name": "ghprbCredentialsId", "value": "github-pr-bot" }
+          ]
+        }
+      ]
+    },
+    {
+      "number": 1234,
+      "result": "FAILURE",
+      "building": false,
+      "timestamp": 1718890000000,
+      "duration": 6000,
+      "url": "http://jenkins.example.internal/job/build-and-test_Launcher-on-pr/1234/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "ghprbPullId", "value": "3959" },
+            { "name": "PR_ID", "value": "3959" },
+            { "name": "BRANCH", "value": "feat-login" },
+            { "name": "sha1", "value": "origin/pr/3959/merge" },
+            { "name": "ghprbActualCommit", "value": "beef5678beef5678beef5678beef5678beef5678" },
+            { "name": "ghprbCredentialsId", "value": "github-pr-bot" }
+          ]
+        }
+      ]
+    }
+  ]
+}
