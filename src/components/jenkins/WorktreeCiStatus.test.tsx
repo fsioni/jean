@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render } from '@testing-library/react'
-import { WorktreeStatusDot } from './WorktreeStatusDot'
+import { WorktreeCiStatus } from './WorktreeCiStatus'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
 
 const mockUseJenkinsStatusCached = vi.fn()
@@ -59,31 +59,34 @@ beforeEach(() => {
   mockUseProjects.mockReturnValue({ data: [] })
 })
 
-describe('WorktreeStatusDot', () => {
+describe('WorktreeCiStatus', () => {
   it('renders nothing without a PR (the badge lives at the PR level)', () => {
     mockUseJenkinsStatusCached.mockReturnValue({ data: undefined })
     const { container } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId={null} />
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId={null} />
     )
     expect(container).toBeEmptyDOMElement()
   })
 
   it.each([
-    ['SUCCESS', 'bg-green-500'],
-    ['FAILURE', 'bg-red-500'],
-    ['BUILDING', 'bg-blue-500'],
-    ['QUEUED', 'bg-amber-500'],
-  ])('renders the %s verdict dot (%s)', (overallStatus, dotClass) => {
-    mockUseJenkinsStatusCached.mockReturnValue({
-      data: statusWith({ overallStatus }),
-    })
-    const { container } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId="42" />
-    )
-    expect(container.querySelector(`.${dotClass}`)).not.toBeNull()
-  })
+    ['SUCCESS', 'CI OK'],
+    ['FAILURE', 'CI échec'],
+    ['BUILDING', 'CI en cours'],
+    ['QUEUED', 'CI en file'],
+  ])(
+    'labels the %s verdict pill with text (not color alone): "%s"',
+    (overallStatus, label) => {
+      mockUseJenkinsStatusCached.mockReturnValue({
+        data: statusWith({ overallStatus }),
+      })
+      const { getByText } = render(
+        <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+      )
+      expect(getByText(label)).toBeInTheDocument()
+    }
+  )
 
-  it('adds a preview-freshness dot when the preview is stale', () => {
+  it('adds a labelled preview pill when the preview is stale', () => {
     mockUseJenkinsStatusCached.mockReturnValue({
       data: statusWith({
         overallStatus: 'SUCCESS',
@@ -96,43 +99,40 @@ describe('WorktreeStatusDot', () => {
         },
       }),
     })
-    const { container } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId="42" />
+    const { getByText } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
     )
-    // Verdict (green) + preview freshness (amber) dots both present.
-    expect(container.querySelector('.bg-green-500')).not.toBeNull()
-    expect(container.querySelector('.bg-amber-500')).not.toBeNull()
+    expect(getByText('CI OK')).toBeInTheDocument()
+    expect(getByText('Preview périmée')).toBeInTheDocument()
   })
 
-  it('shows the "not configured" hint for a PR worktree when the project lacks Jenkins config', () => {
+  it('shows the "CI non configuré" pill for a PR worktree whose project lacks config', () => {
     mockUseJenkinsStatusCached.mockReturnValue({ data: undefined })
     mockUseProjects.mockReturnValue({ data: [{ id: 'p1' }] })
     const { getByText } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId="42" />
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
     )
-    expect(getByText('CI')).toBeInTheDocument()
+    expect(getByText('CI non configuré')).toBeInTheDocument()
   })
 
-  it('renders nothing while configured but not yet polled (no spurious hint)', () => {
+  it('renders nothing while configured but not yet polled (no spurious pill)', () => {
     mockUseJenkinsStatusCached.mockReturnValue({ data: undefined })
     mockUseProjects.mockReturnValue({
       data: [{ id: 'p1', jenkins_url: 'https://ci.example.com' }],
     })
     const { container } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId="42" />
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
     )
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('treats the unconfigured sentinel as "no data" (shows the hint, not an UNKNOWN dot)', () => {
+  it('treats the unconfigured sentinel as "no data" (config pill, no verdict)', () => {
     mockUseJenkinsStatusCached.mockReturnValue({ data: UNCONFIGURED_SENTINEL })
     mockUseProjects.mockReturnValue({ data: [{ id: 'p1' }] })
-    const { getByText, container } = render(
-      <WorktreeStatusDot projectId="p1" worktreeId="wt-1" prId="42" />
+    const { getByText, queryByText } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
     )
-    expect(getByText('CI')).toBeInTheDocument()
-    // No verdict dot for an UNKNOWN sentinel.
-    expect(container.querySelector('.bg-green-500')).toBeNull()
-    expect(container.querySelector('.bg-red-500')).toBeNull()
+    expect(getByText('CI non configuré')).toBeInTheDocument()
+    expect(queryByText('CI OK')).toBeNull()
   })
 })

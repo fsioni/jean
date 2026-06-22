@@ -83,7 +83,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { GitStatusBadges } from '@/components/ui/git-status-badges'
-import { WorktreeStatusDot } from '@/components/jenkins/WorktreeStatusDot'
+import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import {
   useProjectBootstrap,
   useJeanConfig,
@@ -827,16 +827,6 @@ function WorktreeSectionHeader({
                   onDiffClick={handleDiffClick}
                 />
               </span>
-              {/* Jenkins build-and-test verdict + preview freshness (cache-only). */}
-              <WorktreeStatusDot
-                projectId={projectId}
-                worktreeId={worktree.id}
-                prId={
-                  worktree.pr_number != null
-                    ? String(worktree.pr_number)
-                    : null
-                }
-              />
             </span>
             {showBranchBadge && (
               <span className="inline-flex max-w-full items-center gap-1 self-start rounded border border-border/50 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground sm:hidden">
@@ -905,6 +895,13 @@ function WorktreeSectionHeader({
             </span>
           )}
         </div>
+        {/* Jenkins CI + preview pills on their own line — shaped + labelled so
+            they're readable without color. Renders nothing for non-PR rows. */}
+        <WorktreeCiStatus
+          projectId={projectId}
+          worktreeId={worktree.id}
+          prId={worktree.pr_number != null ? String(worktree.pr_number) : null}
+        />
         {showDetails && sessionMetrics && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             {sessionMetrics.waitingCount > 0 && (
