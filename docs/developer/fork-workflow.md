@@ -113,3 +113,29 @@ les merge-forward ne génèrent presque jamais de conflits :
   Plus tes patches perso sont petits et isolés, moins le merge coûte.
 - Pousse upstream tout ce qui est générique : ça réduit ton delta privé et donc
   le coût des futurs merges.
+
+## Agir sur `fsioni/jean` avec `gh` (commenter / fermer une issue, etc.)
+
+Le compte `gh` actif est **`fares-spottt`** et doit le rester (il lit les repos
+boulot privés ET les publics). Mais `fares-spottt` n'a **pas les droits d'écriture**
+sur `fsioni/jean` → un `gh issue close`/`comment` y échoue.
+
+**Ne fais pas `gh auth switch`** pour contourner : ça mute le compte actif global
+et **race avec les autres agents/sessions** qui utilisent `gh` en parallèle (et,
+le temps du switch, casse le chargement PR des repos boulot dans Jean).
+
+Utilise le wrapper, qui injecte le token fsioni **scopé au process** (zéro état
+partagé muté) :
+
+```bash
+scripts/gh-fsioni.sh issue close 5 --repo fsioni/jean --comment "…"
+scripts/gh-fsioni.sh pr comment 12 --repo fsioni/jean --body "…"
+```
+
+Sous le capot : `GH_TOKEN="$(gh auth token -u fsioni)" gh …`. Les **lectures**
+(`gh issue list`, `gh pr view`) marchent déjà en `fares-spottt` — le wrapper ne
+sert que pour les commandes qui **écrivent** sur un repo possédé par fsioni.
+
+> ⚠ `gh issue close --comment …` poste le commentaire **avant** de vérifier le
+> droit de fermeture : lancé avec le mauvais compte, il laisse un commentaire
+> orphelin. D'où le wrapper dès la 1ʳᵉ commande d'écriture.

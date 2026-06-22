@@ -12,7 +12,7 @@ Objectifs décidés avec Farès :
 ## Découverte décisive (réorientation du design)
 
 L'idée initiale — lire le commit du **build `deploy-preview`** et le comparer au HEAD PR — ne
-tient pas face au vrai Jenkins planexpo (vérifié en direct via l'API REST) :
+tient pas face au vrai Jenkins (vérifié en direct via l'API REST) :
 
 - Le job `deploy-preview` est **vide** (`color: notbuilt`, `lastBuild: null`). La preview est en
   réalité déployée par le **stage « Deploy preview » du pipeline `build-and-test`**.
@@ -21,9 +21,10 @@ tient pas face au vrai Jenkins planexpo (vérifié en direct via l'API REST) :
   d'obtenir le commit déployé côté Jenkins.
 
 **Nouvelle source de vérité : la preview elle-même.** Chaque environnement preview sert un
-endpoint `GET https://<PR>.preview.example.com/version` (`text/plain`, sortie `git log -1`), dont la
-**première ligne est `commit <sha40>`** = le commit réellement déployé. (Confirmé sur la prod :
-`https://demo.planexpo.fr/version`.)
+endpoint `GET https://<PR>.<preview-host>/version` (`text/plain`, sortie `git log -1`), dont la
+**première ligne est `commit <sha40>`** = le commit réellement déployé. (Confirmé sur un env
+stable type `https://<prod-host>/version`.) L'hôte preview est configuré par projet via le
+template `jenkins_preview_url_template` (placeholder `{pr}`) — aucun domaine interne en dur.
 
 ## 1. Probe `/version` + comparaison HEAD PR
 
