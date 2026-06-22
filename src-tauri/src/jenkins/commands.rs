@@ -195,7 +195,14 @@ pub async fn get_jenkins_status(
     Ok(status)
 }
 
-/// Re-run the whole `build-and-test` pipeline, replaying the last build's parameters.
+/// Re-run the `build-and-test` pipeline for a PR **through the ghprb Launcher**,
+/// replaying the Launcher build's parameters.
+///
+/// The GitHub↔PR binding — commit status / checks callbacks — is owned by the
+/// ghprb plugin on [`LAUNCHER_JOB`] (`sha1`, `ghprbActualCommit`, `ghprbPullId`,
+/// `ghprbCredentialsId`, …), **not** on [`PIPELINE_JOB`]. Triggering the pipeline
+/// job directly runs the tests but never calls back to the PR, so the re-run's
+/// status is lost. Replaying the Launcher's last build instead preserves the link.
 #[tauri::command]
 pub async fn rerun_jenkins_pipeline(
     app: AppHandle,
@@ -206,14 +213,15 @@ pub async fn rerun_jenkins_pipeline(
     let cfg = config::load_config(&app, &project_id)?;
     let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
 
-    let builds = client.fetch_builds(PIPELINE_JOB).await?;
-    let last = match_build(&builds, pr_id.as_deref(), branch.as_deref())
-        .ok_or_else(|| "No previous build found for this PR/branch to re-run".to_string())?;
+    let builds = client.fetch_builds(LAUNCHER_JOB).await?;
+    let last = match_build(&builds, pr_id.as_deref(), branch.as_deref()).ok_or_else(|| {
+        "No previous Launcher build found for this PR/branch to re-run".to_string()
+    })?;
 
     let params = client
-        .fetch_build_parameters(PIPELINE_JOB, last.number)
+        .fetch_build_parameters(LAUNCHER_JOB, last.number)
         .await?;
-    client.trigger_with_parameters(PIPELINE_JOB, &params).await
+    client.trigger_with_parameters(LAUNCHER_JOB, &params).await
 }
 
 /// Restart only the flaky `Integration tests` stage of a pipeline build.
@@ -275,6 +283,10 @@ fn clean(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jenkins::parse;
+    use serde_json::Value;
+
+    const LAUNCHER_BUILDS_FIXTURE: &str = include_str!("tests/fixtures/launcher-on-pr-builds.json");
 
     fn build(number: u64, pr: Option<&str>, branch: Option<&str>) -> JenkinsBuild {
         JenkinsBuild {
@@ -335,6 +347,47 @@ mod tests {
         let builds = vec![build(1, Some("3959"), Some("feat"))];
         assert!(match_build(&builds, None, None).is_none());
         assert!(match_build(&builds, Some(""), Some("")).is_none());
+    }
+
+    #[test]
+    fn rerun_replays_launcher_ghprb_params_for_the_pr() {
+        // The re-run resolves the LAUNCHER_JOB build for the PR, then replays its
+        // parameters. This guards the fix for #11: the GitHub↔PR link lives on the
+        // Launcher's ghprb params, so they must survive the replay (vs the pipeline
+        // job, which carries only PR_ID/BRANCH and never calls back to the PR).
+        let builds = parse::parse_builds(LAUNCHER_BUILDS_FIXTURE).expect("parse launcher builds");
+
+        // Same PR-matching logic the re-run uses to pick the build to replay.
+        let last = match_build(&builds, Some("3959"), Some("feat-login")).expect("launcher build");
+        assert_eq!(last.number, 1234);
+
+        // Pull the full parameter set off that build (mirrors fetch_build_parameters).
+        let root: Value = serde_json::from_str(LAUNCHER_BUILDS_FIXTURE).expect("json");
+        let actions = root["builds"]
+            .as_array()
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|b| b["number"].as_u64() == Some(last.number))
+            })
+            .map(|b| b["actions"].clone())
+            .expect("matched build actions");
+        let params = parse::extract_parameters(Some(&actions));
+
+        let get = |name: &str| {
+            params
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.as_str())
+        };
+
+        // The ghprb binding (these are what the pipeline job would have dropped).
+        assert_eq!(get("ghprbPullId"), Some("3959"));
+        assert_eq!(get("sha1"), Some("origin/pr/3959/merge"));
+        assert_eq!(
+            get("ghprbActualCommit"),
+            Some("beef5678beef5678beef5678beef5678beef5678")
+        );
+        assert_eq!(get("ghprbCredentialsId"), Some("github-pr-bot"));
     }
 
     #[test]
