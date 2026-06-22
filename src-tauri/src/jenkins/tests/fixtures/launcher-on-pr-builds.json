@@ -8,13 +8,15 @@
       "duration": 5000,
       "url": "http://jenkins.example.internal/job/build-and-test_Launcher-on-pr/1235/",
       "actions": [
+        { "_class": "hudson.model.CauseAction" },
         {
+          "_class": "org.jenkinsci.plugins.ghprb.GhprbParametersAction",
           "parameters": [
-            { "name": "ghprbPullId", "value": "3960" },
-            { "name": "PR_ID", "value": "3960" },
-            { "name": "BRANCH", "value": "feat-pagination" },
             { "name": "sha1", "value": "origin/pr/3960/merge" },
             { "name": "ghprbActualCommit", "value": "cafe1234cafe1234cafe1234cafe1234cafe1234" },
+            { "name": "ghprbPullId", "value": "3960" },
+            { "name": "ghprbTargetBranch", "value": "master" },
+            { "name": "ghprbSourceBranch", "value": "feat-pagination" },
             { "name": "ghprbCredentialsId", "value": "github-pr-bot" }
           ]
         }
@@ -28,13 +30,15 @@
       "duration": 6000,
       "url": "http://jenkins.example.internal/job/build-and-test_Launcher-on-pr/1234/",
       "actions": [
+        { "_class": "hudson.model.CauseAction" },
         {
+          "_class": "org.jenkinsci.plugins.ghprb.GhprbParametersAction",
           "parameters": [
-            { "name": "ghprbPullId", "value": "3959" },
-            { "name": "PR_ID", "value": "3959" },
-            { "name": "BRANCH", "value": "feat-login" },
             { "name": "sha1", "value": "origin/pr/3959/merge" },
             { "name": "ghprbActualCommit", "value": "beef5678beef5678beef5678beef5678beef5678" },
+            { "name": "ghprbPullId", "value": "3959" },
+            { "name": "ghprbTargetBranch", "value": "master" },
+            { "name": "ghprbSourceBranch", "value": "feat-login" },
             { "name": "ghprbCredentialsId", "value": "github-pr-bot" }
           ]
         }

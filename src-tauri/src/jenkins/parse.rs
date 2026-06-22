@@ -57,9 +57,22 @@ pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        pr_id: non_empty(params.iter().find(|(n, _)| n == "PR_ID").map(|(_, v)| v)),
-        branch: non_empty(params.iter().find(|(n, _)| n == "BRANCH").map(|(_, v)| v)),
+        pr_id: non_empty(find_param(&params, &["PR_ID", "ghprbPullId"])),
+        branch: non_empty(find_param(&params, &["BRANCH", "ghprbSourceBranch"])),
     })
+}
+
+/// First present value among `names`, in priority order.
+///
+/// Lets one [`JenkinsBuild`] model the PR/branch regardless of how the job
+/// labels its parameters: the `build-and-test` pipeline carries `PR_ID` /
+/// `BRANCH`, while the ghprb `*_Launcher-on-pr` entry carries `ghprbPullId` /
+/// `ghprbSourceBranch`. Without this, Launcher builds parse with no PR id and
+/// the re-run can never find the build to replay.
+fn find_param<'a>(params: &'a [(String, String)], names: &[&str]) -> Option<&'a String> {
+    names
+        .iter()
+        .find_map(|name| params.iter().find(|(n, _)| n == name).map(|(_, v)| v))
 }
 
 /// Collect `(name, value)` pairs from the `ParametersAction` inside `actions[]`.
@@ -221,6 +234,7 @@ mod tests {
     use super::*;
 
     const BUILDS_FIXTURE: &str = include_str!("tests/fixtures/build-and-test-builds.json");
+    const LAUNCHER_FIXTURE: &str = include_str!("tests/fixtures/launcher-on-pr-builds.json");
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
     const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
     const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
@@ -246,6 +260,21 @@ mod tests {
         assert_eq!(master.pr_id, None);
         assert_eq!(master.branch.as_deref(), Some("master"));
         assert_eq!(master.result.as_deref(), Some("SUCCESS"));
+    }
+
+    #[test]
+    fn launcher_builds_derive_pr_and_branch_from_ghprb_params() {
+        // ghprb `*_Launcher-on-pr` builds carry NO PR_ID/BRANCH — the PR lives in
+        // `ghprbPullId` and the branch in `ghprbSourceBranch`. parse_build must
+        // surface both so the re-run can match the Launcher build to replay.
+        let builds = parse_builds(LAUNCHER_FIXTURE).expect("parse launcher builds");
+        assert_eq!(builds.len(), 2);
+
+        let pr = find_build_for_pr(&builds, "3959").expect("3959 via ghprbPullId");
+        assert_eq!(pr.number, 1234);
+        assert_eq!(pr.pr_id.as_deref(), Some("3959"));
+        assert_eq!(pr.branch.as_deref(), Some("feat-login"));
+        assert_eq!(pr.result.as_deref(), Some("FAILURE"));
     }
 
     #[test]
