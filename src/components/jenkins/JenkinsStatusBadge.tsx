@@ -182,7 +182,8 @@ function isUnconfigured(status: JenkinsWorktreeStatus): boolean {
  * The pill reflects the GLOBAL `build-and-test` result for the worktree's PR
  * (not any single stage). Clicking opens a popover with the per-stage breakdown
  * ("Integration tests" highlighted as the important flaky step) and actions
- * (re-run pipeline, restart integration tests, open preview).
+ * (re-run pipeline, restart integration tests). Preview access lives in the
+ * dedicated `PreviewBadge` next to this one.
  *
  * Renders nothing when there is no PR/branch or Jenkins is not configured.
  */
@@ -214,10 +215,6 @@ export function JenkinsStatusBadge({
   const handleOpenPipeline = useCallback(() => {
     if (status?.pipeline?.url) openUrl(status.pipeline.url)
   }, [status?.pipeline?.url])
-
-  const handleOpenPreview = useCallback(() => {
-    if (status?.previewUrl) openUrl(status.previewUrl)
-  }, [status?.previewUrl])
 
   // Hide unless there's a real Jenkins verdict for this worktree.
   if (!status || isUnconfigured(status)) return null
@@ -329,13 +326,6 @@ export function JenkinsStatusBadge({
                 <RotateCcw className="h-3.5 w-3.5" />
               )}
               Relancer Integration tests
-            </Button>
-          )}
-
-          {status.previewUrl && (
-            <Button variant="ghost" size="sm" onClick={handleOpenPreview}>
-              <ExternalLink className="h-3.5 w-3.5" />
-              Preview
             </Button>
           )}
         </div>
