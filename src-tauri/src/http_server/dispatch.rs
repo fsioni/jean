@@ -947,6 +947,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let result = crate::jean_mcp_core::start_background_investigation(
                 app.clone(),
                 worktree_id,
@@ -960,6 +962,7 @@ pub async fn dispatch_command(
                 chrome_enabled,
                 ai_language,
                 parallel_execution_prompt,
+                execution_mode,
             )
             .await?;
             to_value(result)
@@ -1085,8 +1088,6 @@ pub async fn dispatch_command(
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let message: String = from_field(&args, "message")?;
             let model: Option<String> = from_field_opt(&args, "model")?;
-            let execution_mode: Option<String> =
-                field_opt(&args, "executionMode", "execution_mode")?;
             let thinking_level_raw: Option<String> =
                 field_opt(&args, "thinkingLevel", "thinking_level")?;
             let parallel_execution_prompt: Option<String> = field_opt(
@@ -1094,6 +1095,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let ai_language: Option<String> = field_opt(&args, "aiLanguage", "ai_language")?;
             let allowed_tools: Option<Vec<String>> =
                 field_opt(&args, "allowedTools", "allowed_tools")?;
@@ -2573,7 +2576,16 @@ pub async fn dispatch_command(
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let message: String = from_field(&args, "message")?;
-            crate::chat::steer_codex_turn(app.clone(), worktree_id, session_id, message).await?;
+            let queued_message: Option<Value> =
+                field_opt(&args, "queuedMessage", "queued_message")?;
+            crate::chat::steer_codex_turn(
+                app.clone(),
+                worktree_id,
+                session_id,
+                message,
+                queued_message,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "steer_opencode_turn" => {
@@ -3126,9 +3138,17 @@ pub async fn dispatch_command(
         }
         "rerun_jenkins_pipeline" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
             let branch: Option<String> = from_field_opt(&args, "branch")?;
-            crate::jenkins::rerun_jenkins_pipeline(app.clone(), project_id, pr_id, branch).await?;
+            crate::jenkins::rerun_jenkins_pipeline(
+                app.clone(),
+                project_id,
+                worktree_id,
+                pr_id,
+                branch,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "restart_jenkins_integration" => {
@@ -3155,6 +3175,10 @@ pub async fn dispatch_command(
             )
             .await?;
             to_value(result)
+        }
+        "poke_jenkins_poll" => {
+            crate::jenkins::poke_jenkins_poll(app.clone())?;
+            Ok(Value::Null)
         }
         // --- /perso/jenkins ---
 

@@ -13,6 +13,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
+import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -481,7 +482,11 @@ export function WorktreeItem({
         handleDeleteSession(session.id)
       }
     },
-    [sessionsData?.sessions, handleDeleteSession, preferences?.confirm_session_close]
+    [
+      sessionsData?.sessions,
+      handleDeleteSession,
+      preferences?.confirm_session_close,
+    ]
   )
 
   const handleDoubleClick = useCallback(
@@ -585,7 +590,7 @@ export function WorktreeItem({
       <WorktreeContextMenu actions={menuActions}>
         <div
           className={cn(
-            'group relative flex cursor-pointer items-center gap-1.5 py-1.5 pr-2 overflow-hidden transition-colors duration-150',
+            'group relative flex cursor-pointer flex-col gap-1 py-1.5 pr-2 overflow-hidden transition-colors duration-150',
             isNarrowSidebar ? 'pl-4' : 'pl-7',
             isSelected
               ? 'bg-primary/10 text-foreground before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:bg-primary'
@@ -595,115 +600,128 @@ export function WorktreeItem({
           {...middleClickClose(handleWorktreeMiddleClose)}
           onDoubleClick={handleDoubleClick}
         >
-          {/* Chat status indicator (spinner/dot) */}
-          <StatusIndicator
-            status={indicatorStatus}
-            variant={indicatorVariant}
-            className="h-2 w-2"
-          />
-
-          {/* Terminal running/failed indicator */}
-          <TerminalStatusIndicator worktreeId={worktree.id} />
-
-          {/* Workspace name - editable on double-click */}
-          {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
-              aria-label="Worktree name"
-              value={editValue}
-              onChange={e => setEditValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={handleBlur}
-              onClick={e => e.stopPropagation()}
-              className="flex-1 bg-transparent text-base outline-none ring-1 ring-ring rounded px-1 md:text-sm"
+          <div className="flex min-w-0 items-center gap-1.5">
+            {/* Chat status indicator (spinner/dot) */}
+            <StatusIndicator
+              status={indicatorStatus}
+              variant={indicatorVariant}
+              className="h-2 w-2"
             />
-          ) : (
-            <span
-              className={cn(
-                'flex flex-1 items-center gap-0.5 truncate text-sm',
-                isBase && 'font-medium'
-              )}
-            >
-              <span className="truncate">{worktree.name}</span>
-              {/* Chevron for expand/collapse sessions */}
-              <button
-                type="button"
-                className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:bg-accent-foreground/10"
-                onClick={handleChevronClick}
+
+            {/* Terminal running/failed indicator */}
+            <TerminalStatusIndicator worktreeId={worktree.id} />
+
+            {/* Workspace name - editable on double-click */}
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="text"
+                aria-label="Worktree name"
+                value={editValue}
+                onChange={e => setEditValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={handleBlur}
+                onClick={e => e.stopPropagation()}
+                className="flex-1 bg-transparent text-base outline-none ring-1 ring-ring rounded px-1 md:text-sm"
+              />
+            ) : (
+              <span
+                className={cn(
+                  'flex flex-1 items-center gap-0.5 truncate text-sm',
+                  isBase && 'font-medium'
+                )}
               >
-                <ChevronDown
-                  className={cn(
-                    'size-3 transition-transform',
-                    isExpanded && 'rotate-180'
-                  )}
-                />
-              </button>
-              {/* Show branch name only when different from displayed name */}
-              {(() => {
-                const displayBranch =
-                  gitStatus?.current_branch ?? worktree.branch
-                return displayBranch !== worktree.name ? (
-                  <span className="ml-0.5 inline-flex max-w-[80px] items-center gap-0.5 truncate text-xs text-muted-foreground">
-                    <GitBranch className="h-2.5 w-2.5" />
-                    {displayBranch}
-                  </span>
-                ) : null
-              })()}
-            </span>
-          )}
-
-          {/* Pull badge - shown when behind remote */}
-          {behindCount > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
+                <span className="truncate">{worktree.name}</span>
+                {/* Chevron for expand/collapse sessions */}
                 <button
                   type="button"
-                  onClick={handlePull}
-                  className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+                  className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:bg-accent-foreground/10"
+                  onClick={handleChevronClick}
                 >
-                  <span className="flex items-center gap-0.5">
-                    <ArrowDown className="h-3 w-3" />
-                    {behindCount}
-                  </span>
+                  <ChevronDown
+                    className={cn(
+                      'size-3 transition-transform',
+                      isExpanded && 'rotate-180'
+                    )}
+                  />
                 </button>
-              </TooltipTrigger>
-              <TooltipContent>{`Pull ${behindCount} commit${behindCount > 1 ? 's' : ''} from remote`}</TooltipContent>
-            </Tooltip>
-          )}
+                {/* Show branch name only when different from displayed name */}
+                {(() => {
+                  const displayBranch =
+                    gitStatus?.current_branch ?? worktree.branch
+                  return displayBranch !== worktree.name ? (
+                    <span className="ml-0.5 inline-flex max-w-[80px] items-center gap-0.5 truncate text-xs text-muted-foreground">
+                      <GitBranch className="h-2.5 w-2.5" />
+                      {displayBranch}
+                    </span>
+                  ) : null
+                })()}
+              </span>
+            )}
 
-          {/* Push badge - unpushed commits */}
-          {pushCount > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handlePush}
-                  className="shrink-0 rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] font-medium text-orange-500 transition-colors hover:bg-orange-500/20"
-                >
-                  <span className="flex items-center gap-0.5">
-                    <ArrowUp className="h-3 w-3" />
-                    {pushCount}
+            {/* Pull badge - shown when behind remote */}
+            {behindCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handlePull}
+                    className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+                  >
+                    <span className="flex items-center gap-0.5">
+                      <ArrowDown className="h-3 w-3" />
+                      {behindCount}
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{`Pull ${behindCount} commit${behindCount > 1 ? 's' : ''} from remote`}</TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* Push badge - unpushed commits */}
+            {pushCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handlePush}
+                    className="shrink-0 rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] font-medium text-orange-500 transition-colors hover:bg-orange-500/20"
+                  >
+                    <span className="flex items-center gap-0.5">
+                      <ArrowUp className="h-3 w-3" />
+                      {pushCount}
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{`Push ${pushCount} commit${pushCount > 1 ? 's' : ''} to remote`}</TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* Uncommitted changes */}
+            {hasUncommitted && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium">
+                    <span className="text-green-500">+{uncommittedAdded}</span>
+                    <span className="text-muted-foreground">/</span>
+                    <span className="text-red-500">-{uncommittedRemoved}</span>
                   </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{`Push ${pushCount} commit${pushCount > 1 ? 's' : ''} to remote`}</TooltipContent>
-            </Tooltip>
-          )}
+                </TooltipTrigger>
+                <TooltipContent>{`Uncommitted: +${uncommittedAdded}/-${uncommittedRemoved} lines`}</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
 
-          {/* Uncommitted changes */}
-          {hasUncommitted && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium">
-                  <span className="text-green-500">+{uncommittedAdded}</span>
-                  <span className="text-muted-foreground">/</span>
-                  <span className="text-red-500">-{uncommittedRemoved}</span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{`Uncommitted: +${uncommittedAdded}/-${uncommittedRemoved} lines`}</TooltipContent>
-            </Tooltip>
-          )}
+          {/* Jenkins build-and-test + preview freshness pills (cache-only,
+              shaped + labelled so they're readable without color). Second line;
+              renders nothing for non-PR rows. */}
+          <WorktreeCiStatus
+            projectId={projectId}
+            worktreeId={worktree.id}
+            prId={
+              worktree.pr_number != null ? String(worktree.pr_number) : null
+            }
+          />
         </div>
       </WorktreeContextMenu>
 

@@ -77,7 +77,26 @@ beforeEach(() => {
 })
 
 describe('BackendModelPickerContent', () => {
-  it('keeps Claude 1M variants plus models without 1M support', () => {
+  it('shows a manual refresh button for CDN-backed Claude and Codex model lists', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="codex"
+        selectedModel="gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole('button', { name: /refresh model list/i })
+    ).toBeInTheDocument()
+  })
+  it('keeps Claude 1M variants plus standard models', () => {
     render(
       <BackendModelPickerContent
         open
@@ -97,9 +116,9 @@ describe('BackendModelPickerContent', () => {
     expect(screen.getByText('Opus 4.7 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.6 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Sonnet 4.6 (1M)')).toBeInTheDocument()
+    expect(screen.getByText('Sonnet 4.6')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.5')).toBeInTheDocument()
     expect(screen.getByText('Haiku')).toBeInTheDocument()
-    expect(screen.queryByText('Sonnet 4.6')).toBeNull()
   })
 
   it('renders backend sidebar and switches backend+model on selection', async () => {

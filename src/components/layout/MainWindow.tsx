@@ -188,6 +188,8 @@ import {
   type WorktreePollingInfo,
 } from '@/services/git-status'
 import { useJenkinsStatusEvents } from '@/services/jenkins'
+import { useNotificationPermission } from '@/hooks/useNotificationPermission'
+import { useJenkinsFocusRefresh } from '@/hooks/useJenkinsFocusRefresh'
 import {
   useWorktree,
   useProjects,
@@ -368,6 +370,14 @@ export function MainWindow() {
 
   // Listen for Jenkins status updates pushed from the backend
   useJenkinsStatusEvents()
+
+  // Resolve the OS notification permission once at startup so the poller's
+  // native notifications are not silently dropped (notif-diagnostic).
+  useNotificationPermission()
+
+  // Force an immediate Jenkins poll when the window regains focus, so CI pills
+  // refresh on tab-back instead of waiting out the poll interval.
+  useJenkinsFocusRefresh()
 
   // Listen for background worktree events (creation/deletion) - must be here
   // (not in sidebar) so events are received even when sidebar is closed

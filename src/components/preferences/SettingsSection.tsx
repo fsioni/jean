@@ -18,9 +18,11 @@ export const SettingsSection: React.FC<SettingsSectionProps> = ({
 }) => (
   <div id={anchorId} className="space-y-4">
     <div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-lg font-medium text-foreground">{title}</h3>
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+        {actions && (
+          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        )}
       </div>
       {description && (
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>

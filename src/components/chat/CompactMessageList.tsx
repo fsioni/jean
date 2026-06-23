@@ -106,7 +106,13 @@ type RenderItem =
       latestText: string | null
     }
   | { kind: 'question'; message: ChatMessage; globalIndex: number }
-  | { kind: 'steered'; texts: string[]; key: string }
+  | {
+      kind: 'steered'
+      texts: string[]
+      key: string
+      messageId: string
+      globalIndex: number
+    }
 
 /**
  * Returns true if an assistant message should always render in full
@@ -250,7 +256,9 @@ function findLatestAssistantText(
 
     const combined = texts.join('\n\n')
     if (!combined.trim()) continue
-    return extractRecapSection(combined) ?? combined
+    const recap = extractRecapSection(combined)
+    if (recap) return recap
+    return texts[texts.length - 1] ?? null
   }
   return null
 }
@@ -852,6 +860,8 @@ export const CompactMessageList = memo(
                   kind: 'steered',
                   texts: segment.texts,
                   key: segment.key,
+                  messageId: message.id,
+                  globalIndex,
                 })
               }
             } else {
@@ -1158,7 +1168,27 @@ export const CompactMessageList = memo(
             if (item.kind === 'steered') {
               return (
                 <div key={item.key} className="pb-4">
-                  <SteeredPromptGroup texts={item.texts} />
+                  <SteeredPromptGroup
+                    texts={item.texts}
+                    onCopyText={
+                      onCopyToInput
+                        ? text =>
+                            onCopyToInput({
+                              id: `${item.messageId}-steered-copy`,
+                              session_id:
+                                messages[item.globalIndex]?.session_id ??
+                                sessionId,
+                              role: 'user',
+                              content: text,
+                              timestamp:
+                                messages[item.globalIndex]?.timestamp ??
+                                Date.now(),
+                              content_blocks: [],
+                              tool_calls: [],
+                            })
+                        : undefined
+                    }
+                  />
                 </div>
               )
             }
@@ -1203,8 +1233,12 @@ export const CompactMessageList = memo(
             const latestTextIsRecap =
               Boolean(item.latestText) &&
               RECAP_HEADING_RE.test(item.latestText ?? '')
+            const hasCancelledMessage = item.messages.some(
+              ({ message }) => message.cancelled
+            )
             const showLatestText =
               isLatestCompact &&
+              !hasCancelledMessage &&
               Boolean(item.latestText) &&
               !(latestTextIsRecap && latestRunHasPlan)
             const surfaceRecap = latestTextIsRecap && showLatestText

@@ -7,7 +7,7 @@
  * Backend contract:
  * - get_jenkins_status({ projectId, worktreeId, prId?, branch? }) -> JenkinsWorktreeStatus
  * - save_jenkins_config({ projectId, url, user, token, previewUrlTemplate? }) -> Project
- * - rerun_jenkins_pipeline({ projectId, prId?, branch? }) -> void
+ * - rerun_jenkins_pipeline({ projectId, worktreeId, prId?, branch? }) -> void
  * - restart_jenkins_integration({ projectId, buildNumber }) -> void
  * - event "jenkins:status-update" -> JenkinsWorktreeStatus
  */
@@ -141,6 +141,31 @@ export function useJenkinsStatus(
   })
 }
 
+/**
+ * Cache-only read of a worktree's Jenkins status — **never fetches**.
+ *
+ * The global poller (`jenkins::start_poller`) already broadcasts every PR-linked
+ * worktree's status every 60s; `useJenkinsStatusEvents()` writes those payloads
+ * into the same query key via `setQueryData`. List rows consume that cache
+ * passively: subscribing here re-renders the row when a fresh status lands,
+ * with zero extra `get_jenkins_status` invocations (which would be N redundant
+ * fetches at mount + every cycle).
+ *
+ * Returns `undefined` until the poller has populated the cache for this worktree.
+ */
+export function useJenkinsStatusCached(worktreeId: string | null) {
+  return useQuery<JenkinsWorktreeStatus>({
+    queryKey: jenkinsQueryKeys.status(worktreeId ?? ''),
+    // Never invoked: enabled is false. The cache is filled by the poller events.
+    queryFn: () => {
+      throw new Error('useJenkinsStatusCached is cache-only')
+    },
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 5,
+  })
+}
+
 // ============================================================================
 // Status Events
 // ============================================================================
@@ -198,7 +223,7 @@ export function useRerunJenkinsPipeline() {
   return useMutation({
     mutationFn: async (variables: {
       projectId: string
-      /** Only used to invalidate the right status cache entry. */
+      /** Resolves the PR's worktree checkout (where `gh` runs) + status cache. */
       worktreeId: string
       prId?: string | null
       branch?: string | null
@@ -206,16 +231,21 @@ export function useRerunJenkinsPipeline() {
       if (!isTauri()) throw new Error('Not in Tauri context')
       await invoke('rerun_jenkins_pipeline', {
         projectId: variables.projectId,
+        worktreeId: variables.worktreeId,
         prId: variables.prId ?? null,
         branch: variables.branch ?? null,
       })
     },
     onMutate: () => {
-      const toastId = toast.loading('Re-running Jenkins pipeline...')
+      const toastId = toast.loading('Requesting pipeline re-run...')
       return { toastId }
     },
     onSuccess: (_data, variables, context) => {
-      toast.success('Jenkins pipeline triggered', { id: context?.toastId })
+      // The re-run posts the ghprb "retest" comment on the PR; ghprb picks it up
+      // on its next poll (~5 min) and starts the build — it isn't instant.
+      toast.success('Re-run requested — pipeline will start shortly', {
+        id: context?.toastId,
+      })
       queryClient.invalidateQueries({
         queryKey: jenkinsQueryKeys.status(variables.worktreeId),
       })

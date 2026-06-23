@@ -17,12 +17,15 @@ import {
   triggerImmediateRemotePoll,
   getGitDiff,
   useGitStatus,
+  useAppFocusTracking,
+  useWorktreePolling,
   performGitPull,
   type WorktreePollingInfo,
 } from './git-status'
 
 const mockInvoke = vi.fn()
 const mockListen = vi.fn()
+let mockWsConnected = true
 const mockToast = {
   loading: vi.fn(() => 'toast-1'),
   success: vi.fn(),
@@ -37,6 +40,7 @@ const mockIsWorktreeRunningNonPlan = vi.fn(() => false)
 vi.mock('@/lib/transport', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
   listen: (...args: unknown[]) => mockListen(...args),
+  useWsConnectionStatus: () => mockWsConnected,
 }))
 
 vi.mock('@/services/projects', () => ({
@@ -89,6 +93,7 @@ describe('git-status service', () => {
     })
     mockToast.loading.mockReturnValue('toast-1')
     mockIsWorktreeRunningNonPlan.mockReturnValue(false)
+    mockWsConnected = true
     // Mock Tauri environment
     const { isTauri } = vi.mocked(await import('@/services/projects'))
     isTauri.mockReturnValue(true)
@@ -445,6 +450,55 @@ describe('git-status service', () => {
 
       expect(result.current.data?.behind_count).toBe(5)
       expect(result.current.data?.ahead_count).toBe(2)
+    })
+  })
+
+  describe('background polling hooks', () => {
+    it('swallows rejected focus state updates so global error toasts are not triggered', async () => {
+      mockInvoke.mockRejectedValue(new Error('Command timed out after 60s'))
+      const unhandledRejection = vi.fn()
+      window.addEventListener('unhandledrejection', unhandledRejection)
+
+      renderHook(() => useAppFocusTracking())
+
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      expect(mockInvoke).toHaveBeenCalledWith('set_app_focus_state', {
+        focused: document.hasFocus(),
+      })
+
+      window.removeEventListener('unhandledrejection', unhandledRejection)
+    })
+
+    it('swallows rejected active worktree polling updates so global error toasts are not triggered', async () => {
+      mockInvoke.mockRejectedValue(new Error('Command timed out after 60s'))
+      const unhandledRejection = vi.fn()
+      window.addEventListener('unhandledrejection', unhandledRejection)
+
+      renderHook(() =>
+        useWorktreePolling({
+          worktreeId: 'wt-123',
+          worktreePath: '/path/to/worktree',
+          baseBranch: 'main',
+        })
+      )
+
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'set_active_worktree_for_polling',
+        {
+          worktreeId: 'wt-123',
+          worktreePath: '/path/to/worktree',
+          baseBranch: 'main',
+          prNumber: null,
+          prUrl: null,
+        }
+      )
+
+      window.removeEventListener('unhandledrejection', unhandledRejection)
     })
   })
 })

@@ -404,6 +404,42 @@ describe('useMessageSending Codex auto-steer', () => {
     expect(sendMessage.mutate).not.toHaveBeenCalled()
   })
 
+
+
+  it('steers codex attachments instead of queueing when auto-steer is enabled', async () => {
+    vi.mocked(steerCodexTurn).mockResolvedValue(undefined)
+    const { result } = renderUseMessageSending({
+      inputValue: 'please inspect',
+    })
+    useChatStore.setState({
+      pendingImages: {
+        'session-1': [
+          { id: 'img-1', path: '/tmp/img.png', filename: 'img.png' },
+        ],
+      },
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerCodexTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      `please inspect
+
+[Image attached: /tmp/img.png - Use the Read tool to view this image]`,
+      expect.objectContaining({
+        pendingImages: [
+          expect.objectContaining({ path: '/tmp/img.png' }),
+        ],
+      })
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+  })
+
   it('queues instead of steering when auto-steer is disabled', async () => {
     const { result } = renderUseMessageSending({
       autoSteer: false,

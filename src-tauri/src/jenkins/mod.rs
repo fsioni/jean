@@ -23,4 +23,4 @@ pub mod types;
 // Glob re-export so `#[tauri::command]`'s hidden `__cmd__*` macros are visible
 // to `generate_handler!` (same pattern as `projects::*`).
 pub use commands::*;
-pub use poller::start_poller;
+pub use poller::{start_poller, JenkinsPollSignal};

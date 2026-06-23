@@ -673,7 +673,7 @@ export function PreferencesDialog() {
         </DialogDescription>
 
         <SidebarProvider className="!min-h-0 !h-full items-stretch overflow-hidden">
-          <Sidebar collapsible="none" className="hidden md:flex">
+          <Sidebar collapsible="none" className="hidden lg:flex">
             <SidebarContent>
               <SidebarGroup>
                 <SidebarGroupContent>
@@ -714,7 +714,7 @@ export function PreferencesDialog() {
                   value={activePane}
                   onValueChange={v => handlePaneSelect(v as PreferencePane)}
                 >
-                  <SelectTrigger className="md:hidden w-full">
+                  <SelectTrigger className="lg:hidden w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -729,10 +729,10 @@ export function PreferencesDialog() {
                 </Select>
                 <ModalCloseButton
                   size="lg"
-                  className="md:hidden"
+                  className="lg:hidden"
                   onClick={() => handleOpenChange(false)}
                 />
-                <Breadcrumb className="hidden md:block">
+                <Breadcrumb className="hidden lg:block">
                   <BreadcrumbList>
                     <BreadcrumbItem>
                       <BreadcrumbLink href="#">Settings</BreadcrumbLink>
@@ -746,7 +746,7 @@ export function PreferencesDialog() {
                   </BreadcrumbList>
                 </Breadcrumb>
 
-                <div className="ml-auto hidden md:flex items-center gap-2">
+                <div className="ml-auto hidden lg:flex items-center gap-2">
                   <PreferencesSearchBar
                     variant="desktop"
                     searchValue={searchValue}
@@ -774,7 +774,7 @@ export function PreferencesDialog() {
 
             <div
               ref={scrollContainerRef}
-              className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 min-h-0"
+              className="flex min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-4 min-h-0"
             >
               <PreferencesSearchBar
                 variant="mobile"
@@ -793,104 +793,107 @@ export function PreferencesDialog() {
               />
 
               {activePane === 'general' && (
-                <div id="pref-pane-general">
+                <div id="pref-pane-general" className="min-w-0 max-w-full">
                   <GeneralPane />
                 </div>
               )}
               {activePane === 'claude' && (
-                <div id="pref-pane-claude">
+                <div id="pref-pane-claude" className="min-w-0 max-w-full">
                   <ClaudePane />
                 </div>
               )}
               {activePane === 'codex' && (
-                <div id="pref-pane-codex">
+                <div id="pref-pane-codex" className="min-w-0 max-w-full">
                   <CodexPane />
                 </div>
               )}
               {activePane === 'opencode' && (
-                <div id="pref-pane-opencode">
+                <div id="pref-pane-opencode" className="min-w-0 max-w-full">
                   <OpenCodePane />
                 </div>
               )}
               {activePane === 'cursor' && (
-                <div id="pref-pane-cursor">
+                <div id="pref-pane-cursor" className="min-w-0 max-w-full">
                   <CursorPane />
                 </div>
               )}
               {activePane === 'pi' && (
-                <div id="pref-pane-pi">
+                <div id="pref-pane-pi" className="min-w-0 max-w-full">
                   <PiPane />
                 </div>
               )}
               {activePane === 'commandcode' && (
-                <div id="pref-pane-commandcode">
+                <div id="pref-pane-commandcode" className="min-w-0 max-w-full">
                   <CommandCodePane />
                 </div>
               )}
               {activePane === 'github' && (
-                <div id="pref-pane-github">
+                <div id="pref-pane-github" className="min-w-0 max-w-full">
                   <GitHubPane />
                 </div>
               )}
               {activePane === 'coderabbit' && (
-                <div id="pref-pane-coderabbit">
+                <div id="pref-pane-coderabbit" className="min-w-0 max-w-full">
                   <CodeRabbitPane />
                 </div>
               )}
               {activePane === 'appearance' && (
-                <div id="pref-pane-appearance">
+                <div id="pref-pane-appearance" className="min-w-0 max-w-full">
                   <AppearancePane />
                 </div>
               )}
               {activePane === 'keybindings' && (
-                <div id="pref-pane-keybindings">
+                <div id="pref-pane-keybindings" className="min-w-0 max-w-full">
                   <KeybindingsPane searchTargetAction={searchTargetAction} />
                 </div>
               )}
               {activePane === 'terminal' && (
-                <div id="pref-pane-terminal">
+                <div id="pref-pane-terminal" className="min-w-0 max-w-full">
                   <TerminalPane />
                 </div>
               )}
               {activePane === 'magic-prompts' && (
-                <div id="pref-pane-magic-prompts">
+                <div
+                  id="pref-pane-magic-prompts"
+                  className="min-w-0 max-w-full"
+                >
                   <MagicPromptsPane
                     searchTargetPromptKey={searchTargetPromptKey}
                   />
                 </div>
               )}
               {activePane === 'mcp-servers' && (
-                <div id="pref-pane-mcp-servers">
+                <div id="pref-pane-mcp-servers" className="min-w-0 max-w-full">
                   <McpServersPane />
                 </div>
               )}
               {activePane === 'providers' && (
-                <div id="pref-pane-providers">
+                <div id="pref-pane-providers" className="min-w-0 max-w-full">
                   <ProvidersPane />
                 </div>
               )}
               {activePane === 'usage' && (
-                <div id="pref-pane-usage">
+                <div id="pref-pane-usage" className="min-w-0 max-w-full">
                   <UsagePane />
                 </div>
               )}
               {activePane === 'integrations' && (
-                <div id="pref-pane-integrations">
+                <div id="pref-pane-integrations" className="min-w-0 max-w-full">
                   <IntegrationsPane />
                 </div>
               )}
               {activePane === 'experimental' && (
-                <div id="pref-pane-experimental">
+                <div id="pref-pane-experimental" className="min-w-0 max-w-full">
                   <ExperimentalPane />
                 </div>
               )}
               {activePane === 'opinionated' && (
-                <div id="pref-pane-opinionated">
+                <div id="pref-pane-opinionated" className="min-w-0 max-w-full">
                   <OpinionatedPane />
                 </div>
               )}
               {activePane === 'web-access' && (
-                <div id="pref-pane-web-access">
+                <div id="pref-pane-web-access" className="min-w-0 max-w-full">
                   <WebAccessPane />
                 </div>
               )}

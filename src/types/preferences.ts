@@ -810,6 +810,35 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   review_comments_effort: null,
 }
 
+export type MagicPromptExecutionMode = Extract<ExecutionMode, 'plan' | 'yolo'>
+
+/**
+ * Per-prompt execution mode overrides for magic prompts that send chat turns.
+ * Field names use snake_case to match Rust struct exactly.
+ */
+export interface MagicPromptModes {
+  investigate_issue_mode: MagicPromptExecutionMode
+  investigate_pr_mode: MagicPromptExecutionMode
+  investigate_workflow_run_mode: MagicPromptExecutionMode
+  investigate_security_alert_mode: MagicPromptExecutionMode
+  investigate_advisory_mode: MagicPromptExecutionMode
+  investigate_linear_issue_mode: MagicPromptExecutionMode
+  review_comments_mode: MagicPromptExecutionMode
+  resolve_conflicts_mode: MagicPromptExecutionMode
+}
+
+/** Default execution modes for chat-style magic prompts */
+export const DEFAULT_MAGIC_PROMPT_MODES: MagicPromptModes = {
+  investigate_issue_mode: 'plan',
+  investigate_pr_mode: 'plan',
+  investigate_workflow_run_mode: 'yolo',
+  investigate_security_alert_mode: 'plan',
+  investigate_advisory_mode: 'plan',
+  investigate_linear_issue_mode: 'plan',
+  review_comments_mode: 'plan',
+  resolve_conflicts_mode: 'yolo',
+}
+
 /** Codex preset: heavier reasoning for investigations, lighter for simple generation */
 export const CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_issue_effort: 'medium',
@@ -1011,6 +1040,7 @@ export interface AppPreferences {
   magic_prompt_providers: MagicPromptProviders // Per-prompt provider overrides (null = use default_provider)
   magic_prompt_backends: MagicPromptBackends // Per-prompt backend overrides (null = use project/global default_backend)
   magic_prompt_efforts: MagicPromptReasoningEfforts // Per-prompt reasoning effort overrides (null = model default)
+  magic_prompt_modes: MagicPromptModes // Per-prompt execution modes for magic prompts that send chat turns
   file_edit_mode: FileEditMode // How to edit files: inline (CodeMirror) or external (VS Code, etc.)
   ai_language: string // Preferred language for AI responses (empty = default)
   allow_web_tools_in_plan_mode: boolean // Allow WebFetch/WebSearch in plan mode without prompts
@@ -1196,31 +1226,33 @@ export type ClaudeModel =
   | 'claude-opus-4-7'
   | 'claude-opus-4-7[1m]'
   | 'claude-opus-4-6'
-  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-6[1m]'
+  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-8[1m]-fast'
   | 'claude-opus-4-7[1m]-fast'
   | 'claude-opus-4-6-fast'
   | 'claude-opus-4-6[1m]-fast'
   | 'opus' // Legacy/provider-alias: resolved by CLI via ANTHROPIC_DEFAULT_OPUS_MODEL env
   | 'sonnet'
+  | 'claude-sonnet-4-6'
   | 'claude-sonnet-4-6[1m]'
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
   { value: 'claude-fable-5', label: 'Claude Fable 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
+  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-sonnet-4-6[1m]', label: 'Claude Sonnet 4.6 (1M)' },
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku' },
 ]
 
 const legacyClaudeDefaultModelMap = {
-  'claude-opus-4-8': 'claude-opus-4-8[1m]',
-  'claude-opus-4-7': 'claude-opus-4-7[1m]',
-  'claude-opus-4-6': 'claude-opus-4-6[1m]',
   'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
   sonnet: 'claude-sonnet-4-6[1m]',
 } as const satisfies Partial<Record<ClaudeModel, ClaudeModel>>
@@ -1845,6 +1877,7 @@ export const defaultPreferences: AppPreferences = {
   magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
   magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
   magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+  magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
   file_edit_mode: 'external',
   ai_language: '', // Default: empty (Claude's default behavior)
   allow_web_tools_in_plan_mode: true, // Default: enabled

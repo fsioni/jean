@@ -13,6 +13,7 @@ use super::freshness::{self, PreviewFreshness};
 use super::parse;
 use super::types::{JenkinsBuild, JenkinsStage, JenkinsWorktreeStatus};
 use crate::gh_cli::config::resolve_gh_binary;
+use crate::platform::silent_command;
 use crate::projects::storage::{load_projects_data, save_projects_data};
 use crate::projects::types::Project;
 
@@ -26,6 +27,10 @@ pub const PREVIEW_JOB: &str = "deploy-preview";
 pub const INTEGRATION_STAGE: &str = "Integration tests";
 /// Jobs whose queue items mean "the PR's pipeline is waiting to start".
 const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
+/// The ghprb "retest" trigger phrase (Jenkins global config regex
+/// `.*test\W+this\W+please.*`). Posted as a PR comment, it makes ghprb
+/// re-trigger the Launcher build — see [`rerun_jenkins_pipeline`].
+const GHPRB_RETEST_PHRASE: &str = "retest this please";
 
 /// Resolve the preview **base** URL for a PR from the project's configured
 /// template (`{pr}` placeholder, e.g. `https://{pr}.preview.example.com`).
@@ -35,12 +40,21 @@ const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
 /// freshness `/version` probe are derived from this single base.
 pub fn preview_base_url(template: Option<&str>, pr_id: &str) -> Option<String> {
     let template = template.map(str::trim).filter(|t| !t.is_empty())?;
-    Some(
-        template
-            .replace("{pr}", pr_id)
-            .trim_end_matches('/')
-            .to_string(),
-    )
+    let resolved = template.replace("{pr}", pr_id);
+    let base = resolved.trim_end_matches('/');
+
+    // Tolerate a template that already includes the `/admin` suffix: the admin
+    // link and the `/version` probe are BOTH derived from the base, so a trailing
+    // `/admin` would build `/admin/admin` and probe `/admin/version` — which the
+    // admin SPA happily answers with index.html (HTTP 200, no `commit <sha>`),
+    // masking the preview freshness as UNKNOWN (grey). Strip it so either the
+    // base or the admin URL works.
+    let base = match base.len().checked_sub("/admin".len()) {
+        Some(cut) if base[cut..].eq_ignore_ascii_case("/admin") => &base[..cut],
+        _ => base,
+    };
+
+    Some(base.trim_end_matches('/').to_string())
 }
 
 /// Build the preview admin URL for a PR (preview base + `/admin`).
@@ -195,25 +209,101 @@ pub async fn get_jenkins_status(
     Ok(status)
 }
 
-/// Re-run the whole `build-and-test` pipeline, replaying the last build's parameters.
+/// Re-run a PR's `build-and-test` pipeline by asking ghprb to retest it.
+///
+/// Neither Jenkins job can be re-triggered directly with the right effect:
+/// - [`LAUNCHER_JOB`] (the ghprb entry point) is a FreeStyle job with **no build
+///   parameters** — its ghprb context (`sha1`, `ghprbPullId`, …) is injected at
+///   trigger time — so `POST …/buildWithParameters` answers **HTTP 500** ("Oops!
+///   A problem occurred…"). That is the bug behind the original re-run error.
+/// - Triggering [`PIPELINE_JOB`] directly *works*, but bypasses ghprb, so the
+///   GitHub PR check / commit status never updates.
+///
+/// The supported re-run is therefore the ghprb **retest phrase**: a PR comment
+/// ([`GHPRB_RETEST_PHRASE`]) that ghprb honors for repo admins and re-triggers
+/// the Launcher with the right PR context on its next poll (~5 min) — preserving
+/// the PR↔GitHub link. We post it with `gh` from the worktree's checkout.
 #[tauri::command]
 pub async fn rerun_jenkins_pipeline(
     app: AppHandle,
     project_id: String,
+    worktree_id: Option<String>,
     pr_id: Option<String>,
     branch: Option<String>,
 ) -> Result<(), String> {
-    let cfg = config::load_config(&app, &project_id)?;
-    let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
+    let data = load_projects_data(&app)?;
+    let pr_from_arg = pr_id.as_deref().and_then(parse_pr_number);
 
-    let builds = client.fetch_builds(PIPELINE_JOB).await?;
-    let last = match_build(&builds, pr_id.as_deref(), branch.as_deref())
-        .ok_or_else(|| "No previous build found for this PR/branch to re-run".to_string())?;
+    // Resolve the PR's worktree (by id → PR number → branch). Needed for the repo
+    // checkout where `gh` runs, and as a fallback source of the PR number.
+    let worktree = worktree_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .and_then(|id| data.worktrees.iter().find(|w| w.id == id))
+        .or_else(|| {
+            pr_from_arg.and_then(|pr| data.worktrees.iter().find(|w| w.pr_number == Some(pr)))
+        })
+        .or_else(|| {
+            branch
+                .as_deref()
+                .filter(|b| !b.is_empty())
+                .and_then(|b| data.worktrees.iter().find(|w| w.branch == b))
+        });
 
-    let params = client
-        .fetch_build_parameters(PIPELINE_JOB, last.number)
-        .await?;
-    client.trigger_with_parameters(PIPELINE_JOB, &params).await
+    // `gh` runs in the PR's worktree checkout, falling back to the project repo.
+    let repo_path = worktree
+        .map(|w| w.path.clone())
+        .or_else(|| data.find_project(&project_id).map(|p| p.path.clone()))
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| {
+            "Re-run: couldn't resolve a repository directory for this PR.".to_string()
+        })?;
+
+    let pr_number = pr_from_arg
+        .or_else(|| worktree.and_then(|w| w.pr_number))
+        .ok_or_else(|| {
+            "Re-run needs an open PR — no PR number found for this worktree.".to_string()
+        })?;
+
+    let gh = resolve_gh_binary(&app);
+    post_ghprb_retest_comment(repo_path, pr_number, gh).await
+}
+
+/// Parse a PR number from a possibly `#`-prefixed string (e.g. `"#3959"`).
+fn parse_pr_number(raw: &str) -> Option<u32> {
+    raw.trim().trim_start_matches('#').parse().ok()
+}
+
+/// Post the ghprb retest phrase on a PR via `gh pr comment` (blocking → off-thread).
+async fn post_ghprb_retest_comment(
+    repo_path: String,
+    pr_number: u32,
+    gh: std::path::PathBuf,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let output = silent_command(&gh)
+            .args([
+                "pr",
+                "comment",
+                &pr_number.to_string(),
+                "--body",
+                GHPRB_RETEST_PHRASE,
+            ])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to run gh: {e}"))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "gh pr comment failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    })
+    .await
+    .map_err(|e| format!("Re-run task failed to join: {e}"))?
 }
 
 /// Restart only the flaky `Integration tests` stage of a pipeline build.
@@ -272,6 +362,15 @@ fn clean(value: String) -> Option<String> {
     }
 }
 
+/// Force the background poller to run a cycle now (e.g. on window focus) instead
+/// of waiting out the adaptive interval. Cheap: just wakes the existing loop.
+#[tauri::command]
+pub fn poke_jenkins_poll(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<super::poller::JenkinsPollSignal>().poke();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,6 +410,31 @@ mod tests {
     }
 
     #[test]
+    fn preview_base_strips_trailing_admin_suffix() {
+        // A template that already ends in `/admin` must not double up or probe
+        // `/admin/version` — the base is normalized back to the host root.
+        let tpl = Some("https://{pr}.preview.example.com/admin");
+        assert_eq!(
+            preview_base_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com")
+        );
+        assert_eq!(
+            preview_url(tpl, "3905").as_deref(),
+            Some("https://3905.preview.example.com/admin")
+        );
+        // Case-insensitive + trailing slash variants normalize the same way.
+        assert_eq!(
+            preview_base_url(Some("https://{pr}.preview.example.com/Admin/"), "42").as_deref(),
+            Some("https://42.preview.example.com")
+        );
+        // A path that merely contains "admin" elsewhere is left untouched.
+        assert_eq!(
+            preview_base_url(Some("https://admin.example.com/{pr}"), "42").as_deref(),
+            Some("https://admin.example.com/42")
+        );
+    }
+
+    #[test]
     fn match_build_prefers_pr_id() {
         let builds = vec![
             build(2, Some("3960"), Some("feat-x")),
@@ -335,6 +459,28 @@ mod tests {
         let builds = vec![build(1, Some("3959"), Some("feat"))];
         assert!(match_build(&builds, None, None).is_none());
         assert!(match_build(&builds, Some(""), Some("")).is_none());
+    }
+
+    #[test]
+    fn parse_pr_number_strips_hash_and_whitespace() {
+        assert_eq!(parse_pr_number(" #3959 "), Some(3959));
+        assert_eq!(parse_pr_number("404"), Some(404));
+        assert_eq!(parse_pr_number(""), None);
+        assert_eq!(parse_pr_number("feat-x"), None);
+    }
+
+    #[test]
+    fn retest_phrase_satisfies_ghprb_regex() {
+        // ghprb global config: retestPhrase = `.*test\W+this\W+please.*`. Cheap
+        // guard that the constant we post still carries the three anchor words in
+        // order so a phrase typo can't silently make the re-run a no-op.
+        let p = GHPRB_RETEST_PHRASE;
+        let test = p.find("test").expect("test");
+        let this = p[test..].find("this").expect("this");
+        assert!(
+            p[test + this..].contains("please"),
+            "words out of order: {p}"
+        );
     }
 
     #[test]

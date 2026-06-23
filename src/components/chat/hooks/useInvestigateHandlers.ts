@@ -16,6 +16,7 @@ import {
   DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
   DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
 } from '@/types/preferences'
@@ -187,6 +188,19 @@ export function useInvestigateHandlers({
               : type === 'linear-issue'
                 ? 'investigate_linear_issue_backend'
                 : ('investigate_advisory_backend' as const)
+      const modeKey =
+        type === 'issue'
+          ? 'investigate_issue_mode'
+          : type === 'pr'
+            ? 'investigate_pr_mode'
+            : type === 'security-alert'
+              ? 'investigate_security_alert_mode'
+              : type === 'linear-issue'
+                ? 'investigate_linear_issue_mode'
+                : ('investigate_advisory_mode' as const)
+      const investigateMode =
+        preferences?.magic_prompt_modes?.[modeKey] ??
+        DEFAULT_MAGIC_PROMPT_MODES[modeKey]
       const investigateModel =
         override?.model ??
         preferences?.magic_prompt_models?.[modelKey] ??
@@ -364,7 +378,7 @@ export function useInvestigateHandlers({
       addSendingSession(activeSessionId)
       setSelectedModel(activeSessionId, investigateModel)
       setSelectedProvider(activeSessionId, investigateProvider)
-      setExecutingMode(activeSessionId, executionModeRef.current)
+      setExecutingMode(activeSessionId, investigateMode)
 
       setSessionProvider.mutate({
         sessionId: activeSessionId,
@@ -424,7 +438,7 @@ export function useInvestigateHandlers({
           worktreePath: activeWorktreePath,
           message: prompt,
           model: investigateModel,
-          executionMode: executionModeRef.current,
+          executionMode: investigateMode,
           thinkingLevel: selectedThinkingLevelRef.current,
           effortLevel: investigateUseAdaptive
             ? selectedEffortLevelRef.current
@@ -464,6 +478,7 @@ export function useInvestigateHandlers({
       preferences?.magic_prompt_models,
       preferences?.magic_prompt_providers,
       preferences?.magic_prompt_backends,
+      preferences?.magic_prompt_modes,
       preferences?.chrome_enabled,
       preferences?.ai_language,
       setSessionProvider,
@@ -502,6 +517,9 @@ export function useInvestigateHandlers({
       const investigateModel =
         preferences?.magic_prompt_models?.investigate_workflow_run_model ??
         selectedModelRef.current
+      const investigateMode =
+        preferences?.magic_prompt_modes?.investigate_workflow_run_mode ??
+        DEFAULT_MAGIC_PROMPT_MODES.investigate_workflow_run_mode
       const investigateProvider = resolveMagicPromptProvider(
         preferences?.magic_prompt_providers,
         'investigate_workflow_run_provider',
@@ -629,7 +647,7 @@ export function useInvestigateHandlers({
         addSendingSession(targetSessionId)
         setSelectedModel(targetSessionId, investigateModel)
         setSelectedProvider(targetSessionId, investigateProvider)
-        setExecutingMode(targetSessionId, 'yolo')
+        setExecutingMode(targetSessionId, investigateMode)
 
         setSessionBackend.mutate({
           sessionId: targetSessionId,
@@ -671,7 +689,7 @@ export function useInvestigateHandlers({
             worktreePath,
             message: prompt,
             model: investigateModel,
-            executionMode: 'yolo',
+            executionMode: investigateMode,
             thinkingLevel: selectedThinkingLevelRef.current,
             effortLevel: investigateUseAdaptive
               ? selectedEffortLevelRef.current
@@ -747,6 +765,7 @@ export function useInvestigateHandlers({
       preferences?.magic_prompts?.parallel_execution,
       preferences?.magic_prompt_providers,
       preferences?.magic_prompt_backends,
+      preferences?.magic_prompt_modes,
       preferences?.chrome_enabled,
       preferences?.ai_language,
       setSessionProvider,
@@ -808,7 +827,9 @@ export function useInvestigateHandlers({
       if (prompts.length === 0) return
 
       const requestedExecutionMode =
-        options?.executionMode ?? executionModeRef.current
+        options?.executionMode ??
+        preferences?.magic_prompt_modes?.review_comments_mode ??
+        DEFAULT_MAGIC_PROMPT_MODES.review_comments_mode
 
       // Helper to send the message once we have a session ID
       const sendInSession = (sessionId: string, prompt: string) => {
@@ -961,6 +982,7 @@ export function useInvestigateHandlers({
       preferences?.magic_prompt_models?.review_comments_model,
       preferences?.magic_prompt_providers,
       preferences?.magic_prompt_backends,
+      preferences?.magic_prompt_modes,
       preferences?.chrome_enabled,
       preferences?.ai_language,
       setSessionProvider,

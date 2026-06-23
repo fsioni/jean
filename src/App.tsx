@@ -61,6 +61,7 @@ import {
 import { scheduleIdleWork } from './lib/idle'
 import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
+import { collectWorktreePaths } from './lib/initial-data-cache'
 import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 
 interface AutoFixStoppedEvent {
@@ -243,13 +244,23 @@ function App() {
           )
         }
       }
+      const worktreePaths = collectWorktreePaths(data.worktreesByProject)
+      if (Object.keys(worktreePaths).length > 0) {
+        const currentState = useChatStore.getState()
+        useChatStore.setState({
+          worktreePaths: {
+            ...currentState.worktreePaths,
+            ...worktreePaths,
+          },
+        })
+      }
+
       // Seed sessions for each worktree (WorktreeSessions struct)
       // Also restore Zustand state for reviewing/waiting status
       if (data.sessionsByWorktree) {
         const reviewingUpdates: Record<string, boolean> = {}
         const waitingUpdates: Record<string, boolean> = {}
         const sessionMappings: Record<string, string> = {}
-        const worktreePaths: Record<string, string> = {}
 
         for (const [worktreeId, sessionsData] of Object.entries(
           data.sessionsByWorktree
@@ -279,17 +290,6 @@ function App() {
           }
         }
 
-        // Get worktree paths from worktreesByProject
-        if (data.worktreesByProject) {
-          for (const worktrees of Object.values(data.worktreesByProject)) {
-            for (const wt of worktrees as { id: string; path: string }[]) {
-              if (wt.id && wt.path) {
-                worktreePaths[wt.id] = wt.path
-              }
-            }
-          }
-        }
-
         // Update Zustand store with session state
         const currentState = useChatStore.getState()
         const storeUpdates: Partial<ReturnType<typeof useChatStore.getState>> =
@@ -299,12 +299,6 @@ function App() {
           storeUpdates.sessionWorktreeMap = {
             ...currentState.sessionWorktreeMap,
             ...sessionMappings,
-          }
-        }
-        if (Object.keys(worktreePaths).length > 0) {
-          storeUpdates.worktreePaths = {
-            ...currentState.worktreePaths,
-            ...worktreePaths,
           }
         }
         // Clear stale waiting/reviewing state for sessions actively running a turn.
@@ -346,14 +340,31 @@ function App() {
       // Use function updater to avoid overwriting cache that has MORE messages
       // (e.g., from chat:done upsert that arrived before this reconnect seed).
       if (data.activeSessions) {
+        const activeSessionWorktreeIds = data.activeSessionWorktreeIds ?? {}
+        const activeReviewingUpdates: Record<string, boolean> = {}
+        const activeWaitingUpdates: Record<string, boolean> = {}
+        const activeSessionMappings: Record<string, string> = {}
+
         for (const [sessionId, initSession] of Object.entries(
           data.activeSessions
         )) {
+          const session = initSession as Session
+          const worktreeId = activeSessionWorktreeIds[sessionId]
+          if (worktreeId) {
+            activeSessionMappings[sessionId] = worktreeId
+          }
+          if (session.is_reviewing) {
+            activeReviewingUpdates[sessionId] = true
+          }
+          if (session.waiting_for_input) {
+            activeWaitingUpdates[sessionId] = true
+          }
+
           queryClient.setQueryData<Session>(
             chatQueryKeys.session(sessionId),
             old => {
-              if (!old) return initSession as Session
-              const init = initSession as Session
+              if (!old) return session
+              const init = session
               if (old.messages.length > init.messages.length) {
                 logger.warn('[seedCache] preserving cached messages', {
                   sessionId,
@@ -375,6 +386,35 @@ function App() {
             lastMsg.id.startsWith('running-')
           ) {
             runningSnapshotMessages.push({ sessionId, message: lastMsg })
+          }
+        }
+
+        if (
+          Object.keys(activeSessionMappings).length > 0 ||
+          Object.keys(activeReviewingUpdates).length > 0 ||
+          Object.keys(activeWaitingUpdates).length > 0
+        ) {
+          beginSessionStateHydration()
+          try {
+            useChatStore.setState(state => ({
+              sessionWorktreeMap:
+                Object.keys(activeSessionMappings).length > 0
+                  ? {
+                      ...state.sessionWorktreeMap,
+                      ...activeSessionMappings,
+                    }
+                  : state.sessionWorktreeMap,
+              reviewingSessions:
+                data.sessionsByWorktree === undefined
+                  ? activeReviewingUpdates
+                  : state.reviewingSessions,
+              waitingForInputSessionIds:
+                data.sessionsByWorktree === undefined
+                  ? activeWaitingUpdates
+                  : state.waitingForInputSessionIds,
+            }))
+          } finally {
+            endSessionStateHydration()
           }
         }
       }
@@ -450,6 +490,29 @@ function App() {
       // Seed UI state into cache
       if (data.uiState) {
         queryClient.setQueryData(['ui-state'], data.uiState)
+        const uiState = data.uiState as { active_project_id?: string | null }
+        const activeProjectId = uiState.active_project_id
+        if (activeProjectId) {
+          const { selectedProjectId, expandProject, selectProject } =
+            useProjectsStore.getState()
+          const { activeWorktreePath } = useChatStore.getState()
+          const projects = Array.isArray(data.projects) ? data.projects : []
+          const projectExists = projects.some(
+            project =>
+              typeof project === 'object' &&
+              project !== null &&
+              'id' in project &&
+              project.id === activeProjectId &&
+              (!('is_folder' in project) || !project.is_folder)
+          )
+          if (!selectedProjectId && !activeWorktreePath && projectExists) {
+            logger.info('Restoring active project from reconnect UI state', {
+              activeProjectId,
+            })
+            selectProject(activeProjectId)
+            expandProject(activeProjectId)
+          }
+        }
       }
       // Cache app data dir for browser-mode file URL conversion
       if (data.appDataDir) {

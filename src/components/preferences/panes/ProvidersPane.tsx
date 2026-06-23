@@ -58,7 +58,7 @@ export const ProvidersPane: React.FC = () => {
               value={defaultProvider ?? 'default'}
               onValueChange={handleDefaultProviderChange}
             >
-              <SelectTrigger className="w-full sm:w-96">
+              <SelectTrigger className="w-full sm:w-80">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

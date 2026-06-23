@@ -828,6 +828,7 @@ struct InvestigationSelection {
     model: String,
     provider: Option<String>,
     effort: Option<String>,
+    execution_mode: String,
 }
 
 async fn start_autoinvestigating(
@@ -875,6 +876,7 @@ async fn start_autoinvestigating(
         Some(prefs.chrome_enabled),
         Some(prefs.ai_language.clone()),
         parallel_execution_prompt,
+        Some(selection.execution_mode.clone()),
         Some(source.to_string()),
     )
     .await
@@ -912,6 +914,7 @@ pub async fn start_background_investigation_impl(
     chrome_enabled: Option<bool>,
     ai_language: Option<String>,
     parallel_execution_prompt: Option<String>,
+    execution_mode: Option<String>,
     source: Option<String>,
 ) -> Result<BackgroundInvestigationResult, String> {
     let sessions = crate::chat::get_sessions(
@@ -962,6 +965,9 @@ pub async fn start_background_investigation_impl(
 
     let app_clone = app.clone();
     let source_clone = source.unwrap_or_else(|| "ui".to_string());
+    let execution_mode = execution_mode
+        .filter(|mode| matches!(mode.as_str(), "plan" | "yolo"))
+        .unwrap_or_else(|| "plan".to_string());
     let session_id_for_send = session_id.clone();
     let worktree_id_for_send = worktree_id.clone();
     let worktree_path_for_send = worktree_path.clone();
@@ -973,7 +979,7 @@ pub async fn start_background_investigation_impl(
             worktree_path_for_send,
             message,
             Some(model),
-            Some("plan".to_string()),
+            Some(execution_mode),
             thinking_level,
             effort_level,
             parallel_execution_prompt,
@@ -1014,6 +1020,7 @@ pub async fn start_background_investigation(
     chrome_enabled: Option<bool>,
     ai_language: Option<String>,
     parallel_execution_prompt: Option<String>,
+    execution_mode: Option<String>,
 ) -> Result<BackgroundInvestigationResult, String> {
     start_background_investigation_impl(
         &app,
@@ -1028,6 +1035,7 @@ pub async fn start_background_investigation(
         chrome_enabled,
         ai_language,
         parallel_execution_prompt,
+        execution_mode,
         Some("ui".to_string()),
     )
     .await
@@ -1090,6 +1098,10 @@ fn resolve_investigation_selection(
         InvestigationKind::Pr => prefs.magic_prompt_efforts.investigate_pr_effort.clone(),
     }
     .or_else(|| Some(prefs.default_codex_reasoning_effort.clone()));
+    let execution_mode = match kind {
+        InvestigationKind::Issue => prefs.magic_prompt_modes.investigate_issue_mode.clone(),
+        InvestigationKind::Pr => prefs.magic_prompt_modes.investigate_pr_mode.clone(),
+    };
 
     let worktree_id = worktree.get("id").and_then(|v| v.as_str());
     let default_backend = project_default_backend(app, worktree_id).unwrap_or_else(|| {
@@ -1109,6 +1121,7 @@ fn resolve_investigation_selection(
         model,
         provider,
         effort,
+        execution_mode,
     }
 }
 

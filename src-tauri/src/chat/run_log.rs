@@ -330,6 +330,7 @@ pub fn start_run(
     thinking_level: Option<&str>,
     effort_level: Option<&str>,
     backend: Option<Backend>,
+    custom_profile_name: Option<&str>,
 ) -> Result<RunLogWriter, String> {
     let run_id = Uuid::new_v4().to_string();
     let now = now_timestamp();
@@ -374,6 +375,7 @@ pub fn start_run(
         thinking_level: thinking_level.map(|s| s.to_string()),
         effort_level: effort_level.map(|s| s.to_string()),
         backend: backend.clone(),
+        custom_profile_name: custom_profile_name.map(|s| s.to_string()),
         started_at: now,
         ended_at: None,
         status: RunStatus::Running,
@@ -1309,6 +1311,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: Some(Backend::Codex),
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Completed,
@@ -1577,6 +1580,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: Some(Backend::Claude),
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Cancelled,

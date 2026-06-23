@@ -44,6 +44,7 @@ import type {
 import {
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_RESOLVE_CONFLICTS_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
   type CliBackend,
@@ -262,6 +263,7 @@ export function useGitOperations({
       backend,
       model,
       provider,
+      executionMode,
     }: {
       session: Session
       worktreeId: string
@@ -270,12 +272,13 @@ export function useGitOperations({
       backend: CliBackend
       model: string
       provider: string | null
+      executionMode: 'plan' | 'yolo'
     }) => {
       const store = useChatStore.getState()
       store.setLastSentMessage(session.id, prompt)
       store.setError(session.id, null)
-      store.setExecutionMode(session.id, 'yolo')
-      store.setExecutingMode(session.id, 'yolo')
+      store.setExecutionMode(session.id, executionMode)
+      store.setExecutingMode(session.id, executionMode)
       store.clearInputDraft(session.id)
 
       const isCustomProvider = Boolean(provider && provider !== '__anthropic__')
@@ -290,7 +293,7 @@ export function useGitOperations({
           worktreePath,
           message: prompt,
           model,
-          executionMode: 'yolo',
+          executionMode,
           thinkingLevel: selectedThinkingLevelRef.current,
           effortLevel: usesEffortLevel
             ? selectedEffortLevelRef.current
@@ -344,6 +347,9 @@ export function useGitOperations({
           defaultBackend
         ) ??
         defaultBackend) as CliBackend
+      const executionMode =
+        preferences?.magic_prompt_modes?.resolve_conflicts_mode ??
+        DEFAULT_MAGIC_PROMPT_MODES.resolve_conflicts_mode
       const model =
         override?.model ??
         preferences?.magic_prompt_models?.resolve_conflicts_model ??
@@ -359,7 +365,7 @@ export function useGitOperations({
           ? null
           : resolvedProvider
 
-      return { backend, model, provider }
+      return { backend, model, provider, executionMode }
     },
     [project?.default_backend, preferences]
   )

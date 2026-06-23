@@ -558,9 +558,7 @@ export function DesktopToolbarControls({
         </>
       )}
 
-      {customCliProfiles.length > 0 &&
-        !providerLocked &&
-        selectedBackend === 'claude' && (
+      {customCliProfiles.length > 0 && selectedBackend === 'claude' && (
           <>
             <div className="hidden @xl:block h-4 w-px bg-border/50" />
             <DropdownMenu
