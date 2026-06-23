@@ -235,6 +235,9 @@ interface UIState {
   setChatSearchOpen: (open: boolean) => void
   githubDashboardOpen: boolean
   setGitHubDashboardOpen: (open: boolean) => void
+  /** Full-page Jenkins "Mission Control" view (all PRs across all projects). */
+  missionControlOpen: boolean
+  setMissionControlOpen: (open: boolean) => void
 }
 
 // Store callback outside Zustand state to avoid serialization issues with
@@ -308,6 +311,7 @@ export const useUIStore = create<UIState>()(
       updateModalVersion: null,
       chatSearchOpen: false,
       githubDashboardOpen: false,
+      missionControlOpen: false,
       toggleLeftSidebar: () =>
         set(
           state => ({ leftSidebarVisible: !state.leftSidebarVisible }),
@@ -1035,6 +1039,16 @@ export const useUIStore = create<UIState>()(
               : { githubDashboardOpen: open },
           undefined,
           'setGitHubDashboardOpen'
+        ),
+
+      setMissionControlOpen: (open: boolean) =>
+        set(
+          state =>
+            state.missionControlOpen === open
+              ? state
+              : { missionControlOpen: open },
+          undefined,
+          'setMissionControlOpen'
         ),
     }),
     {

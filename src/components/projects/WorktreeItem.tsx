@@ -16,6 +16,7 @@ import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
 import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
+import { WorktreeCiDot } from '@/components/jenkins/WorktreeCiDot'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
 import { useSessionArchive } from '@/components/chat/hooks/useSessionArchive'
 import { middleClickClose } from '@/lib/middle-click'
@@ -610,6 +611,14 @@ export function WorktreeItem({
 
             {/* Terminal running/failed indicator */}
             <TerminalStatusIndicator worktreeId={worktree.id} />
+
+            {/* Jenkins CI pastille — working / needs-me at a glance */}
+            <WorktreeCiDot
+              worktreeId={worktree.id}
+              prId={
+                worktree.pr_number != null ? String(worktree.pr_number) : null
+              }
+            />
 
             {/* Workspace name - editable on double-click */}
             {isEditing ? (

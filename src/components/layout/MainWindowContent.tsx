@@ -26,6 +26,12 @@ const ProjectCanvasView = lazy(() =>
   }))
 )
 
+const MissionControlView = lazy(() =>
+  import('@/components/mission-control/MissionControlView').then(mod => ({
+    default: mod.MissionControlView,
+  }))
+)
+
 interface MainWindowContentProps {
   children?: React.ReactNode
   className?: string
@@ -36,6 +42,7 @@ export function MainWindowContent({
   className,
 }: MainWindowContentProps) {
   const activeWorktreePath = useChatStore(state => state.activeWorktreePath)
+  const missionControlOpen = useUIStore(state => state.missionControlOpen)
   const isMobile = useIsMobile()
   const swipeBackCallback = useCallback(() => {
     useChatStore.getState().clearActiveWorktree()
@@ -101,7 +108,17 @@ export function MainWindowContent({
         className
       )}
     >
-      {activeWorktreePath ? (
+      {missionControlOpen ? (
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Loading Mission Control…
+            </div>
+          }
+        >
+          <MissionControlView />
+        </Suspense>
+      ) : activeWorktreePath ? (
         <div
           ref={isMobile ? swipe.containerRef : undefined}
           className="relative h-full w-full"

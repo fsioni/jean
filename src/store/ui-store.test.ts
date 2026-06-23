@@ -116,4 +116,28 @@ describe('UIStore', () => {
     unsubscribe()
     expect(notifications).toBe(1)
   })
+
+  it('toggles the Mission Control full-page view', () => {
+    const { setMissionControlOpen } = useUIStore.getState()
+    expect(useUIStore.getState().missionControlOpen).toBe(false)
+
+    setMissionControlOpen(true)
+    expect(useUIStore.getState().missionControlOpen).toBe(true)
+
+    setMissionControlOpen(false)
+    expect(useUIStore.getState().missionControlOpen).toBe(false)
+  })
+
+  it('does not notify subscribers when missionControlOpen is unchanged', () => {
+    useUIStore.getState().setMissionControlOpen(false)
+    let notifications = 0
+    const unsubscribe = useUIStore.subscribe(() => {
+      notifications += 1
+    })
+
+    useUIStore.getState().setMissionControlOpen(false)
+
+    unsubscribe()
+    expect(notifications).toBe(0)
+  })
 })

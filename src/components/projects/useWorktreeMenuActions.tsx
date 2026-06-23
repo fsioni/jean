@@ -11,8 +11,11 @@ import {
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
+import { useJenkinsStatusCached } from '@/services/jenkins'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
+import { openExternal } from '@/lib/platform'
+import { clickUpTaskIdFromBranch, clickupTaskUrl } from '@/lib/clickup'
 
 interface UseWorktreeMenuActionsProps {
   worktree: Worktree
@@ -34,6 +37,27 @@ export function useWorktreeMenuActions({
   const { data: preferences } = usePreferences()
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
   const isBase = isBaseSession(worktree)
+
+  // Quick-open external links (cache-only Jenkins read; ClickUp from branch).
+  const { data: jenkins } = useJenkinsStatusCached(worktree.id)
+  const prUrl = worktree.pr_url ?? null
+  const jenkinsUrl = jenkins?.pipeline?.url ?? null
+  const previewUrl = jenkins?.previewUrl ?? null
+  const clickUpTaskId = clickUpTaskIdFromBranch(worktree.branch)
+  const clickUpUrl = clickUpTaskId ? clickupTaskUrl(clickUpTaskId) : null
+
+  const openPr = useCallback(() => {
+    if (prUrl) openExternal(prUrl)
+  }, [prUrl])
+  const openJenkins = useCallback(() => {
+    if (jenkinsUrl) openExternal(jenkinsUrl)
+  }, [jenkinsUrl])
+  const openPreview = useCallback(() => {
+    if (previewUrl) openExternal(previewUrl)
+  }, [previewUrl])
+  const openClickUp = useCallback(() => {
+    if (clickUpUrl) openExternal(clickUpUrl)
+  }, [clickUpUrl])
 
   const hasMessages = sessionsData?.sessions?.some(
     session => session.messages.length > 0
@@ -120,5 +144,17 @@ export function useWorktreeMenuActions({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+
+    // Quick-open external links (null URL = hide the entry)
+    openLinks: {
+      prUrl,
+      jenkinsUrl,
+      previewUrl,
+      clickUpUrl,
+      openPr,
+      openJenkins,
+      openPreview,
+      openClickUp,
+    },
   }
 }

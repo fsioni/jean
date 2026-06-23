@@ -10,6 +10,7 @@ import {
 import { useProjects, useCreateFolder } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { ProjectTree } from './ProjectTree'
+import { MissionControlSidebarButton } from '@/components/mission-control/MissionControlSidebarButton'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { scheduleIdleWork } from '@/lib/idle'
 
@@ -30,6 +31,11 @@ export function ProjectsSidebar() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Mission Control — permanent cross-project Jenkins overview */}
+      <div className="p-1.5 pb-0">
+        <MissionControlSidebarButton isNarrow={isNarrow} />
+      </div>
+
       {/* Content */}
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         {isLoading ? (

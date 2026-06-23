@@ -34,11 +34,7 @@ import {
   useFinishAiPipelinePr,
 } from '@/services/ai-pipeline'
 import type { AiPipelinePr, StepResult } from '@/types/ai-pipeline'
-
-/** ClickUp task URL for a task id. */
-function clickupTaskUrl(taskId: string): string {
-  return `https://app.clickup.com/t/${taskId}`
-}
+import { clickupTaskUrl } from '@/lib/clickup'
 
 /** Small inline link chip (mirrors the row's "GitHub" affordance). */
 function LinkChip({

@@ -2,11 +2,15 @@ import {
   Archive,
   Code,
   FolderOpen,
+  GitPullRequest,
+  Globe,
+  Hammer,
   Play,
   Terminal,
   Trash2,
   X,
 } from 'lucide-react'
+import { ClickUpIcon } from '@/components/icons/ClickUpIcon'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,12 +60,48 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+    openLinks,
   } = actions
+
+  const hasOpenLinks =
+    !!openLinks.prUrl ||
+    !!openLinks.jenkinsUrl ||
+    !!openLinks.previewUrl ||
+    !!openLinks.clickUpUrl
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
+        {hasOpenLinks && (
+          <>
+            {openLinks.prUrl && (
+              <ContextMenuItem onClick={openLinks.openPr}>
+                <GitPullRequest className="mr-2 h-4 w-4" />
+                Ouvrir la PR
+              </ContextMenuItem>
+            )}
+            {openLinks.clickUpUrl && (
+              <ContextMenuItem onClick={openLinks.openClickUp}>
+                <ClickUpIcon className="mr-2 h-4 w-4" />
+                Ouvrir ClickUp
+              </ContextMenuItem>
+            )}
+            {openLinks.jenkinsUrl && (
+              <ContextMenuItem onClick={openLinks.openJenkins}>
+                <Hammer className="mr-2 h-4 w-4" />
+                Ouvrir Jenkins
+              </ContextMenuItem>
+            )}
+            {openLinks.previewUrl && (
+              <ContextMenuItem onClick={openLinks.openPreview}>
+                <Globe className="mr-2 h-4 w-4" />
+                Ouvrir la preview
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
+          </>
+        )}
         {isNativeApp() && runScripts.length === 1 && (
           <ContextMenuItem onClick={handleRun}>
             <Play className="mr-2 h-4 w-4" />
