@@ -289,6 +289,15 @@ fn clean(value: String) -> Option<String> {
     }
 }
 
+/// Force the background poller to run a cycle now (e.g. on window focus) instead
+/// of waiting out the adaptive interval. Cheap: just wakes the existing loop.
+#[tauri::command]
+pub fn poke_jenkins_poll(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<super::poller::JenkinsPollSignal>().poke();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
