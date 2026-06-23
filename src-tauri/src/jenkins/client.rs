@@ -83,21 +83,6 @@ impl JenkinsClient {
         parse::parse_stages(&body)
     }
 
-    /// Fetch the build parameters of a specific build (used to replay a re-run).
-    pub async fn fetch_build_parameters(
-        &self,
-        job: &str,
-        build: u64,
-    ) -> Result<Vec<(String, String)>, String> {
-        let url = format!("{}/{build}/api/json", self.job_url(job));
-        let body = self
-            .get_text(&url, &[("tree", "actions[parameters[name,value]]")])
-            .await?;
-        let root: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse build parameters: {e}"))?;
-        Ok(parse::extract_parameters(root.get("actions")))
-    }
-
     /// Fetch a CSRF crumb `(header_name, value)`, or `None` if disabled/unavailable.
     async fn crumb(&self) -> Option<(String, String)> {
         let url = format!("{}/crumbIssuer/api/json", self.base_url);
@@ -131,20 +116,6 @@ impl JenkinsClient {
             ));
         }
         Ok(())
-    }
-
-    /// Trigger a new build of `job` with the given parameters.
-    pub async fn trigger_with_parameters(
-        &self,
-        job: &str,
-        params: &[(String, String)],
-    ) -> Result<(), String> {
-        let url = format!("{}/buildWithParameters", self.job_url(job));
-        let form: Vec<(&str, String)> = params
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.clone()))
-            .collect();
-        self.post_form(&url, &form).await
     }
 
     /// Restart a declarative pipeline from a given stage (e.g. `"Integration tests"`).

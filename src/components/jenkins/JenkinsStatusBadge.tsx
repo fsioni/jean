@@ -304,6 +304,10 @@ export function JenkinsStatusBadge({
             size="sm"
             onClick={handleRerun}
             disabled={rerunPipeline.isPending}
+            title={
+              'Comments “retest this please” on the PR so ghprb re-triggers the ' +
+              'pipeline (keeps the GitHub check in sync; starts within ~5 min).'
+            }
           >
             {rerunPipeline.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

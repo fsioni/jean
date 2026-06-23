@@ -3133,9 +3133,17 @@ pub async fn dispatch_command(
         }
         "rerun_jenkins_pipeline" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
             let branch: Option<String> = from_field_opt(&args, "branch")?;
-            crate::jenkins::rerun_jenkins_pipeline(app.clone(), project_id, pr_id, branch).await?;
+            crate::jenkins::rerun_jenkins_pipeline(
+                app.clone(),
+                project_id,
+                worktree_id,
+                pr_id,
+                branch,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "restart_jenkins_integration" => {
