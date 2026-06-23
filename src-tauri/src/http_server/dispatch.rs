@@ -3163,6 +3163,10 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+        "poke_jenkins_poll" => {
+            crate::jenkins::poke_jenkins_poll(app.clone())?;
+            Ok(Value::Null)
+        }
 
         // =====================================================================
         // Unknown command

@@ -3917,9 +3917,12 @@ pub fn run() {
             log::trace!("Background task manager initialized");
 
             // --- perso/jenkins ---
+            // Shared wake signal so the UI can force an immediate poll (focus).
+            let jenkins_signal = jenkins::JenkinsPollSignal::default();
+            app.manage(jenkins_signal.clone());
             let app_handle_jenkins = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = jenkins::start_poller(app_handle_jenkins).await {
+                if let Err(e) = jenkins::start_poller(app_handle_jenkins, jenkins_signal).await {
                     log::error!("Jenkins poller stopped: {e}");
                 }
             });
@@ -4204,6 +4207,7 @@ pub fn run() {
             jenkins::rerun_jenkins_pipeline,
             jenkins::restart_jenkins_integration,
             jenkins::save_jenkins_config,
+            jenkins::poke_jenkins_poll,
             // --- /perso/jenkins ---
             // Saved context commands
             projects::attach_saved_context,
