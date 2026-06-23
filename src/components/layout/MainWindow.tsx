@@ -137,6 +137,11 @@ const MagicModal = lazy(() =>
     default: mod.MagicModal,
   }))
 )
+const AiPipelinePrModal = lazy(() =>
+  import('@/components/ai-pipeline/AiPipelinePrModal').then(mod => ({
+    default: mod.AiPipelinePrModal,
+  }))
+)
 const ResolveConflictsDialog = lazy(() =>
   import('@/components/magic/ResolveConflictsDialog').then(mod => ({
     default: mod.ResolveConflictsDialog,
@@ -236,6 +241,7 @@ export function MainWindow() {
     state => state.reviewCommentsModalOpen
   )
   const workflowRunsModalOpen = useUIStore(state => state.workflowRunsModalOpen)
+  const aiPipelineModalOpen = useUIStore(state => state.aiPipelineModalOpen)
   const cliUpdateModalOpen = useUIStore(state => state.cliUpdateModalOpen)
   const cliLoginModalOpen = useUIStore(state => state.cliLoginModalOpen)
   const updateModalVersion = useUIStore(state => state.updateModalVersion)
@@ -434,6 +440,7 @@ export function MainWindow() {
     reviewCommentsModalOpen
   )
   const shouldRenderWorkflowRunsModal = useRetainedMount(workflowRunsModalOpen)
+  const shouldRenderAiPipelineModal = useRetainedMount(aiPipelineModalOpen)
   const shouldRenderMagicModal = useRetainedMount(magicModalOpen)
   const shouldRenderResolveConflictsDialog = useRetainedMount(
     resolveConflictsDialogOpen
@@ -589,6 +596,11 @@ export function MainWindow() {
       {shouldRenderWorkflowRunsModal && (
         <Suspense fallback={null}>
           <WorkflowRunsModal />
+        </Suspense>
+      )}
+      {shouldRenderAiPipelineModal && (
+        <Suspense fallback={null}>
+          <AiPipelinePrModal />
         </Suspense>
       )}
       {shouldRenderMagicModal && (

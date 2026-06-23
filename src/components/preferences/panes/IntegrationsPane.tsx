@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { SettingsSection } from '../SettingsSection'
 import { ClickUpSettings } from '@/components/clickup/ClickUpSettings'
+import { AiPipelineSettings } from '@/components/ai-pipeline/AiPipelineSettings'
 
 const InlineField: React.FC<{
   label: string
@@ -117,6 +118,8 @@ export const IntegrationsPane: React.FC = () => {
       </SettingsSection>
 
       <ClickUpSettings />
+
+      <AiPipelineSettings />
     </div>
   )
 }

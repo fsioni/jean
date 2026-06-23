@@ -11,21 +11,27 @@ use tauri::AppHandle;
 use super::clickup_config::{load_sidecar, save_sidecar};
 use super::storage::load_projects_data;
 
-/// Parse the ClickUp task id out of a branch named `CU-<taskId>-<description>`.
+/// Parse the ClickUp task id out of a branch named `CU-<taskId><sep><description>`.
 ///
 /// The prefix match is case-insensitive (`CU-` / `cu-`); the task id is the
-/// first dash-separated segment after the prefix (ClickUp task ids are
-/// alphanumeric, e.g. `86caa8btx`). Returns `None` for non-matching branches.
+/// leading alphanumeric run after the prefix. ClickUp task ids are alphanumeric
+/// (e.g. `86caa8btx`), so the id ends at the first non-alphanumeric character —
+/// this covers both the `-` separator (`CU-<id>-desc`) and the `__` separator
+/// the pipeline also emits (`CU-<id>__desc`). Returns `None` for non-matching
+/// branches.
 pub fn parse_clickup_task_id_from_branch(branch: &str) -> Option<String> {
     let rest = branch
         .strip_prefix("CU-")
         .or_else(|| branch.strip_prefix("cu-"))?;
 
-    let id = rest.split('-').next().unwrap_or("");
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
     if id.is_empty() {
         None
     } else {
-        Some(id.to_string())
+        Some(id)
     }
 }
 
@@ -106,6 +112,15 @@ mod tests {
         assert_eq!(
             parse_clickup_task_id_from_branch("CU-86caa8btx"),
             Some("86caa8btx".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_double_underscore_separator() {
+        // The pipeline also emits `CU-<id>__<slug>` branches.
+        assert_eq!(
+            parse_clickup_task_id_from_branch("CU-86c997enp__national-id-and-exhibitor-profile"),
+            Some("86c997enp".to_string())
         );
     }
 

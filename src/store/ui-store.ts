@@ -85,6 +85,10 @@ interface UIState {
   workflowRunsModalOpen: boolean
   workflowRunsModalProjectPath: string | null
   workflowRunsModalBranch: string | null
+  // --- perso/ai-pipeline ---
+  aiPipelineModalOpen: boolean
+  aiPipelineModalProjectId: string | null
+  // --- /perso/ai-pipeline ---
   cliUpdateModalOpen: boolean
   cliUpdateModalType: CliUpdateModalType
   cliLoginModalOpen: boolean
@@ -175,6 +179,9 @@ interface UIState {
     projectPath?: string | null,
     branch?: string | null
   ) => void
+  // --- perso/ai-pipeline ---
+  setAiPipelineModalOpen: (open: boolean, projectId?: string | null) => void
+  // --- /perso/ai-pipeline ---
   openCliUpdateModal: (type: Exclude<CliUpdateModalType, null>) => void
   closeCliUpdateModal: () => void
   openCliLoginModal: (
@@ -267,6 +274,8 @@ export const useUIStore = create<UIState>()(
       workflowRunsModalOpen: false,
       workflowRunsModalProjectPath: null,
       workflowRunsModalBranch: null,
+      aiPipelineModalOpen: false,
+      aiPipelineModalProjectId: null,
       cliUpdateModalOpen: false,
       cliUpdateModalType: null,
       cliLoginModalOpen: false,
@@ -536,6 +545,16 @@ export const useUIStore = create<UIState>()(
           },
           undefined,
           'setWorkflowRunsModalOpen'
+        ),
+
+      setAiPipelineModalOpen: (open, projectId) =>
+        set(
+          {
+            aiPipelineModalOpen: open,
+            aiPipelineModalProjectId: open ? (projectId ?? null) : null,
+          },
+          undefined,
+          'setAiPipelineModalOpen'
         ),
 
       openCliUpdateModal: type =>

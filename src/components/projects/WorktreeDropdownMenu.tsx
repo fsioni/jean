@@ -2,6 +2,7 @@ import {
   Activity,
   Archive,
   AlertCircle,
+  Bot,
   CircleDot,
   Code,
   FolderOpen,
@@ -49,6 +50,7 @@ import {
   useRepositoryAdvisories,
   useWorkflowRuns,
 } from '@/services/github'
+import { useHasAiPipelineAccess } from '@/services/ai-pipeline'
 import { isNativeApp } from '@/lib/environment'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
@@ -167,6 +169,14 @@ export function WorktreeDropdownMenu({
     useUIStore.getState().setWorkflowRunsModalOpen(true, projectPath)
   }, [projectPath])
 
+  // --- perso/ai-pipeline ---
+  const hasAiPipelineAccess = useHasAiPipelineAccess()
+  const handleOpenAiPipeline = useCallback(() => {
+    useProjectsStore.getState().selectProject(projectId)
+    useUIStore.getState().setAiPipelineModalOpen(true, projectId)
+  }, [projectId])
+  // --- /perso/ai-pipeline ---
+
   return (
     <>
       <DropdownMenu>
@@ -276,6 +286,13 @@ export function WorktreeDropdownMenu({
                 : workflowRunCount > 0
                   ? `${workflowRunCount} Workflows`
                   : 'Workflows'}
+            </DropdownMenuItem>
+          )}
+
+          {hasAiPipelineAccess && (
+            <DropdownMenuItem onClick={handleOpenAiPipeline}>
+              <Bot className="mr-2 h-4 w-4 text-purple-600" />
+              PR pipeline IA
             </DropdownMenuItem>
           )}
 

@@ -2956,8 +2956,13 @@ pub async fn dispatch_command(
                 field_opt(&args, "planexpoListId", "planexpo_list_id")?;
             let sprint_list_id: Option<String> =
                 field_opt(&args, "sprintListId", "sprint_list_id")?;
-            crate::projects::set_clickup_config(app.clone(), token, planexpo_list_id, sprint_list_id)
-                .await?;
+            crate::projects::set_clickup_config(
+                app.clone(),
+                token,
+                planexpo_list_id,
+                sprint_list_id,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "get_clickup_task" => {
@@ -3151,6 +3156,65 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+        // --- /perso/jenkins ---
+
+        // =====================================================================
+        // --- perso/ai-pipeline ---
+        // =====================================================================
+        "get_ai_pipeline_config" => {
+            let result = crate::ai_pipeline::get_ai_pipeline_config(app.clone()).await?;
+            to_value(result)
+        }
+        "set_ai_pipeline_config" => {
+            let dashboard_url: Option<String> = field_opt(&args, "dashboardUrl", "dashboard_url")?;
+            let pipeline_label: Option<String> =
+                field_opt(&args, "pipelineLabel", "pipeline_label")?;
+            crate::ai_pipeline::set_ai_pipeline_config(app.clone(), dashboard_url, pipeline_label)
+                .await?;
+            Ok(Value::Null)
+        }
+        "list_ai_pipeline_prs" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let result = crate::ai_pipeline::list_ai_pipeline_prs(app.clone(), project_id).await?;
+            to_value(result)
+        }
+        "list_ai_pipeline_review_tasks" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let result =
+                crate::ai_pipeline::list_ai_pipeline_review_tasks(app.clone(), project_id).await?;
+            to_value(result)
+        }
+        "assign_pr_to_me" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
+            let result =
+                crate::ai_pipeline::assign_pr_to_me(app.clone(), project_id, pr_number).await?;
+            to_value(result)
+        }
+        "resume_ai_pipeline_pr" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
+            let result =
+                crate::ai_pipeline::resume_ai_pipeline_pr(app.clone(), project_id, pr_number)
+                    .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
+        "finish_ai_pipeline_pr" => {
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let task_id: Option<String> = field_opt(&args, "taskId", "task_id")?;
+            let result = crate::ai_pipeline::finish_ai_pipeline_pr(
+                app.clone(),
+                worktree_path,
+                project_id,
+                task_id,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
+        // --- /perso/ai-pipeline ---
 
         // =====================================================================
         // Unknown command

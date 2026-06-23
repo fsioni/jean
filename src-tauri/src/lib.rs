@@ -59,6 +59,9 @@ mod projects;
 // --- perso/jenkins ---
 mod jenkins;
 // --- /perso/jenkins ---
+// --- perso/ai-pipeline ---
+mod ai_pipeline;
+// --- /perso/ai-pipeline ---
 mod terminal;
 
 // Validation functions
@@ -4146,6 +4149,15 @@ pub fn run() {
             jenkins::restart_jenkins_integration,
             jenkins::save_jenkins_config,
             // --- /perso/jenkins ---
+            // --- perso/ai-pipeline ---
+            ai_pipeline::get_ai_pipeline_config,
+            ai_pipeline::set_ai_pipeline_config,
+            ai_pipeline::list_ai_pipeline_prs,
+            ai_pipeline::list_ai_pipeline_review_tasks,
+            ai_pipeline::assign_pr_to_me,
+            ai_pipeline::resume_ai_pipeline_pr,
+            ai_pipeline::finish_ai_pipeline_pr,
+            // --- /perso/ai-pipeline ---
             // Saved context commands
             projects::attach_saved_context,
             projects::remove_saved_context,
