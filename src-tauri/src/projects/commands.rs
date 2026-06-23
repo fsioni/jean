@@ -11690,14 +11690,13 @@ Body
         let first = CommitMessageResponse {
             message: "fix: first".into(),
         };
-        let empty = CommitMessageResponse {
-            message: "".into(),
-        };
-        assert_eq!(pick_fallback_commit_message(first, empty).message, "fix: first");
+        let empty = CommitMessageResponse { message: "".into() };
+        assert_eq!(
+            pick_fallback_commit_message(first, empty).message,
+            "fix: first"
+        );
 
-        let empty1 = CommitMessageResponse {
-            message: "".into(),
-        };
+        let empty1 = CommitMessageResponse { message: "".into() };
         let empty2 = CommitMessageResponse {
             message: "   ".into(),
         };

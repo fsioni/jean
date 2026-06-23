@@ -1396,7 +1396,10 @@ fn is_transient_dir_removal_error(e: &std::io::Error) -> bool {
     // both surface as `DirectoryNotEmpty`; `EACCES` / Windows `ERROR_ACCESS_DENIED`
     // as `PermissionDenied`. Using `ErrorKind` keeps the mapping correct across
     // platforms without hard-coded errno values.
-    if matches!(e.kind(), ErrorKind::DirectoryNotEmpty | ErrorKind::PermissionDenied) {
+    if matches!(
+        e.kind(),
+        ErrorKind::DirectoryNotEmpty | ErrorKind::PermissionDenied
+    ) {
         return true;
     }
     // Windows `ERROR_SHARING_VIOLATION` (a lingering file lock) has no dedicated

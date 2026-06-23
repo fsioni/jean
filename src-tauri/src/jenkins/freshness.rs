@@ -118,7 +118,9 @@ fn sha_matches(a: &str, b: &str) -> bool {
 /// compare, and (only when stale) count how many commits behind.
 pub async fn resolve_freshness(
     repo_path: &str,
-    pr_id: &str,
+    // Kept for call-site symmetry with the Jenkins status pipeline; freshness is
+    // computed from `pr_number` + `/version`, so the id itself is unused here.
+    _pr_id: &str,
     pr_number: Option<u32>,
     gh_binary: PathBuf,
     version_url: &str,

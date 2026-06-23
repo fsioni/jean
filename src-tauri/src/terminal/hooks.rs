@@ -150,10 +150,7 @@ pub fn spawn_signal_tailer(
         let mut tailer = match NdjsonTailer::new_from_start(&signal_path) {
             Ok(t) => t,
             Err(e) => {
-                log::warn!(
-                    "terminal hooks: cannot tail {}: {e}",
-                    signal_path.display()
-                );
+                log::warn!("terminal hooks: cannot tail {}: {e}", signal_path.display());
                 return;
             }
         };
@@ -280,7 +277,9 @@ mod tests {
     #[test]
     fn detects_claude_command_by_name_and_path() {
         assert!(is_claude_command("claude"));
-        assert!(is_claude_command("/home/u/.local/share/com.jean.desktop/claude-cli/claude"));
+        assert!(is_claude_command(
+            "/home/u/.local/share/com.jean.desktop/claude-cli/claude"
+        ));
         assert!(is_claude_command("claude.exe"));
         assert!(!is_claude_command("codex"));
         assert!(!is_claude_command("/usr/bin/bash"));
@@ -289,7 +288,10 @@ mod tests {
 
     #[test]
     fn settings_json_wires_all_three_hooks_to_signal_file() {
-        let json = hook_settings_json(Path::new("/tmp/sess-1.log"), Path::new("/tmp/sess-1.prompt"));
+        let json = hook_settings_json(
+            Path::new("/tmp/sess-1.log"),
+            Path::new("/tmp/sess-1.prompt"),
+        );
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let hooks = &value["hooks"];
         for event in ["Stop", "Notification", "UserPromptSubmit"] {
