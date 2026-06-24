@@ -36,7 +36,9 @@ function JeanConfigWizardContent() {
   const [setupScript, setSetupScript] = useState('')
   const [teardownScript, setTeardownScript] = useState('')
   const [runScripts, setRunScripts] = useState<string[]>([''])
-  const [ports, setPorts] = useState<{ port: string; label: string }[]>([])
+  const [ports, setPorts] = useState<
+    { port: string; label: string; host: string }[]
+  >([])
 
   const markSeen = () => {
     if (preferences && !preferences.has_seen_jean_config_wizard) {
@@ -54,7 +56,11 @@ function JeanConfigWizardContent() {
 
     const validPorts = ports
       .filter(p => p.port.trim() && p.label.trim())
-      .map(p => ({ port: Number(p.port), label: p.label.trim() }))
+      .map(p => ({
+        port: Number(p.port),
+        label: p.label.trim(),
+        host: p.host.trim() || undefined,
+      }))
       .filter(p => !isNaN(p.port) && p.port > 0 && p.port <= 65535)
 
     await saveConfig.mutateAsync({
@@ -239,6 +245,16 @@ function JeanConfigWizardContent() {
                   className="font-mono text-base md:text-sm w-24"
                 />
                 <Input
+                  placeholder="Host (optional)"
+                  value={entry.host}
+                  onChange={e => {
+                    const next = [...ports]
+                    next[i] = { ...entry, host: e.target.value }
+                    setPorts(next)
+                  }}
+                  className="font-mono text-base md:text-sm w-40"
+                />
+                <Input
                   placeholder="Label"
                   value={entry.label}
                   onChange={e => {
@@ -262,13 +278,16 @@ function JeanConfigWizardContent() {
               variant="ghost"
               size="sm"
               className="h-7 text-xs"
-              onClick={() => setPorts([...ports, { port: '', label: '' }])}
+              onClick={() =>
+                setPorts([...ports, { port: '', label: '', host: '' }])
+              }
             >
               <Plus className="mr-1 h-3 w-3" />
               Add port
             </Button>
             <p className="text-xs text-muted-foreground">
-              Open configured ports in browser via CMD+O
+              Open configured ports in browser via CMD+O. Host defaults to
+              localhost.
             </p>
           </div>
         </div>

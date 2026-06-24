@@ -40,6 +40,8 @@ import {
   useLoadOlderMessages,
   markPlanApproved as markPlanApprovedService,
   chatQueryKeys,
+  reconnectNativeCliSession,
+  canReconnectSession,
 } from '@/services/chat'
 import { useWorktree, useProjects, useRunScripts } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -448,6 +450,46 @@ export function ChatWindow({
       .getState()
       .setCodexGoal(deferredSessionId, session?.codex_goal ?? null)
   }, [deferredSessionId, session?.codex_goal])
+
+  // Auto-restore a native CLI terminal session after an app restart. On startup
+  // prefetchSessions restores the persisted `primary_surface: 'terminal'`, but
+  // the live PTY is gone so `sessionTerminalId` is unset — without this the
+  // terminal guard fails and ChatWindow falls back to an empty chat. Relaunch
+  // the terminal (e.g. `claude --resume <id>`) lazily for the active session so
+  // the conversation reappears in its terminal surface. The ref guards against
+  // a duplicate spawn while the async relaunch is in flight.
+  const autoReconnectingRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!deferredSessionId || !session || !activeWorktreeId) return
+    // `primarySurface`/`sessionTerminalId` are keyed on `activeSessionId`, while
+    // `session`/`deferredSessionId` lag behind during a switch. Acting on that
+    // mismatch could relaunch the previous session's terminal (and yank the user
+    // back to it). Wait until the deferred value has caught up to the active one.
+    if (isSessionSwitching) return
+    if (primarySurface !== 'terminal' || sessionTerminalId) return
+    if (!canReconnectSession(session)) return
+    if (autoReconnectingRef.current.has(deferredSessionId)) return
+
+    const sessionId = deferredSessionId
+    autoReconnectingRef.current.add(sessionId)
+    void reconnectNativeCliSession(session, activeWorktreeId, {
+      openModal: false,
+      showToast: false,
+    })
+      .catch(error => {
+        logger.error('Auto-reconnect of terminal session failed', { error })
+      })
+      .finally(() => {
+        autoReconnectingRef.current.delete(sessionId)
+      })
+  }, [
+    deferredSessionId,
+    session,
+    activeWorktreeId,
+    primarySurface,
+    sessionTerminalId,
+    isSessionSwitching,
+  ])
 
   const loadOlderMessages = useLoadOlderMessages()
   const loadedRunStartIndex = session?.loaded_run_start_index ?? 0

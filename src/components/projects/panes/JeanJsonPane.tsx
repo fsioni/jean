@@ -36,7 +36,7 @@ export function JeanJsonPane({
   const [localTeardown, setLocalTeardown] = useState('')
   const [localRun, setLocalRun] = useState<string[]>([''])
   const [localPorts, setLocalPorts] = useState<
-    { port: string; label: string }[]
+    { port: string; label: string; host: string }[]
   >([])
   const [synced, setSynced] = useState(false)
 
@@ -50,7 +50,13 @@ export function JeanJsonPane({
       setLocalRun(scripts.length > 0 ? scripts : [''])
 
       const ports = jeanConfig.ports ?? []
-      setLocalPorts(ports.map(p => ({ port: String(p.port), label: p.label })))
+      setLocalPorts(
+        ports.map(p => ({
+          port: String(p.port),
+          label: p.label,
+          host: p.host ?? '',
+        }))
+      )
 
       setSynced(true)
     }
@@ -64,6 +70,7 @@ export function JeanJsonPane({
   const originalPorts = (jeanConfig?.ports ?? []).map(p => ({
     port: String(p.port),
     label: p.label,
+    host: p.host ?? '',
   }))
 
   const hasChanges = synced
@@ -85,7 +92,11 @@ export function JeanJsonPane({
 
     const validPorts = localPorts
       .filter(p => p.port.trim() && p.label.trim())
-      .map(p => ({ port: Number(p.port), label: p.label.trim() }))
+      .map(p => ({
+        port: Number(p.port),
+        label: p.label.trim(),
+        host: p.host.trim() || undefined,
+      }))
       .filter(p => !isNaN(p.port) && p.port > 0 && p.port <= 65535)
 
     saveJeanConfig.mutate({
@@ -188,6 +199,16 @@ export function JeanJsonPane({
                   className="font-mono text-base md:text-sm w-24"
                 />
                 <Input
+                  placeholder="Host (optional)"
+                  value={entry.host}
+                  onChange={e => {
+                    const next = [...localPorts]
+                    next[i] = { ...entry, host: e.target.value }
+                    setLocalPorts(next)
+                  }}
+                  className="font-mono text-base md:text-sm w-40"
+                />
+                <Input
                   placeholder="Label"
                   value={entry.label}
                   onChange={e => {
@@ -214,14 +235,18 @@ export function JeanJsonPane({
               size="sm"
               className="h-7 text-xs"
               onClick={() =>
-                setLocalPorts([...localPorts, { port: '', label: '' }])
+                setLocalPorts([
+                  ...localPorts,
+                  { port: '', label: '', host: '' },
+                ])
               }
             >
               <Plus className="mr-1 h-3 w-3" />
               Add port
             </Button>
             <p className="text-xs text-muted-foreground">
-              Open configured ports in browser via CMD+O
+              Open configured ports in browser via CMD+O. Host defaults to
+              localhost.
             </p>
           </div>
           <div className="space-y-1.5">

@@ -116,18 +116,26 @@ export function canReconnectSession(session: Session): boolean {
  *
  * Kills/disposes the old terminal (if any) then spawns a fresh one and reveals
  * the terminal surface.
+ *
+ * `options.openModal` pops the floating terminal drawer (default true — what the
+ * manual "Reconnect" action wants). The startup auto-restore passes false
+ * because the full-screen `FullScreenTerminalSurface` renders inline.
+ * `options.showToast` controls the "Reconnecting…" toast (default true); the
+ * auto-restore silences it to avoid noise on every relaunch.
  */
 export async function reconnectNativeCliSession(
   session: Session,
-  worktreeId: string
+  worktreeId: string,
+  options?: { openModal?: boolean; showToast?: boolean }
 ): Promise<void> {
+  const { openModal = true, showToast = true } = options ?? {}
   const resume = getResumeArgs(session)
   const launch = resume ?? {
     command: session.terminal_command ?? '',
     args: session.terminal_command_args ?? [],
   }
   if (!launch.command) {
-    toast.error('No command available to reconnect this session')
+    if (showToast) toast.error('No command available to reconnect this session')
     return
   }
 
@@ -158,10 +166,10 @@ export async function reconnectNativeCliSession(
 
   uiStore.setSessionPrimarySurface(session.id, 'terminal')
   uiStore.setSessionTerminalId(session.id, newTerminalId)
-  terminalStore.setModalTerminalOpen(worktreeId, true)
+  if (openModal) terminalStore.setModalTerminalOpen(worktreeId, true)
   useChatStore.getState().setActiveSession(worktreeId, session.id)
 
-  toast.success('Reconnecting session…')
+  if (showToast) toast.success('Reconnecting session…')
 }
 
 // Query keys for chat
