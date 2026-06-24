@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Play,
   Plus,
+  Rocket,
   Settings,
   ShieldAlert,
   Terminal,
@@ -87,6 +88,8 @@ export function WorktreeDropdownMenu({
   const {
     showDeleteConfirm,
     setShowDeleteConfirm,
+    showFinishConfirm,
+    setShowFinishConfirm,
     isBase,
     runScripts,
     preferences,
@@ -97,6 +100,7 @@ export function WorktreeDropdownMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+    finish,
   } = useWorktreeMenuActions({ worktree, projectId })
   const isMobile = useIsMobile()
   // On native desktop the auth query runs in App.tsx; on web/mobile access it doesn't.
@@ -191,6 +195,18 @@ export function WorktreeDropdownMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-48">
+          {finish.canFinish && (
+            <>
+              <DropdownMenuItem
+                onClick={() => setShowFinishConfirm(true)}
+                disabled={finish.isPending}
+              >
+                <Rocket className="mr-2 h-4 w-4 text-purple-600" />
+                Terminer (TO DEPLOY + merge)
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem
             onClick={() =>
               window.dispatchEvent(new CustomEvent('create-new-session'))
@@ -377,6 +393,39 @@ export function WorktreeDropdownMenu({
               className="bg-destructive text-white hover:bg-destructive/90"
             >
               Delete
+              <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showFinishConfirm} onOpenChange={setShowFinishConfirm}>
+        <AlertDialogContent
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              e.stopPropagation()
+              finish.handleFinish()
+            }
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Terminer la feature</AlertDialogTitle>
+            <AlertDialogDescription>
+              La tâche ClickUp{' '}
+              {finish.clickUpTaskId ? (
+                <>
+                  (<code>{finish.clickUpTaskId}</code>){' '}
+                </>
+              ) : null}
+              passe en <span className="font-medium">TO DEPLOY</span>, puis la
+              PR du worktree est mergée. Le merge ne peut pas être annulé.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction autoFocus onClick={finish.handleFinish}>
+              Terminer
               <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
             </AlertDialogAction>
           </AlertDialogFooter>

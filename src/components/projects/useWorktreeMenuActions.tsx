@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { toast } from 'sonner'
 import { isBaseSession, type Worktree } from '@/types/projects'
 import {
   useArchiveWorktree,
@@ -12,10 +13,15 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
 import { useJenkinsStatusCached } from '@/services/jenkins'
+import {
+  useFinishAiPipelinePr,
+  useHasAiPipelineAccess,
+} from '@/services/ai-pipeline'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
 import { openExternal } from '@/lib/platform'
 import { clickUpTaskIdFromBranch, clickupTaskUrl } from '@/lib/clickup'
+import { reportSteps } from '@/lib/ai-pipeline-steps'
 
 interface UseWorktreeMenuActionsProps {
   worktree: Worktree
@@ -27,6 +33,7 @@ export function useWorktreeMenuActions({
   projectId,
 }: UseWorktreeMenuActionsProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false)
   const archiveWorktree = useArchiveWorktree()
   const closeBaseSession = useCloseBaseSession()
   const deleteWorktree = useDeleteWorktree()
@@ -45,6 +52,12 @@ export function useWorktreeMenuActions({
   const previewUrl = jenkins?.previewUrl ?? null
   const clickUpTaskId = clickUpTaskIdFromBranch(worktree.branch)
   const clickUpUrl = clickUpTaskId ? clickupTaskUrl(clickUpTaskId) : null
+
+  // Finish the feature in one action: ClickUp task → TO DEPLOY + merge the PR.
+  // Only meaningful for AI-pipeline projects on a worktree that has a PR.
+  const hasAiPipelineAccess = useHasAiPipelineAccess()
+  const finish = useFinishAiPipelinePr(projectId)
+  const canFinish = !isBase && !!prUrl && hasAiPipelineAccess
 
   const openPr = useCallback(() => {
     if (prUrl) openExternal(prUrl)
@@ -126,10 +139,25 @@ export function useWorktreeMenuActions({
     setShowDeleteConfirm(false)
   }, [deleteWorktree, worktree.id, projectId])
 
+  const handleFinish = useCallback(() => {
+    setShowFinishConfirm(false)
+    const toastId = toast.loading('Terminer : ClickUp → TO DEPLOY + merge…')
+    finish.mutate(
+      { worktreePath: worktree.path, taskId: clickUpTaskId ?? undefined },
+      {
+        onSuccess: res =>
+          reportSteps(toastId, 'PR terminée', [res.clickup, res.merge]),
+        onError: e => toast.error(`Échec : ${e}`, { id: toastId }),
+      }
+    )
+  }, [finish, worktree.path, clickUpTaskId])
+
   return {
     // State
     showDeleteConfirm,
     setShowDeleteConfirm,
+    showFinishConfirm,
+    setShowFinishConfirm,
     isBase,
     hasMessages,
     runScripts,
@@ -144,6 +172,14 @@ export function useWorktreeMenuActions({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+
+    // Finish (TO DEPLOY + merge) — gated to AI-pipeline projects with a PR.
+    finish: {
+      canFinish,
+      isPending: finish.isPending,
+      handleFinish,
+      clickUpTaskId,
+    },
 
     // Quick-open external links (null URL = hide the entry)
     openLinks: {

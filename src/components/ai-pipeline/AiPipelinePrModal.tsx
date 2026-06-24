@@ -33,8 +33,9 @@ import {
   useResumeAiPipelinePr,
   useFinishAiPipelinePr,
 } from '@/services/ai-pipeline'
-import type { AiPipelinePr, StepResult } from '@/types/ai-pipeline'
+import type { AiPipelinePr } from '@/types/ai-pipeline'
 import { clickupTaskUrl } from '@/lib/clickup'
+import { reportSteps } from '@/lib/ai-pipeline-steps'
 
 /** Small inline link chip (mirrors the row's "GitHub" affordance). */
 function LinkChip({
@@ -55,20 +56,6 @@ function LinkChip({
       {label}
     </button>
   )
-}
-
-/** Report the per-step outcome of a resume/finish action in a single toast. */
-function reportSteps(
-  toastId: string | number,
-  label: string,
-  steps: StepResult[]
-) {
-  const line = steps.map(s => `${s.ok ? '✓' : '✗'} ${s.message}`).join('  ·  ')
-  if (steps.every(s => s.ok)) {
-    toast.success(`${label} — ${line}`, { id: toastId })
-  } else {
-    toast.warning(`${label} — ${line}`, { id: toastId })
-  }
 }
 
 function CiBadge({ ci }: { ci?: string }) {
@@ -113,9 +100,7 @@ function Pill({
       ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400'
       : 'bg-muted text-muted-foreground'
   return (
-    <span
-      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
-    >
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
       {children}
     </span>
   )
@@ -256,8 +241,8 @@ export function AiPipelinePrModal() {
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-muted-foreground">
-                    ClickUp → <span className="font-medium">TO DEPLOY</span> puis
-                    merge de la PR du worktree actif
+                    ClickUp → <span className="font-medium">TO DEPLOY</span>{' '}
+                    puis merge de la PR du worktree actif
                     {activeTaskId ? (
                       <>
                         {' '}

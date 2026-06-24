@@ -6,6 +6,7 @@ import {
   Globe,
   Hammer,
   Play,
+  Rocket,
   Terminal,
   Trash2,
   X,
@@ -50,6 +51,8 @@ export function WorktreeContextMenu({
   const {
     showDeleteConfirm,
     setShowDeleteConfirm,
+    showFinishConfirm,
+    setShowFinishConfirm,
     isBase,
     runScripts,
     preferences,
@@ -60,6 +63,7 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+    finish,
     openLinks,
   } = actions
 
@@ -73,6 +77,18 @@ export function WorktreeContextMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
+        {finish.canFinish && (
+          <>
+            <ContextMenuItem
+              onClick={() => setShowFinishConfirm(true)}
+              disabled={finish.isPending}
+            >
+              <Rocket className="mr-2 h-4 w-4 text-purple-600" />
+              Terminer (TO DEPLOY + merge)
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
         {hasOpenLinks && (
           <>
             {openLinks.prUrl && (
@@ -201,6 +217,39 @@ export function WorktreeContextMenu({
               className="bg-destructive text-white hover:bg-destructive/90"
             >
               Delete
+              <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showFinishConfirm} onOpenChange={setShowFinishConfirm}>
+        <AlertDialogContent
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              e.stopPropagation()
+              finish.handleFinish()
+            }
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Terminer la feature</AlertDialogTitle>
+            <AlertDialogDescription>
+              La tâche ClickUp{' '}
+              {finish.clickUpTaskId ? (
+                <>
+                  (<code>{finish.clickUpTaskId}</code>){' '}
+                </>
+              ) : null}
+              passe en <span className="font-medium">TO DEPLOY</span>, puis la
+              PR du worktree est mergée. Le merge ne peut pas être annulé.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction autoFocus onClick={finish.handleFinish}>
+              Terminer
               <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
             </AlertDialogAction>
           </AlertDialogFooter>
