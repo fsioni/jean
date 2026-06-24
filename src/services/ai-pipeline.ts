@@ -112,8 +112,9 @@ export function useAssignPrToMe(projectId: string | null) {
 }
 
 /**
- * Mutation: resume a pipeline PR — create a worktree and self-assign on both the
- * GitHub PR and the linked ClickUp task. Refreshes worktree/clickup caches.
+ * Mutation: resume a pipeline PR — create a worktree, self-assign the GitHub PR,
+ * and claim the linked ClickUp task (self-assign + move to IN REVIEW). Refreshes
+ * worktree/clickup caches.
  */
 export function useResumeAiPipelinePr(projectId: string | null) {
   const queryClient = useQueryClient()

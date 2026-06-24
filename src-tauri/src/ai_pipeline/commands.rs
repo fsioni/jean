@@ -1,8 +1,9 @@
 //! Tauri commands for the AI pipeline PR lifecycle.
 //!
 //! Phase 1 (resume): list pipeline PRs scoped to the project's GitHub repo,
-//! create a worktree from one, and self-assign on both the ClickUp task and the
-//! GitHub PR (guarded — refuses if already assigned to someone else).
+//! create a worktree from one, self-assign the GitHub PR, and claim the ClickUp
+//! task (self-assign — guarded, refuses if already assigned to someone else —
+//! then move it to `in review`).
 //!
 //! Phase 2 (finish): one action = ClickUp status → `to deploy` + merge the PR.
 //!
@@ -32,6 +33,9 @@ use crate::projects::{
 /// ClickUp statuses that mark a ticket ready to pick up for review/merge.
 /// Both the queued (`to review`) and active (`in review`) review columns count.
 const REVIEW_STATUSES: &[&str] = &["to review", "in review"];
+
+/// ClickUp status the "resume" action moves a picked-up ticket to.
+const IN_REVIEW_STATUS: &str = "in review";
 
 /// ClickUp status the "finish" action moves the task to.
 const TO_DEPLOY_STATUS: &str = "to deploy";
@@ -412,6 +416,31 @@ async fn assign_clickup_guarded(
     Ok("Tâche auto-assignée".to_string())
 }
 
+/// Claim a ClickUp task for review when resuming a PR: self-assign (guarded),
+/// then move it to `IN REVIEW`. Returned as a single combined step. The status
+/// is only changed once the task is ours — a task owned by someone else is left
+/// untouched (the guard fails first, so we never move someone else's ticket).
+async fn claim_clickup_for_review(app: &AppHandle, task_id: &str, project_id: &str) -> StepResult {
+    // Self-assign first; bail out (without touching the status) if it is not ours.
+    let assigned = match assign_clickup_guarded(app, task_id, project_id).await {
+        Ok(m) => m,
+        Err(e) => return StepResult::fail(e),
+    };
+
+    // Now we own it: move it into the active review column.
+    match update_clickup_task_status(
+        app.clone(),
+        task_id.to_string(),
+        IN_REVIEW_STATUS.to_string(),
+        Some(project_id.to_string()),
+    )
+    .await
+    {
+        Ok(_) => StepResult::ok(format!("{assigned} → IN REVIEW")),
+        Err(e) => StepResult::fail(format!("{assigned}, mais statut non changé : {e}")),
+    }
+}
+
 /// Fetch the `TO REVIEW` ClickUp tickets from every configured list (Planexpo +
 /// Sprint), deduped by id. Uses the API status filter and a client-side guard.
 async fn fetch_review_tasks(app: &AppHandle, project_id: &str) -> Result<Vec<ClickUpTask>, String> {
@@ -562,9 +591,10 @@ pub async fn assign_pr_to_me(
     })
 }
 
-/// Resume a pipeline PR: create a worktree from it, then self-assign on both the
-/// GitHub PR and the linked ClickUp task. The worktree creation must succeed;
-/// the two self-assign steps are best-effort and reported individually.
+/// Resume a pipeline PR: create a worktree from it, self-assign the GitHub PR,
+/// and claim the linked ClickUp task (self-assign + move to `IN REVIEW`). The
+/// worktree creation must succeed; the GitHub and ClickUp steps are best-effort
+/// and reported individually.
 #[tauri::command]
 pub async fn resume_ai_pipeline_pr(
     app: AppHandle,
@@ -583,13 +613,11 @@ pub async fn resume_ai_pipeline_pr(
         Err(e) => StepResult::fail(e),
     };
 
-    // 3. ClickUp self-assign (best effort), task id from the branch convention.
+    // 3. ClickUp claim (best effort): self-assign + move to IN REVIEW, task id
+    //    from the branch convention.
     let clickup_task_id = parse_clickup_task_id_from_branch(&worktree.branch);
     let clickup = match &clickup_task_id {
-        Some(id) => match assign_clickup_guarded(&app, id, &project_id).await {
-            Ok(m) => StepResult::ok(m),
-            Err(e) => StepResult::fail(e),
-        },
+        Some(id) => claim_clickup_for_review(&app, id, &project_id).await,
         None => StepResult::fail("Aucune tâche ClickUp liée à la branche"),
     };
 
