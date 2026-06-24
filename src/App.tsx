@@ -43,6 +43,8 @@ import type { AppPreferences } from './types/preferences'
 import { useChatStore } from './store/chat-store'
 import { useProjectsStore } from './store/projects-store'
 import { useFontSettings } from './hooks/use-font-settings'
+import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigation'
+import { useLinuxFileDrop } from './hooks/useLinuxFileDrop'
 import { useZoom } from './hooks/use-zoom'
 import { useImmediateSessionStateSave } from './hooks/useImmediateSessionStateSave'
 import { useCliVersionCheck } from './hooks/useCliVersionCheck'
@@ -133,6 +135,14 @@ function App() {
   const featureTourOpen = useUIStore(state => state.featureTourOpen)
   const jeanMcpIntroOpen = useUIStore(state => state.jeanMcpIntroOpen)
   const hasStartedTransportRef = useRef(false)
+
+  // Prevent a stray file drop from navigating the webview to file:// (which
+  // would lock the whole window). Always-on catch-all for views without their
+  // own drop handler.
+  usePreventFileDropNavigation()
+
+  // Linux: route OS file drops (intercepted in Rust) to a terminal or the chat.
+  useLinuxFileDrop()
 
   // Holds the update object so the title bar indicator can trigger install later
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -3646,6 +3646,117 @@ pub fn run() {
                 }
             }
 
+            // FIX: Handle OS file drops ourselves on Linux/WebKitGTK.
+            //
+            // The app runs with `dragDropEnabled: false` (so internal DOM drag &
+            // drop works for list/tree reordering). The trade-off on WebKitGTK is
+            // that dropping an OS file makes the webview handle it natively: on an
+            // editable field it inserts the path text, on a non-editable area it
+            // navigates the whole webview to that `file://` (blanking/locking the
+            // UI). DOM `preventDefault` does NOT cancel this (tauri-apps/tauri#12052),
+            // and Tauri's own native drag-drop is broken on Linux too (#9725).
+            //
+            // So we intercept at the GTK widget level: on `drag-drop` (mouse
+            // release) we CLAIM the drop (return true → WebKitGTK's editor/navigation
+            // does not run) and request the URI list ourselves; in
+            // `drag-data-received` we read the file paths + pointer position, stop the
+            // default handler, and forward them to the frontend, which routes each
+            // drop to a terminal (write the path into its pty) or the chat (attach
+            // the image). `drag-data-received` also fires during hover, so a flag set
+            // in `drag-drop` gates it to genuine drops only.
+            #[cfg(target_os = "linux")]
+            if !headless {
+                if let Some(window) = app.get_webview_window("main") {
+                    let drop_app = app.handle().clone();
+                    let installed = window.with_webview(move |webview| {
+                        use gtk::prelude::WidgetExt;
+                        use std::cell::Cell;
+                        use std::rc::Rc;
+                        use tauri::Emitter;
+                        use webkit2gtk::glib;
+                        use webkit2gtk::glib::object::ObjectExt;
+
+                        let wv: webkit2gtk::WebView = webview.inner();
+
+                        // WebKitGTK requests the drag data during hover (to validate
+                        // the target), so `drag-data-received` fires before release.
+                        // Only act on the ACTUAL drop: `drag-drop` (mouse release)
+                        // sets this flag and explicitly requests the data.
+                        let is_dropping = Rc::new(Cell::new(false));
+
+                        let drop_flag = is_dropping.clone();
+                        wv.connect_drag_drop(move |wv, ctx, _x, _y, time| {
+                            // Claim the drop (return true) so WebKitGTK's editor does
+                            // NOT insert the file path into editable fields, and
+                            // request the URI list ourselves → drag-data-received.
+                            drop_flag.set(true);
+                            let target = gtk::gdk::Atom::intern("text/uri-list");
+                            wv.drag_get_data(ctx, &target, time);
+                            true
+                        });
+
+                        let recv_flag = is_dropping.clone();
+                        wv.connect_drag_data_received(
+                            move |wv, _ctx, _x, _y, data, _info, _time| {
+                                use gtk::gdk::prelude::SeatExt;
+                                use gtk::prelude::WidgetExt;
+
+                                // Ignore data requested during hover (not a real drop).
+                                if !recv_flag.replace(false) {
+                                    return;
+                                }
+                                // Stop WebKitGTK's default handler from loading the
+                                // dropped file (which blanks/locks the window).
+                                wv.stop_signal_emission_by_name("drag-data-received");
+
+                                // Convert file:// URIs to real paths (percent-decoded).
+                                let paths: Vec<String> = data
+                                    .uris()
+                                    .iter()
+                                    .filter_map(|uri| glib::filename_from_uri(uri).ok())
+                                    .map(|(path, _host)| {
+                                        path.to_string_lossy().into_owned()
+                                    })
+                                    .collect();
+                                if paths.is_empty() {
+                                    return;
+                                }
+
+                                // Drop position: query the pointer relative to the
+                                // webview's window at release time.
+                                let (x, y) = wv
+                                    .window()
+                                    .and_then(|win| {
+                                        wv.display().default_seat().and_then(|seat| {
+                                            seat.pointer().map(|pointer| {
+                                                let (_w, px, py, _mask) =
+                                                    win.device_position(&pointer);
+                                                (px, py)
+                                            })
+                                        })
+                                    })
+                                    .unwrap_or((0, 0));
+                                log::debug!("[file-drop] paths={paths:?} x={x} y={y}");
+                                if let Err(e) = drop_app.emit(
+                                    "linux-file-drop",
+                                    serde_json::json!({ "paths": paths, "x": x, "y": y }),
+                                ) {
+                                    log::warn!("[file-drop] emit failed: {e}");
+                                }
+                            },
+                        );
+                    });
+                    match installed {
+                        Ok(()) => log::debug!(
+                            "[file-drop] Installed Linux drag-data-received interceptor"
+                        ),
+                        Err(e) => {
+                            log::warn!("[file-drop] Failed to install interceptor: {e}")
+                        }
+                    }
+                }
+            }
+
             // Kill orphaned OpenCode server from a previous crash (if any).
             // Spawned async — cleanup involves blocking I/O (HTTP health check with
             // 1.2s timeout, process kill, 300ms sleep) that can delay startup by ~1.5s.

@@ -64,6 +64,13 @@ tokio-tungstenite = "0.28"  # WebSocket-over-Unix-socket client for detached cod
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSColor", "NSResponder"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Intercept OS file drops at the GTK widget level so WebKitGTK does not navigate
+# the webview to the dropped file (which locks the window — DOM preventDefault
+# cannot stop it). Versions pinned to Tauri's transitive deps.
+webkit2gtk = "=2.0.2"
+gtk = "=0.18.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Threading", "Win32_Foundation"] }
 
