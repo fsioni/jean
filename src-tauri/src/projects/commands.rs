@@ -6727,9 +6727,46 @@ pub struct MergePrResponse {
     pub message: String,
 }
 
+/// Resolve a `gh pr merge` method flag the repository actually allows.
+///
+/// Returns `--squash`, `--merge`, or `--rebase`, preferring squash. Repositories
+/// often disable merge commits, so a hardcoded `--merge` would fail with exit
+/// code 1; this queries the repo settings and falls back to `--squash` when they
+/// can't be read.
+fn resolve_repo_merge_flag(gh: &std::path::Path, worktree_path: &str) -> &'static str {
+    let output = silent_command(gh)
+        .args([
+            "repo",
+            "view",
+            "--json",
+            "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed",
+        ])
+        .current_dir(worktree_path)
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            if let Ok(settings) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if settings["squashMergeAllowed"].as_bool().unwrap_or(false) {
+                    return "--squash";
+                }
+                if settings["mergeCommitAllowed"].as_bool().unwrap_or(false) {
+                    return "--merge";
+                }
+                if settings["rebaseMergeAllowed"].as_bool().unwrap_or(false) {
+                    return "--rebase";
+                }
+            }
+        }
+    }
+
+    "--squash"
+}
+
 /// Merge the open GitHub PR for the current branch using `gh pr merge`.
 ///
-/// Checks mergeability first via `gh pr view`, then merges with `--merge --delete-branch`.
+/// Checks mergeability first via `gh pr view`, then merges with the merge method
+/// the repository allows (squash > merge commit > rebase, preferring squash).
 #[tauri::command]
 pub async fn merge_github_pr(
     app: AppHandle,
@@ -6775,9 +6812,13 @@ pub async fn merge_github_pr(
 
     let title = pr_info["title"].as_str().unwrap_or("").to_string();
 
-    // 2. Merge the PR
+    // 2. Merge the PR using a method the repository actually allows. A
+    //    hardcoded `--merge` fails with exit code 1 on repos that disable merge
+    //    commits (e.g. squash-only repos like Planexpo), so resolve the method
+    //    from the repo settings first (preferring squash).
+    let merge_flag = resolve_repo_merge_flag(&gh, &worktree_path);
     let merge_output = silent_command(&gh)
-        .args(["pr", "merge", "--merge"])
+        .args(["pr", "merge", merge_flag])
         .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr merge: {e}"))?;
