@@ -15,7 +15,9 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
 
 use super::client::JenkinsClient;
-use super::commands::{assemble_status, resolve_preview_freshness, PIPELINE_JOB, PREVIEW_JOB};
+use super::commands::{
+    assemble_status, resolve_preview_freshness, INTEGRATION_JOB, PIPELINE_JOB, PREVIEW_JOB,
+};
 use super::parse::{self, Transition, STATUS_FAILURE, STATUS_SUCCESS};
 use super::{config, types::JenkinsWorktreeStatus};
 use crate::http_server::EmitExt;
@@ -116,6 +118,10 @@ async fn poll_cycle(
             continue;
         };
         let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
+        let integration_builds = client
+            .fetch_builds(INTEGRATION_JOB)
+            .await
+            .unwrap_or_default();
         let queue_json = client.fetch_queue().await.unwrap_or_default();
 
         for worktree in data.worktrees.iter().filter(|w| w.project_id == project.id) {
@@ -134,6 +140,7 @@ async fn poll_cycle(
                 &client,
                 &pipeline_builds,
                 &preview_builds,
+                &integration_builds,
                 &queue_json,
                 &worktree.id,
                 Some(&pr_id),

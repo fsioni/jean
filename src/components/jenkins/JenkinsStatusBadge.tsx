@@ -228,10 +228,13 @@ export function JenkinsStatusBadge({
           </div>
         )}
 
-        {/* Stages */}
+        {/* Stages (with the Integration tests retry attempts inline) */}
         {status.stages.length > 0 && (
           <div className="mt-2">
-            <JenkinsStageList stages={status.stages} />
+            <JenkinsStageList
+              stages={status.stages}
+              attempts={status.integrationAttempts}
+            />
           </div>
         )}
 

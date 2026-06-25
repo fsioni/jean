@@ -49,6 +49,7 @@ function notConfiguredStatus(
     prId,
     pipeline: null,
     stages: [],
+    integrationAttempts: [],
     preview: null,
     previewUrl: null,
     previewFreshness: null,
