@@ -11,7 +11,7 @@ use super::client::JenkinsClient;
 use super::config;
 use super::freshness::{self, PreviewFreshness};
 use super::parse;
-use super::types::{JenkinsBuild, JenkinsStage, JenkinsWorktreeStatus};
+use super::types::{JenkinsAttempt, JenkinsBuild, JenkinsStage, JenkinsWorktreeStatus};
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
 use crate::projects::storage::{load_projects_data, save_projects_data};
@@ -23,6 +23,9 @@ pub const PIPELINE_JOB: &str = "build-and-test";
 pub const LAUNCHER_JOB: &str = "build-and-test_Launcher-on-pr";
 /// Standalone job that deploys the PR preview environment.
 pub const PREVIEW_JOB: &str = "deploy-preview";
+/// Downstream job the `Integration tests` stage launches once per attempt
+/// (auto-retried up to 3× on failure). Each run is one [`JenkinsAttempt`].
+pub const INTEGRATION_JOB: &str = "integration-tests";
 /// The flaky stage that gets re-run most often.
 pub const INTEGRATION_STAGE: &str = "Integration tests";
 /// Jobs whose queue items mean "the PR's pipeline is waiting to start".
@@ -86,6 +89,35 @@ fn match_build<'a>(
     None
 }
 
+/// Group the `integration-tests` runs triggered by `pipeline_number` into
+/// numbered retry attempts, oldest first ("essai 1", "essai 2", …).
+///
+/// Returns empty when the pipeline build hasn't reached the Integration tests
+/// stage yet, or when its runs scrolled off the fetched `integration-tests`
+/// window (best-effort detail, never an error).
+pub fn integration_attempts_for(
+    integration_builds: &[JenkinsBuild],
+    pipeline_number: u64,
+) -> Vec<JenkinsAttempt> {
+    let mut runs: Vec<&JenkinsBuild> = integration_builds
+        .iter()
+        .filter(|b| b.upstream_build == Some(pipeline_number))
+        .collect();
+    // Oldest first → attempt 1, 2, 3 in trigger order (the list is newest-first).
+    runs.sort_by_key(|b| b.number);
+    runs.iter()
+        .enumerate()
+        .map(|(i, b)| JenkinsAttempt {
+            attempt: (i + 1) as u32,
+            number: b.number,
+            result: b.result.clone(),
+            building: b.building,
+            duration_ms: b.duration_ms,
+            url: b.url.clone(),
+        })
+        .collect()
+}
+
 /// Assemble the full status for one worktree from already-fetched build lists.
 ///
 /// Only the matched pipeline build's stages are fetched (one extra request).
@@ -95,6 +127,7 @@ pub async fn assemble_status(
     client: &JenkinsClient,
     pipeline_builds: &[JenkinsBuild],
     preview_builds: &[JenkinsBuild],
+    integration_builds: &[JenkinsBuild],
     queue_json: &str,
     worktree_id: &str,
     pr_id: Option<&str>,
@@ -110,6 +143,12 @@ pub async fn assemble_status(
             .unwrap_or_default(),
         None => Vec::new(),
     };
+
+    // Per-attempt breakdown of the (flaky, auto-retried) Integration tests stage.
+    let integration_attempts = pipeline
+        .as_ref()
+        .map(|build| integration_attempts_for(integration_builds, build.number))
+        .unwrap_or_default();
 
     let preview = match_build(preview_builds, pr_id, branch).cloned();
 
@@ -136,6 +175,7 @@ pub async fn assemble_status(
         pr_id: resolved_pr,
         pipeline,
         stages,
+        integration_attempts,
         preview,
         preview_url,
         // Filled by the caller (needs the worktree repo path + a `gh` read).
@@ -181,12 +221,17 @@ pub async fn get_jenkins_status(
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
     let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
+    let integration_builds = client
+        .fetch_builds(INTEGRATION_JOB)
+        .await
+        .unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
 
     let mut status = assemble_status(
         &client,
         &pipeline_builds,
         &preview_builds,
+        &integration_builds,
         &queue_json,
         &worktree_id,
         pr_id.as_deref(),
@@ -385,7 +430,56 @@ mod tests {
             url: String::new(),
             pr_id: pr.map(str::to_string),
             branch: branch.map(str::to_string),
+            upstream_build: None,
         }
+    }
+
+    /// One `integration-tests` run triggered by pipeline build `upstream`.
+    fn attempt_build(
+        number: u64,
+        upstream: u64,
+        result: Option<&str>,
+        building: bool,
+    ) -> JenkinsBuild {
+        JenkinsBuild {
+            number,
+            result: result.map(str::to_string),
+            building,
+            timestamp_ms: 0,
+            duration_ms: 1000,
+            url: format!("http://jenkins/job/integration-tests/{number}/"),
+            pr_id: None,
+            branch: None,
+            upstream_build: Some(upstream),
+        }
+    }
+
+    #[test]
+    fn groups_integration_runs_into_numbered_attempts_oldest_first() {
+        // Newest-first list (as Jenkins returns it), mixing two pipeline builds.
+        let runs = vec![
+            attempt_build(6854, 6386, None, true), // PR build 6386, attempt 2 (running)
+            attempt_build(6853, 6386, Some("FAILURE"), false), // PR build 6386, attempt 1
+            attempt_build(6852, 6385, Some("FAILURE"), false), // PR build 6385, attempt 3
+            attempt_build(6851, 6385, Some("FAILURE"), false),
+            attempt_build(6850, 6385, Some("FAILURE"), false),
+        ];
+
+        // 6385 exhausted all three retries.
+        let a = integration_attempts_for(&runs, 6385);
+        assert_eq!(a.len(), 3);
+        assert_eq!((a[0].attempt, a[0].number), (1, 6850));
+        assert_eq!((a[2].attempt, a[2].number), (3, 6852));
+
+        // 6386 is mid-retry: attempt 1 failed, attempt 2 still running.
+        let b = integration_attempts_for(&runs, 6386);
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[0].result.as_deref(), Some("FAILURE"));
+        assert!(b[1].building && b[1].result.is_none());
+        assert_eq!(b[1].attempt, 2);
+
+        // A build that never reached the stage has no attempts.
+        assert!(integration_attempts_for(&runs, 9999).is_empty());
     }
 
     #[test]

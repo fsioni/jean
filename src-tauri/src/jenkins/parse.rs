@@ -59,7 +59,28 @@ pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
             .to_string(),
         pr_id: non_empty(find_param(&params, &["PR_ID", "ghprbPullId"])),
         branch: non_empty(find_param(&params, &["BRANCH", "ghprbSourceBranch"])),
+        upstream_build: extract_upstream_build(build.get("actions")),
     })
+}
+
+/// The triggering upstream build number from a `CauseAction` in `actions[]`.
+///
+/// `integration-tests` runs are launched by the `build-and-test` pipeline, so
+/// their `causes[].upstreamBuild` ties each run back to the pipeline build that
+/// spawned it — the join key behind the per-attempt breakdown.
+fn extract_upstream_build(actions: Option<&Value>) -> Option<u64> {
+    let actions = actions.and_then(Value::as_array)?;
+    for action in actions {
+        let Some(causes) = action.get("causes").and_then(Value::as_array) else {
+            continue;
+        };
+        for cause in causes {
+            if let Some(n) = cause.get("upstreamBuild").and_then(Value::as_u64) {
+                return Some(n);
+            }
+        }
+    }
+    None
 }
 
 /// First present value among `names`, in priority order.
@@ -235,6 +256,7 @@ mod tests {
 
     const BUILDS_FIXTURE: &str = include_str!("tests/fixtures/build-and-test-builds.json");
     const LAUNCHER_FIXTURE: &str = include_str!("tests/fixtures/launcher-on-pr-builds.json");
+    const INTEGRATION_FIXTURE: &str = include_str!("tests/fixtures/integration-tests-builds.json");
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
     const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
     const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
@@ -275,6 +297,28 @@ mod tests {
         assert_eq!(pr.pr_id.as_deref(), Some("3959"));
         assert_eq!(pr.branch.as_deref(), Some("feat-login"));
         assert_eq!(pr.result.as_deref(), Some("FAILURE"));
+    }
+
+    #[test]
+    fn integration_builds_carry_their_upstream_pipeline_build() {
+        // Each `integration-tests` run records the `build-and-test` build that
+        // triggered it via `causes[].upstreamBuild` — the join key for attempts.
+        let builds = parse_builds(INTEGRATION_FIXTURE).expect("parse integration builds");
+        assert_eq!(builds.len(), 6);
+
+        // PR 3959's pipeline (#6385) retried 3× — all three runs point back to it.
+        let for_6385: Vec<u64> = builds
+            .iter()
+            .filter(|b| b.upstream_build == Some(6385))
+            .map(|b| b.number)
+            .collect();
+        assert_eq!(for_6385, vec![6852, 6851, 6850]);
+
+        // The in-flight run has no result yet but still knows its upstream build.
+        let running = builds.iter().find(|b| b.number == 6854).expect("6854");
+        assert!(running.building);
+        assert_eq!(running.result, None);
+        assert_eq!(running.upstream_build, Some(6386));
     }
 
     #[test]
@@ -322,6 +366,7 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
+            upstream_build: None,
         };
         assert_eq!(overall_status(Some(&building)), "BUILDING");
 
@@ -385,6 +430,7 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
+            upstream_build: None,
         };
         // Running build wins even if something is also queued.
         assert_eq!(overall_status_with_queue(Some(&building), true), "BUILDING");
