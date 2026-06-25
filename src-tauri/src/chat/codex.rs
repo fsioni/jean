@@ -3974,7 +3974,7 @@ pub fn execute_one_shot_codex(
 ) -> Result<String, String> {
     let cli_path = crate::codex_cli::resolve_cli_binary(app)?;
 
-    if !cli_path.exists() {
+    if !crate::platform::resolved_cli_exists(&cli_path) {
         return Err("Codex CLI not installed".to_string());
     }
 
@@ -3993,19 +3993,37 @@ pub fn execute_one_shot_codex(
     std::fs::write(&schema_file, output_schema)
         .map_err(|e| format!("Failed to write schema file: {e}"))?;
 
-    let mut cmd = crate::platform::silent_command(&cli_path);
+    let wsl = crate::platform::get_wsl_config();
+    let schema_arg = if cfg!(windows) && wsl.enabled {
+        std::path::PathBuf::from(crate::platform::win_to_wsl_path(
+            &schema_file.to_string_lossy(),
+        ))
+    } else {
+        schema_file.clone()
+    };
+    let working_dir_arg = working_dir.map(|dir| {
+        if cfg!(windows) && wsl.enabled {
+            std::path::PathBuf::from(crate::platform::win_to_wsl_path(&dir.to_string_lossy()))
+        } else {
+            dir.to_path_buf()
+        }
+    });
+
+    let mut cmd = crate::platform::resolved_cli_command(&cli_path, working_dir);
     cmd.args(build_one_shot_codex_args(
         actual_model,
         is_fast,
-        &schema_file,
-        working_dir,
+        &schema_arg,
+        working_dir_arg.as_deref(),
     ));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+    if !wsl.enabled {
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
+        }
     }
 
     let mut child = cmd

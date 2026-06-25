@@ -54,6 +54,10 @@ use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 use crate::platform::wsl_aware_command;
 
+fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
+
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\(([^)]*)\)").expect("valid release notes parenthetical regex"));
 static RELEASE_NOTES_LEADING_PR_RE: Lazy<Regex> =
@@ -5370,7 +5374,7 @@ pub async fn link_worktree_pr(
     log::trace!("Linking PR #{pr_number} to worktree {worktree_id}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5378,7 +5382,6 @@ pub async fn link_worktree_pr(
             "--json",
             "number,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5436,7 +5439,7 @@ pub async fn detect_open_pr_for_branch(
     let current_branch = git::get_current_branch(&worktree_path)?;
     let repo = get_repo_identifier(&worktree_path)?;
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "api",
             "--method",
@@ -5449,7 +5452,6 @@ pub async fn detect_open_pr_for_branch(
             "-f",
             "per_page=1",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -5493,9 +5495,8 @@ pub async fn detect_and_link_pr(
     log::trace!("Detecting PR for worktree {worktree_id} at {worktree_path}");
 
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -5584,7 +5585,7 @@ pub async fn trigger_coderabbit_pr_review(
     let gh = resolve_gh_binary(&app);
     let target_pr_number =
         pr_number.ok_or_else(|| "Open or link a PR in Jean first".to_string())?;
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5592,7 +5593,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--json",
             "number,url",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5606,7 +5606,7 @@ pub async fn trigger_coderabbit_pr_review(
     let pr_url = view_json["url"].as_str().unwrap_or("").to_string();
 
     let comment_body = "@coderabbitai review".to_string();
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "comment",
@@ -5614,7 +5614,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--body",
             &comment_body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr comment: {e}"))?;
 
@@ -6494,9 +6493,8 @@ pub async fn create_pr_with_ai_content(
 
     // Check if a PR already exists for this branch before spending time/tokens on AI generation
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -6629,7 +6627,7 @@ pub async fn create_pr_with_ai_content(
 
     // Create the PR using gh CLI
     log::trace!("Creating PR with gh CLI");
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "create",
@@ -6640,7 +6638,6 @@ pub async fn create_pr_with_ai_content(
             "--body",
             &pr_content.body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr create: {e}"))?;
 
@@ -6648,9 +6645,8 @@ pub async fn create_pr_with_ai_content(
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("already exists") {
             // Try to look up the existing PR and link it to the worktree
-            let view_output = silent_command(&gh)
+            let view_output = gh_command(&gh, &worktree_path)
                 .args(["pr", "view", "--json", "number,url,title"])
-                .current_dir(&worktree_path)
                 .output();
 
             if let Ok(view_out) = view_output {
@@ -6726,14 +6722,13 @@ pub async fn merge_github_pr(
     let gh = resolve_gh_binary(&app);
 
     // 1. Check PR status and mergeability
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
             "--json",
             "number,state,mergeable,mergeStateStatus,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -6764,9 +6759,8 @@ pub async fn merge_github_pr(
     let title = pr_info["title"].as_str().unwrap_or("").to_string();
 
     // 2. Merge the PR
-    let merge_output = silent_command(&gh)
+    let merge_output = gh_command(&gh, &worktree_path)
         .args(["pr", "merge", "--merge"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr merge: {e}"))?;
 
@@ -8952,7 +8946,7 @@ pub async fn list_github_releases(
     log::trace!("Listing GitHub releases for: {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "release",
             "list",
@@ -8961,7 +8955,6 @@ pub async fn list_github_releases(
             "--limit",
             "30",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh CLI: {e}"))?;
 

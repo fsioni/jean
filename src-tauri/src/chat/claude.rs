@@ -1004,7 +1004,7 @@ pub fn execute_claude_detached(
     // Get CLI path
     let cli_path = resolve_cli_binary(app);
 
-    if !cli_path.exists() {
+    if !crate::platform::resolved_cli_exists(&cli_path) {
         let error_msg = format!(
             "Claude CLI not found at {}. Please complete setup in Settings > Advanced.",
             cli_path.display()

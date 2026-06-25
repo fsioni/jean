@@ -160,6 +160,34 @@ pub fn wsl_aware_command(program: &str, cwd: Option<&std::path::Path>) -> Comman
     cmd
 }
 
+/// True when `path` is a Unix-style absolute path that only exists inside WSL.
+pub fn is_wsl_unix_path(path: &std::path::Path) -> bool {
+    path.to_string_lossy().starts_with('/')
+}
+
+/// Check whether a resolved CLI path/tool is available in the current execution
+/// context. In WSL mode, Unix paths must be checked inside the distro instead
+/// of with Windows filesystem APIs.
+pub fn resolved_cli_exists(path: &std::path::Path) -> bool {
+    let config = get_wsl_config();
+    if cfg!(windows) && config.enabled {
+        let tool = path.to_string_lossy();
+        if tool.starts_with('/') {
+            return wsl_file_executable(&config.distro, &tool);
+        }
+        return check_wsl_tool(&config.distro, &tool);
+    }
+
+    path.exists()
+}
+
+/// Build a command for a resolved CLI path/tool in the current execution
+/// context. In WSL mode this routes through `wsl.exe --cd <cwd> -- <tool>`.
+pub fn resolved_cli_command(path: &std::path::Path, cwd: Option<&std::path::Path>) -> Command {
+    let program = path.to_string_lossy();
+    wsl_aware_command(&program, cwd)
+}
+
 /// Check if WSL is available on this system.
 #[cfg(windows)]
 pub fn is_wsl_available() -> bool {
@@ -555,6 +583,20 @@ mod tests {
             win_to_wsl_path(r"\\wsl.localhost\Ubuntu\home\user\project"),
             "/home/user/project"
         );
+    }
+
+    #[test]
+    fn test_is_wsl_unix_path_detects_linux_absolute_path() {
+        assert!(is_wsl_unix_path(std::path::Path::new(
+            "/home/alice/.local/share/jean/gh-cli/gh"
+        )));
+    }
+
+    #[test]
+    fn test_is_wsl_unix_path_rejects_windows_path() {
+        assert!(!is_wsl_unix_path(std::path::Path::new(
+            r"C:\Users\alice\AppData\Roaming\jean\gh-cli\gh.exe"
+        )));
     }
 
     #[test]
