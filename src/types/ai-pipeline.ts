@@ -7,8 +7,6 @@ import type { Worktree } from '@/types/projects'
 
 /** Persisted AI pipeline configuration (sidecar). */
 export interface AiPipelineConfig {
-  /** Dashboard base URL, e.g. `https://ai-agents.example.internal`. */
-  dashboardUrl?: string
   /** Label the pipeline puts on its PRs (defaults to `ai-full-flow`). */
   pipelineLabel?: string
 }
@@ -35,7 +33,8 @@ export interface AiPipelinePr {
 /**
  * A ClickUp `TO REVIEW` ticket ready to pick up (unassigned or mine), joined
  * with its PR in the current project's repo. ClickUp is the source of truth for
- * inclusion; the PR carries the resume target + CI/draft state (may be red).
+ * inclusion; the PR carries the resume target + CI state (may be red). Draft PRs
+ * are excluded server-side (a draft means the pipeline hasn't finished).
  */
 export interface AiPipelineReviewTask {
   taskId: string

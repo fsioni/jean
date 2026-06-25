@@ -3190,11 +3190,9 @@ pub async fn dispatch_command(
             to_value(result)
         }
         "set_ai_pipeline_config" => {
-            let dashboard_url: Option<String> = field_opt(&args, "dashboardUrl", "dashboard_url")?;
             let pipeline_label: Option<String> =
                 field_opt(&args, "pipelineLabel", "pipeline_label")?;
-            crate::ai_pipeline::set_ai_pipeline_config(app.clone(), dashboard_url, pipeline_label)
-                .await?;
+            crate::ai_pipeline::set_ai_pipeline_config(app.clone(), pipeline_label).await?;
             Ok(Value::Null)
         }
         "list_ai_pipeline_prs" => {

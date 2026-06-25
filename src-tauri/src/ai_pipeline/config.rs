@@ -3,8 +3,9 @@
 //! shared `AppPreferences` / `Project` structs and stays conflict-free on
 //! merge-forward.
 //!
-//! Holds the internal dashboard base URL (never hardcoded — public fork) and the
-//! label the pipeline puts on its PRs (defaults to `ai-full-flow`).
+//! Holds the label the pipeline puts on its PRs (defaults to `ai-full-flow`).
+//! PR state itself comes straight from GitHub via `gh` — no dashboard
+//! service/credential is involved.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -18,12 +19,9 @@ pub const DEFAULT_PIPELINE_LABEL: &str = "ai-full-flow";
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AiPipelineConfig {
-    /// Dashboard base URL, e.g. `https://ai-agents.example.internal` (no
-    /// trailing slash needed). `None` until the user configures it in Settings.
-    #[serde(default)]
-    pub dashboard_url: Option<String>,
     /// Label the pipeline puts on its PRs. `None` falls back to
-    /// [`DEFAULT_PIPELINE_LABEL`].
+    /// [`DEFAULT_PIPELINE_LABEL`]. (Branches following `CU-<id>` are recognized
+    /// as pipeline PRs regardless of the label.)
     #[serde(default)]
     pub pipeline_label: Option<String>,
 }
@@ -86,21 +84,6 @@ pub fn save_ai_pipeline_config(app: &AppHandle, config: &AiPipelineConfig) -> Re
     save_sidecar(app, "config.json", config)
 }
 
-/// Resolve the configured dashboard base URL (trimmed, no trailing slash), or an
-/// error when it isn't configured yet.
-pub fn resolve_dashboard_url(config: &AiPipelineConfig) -> Result<String, String> {
-    config
-        .dashboard_url
-        .as_ref()
-        .map(|s| s.trim().trim_end_matches('/'))
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            "No AI pipeline dashboard URL configured. Add one in Settings → Integrations."
-                .to_string()
-        })
-}
-
 // =============================================================================
 // Tauri commands
 // =============================================================================
@@ -111,15 +94,13 @@ pub async fn get_ai_pipeline_config(app: AppHandle) -> Result<AiPipelineConfig, 
     load_ai_pipeline_config(&app)
 }
 
-/// Update the dashboard URL and pipeline label. `None`/empty clears a value.
+/// Update the pipeline label. `None`/empty clears it (falls back to the default).
 #[tauri::command]
 pub async fn set_ai_pipeline_config(
     app: AppHandle,
-    dashboard_url: Option<String>,
     pipeline_label: Option<String>,
 ) -> Result<(), String> {
     let mut config = load_ai_pipeline_config(&app)?;
-    config.dashboard_url = dashboard_url.filter(|t| !t.trim().is_empty());
     config.pipeline_label = pipeline_label.filter(|t| !t.trim().is_empty());
     save_ai_pipeline_config(&app, &config)
 }
@@ -137,7 +118,6 @@ mod tests {
     #[test]
     fn effective_label_uses_configured_value() {
         let cfg = AiPipelineConfig {
-            dashboard_url: None,
             pipeline_label: Some("my-label".to_string()),
         };
         assert_eq!(cfg.effective_label(), "my-label");
@@ -146,33 +126,8 @@ mod tests {
     #[test]
     fn effective_label_ignores_blank() {
         let cfg = AiPipelineConfig {
-            dashboard_url: None,
             pipeline_label: Some("   ".to_string()),
         };
         assert_eq!(cfg.effective_label(), DEFAULT_PIPELINE_LABEL);
-    }
-
-    #[test]
-    fn resolve_dashboard_url_trims_trailing_slash() {
-        let cfg = AiPipelineConfig {
-            dashboard_url: Some("https://example.test/ ".to_string()),
-            pipeline_label: None,
-        };
-        assert_eq!(resolve_dashboard_url(&cfg).unwrap(), "https://example.test");
-    }
-
-    #[test]
-    fn resolve_dashboard_url_errors_when_unset() {
-        let cfg = AiPipelineConfig::default();
-        assert!(resolve_dashboard_url(&cfg).is_err());
-    }
-
-    #[test]
-    fn resolve_dashboard_url_errors_when_blank() {
-        let cfg = AiPipelineConfig {
-            dashboard_url: Some("   ".to_string()),
-            pipeline_label: None,
-        };
-        assert!(resolve_dashboard_url(&cfg).is_err());
     }
 }

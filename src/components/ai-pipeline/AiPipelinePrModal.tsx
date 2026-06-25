@@ -9,7 +9,6 @@ import {
   GitPullRequest,
   ExternalLink,
   ClipboardList,
-  Gauge,
   Rocket,
 } from 'lucide-react'
 import {
@@ -27,7 +26,6 @@ import { useProjectsStore } from '@/store/projects-store'
 import { openExternal } from '@/lib/platform'
 import { useResolvedClickUpTaskId } from '@/services/clickup'
 import {
-  useAiPipelineConfig,
   useAiPipelineReviewTasks,
   useHasAiPipelineAccess,
   useResumeAiPipelinePr,
@@ -126,9 +124,6 @@ export function AiPipelinePrModal() {
     refetch,
   } = useAiPipelineReviewTasks(projectId, { enabled: open })
 
-  const { data: config } = useAiPipelineConfig()
-  const dashboardUrl = config?.dashboardUrl?.trim().replace(/\/+$/, '') ?? ''
-
   const resume = useResumeAiPipelinePr(projectId)
   const finish = useFinishAiPipelinePr(projectId)
 
@@ -192,17 +187,6 @@ export function AiPipelinePrModal() {
             <GitPullRequest className="h-4 w-4 text-muted-foreground" />
             <DialogTitle>PR de la pipeline IA</DialogTitle>
             <div className="ml-auto flex items-center gap-1">
-              {dashboardUrl && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 p-0"
-                  onClick={() => openExternal(`${dashboardUrl}/dashboard`)}
-                  title="Ouvrir le dashboard full flow"
-                >
-                  <Gauge className="h-4 w-4" />
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -222,11 +206,11 @@ export function AiPipelinePrModal() {
 
         {!hasAccess ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
-            Aucun dashboard IA configuré.
+            ClickUp n&apos;est pas configuré.
             <br />
-            Renseigne son URL dans{' '}
+            Renseigne ton token dans{' '}
             <span className="font-medium">
-              Réglages → Intégrations → Pipeline IA
+              Réglages → Intégrations → ClickUp
             </span>
             .
           </div>
@@ -342,17 +326,6 @@ export function AiPipelinePrModal() {
                                   )
                                 }
                               />
-                              {dashboardUrl && (
-                                <LinkChip
-                                  icon={Gauge}
-                                  label="Flow"
-                                  onClick={() =>
-                                    openExternal(
-                                      `${dashboardUrl}/ticket/${task.taskId}`
-                                    )
-                                  }
-                                />
-                              )}
                             </div>
                           </div>
                           <Button

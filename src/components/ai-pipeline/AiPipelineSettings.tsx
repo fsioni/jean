@@ -27,36 +27,26 @@ const Field: React.FC<{
 )
 
 /**
- * AI pipeline integration settings (dashboard URL + label), stored in the
- * isolated AI pipeline sidecar config (not in AppPreferences). The URL is never
- * hardcoded — the fork is public.
+ * AI pipeline integration settings. Only the pipeline label is configurable —
+ * PR state is read straight from GitHub via `gh`, so there's no dashboard URL
+ * or auth to set. Stored in the isolated AI pipeline sidecar config (not in
+ * AppPreferences).
  */
 export const AiPipelineSettings: React.FC = () => {
   const { data: config } = useAiPipelineConfig()
   const saveConfig = useSaveAiPipelineConfig()
 
-  const [localUrl, setLocalUrl] = useState<string | null>(null)
   const [localLabel, setLocalLabel] = useState<string | null>(null)
 
-  const currentUrl = config?.dashboardUrl ?? ''
   const currentLabel = config?.pipelineLabel ?? ''
-
-  const url = localUrl ?? currentUrl
   const label = localLabel ?? currentLabel
-
-  const changed =
-    (localUrl !== null && localUrl !== currentUrl) ||
-    (localLabel !== null && localLabel !== currentLabel)
+  const changed = localLabel !== null && localLabel !== currentLabel
 
   const handleSave = () => {
     saveConfig.mutate(
-      {
-        dashboardUrl: url.trim() || undefined,
-        pipelineLabel: label.trim() || undefined,
-      },
+      { pipelineLabel: label.trim() || undefined },
       {
         onSuccess: () => {
-          setLocalUrl(null)
           setLocalLabel(null)
           toast.success('Configuration pipeline IA enregistrée')
         },
@@ -71,20 +61,8 @@ export const AiPipelineSettings: React.FC = () => {
       anchorId="pref-integrations-section-ai-pipeline"
     >
       <Field
-        label="URL du dashboard"
-        description="Base URL du dashboard de la pipeline IA (endpoint /prs). Stockée localement, jamais committée."
-      >
-        <Input
-          placeholder="https://ai-agents.exemple.interne"
-          value={url}
-          onChange={e => setLocalUrl(e.target.value)}
-          className="text-base md:text-sm font-mono"
-        />
-      </Field>
-
-      <Field
         label="Label pipeline (optionnel)"
-        description="Label porté par les PR de la pipeline (défaut : ai-full-flow). Les branches CU-<id> sont reconnues quel que soit le label."
+        description="Label porté par les PR de la pipeline (défaut : ai-full-flow). Les branches CU-<id> sont reconnues quel que soit le label. Les PR sont lues directement depuis GitHub (gh) — aucune URL ni auth de dashboard à configurer."
       >
         <Input
           placeholder="ai-full-flow"

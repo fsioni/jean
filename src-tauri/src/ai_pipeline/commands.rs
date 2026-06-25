@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::AppHandle;
 
-use super::client::fetch_prs;
-use super::config::{load_ai_pipeline_config, resolve_dashboard_url};
+use super::config::load_ai_pipeline_config;
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
 use crate::projects::clickup_client::clickup_get;
@@ -71,7 +70,8 @@ pub struct AiPipelinePr {
 /// A ClickUp `TO REVIEW` ticket ready to pick up (unassigned or mine), joined
 /// with its GitHub PR in the current project's repo. ClickUp drives the list
 /// (source of truth for status + assignment); the PR carries the resume target
-/// and its CI/draft/mergeable state (which may legitimately be red/draft).
+/// and its CI/mergeable state (CI may legitimately be red). Draft PRs are
+/// filtered out upstream (a draft means the pipeline hasn't finished).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiPipelineReviewTask {
@@ -145,97 +145,141 @@ fn repo_slug_from_github_url(url: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Parse the dashboard `/prs` payload into the pipeline PRs of one repo.
+/// One check's contribution to the CI rollup.
+#[derive(Debug, PartialEq)]
+enum CiVerdict {
+    Pass,
+    Pending,
+    Fail,
+}
+
+/// Classify a single `statusCheckRollup` entry (a `CheckRun` or a legacy
+/// `StatusContext`) as pass / pending / fail. Pure so it is unit-tested.
+fn classify_check(check: &serde_json::Value) -> CiVerdict {
+    match check.get("__typename").and_then(|t| t.as_str()) {
+        Some("CheckRun") => {
+            if check.get("status").and_then(|s| s.as_str()) != Some("COMPLETED") {
+                return CiVerdict::Pending;
+            }
+            match check.get("conclusion").and_then(|c| c.as_str()) {
+                Some("SUCCESS") | Some("NEUTRAL") | Some("SKIPPED") => CiVerdict::Pass,
+                Some("") | None => CiVerdict::Pending,
+                // FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE, STALE…
+                _ => CiVerdict::Fail,
+            }
+        }
+        Some("StatusContext") => match check.get("state").and_then(|s| s.as_str()) {
+            Some("SUCCESS") => CiVerdict::Pass,
+            Some("PENDING") | Some("EXPECTED") => CiVerdict::Pending,
+            // FAILURE, ERROR…
+            _ => CiVerdict::Fail,
+        },
+        // Unknown entry shape: don't let it force a fail/pending.
+        _ => CiVerdict::Pass,
+    }
+}
+
+/// Roll up GitHub's `statusCheckRollup` array into a single `SUCCESS` |
+/// `FAILURE` | `PENDING`, or `None` when there are no checks. Any failure wins,
+/// then any pending, else success. Pure so it is unit-tested.
+fn rollup_ci(rollup: Option<&serde_json::Value>) -> Option<String> {
+    let arr = rollup.and_then(|r| r.as_array())?;
+    if arr.is_empty() {
+        return None;
+    }
+    let mut any_pending = false;
+    for check in arr {
+        match classify_check(check) {
+            CiVerdict::Fail => return Some("FAILURE".to_string()),
+            CiVerdict::Pending => any_pending = true,
+            CiVerdict::Pass => {}
+        }
+    }
+    Some(if any_pending { "PENDING" } else { "SUCCESS" }.to_string())
+}
+
+/// Parse the `gh pr list --json …` array into this repo's pipeline PRs.
 ///
 /// A PR is "pipeline" when its branch follows the `CU-<id>` convention (the
 /// reliable signal — the label is added late by review steps) **or** it carries
-/// the configured pipeline `label`. When `repo_slug_filter` is set, only that
-/// repo's PRs are returned (case-insensitive slug match).
-fn parse_pipeline_prs(
-    value: &serde_json::Value,
-    repo_slug_filter: Option<&str>,
-    label: &str,
-) -> Vec<AiPipelinePr> {
+/// the configured pipeline `label`. The CI rollup is derived from
+/// `statusCheckRollup`. `repo_slug` is the `owner/repo` the PRs belong to.
+fn parse_gh_prs(value: &serde_json::Value, repo_slug: &str, label: &str) -> Vec<AiPipelinePr> {
     let mut out = Vec::new();
-    let Some(repos) = value.get("repos").and_then(|r| r.as_object()) else {
+    let Some(prs) = value.as_array() else {
         return out;
     };
 
-    for repo in repos.values() {
-        let slug = repo
-            .get("slug")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string();
-        if let Some(filter) = repo_slug_filter {
-            if !slug.eq_ignore_ascii_case(filter) {
-                continue;
-            }
-        }
-
-        let Some(prs) = repo.get("prs").and_then(|p| p.as_array()) else {
+    for pr in prs {
+        let Some(number) = pr.get("number").and_then(|n| n.as_u64()) else {
             continue;
         };
+        let branch = pr
+            .get("headRefName")
+            .and_then(|b| b.as_str())
+            .unwrap_or("")
+            .to_string();
+        // gh `labels` is an array of objects: `[{ "name": "…" }, …]`.
+        let labels: Vec<String> = pr
+            .get("labels")
+            .and_then(|l| l.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        for pr in prs {
-            let Some(number) = pr.get("number").and_then(|n| n.as_u64()) else {
-                continue;
-            };
-            let branch = pr
-                .get("branch")
-                .and_then(|b| b.as_str())
-                .unwrap_or("")
-                .to_string();
-            let labels: Vec<String> = pr
-                .get("labels")
-                .and_then(|l| l.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let clickup_task_id = parse_clickup_task_id_from_branch(&branch);
-            let is_pipeline = clickup_task_id.is_some() || labels.iter().any(|l| l == label);
-            if !is_pipeline {
-                continue;
-            }
-
-            out.push(AiPipelinePr {
-                number: number as u32,
-                title: pr
-                    .get("title")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                branch,
-                url: pr
-                    .get("url")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                ci: pr.get("ci").and_then(|c| c.as_str()).map(String::from),
-                is_draft: pr.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false),
-                mergeable: pr
-                    .get("mergeable")
-                    .and_then(|m| m.as_str())
-                    .map(String::from),
-                created_at: pr
-                    .get("created_at")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                labels,
-                repo_slug: slug.clone(),
-                clickup_task_id,
-            });
+        let clickup_task_id = parse_clickup_task_id_from_branch(&branch);
+        let is_pipeline = clickup_task_id.is_some() || labels.iter().any(|l| l == label);
+        if !is_pipeline {
+            continue;
         }
+
+        out.push(AiPipelinePr {
+            number: number as u32,
+            title: pr
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
+            branch,
+            url: pr
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string(),
+            ci: rollup_ci(pr.get("statusCheckRollup")),
+            is_draft: pr.get("isDraft").and_then(|d| d.as_bool()).unwrap_or(false),
+            mergeable: pr
+                .get("mergeable")
+                .and_then(|m| m.as_str())
+                .map(String::from),
+            created_at: pr
+                .get("createdAt")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string(),
+            labels,
+            repo_slug: repo_slug.to_string(),
+            clickup_task_id,
+        });
     }
 
     // Newest first (ISO-8601 timestamps sort lexicographically).
     out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     out
+}
+
+/// Build the `task_id -> PR` join map for the review list. Pure so it is
+/// unit-tested. **Draft PRs are excluded**: a draft means the pipeline hasn't
+/// finished processing the ticket, so it isn't ready to pick up. PRs without a
+/// `CU-<id>` task id can't be joined and are dropped too.
+fn pr_by_task_for_review(prs: Vec<AiPipelinePr>) -> HashMap<String, AiPipelinePr> {
+    prs.into_iter()
+        .filter(|pr| !pr.is_draft)
+        .filter_map(|pr| pr.clickup_task_id.clone().map(|id| (id, pr)))
+        .collect()
 }
 
 /// Review-status + (unassigned OR mine) inclusion filter. Pure so it is
@@ -291,6 +335,35 @@ fn repo_slug_for_path(project_path: &str) -> Result<String, String> {
     let url = get_github_url(project_path)?;
     repo_slug_from_github_url(&url)
         .ok_or_else(|| format!("Could not parse owner/repo from GitHub URL: {url}"))
+}
+
+/// Fetch this repo's open PRs as the raw `gh pr list --json …` array. Replaces
+/// the former internal-dashboard `/prs` call: the PR state Jean needs (CI,
+/// draft, mergeable, branch, labels) all comes from GitHub directly, so no
+/// extra service/credential is required beyond the `gh` auth Jean already has.
+fn fetch_repo_prs_json(app: &AppHandle, repo_slug: &str) -> Result<serde_json::Value, String> {
+    let gh = resolve_gh_binary(app);
+    let output = silent_command(&gh)
+        .args([
+            "pr",
+            "list",
+            "--repo",
+            repo_slug,
+            "--state",
+            "open",
+            "--limit",
+            "300",
+            "--json",
+            "number,title,headRefName,url,isDraft,mergeable,statusCheckRollup,createdAt,labels",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run gh pr list: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gh pr list failed: {stderr}"));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh pr list output: {e}"))
 }
 
 /// Current GitHub login from `gh api user`.
@@ -508,22 +581,22 @@ pub async fn list_ai_pipeline_prs(
     project_id: String,
 ) -> Result<Vec<AiPipelinePr>, String> {
     let config = load_ai_pipeline_config(&app)?;
-    let base = resolve_dashboard_url(&config)?;
     let label = config.effective_label();
 
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
 
-    let value = fetch_prs(&base).await?;
-    Ok(parse_pipeline_prs(&value, Some(&slug), &label))
+    let value = fetch_repo_prs_json(&app, &slug)?;
+    Ok(parse_gh_prs(&value, &slug, &label))
 }
 
 /// List the ClickUp `TO REVIEW` tickets ready to pick up (unassigned or mine),
 /// joined with their PR in this project's repo.
 ///
-/// ClickUp is the source of truth: a ticket shows whatever its PR's CI/draft
-/// state is (red CI / draft PRs are expected in review). Tickets whose PR is in
-/// another repo — or that have no PR yet — are not shown in this project's modal.
+/// ClickUp is the source of truth, but PRs still in **draft** are excluded — a
+/// draft means the pipeline hasn't finished processing the ticket, so it isn't
+/// ready to pick up. Red CI is still shown (review can act on it). Tickets whose
+/// PR is in another repo — or that have no (non-draft) PR yet — are not shown.
 #[tauri::command]
 pub async fn list_ai_pipeline_review_tasks(
     app: AppHandle,
@@ -531,15 +604,11 @@ pub async fn list_ai_pipeline_review_tasks(
 ) -> Result<Vec<AiPipelineReviewTask>, String> {
     // This repo's pipeline PRs, keyed by their ClickUp task id (for the join).
     let config = load_ai_pipeline_config(&app)?;
-    let base = resolve_dashboard_url(&config)?;
     let label = config.effective_label();
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
-    let value = fetch_prs(&base).await?;
-    let pr_by_task: HashMap<String, AiPipelinePr> = parse_pipeline_prs(&value, Some(&slug), &label)
-        .into_iter()
-        .filter_map(|pr| pr.clickup_task_id.clone().map(|id| (id, pr)))
-        .collect();
+    let value = fetch_repo_prs_json(&app, &slug)?;
+    let pr_by_task = pr_by_task_for_review(parse_gh_prs(&value, &slug, &label));
 
     // ClickUp TO-REVIEW tickets + the current user (assignment filter).
     let me = get_clickup_me(app.clone(), Some(project_id.clone())).await?;
@@ -667,95 +736,74 @@ pub async fn finish_ai_pipeline_pr(
 mod tests {
     use super::*;
 
+    /// Mirrors a `gh pr list --json …` array for one repo (Spottt/planexpo).
     fn sample_payload() -> serde_json::Value {
-        serde_json::json!({
-            "generated_at": "2026-06-22T14:35:01Z",
-            "repos": {
-                "planexpo": {
-                    "slug": "Spottt/planexpo",
-                    "prs": [
-                        {
-                            "number": 3977,
-                            "title": "feat(86c997enp): identifiant national",
-                            "branch": "CU-86c997enp__national-id",
-                            "url": "https://github.com/Spottt/planexpo/pull/3977",
-                            "ci": "FAILURE",
-                            "isDraft": true,
-                            "mergeable": "UNKNOWN",
-                            "created_at": "2026-06-22T13:54:26Z",
-                            "labels": []
-                        },
-                        {
-                            "number": 3976,
-                            "title": "feat(86cac8hvh): Emailing 2eme passe",
-                            "branch": "CU-86cac8hvh-emailing-2eme-passe",
-                            "url": "https://github.com/Spottt/planexpo/pull/3976",
-                            "ci": "SUCCESS",
-                            "isDraft": true,
-                            "mergeable": "MERGEABLE",
-                            "created_at": "2026-06-22T11:25:25Z",
-                            "labels": ["ai-full-flow"]
-                        },
-                        {
-                            "number": 100,
-                            "title": "chore: human PR not from pipeline",
-                            "branch": "fix/manual-tweak",
-                            "url": "https://github.com/Spottt/planexpo/pull/100",
-                            "ci": "SUCCESS",
-                            "isDraft": false,
-                            "mergeable": "MERGEABLE",
-                            "created_at": "2026-06-10T09:00:00Z",
-                            "labels": []
-                        },
-                        {
-                            "number": 101,
-                            "title": "feat: labeled but no CU branch",
-                            "branch": "feature/labeled",
-                            "url": "https://github.com/Spottt/planexpo/pull/101",
-                            "ci": "PENDING",
-                            "isDraft": false,
-                            "mergeable": "MERGEABLE",
-                            "created_at": "2026-06-09T09:00:00Z",
-                            "labels": ["ai-full-flow"]
-                        }
-                    ]
-                },
-                "myb": {
-                    "slug": "Spottt/myb",
-                    "prs": [
-                        {
-                            "number": 50,
-                            "title": "feat(abc123): other repo",
-                            "branch": "CU-abc123-thing",
-                            "url": "https://github.com/Spottt/myb/pull/50",
-                            "ci": "SUCCESS",
-                            "isDraft": false,
-                            "mergeable": "MERGEABLE",
-                            "created_at": "2026-06-20T09:00:00Z",
-                            "labels": []
-                        }
-                    ]
-                }
+        serde_json::json!([
+            {
+                "number": 3977,
+                "title": "feat(86c997enp): identifiant national",
+                "headRefName": "CU-86c997enp__national-id",
+                "url": "https://github.com/Spottt/planexpo/pull/3977",
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"}
+                ],
+                "isDraft": true,
+                "mergeable": "UNKNOWN",
+                "createdAt": "2026-06-22T13:54:26Z",
+                "labels": []
+            },
+            {
+                "number": 3976,
+                "title": "feat(86cac8hvh): Emailing 2eme passe",
+                "headRefName": "CU-86cac8hvh-emailing-2eme-passe",
+                "url": "https://github.com/Spottt/planexpo/pull/3976",
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                    {"__typename": "StatusContext", "state": "SUCCESS"}
+                ],
+                "isDraft": true,
+                "mergeable": "MERGEABLE",
+                "createdAt": "2026-06-22T11:25:25Z",
+                "labels": [{"name": "ai-full-flow"}]
+            },
+            {
+                "number": 100,
+                "title": "chore: human PR not from pipeline",
+                "headRefName": "fix/manual-tweak",
+                "url": "https://github.com/Spottt/planexpo/pull/100",
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                ],
+                "isDraft": false,
+                "mergeable": "MERGEABLE",
+                "createdAt": "2026-06-10T09:00:00Z",
+                "labels": []
+            },
+            {
+                "number": 101,
+                "title": "feat: labeled but no CU branch",
+                "headRefName": "feature/labeled",
+                "url": "https://github.com/Spottt/planexpo/pull/101",
+                "statusCheckRollup": [
+                    {"__typename": "CheckRun", "status": "IN_PROGRESS"}
+                ],
+                "isDraft": false,
+                "mergeable": "MERGEABLE",
+                "createdAt": "2026-06-09T09:00:00Z",
+                "labels": [{"name": "ai-full-flow"}]
             }
-        })
+        ])
     }
 
     #[test]
-    fn filters_to_requested_repo() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+    fn tags_every_pr_with_the_queried_repo() {
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         assert!(prs.iter().all(|p| p.repo_slug == "Spottt/planexpo"));
-        assert!(!prs.iter().any(|p| p.number == 50)); // myb excluded
-    }
-
-    #[test]
-    fn repo_filter_is_case_insensitive() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("spottt/PLANEXPO"), "ai-full-flow");
-        assert!(prs.iter().any(|p| p.number == 3977));
     }
 
     #[test]
     fn includes_cu_branch_even_without_label() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         let pr = prs
             .iter()
             .find(|p| p.number == 3977)
@@ -766,23 +814,24 @@ mod tests {
 
     #[test]
     fn includes_labeled_pr_without_cu_branch() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         let pr = prs
             .iter()
             .find(|p| p.number == 101)
             .expect("labeled PR present");
         assert!(pr.clickup_task_id.is_none());
+        assert_eq!(pr.labels, vec!["ai-full-flow".to_string()]);
     }
 
     #[test]
     fn excludes_human_pr_without_label_or_cu_branch() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         assert!(!prs.iter().any(|p| p.number == 100));
     }
 
     #[test]
     fn sorted_newest_first() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         let dates: Vec<&str> = prs.iter().map(|p| p.created_at.as_str()).collect();
         let mut sorted = dates.clone();
         sorted.sort_by(|a, b| b.cmp(a));
@@ -790,26 +839,96 @@ mod tests {
     }
 
     #[test]
-    fn maps_pr_fields() {
-        let prs = parse_pipeline_prs(&sample_payload(), Some("Spottt/planexpo"), "ai-full-flow");
+    fn maps_pr_fields_and_rolls_up_ci() {
+        let prs = parse_gh_prs(&sample_payload(), "Spottt/planexpo", "ai-full-flow");
         let pr = prs.iter().find(|p| p.number == 3976).unwrap();
-        assert_eq!(pr.ci.as_deref(), Some("SUCCESS"));
+        assert_eq!(pr.ci.as_deref(), Some("SUCCESS")); // rolled up from checks
         assert!(pr.is_draft);
         assert_eq!(pr.mergeable.as_deref(), Some("MERGEABLE"));
         assert_eq!(pr.clickup_task_id.as_deref(), Some("86cac8hvh"));
+        // #3977 has a failing check, #101 an in-progress one.
+        assert_eq!(
+            prs.iter().find(|p| p.number == 3977).unwrap().ci.as_deref(),
+            Some("FAILURE")
+        );
+        assert_eq!(
+            prs.iter().find(|p| p.number == 101).unwrap().ci.as_deref(),
+            Some("PENDING")
+        );
     }
 
     #[test]
-    fn no_repo_filter_returns_all_repos() {
-        let prs = parse_pipeline_prs(&sample_payload(), None, "ai-full-flow");
-        assert!(prs.iter().any(|p| p.repo_slug == "Spottt/myb"));
-        assert!(prs.iter().any(|p| p.repo_slug == "Spottt/planexpo"));
+    fn review_join_excludes_draft_prs() {
+        // Two CU PRs in the same repo: one draft, one ready.
+        let payload = serde_json::json!([
+            {
+                "number": 1,
+                "title": "draft",
+                "headRefName": "CU-aaa-draft",
+                "url": "https://github.com/Spottt/planexpo/pull/1",
+                "statusCheckRollup": [],
+                "isDraft": true,
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": []
+            },
+            {
+                "number": 2,
+                "title": "ready",
+                "headRefName": "CU-bbb-ready",
+                "url": "https://github.com/Spottt/planexpo/pull/2",
+                "statusCheckRollup": [],
+                "isDraft": false,
+                "createdAt": "2026-01-02T00:00:00Z",
+                "labels": []
+            }
+        ]);
+        let prs = parse_gh_prs(&payload, "Spottt/planexpo", "ai-full-flow");
+        let by_task = pr_by_task_for_review(prs);
+        assert!(by_task.contains_key("bbb"), "non-draft CU PR is pickable");
+        assert!(!by_task.contains_key("aaa"), "draft CU PR is hidden");
+        assert_eq!(by_task.len(), 1);
     }
 
     #[test]
     fn empty_payload_yields_no_prs() {
-        let prs = parse_pipeline_prs(&serde_json::json!({}), None, "ai-full-flow");
-        assert!(prs.is_empty());
+        assert!(parse_gh_prs(&serde_json::json!([]), "Spottt/planexpo", "ai-full-flow").is_empty());
+        // A non-array (e.g. a `gh` error object) is tolerated, not panicked on.
+        assert!(parse_gh_prs(&serde_json::json!({}), "Spottt/planexpo", "ai-full-flow").is_empty());
+    }
+
+    #[test]
+    fn ci_rollup_empty_is_none() {
+        assert_eq!(rollup_ci(Some(&serde_json::json!([]))), None);
+        assert_eq!(rollup_ci(None), None);
+    }
+
+    #[test]
+    fn ci_rollup_any_failure_wins() {
+        let checks = serde_json::json!([
+            {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "status": "IN_PROGRESS"},
+            {"__typename": "StatusContext", "state": "FAILURE"}
+        ]);
+        assert_eq!(rollup_ci(Some(&checks)).as_deref(), Some("FAILURE"));
+    }
+
+    #[test]
+    fn ci_rollup_pending_when_no_failure() {
+        let checks = serde_json::json!([
+            {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "status": "QUEUED"}
+        ]);
+        assert_eq!(rollup_ci(Some(&checks)).as_deref(), Some("PENDING"));
+    }
+
+    #[test]
+    fn ci_rollup_success_when_all_pass() {
+        let checks = serde_json::json!([
+            {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SKIPPED"},
+            {"__typename": "StatusContext", "state": "SUCCESS"}
+        ]);
+        assert_eq!(rollup_ci(Some(&checks)).as_deref(), Some("SUCCESS"));
     }
 
     #[test]

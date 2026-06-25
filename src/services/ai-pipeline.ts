@@ -9,6 +9,7 @@ import type {
   StepResult,
 } from '@/types/ai-pipeline'
 import { isTauri, projectsQueryKeys } from './projects'
+import { useClickUpConfig } from './clickup'
 
 function hasValue(value: string | null | undefined): boolean {
   return !!value?.trim()
@@ -41,11 +42,13 @@ export function useAiPipelineConfig() {
 }
 
 /**
- * Whether a dashboard URL is configured (feature usable).
+ * Whether the AI pipeline feature is usable. It joins ClickUp review tickets
+ * with GitHub PRs (via `gh`), so it's gated on ClickUp being configured — PR
+ * data needs no extra credential beyond Jean's existing `gh` auth.
  */
 export function useHasAiPipelineAccess(): boolean {
-  const { data: config } = useAiPipelineConfig()
-  return hasValue(config?.dashboardUrl)
+  const { data: clickup } = useClickUpConfig()
+  return hasValue(clickup?.token)
 }
 
 /**
@@ -164,17 +167,13 @@ export function useFinishAiPipelinePr(projectId: string | null) {
 }
 
 /**
- * Mutation: save the AI pipeline config (dashboard URL + label).
+ * Mutation: save the AI pipeline config (pipeline label).
  */
 export function useSaveAiPipelineConfig() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (vars: {
-      dashboardUrl?: string
-      pipelineLabel?: string
-    }) => {
+    mutationFn: async (vars: { pipelineLabel?: string }) => {
       await invoke('set_ai_pipeline_config', {
-        dashboardUrl: vars.dashboardUrl,
         pipelineLabel: vars.pipelineLabel,
       })
     },
