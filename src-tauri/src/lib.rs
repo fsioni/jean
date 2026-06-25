@@ -3686,11 +3686,22 @@ pub fn run() {
 
                         let drop_flag = is_dropping.clone();
                         wv.connect_drag_drop(move |wv, ctx, _x, _y, time| {
+                            // Only claim OS file drops. WebKitGTK routes internal
+                            // DOM drag & drop (e.g. terminal-tab reordering, which
+                            // carries `text/plain`) through this same GTK signal;
+                            // returning true there short-circuits WebKit's default
+                            // handler, so the page never receives the `drop` event
+                            // and the reorder silently breaks. A real file drop is
+                            // the only drag that offers `text/uri-list`, so gate on
+                            // it and let everything else fall through to WebKit.
+                            let target = gtk::gdk::Atom::intern("text/uri-list");
+                            if !ctx.list_targets().contains(&target) {
+                                return false;
+                            }
                             // Claim the drop (return true) so WebKitGTK's editor does
                             // NOT insert the file path into editable fields, and
                             // request the URI list ourselves → drag-data-received.
                             drop_flag.set(true);
-                            let target = gtk::gdk::Atom::intern("text/uri-list");
                             wv.drag_get_data(ctx, &target, time);
                             true
                         });
