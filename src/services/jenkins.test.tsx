@@ -34,6 +34,7 @@ const seededStatus: JenkinsWorktreeStatus = {
     branch: 'feature',
   },
   stages: [],
+  integrationAttempts: [],
   preview: null,
   previewUrl: null,
   previewFreshness: null,

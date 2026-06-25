@@ -277,7 +277,10 @@ export function MissionControlRow({ row }: { row: Row }) {
       {/* Inline stage timeline — the Jenkins-like breakdown, no tab to keep open */}
       {expanded && hasStages && (
         <div className="px-3 pb-2.5 pl-9">
-          <JenkinsStageList stages={stages} />
+          <JenkinsStageList
+            stages={stages}
+            attempts={status?.integrationAttempts ?? []}
+          />
           {pipeline?.url && (
             <button
               type="button"

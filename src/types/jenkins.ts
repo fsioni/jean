@@ -46,6 +46,27 @@ export interface JenkinsStage {
   durationMs: number
 }
 
+/**
+ * One run (retry attempt) of the downstream `integration-tests` job for a
+ * pipeline build.
+ *
+ * The flaky "Integration tests" stage auto-retries up to 3× on failure, each
+ * retry launching a fresh `integration-tests` build. These surface "which try
+ * are we on" plus the per-iteration build number/result.
+ */
+export interface JenkinsAttempt {
+  /** 1-based attempt index within the pipeline build ("essai N"). */
+  attempt: number
+  /** `integration-tests` job build number. */
+  number: number
+  /** "SUCCESS" | "FAILURE" | "ABORTED" | null (still running). */
+  result: string | null
+  building: boolean
+  durationMs: number
+  /** Direct link to the `integration-tests` build on Jenkins. */
+  url: string
+}
+
 /** A pending item in the Jenkins build queue (not yet a build). */
 export interface JenkinsQueueItem {
   /** Why it's waiting, e.g. "Build #4,798 is already in progress". */
@@ -64,6 +85,12 @@ export interface JenkinsWorktreeStatus {
   pipeline: JenkinsBuild | null
   /** Per-stage breakdown of the pipeline. */
   stages: JenkinsStage[]
+  /**
+   * Retry attempts of the "Integration tests" stage (the downstream
+   * `integration-tests` runs), oldest first. Empty until the build reaches
+   * that stage.
+   */
+  integrationAttempts: JenkinsAttempt[]
   /** Latest "deploy-preview" build for the PR. */
   preview: JenkinsBuild | null
   /** e.g. "https://3959.preview.example.com/admin" */
