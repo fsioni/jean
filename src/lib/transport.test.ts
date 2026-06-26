@@ -74,6 +74,69 @@ describe('transport bootstrap', () => {
     vi.doUnmock('./environment')
   })
 
+
+  it('uses reconnect mode when refetching initial data after reconnect', async () => {
+    const transport = await loadTransportModule()
+
+    await transport.refetchInitialData({ 'worktree-1': 'session-1' }, 'project-1')
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
+    )
+  })
+
+  it('starts reconnect init fetch before websocket comes back and reuses it', async () => {
+    const transport = await loadTransportModule()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    const prefetch = transport.prefetchReconnectInitialData(
+      { 'worktree-1': 'session-1' },
+      'project-1'
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
+    )
+
+    await expect(
+      transport.consumeReconnectInitialData(
+        { 'worktree-1': 'session-1' },
+        'project-1'
+      )
+    ).resolves.toEqual({})
+    await prefetch
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries reconnect init fetch on consume when the prefetch failed', async () => {
+    const transport = await loadTransportModule()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    fetchMock
+      .mockResolvedValueOnce({ ok: false } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ projects: [] }),
+      } as Response)
+
+    await transport.prefetchReconnectInitialData(
+      { 'worktree-1': 'session-1' },
+      'project-1'
+    )
+
+    await expect(
+      transport.consumeReconnectInitialData(
+        { 'worktree-1': 'session-1' },
+        'project-1'
+      )
+    ).resolves.toEqual({ projects: [] })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 
@@ -206,6 +269,49 @@ describe('transport bootstrap', () => {
     expect(rejected).toBe(true)
 
     vi.useRealTimers()
+  })
+
+  it('can explicitly request terminal replay from seq zero after full page reload', async () => {
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+
+    const ws = getWs(0)
+    transport.requestTerminalReplay('term-restored', 0)
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: 'terminal_replay',
+        terminal_id: 'term-restored',
+        last_seq: 0,
+      })
+    )
+  })
+
+  it('uses highest known sequence for explicit terminal replay requests', async () => {
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+
+    const ws = getWs(0)
+    ws.receive({
+      type: 'event',
+      event: 'terminal:output',
+      payload: { terminal_id: 'term-1', data: 'running' },
+      seq: 21,
+    })
+
+    transport.requestTerminalReplay('term-1', 0)
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: 'terminal_replay',
+        terminal_id: 'term-1',
+        last_seq: 21,
+      })
+    )
   })
 
   it('requests terminal_replay for active terminals after websocket reconnect', async () => {

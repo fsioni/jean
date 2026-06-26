@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCodexUserInputAnswerMap,
+  getAskUserQuestions,
   hasQuestionAnswerOutput,
   isAskUserQuestion,
   normalizeCodexQuestions,
@@ -77,6 +78,28 @@ describe('isAskUserQuestion', () => {
     ).toBe(true)
   })
 })
+
+
+  it('recognizes and parses Claude AskUserQuestion with questions encoded as JSON string', () => {
+    const toolCall = {
+      id: 'claude-question-1',
+      name: 'AskUserQuestion',
+      input: {
+        questions:
+          '[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A"}]}]',
+      },
+    }
+
+    expect(isAskUserQuestion(toolCall)).toBe(true)
+    expect(getAskUserQuestions(toolCall.input)).toEqual([
+      {
+        question: 'Pick one',
+        header: 'Choice',
+        multiSelect: false,
+        options: [{ label: 'A' }],
+      },
+    ])
+  })
 
 describe('buildCodexUserInputAnswerMap', () => {
   it('maps selected option labels and custom text by Codex question id', () => {

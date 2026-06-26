@@ -1,6 +1,5 @@
 //! Tauri commands for GitHub CLI management
 
-use crate::platform::silent_command;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::AppHandle;
@@ -113,7 +112,10 @@ pub async fn check_gh_cli_installed(app: AppHandle) -> Result<GhCliStatus, Strin
 
     // Try to get the version by running gh --version
     // Use the binary directly - shell wrapper causes PowerShell parsing issues on Windows
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) => {
             if output.status.success() {
                 let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -239,7 +241,7 @@ pub fn resolve_github_api_token(app: &AppHandle) -> Option<String> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let managed_gh = resolve_gh_binary(app);
-    if managed_gh.exists() {
+    if crate::platform::resolved_cli_exists(&managed_gh) {
         candidates.push(managed_gh);
     } else if let Ok(path) = get_gh_cli_binary_path(app) {
         if path.exists() {
@@ -249,7 +251,10 @@ pub fn resolve_github_api_token(app: &AppHandle) -> Option<String> {
     candidates.push(PathBuf::from("gh"));
 
     for program in candidates {
-        let output = match silent_command(&program).args(["auth", "token"]).output() {
+        let output = match crate::platform::resolved_cli_command(&program, None)
+            .args(["auth", "token"])
+            .output()
+        {
             Ok(output) => output,
             Err(_) => continue,
         };
@@ -501,7 +506,7 @@ pub async fn install_gh_cli(app: AppHandle, version: Option<String>) -> Result<(
     // Verify the binary works
     // Use the binary directly - shell wrapper causes PowerShell parsing issues on Windows
     log::trace!("Verifying binary at {:?}", binary_path);
-    let version_output = silent_command(&binary_path)
+    let version_output = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to verify GitHub CLI: {e}"))?;

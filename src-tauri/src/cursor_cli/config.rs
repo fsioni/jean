@@ -1,6 +1,6 @@
 //! Configuration and path resolution for Cursor Agent.
 
-use crate::platform::{get_wsl_config, silent_command};
+use crate::platform::get_wsl_config;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
@@ -47,28 +47,9 @@ pub fn resolve_cli_binary(_app: &AppHandle) -> PathBuf {
         return PathBuf::from(CLI_TOOL_NAME);
     }
 
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
-
-    for binary_name in CLI_BINARY_CANDIDATES {
-        if let Ok(output) = silent_command(which_cmd).arg(binary_name).output() {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                if !path_str.is_empty() {
-                    let path = PathBuf::from(&path_str);
-                    if path.exists() {
-                        return path;
-                    }
-                }
-            }
+    for tool_name in CLI_TOOL_CANDIDATES {
+        if let Some(path) = crate::platform::find_cli_in_host_path(tool_name, None) {
+            return path;
         }
     }
 

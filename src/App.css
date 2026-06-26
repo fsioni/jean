@@ -517,6 +517,17 @@ kbd {
   font-family: var(--font-family-mono) !important;
 }
 
+/* Keyboard shortcut indicators only make sense in the native desktop app. */
+body:not(.native-app) kbd {
+  display: none !important;
+}
+
+@media (max-width: 767px) {
+  kbd {
+    display: none !important;
+  }
+}
+
 /* UI text styling - font-sans uses UI font preference */
 .font-sans {
   font-family: var(--font-family-sans) !important;

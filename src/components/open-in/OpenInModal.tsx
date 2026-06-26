@@ -42,6 +42,7 @@ import { notify } from '@/lib/notifications'
 import { openExternal } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { isNativeApp } from '@/lib/environment'
+import { resolvePortUrl } from '@/components/browser/default-tab-url'
 
 interface ModalOption {
   id: string
@@ -284,11 +285,11 @@ export function OpenInModal() {
     if (!ports || ports.length === 0) return []
     return ports.map((p, i) => ({
       id: `port-${p.port}`,
-      label: `${p.label} (:${p.port})`,
+      label: `${p.label} (${p.host?.trim() || 'localhost'}:${p.port})`,
       icon: Globe,
       key: i < 9 ? String(i + 1) : undefined,
       metaKey: true,
-      url: `http://localhost:${p.port}`,
+      url: resolvePortUrl(p),
     }))
   }, [ports])
 

@@ -15,6 +15,7 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useRemotePicker } from '@/hooks/useRemotePicker'
 import { useWorktrees, useAppDataDir } from '@/services/projects'
 import {
   useFetchWorktreesStatus,
@@ -143,19 +144,23 @@ export function ProjectTreeItem({ project }: ProjectTreeItemProps) {
     [project.id, project.path, project.default_branch]
   )
 
+  const pickRemoteOrRun = useRemotePicker(project.path)
+
   const handleBasePush = useCallback(
-    async (e: React.MouseEvent) => {
+    (e: React.MouseEvent) => {
       e.stopPropagation()
-      const opToast = dismissibleToast.loading('Pushing changes...')
-      try {
-        await gitPush(project.path)
-        fetchWorktreesStatus(project.id)
-        opToast.success('Changes pushed')
-      } catch (error) {
-        opToast.error(`Push failed: ${error}`)
-      }
+      pickRemoteOrRun(async remote => {
+        const opToast = dismissibleToast.loading('Pushing changes...')
+        try {
+          await gitPush(project.path, undefined, remote)
+          fetchWorktreesStatus(project.id)
+          opToast.success('Changes pushed')
+        } catch (error) {
+          opToast.error(`Push failed: ${error}`)
+        }
+      })
     },
-    [project.id, project.path]
+    [pickRemoteOrRun, project.id, project.path]
   )
 
   return (

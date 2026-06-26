@@ -58,6 +58,7 @@ import { isNativeApp } from '@/lib/environment'
 import {
   CODEX_EFFORT_LEVEL_OPTIONS,
   EFFORT_LEVEL_OPTIONS,
+  GROK_EFFORT_LEVEL_OPTIONS,
   PI_EFFORT_LEVEL_OPTIONS,
   THINKING_LEVEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
@@ -85,13 +86,7 @@ import { getResumeCommand } from '@/components/chat/session-card-utils'
 interface MobileSettingsMenuProps {
   isDisabled: boolean
   providerLocked?: boolean
-  selectedBackend:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+  selectedBackend: CliBackend
   selectedProvider: string | null
   backendModelLabel: ReactNode
   backendModelLabelText: string
@@ -137,7 +132,6 @@ interface MobileSettingsMenuProps {
 
 export function MobileSettingsMenu({
   isDisabled,
-  providerLocked,
   selectedBackend,
   selectedProvider,
   backendModelLabel,
@@ -176,12 +170,15 @@ export function MobileSettingsMenu({
   onAttach,
 }: MobileSettingsMenuProps) {
   const isPi = selectedBackend === 'pi'
-  const usesEffortControl = useAdaptiveThinking || isCodex || isPi
+  const isGrok = selectedBackend === 'grok'
+  const usesEffortControl = useAdaptiveThinking || isCodex || isPi || isGrok
   const effortLevelOptions = isPi
     ? PI_EFFORT_LEVEL_OPTIONS
     : isCodex
       ? CODEX_EFFORT_LEVEL_OPTIONS
-      : EFFORT_LEVEL_OPTIONS
+      : isGrok
+        ? GROK_EFFORT_LEVEL_OPTIONS
+        : EFFORT_LEVEL_OPTIONS
   const displayedEffortLevel =
     isCodex || isPi
       ? selectedEffortLevel === 'max'
@@ -189,7 +186,9 @@ export function MobileSettingsMenu({
         : selectedEffortLevel === 'ultracode'
           ? 'xhigh'
           : selectedEffortLevel
-      : selectedEffortLevel
+      : isGrok && selectedEffortLevel === 'ultracode'
+        ? 'max'
+        : selectedEffortLevel
   const displayedEffortLabel =
     effortLevelOptions.find(o => o.value === displayedEffortLevel)?.label ??
     displayedEffortLevel
@@ -348,9 +347,7 @@ export function MobileSettingsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={isMobile ? 'end' : 'start'} className="w-72">
-        {customCliProfiles.length > 0 &&
-          !providerLocked &&
-          selectedBackend === 'claude' && (
+        {customCliProfiles.length > 0 && selectedBackend === 'claude' && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Sparkles className="mr-2 h-4 w-4 text-muted-foreground" />

@@ -2100,6 +2100,7 @@ export function useOpenWorktreeInEditor() {
 export interface PortEntry {
   port: number
   label: string
+  host?: string | null
 }
 
 /**

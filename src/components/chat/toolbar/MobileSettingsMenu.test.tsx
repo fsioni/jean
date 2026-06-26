@@ -110,6 +110,23 @@ describe('MobileSettingsMenu', () => {
     expect(onOpenBackendModelPicker).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps Claude provider switcher available after messages exist', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        customCliProfiles={[{ name: 'OpenRouter', settings_json: '{}' }]}
+        providerLocked
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+
+    expect(screen.getByText('Provider')).toBeInTheDocument()
+    expect(screen.getByText('Anthropic')).toBeInTheDocument()
+  })
+
   it('keeps model settings usable while a session is running', async () => {
     const user = userEvent.setup()
     const onOpenBackendModelPicker = vi.fn()

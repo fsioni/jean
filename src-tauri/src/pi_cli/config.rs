@@ -1,6 +1,5 @@
 //! Configuration and path management for the PI Coding Agent CLI.
 
-use crate::platform::silent_command;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -33,6 +32,8 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
         .map(|prefs| prefs.pi_cli_source == "path")
         .unwrap_or(false);
 
+    let wsl = crate::platform::get_wsl_config();
+
     if use_path {
         if let Some(path) = find_pi_in_path() {
             return path;
@@ -40,28 +41,18 @@ pub fn resolve_cli_binary(app: &AppHandle) -> PathBuf {
         log::warn!("pi_cli_source is 'path' but pi was not found in PATH, falling back to Jean-managed binary");
     }
 
+    if wsl.enabled {
+        return PathBuf::from("pi");
+    }
+
     get_cli_binary_path(app).unwrap_or_else(|_| PathBuf::from(CLI_BINARY_NAME))
 }
 
 pub fn find_pi_in_path() -> Option<PathBuf> {
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
-    let output = silent_command(which_cmd).arg("pi").output().ok()?;
-    if !output.status.success() {
-        return None;
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        return crate::platform::wsl_which(&wsl.distro, "pi", None).map(PathBuf::from);
     }
-    let path = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if path.is_empty() {
-        return None;
-    }
-    let path = PathBuf::from(path);
-    path.exists().then_some(path)
+
+    crate::platform::find_cli_in_host_path("pi", None)
 }

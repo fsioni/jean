@@ -18,6 +18,7 @@ import { opencodeCliQueryKeys } from '@/services/opencode-cli'
 import { piCliQueryKeys } from '@/services/pi-cli'
 import { coderabbitCliQueryKeys } from '@/services/coderabbit-cli'
 import { commandcodeCliQueryKeys } from '@/services/commandcode-cli'
+import { grokCliQueryKeys } from '@/services/grok-cli'
 import { githubQueryKeys } from '@/services/github'
 import {
   ClaudeCliReinstallModal,
@@ -27,6 +28,7 @@ import {
   PiCliReinstallModal,
   CodeRabbitCliReinstallModal,
   CommandCodeCliReinstallModal,
+  GrokCliReinstallModal,
 } from '@/components/preferences/CliReinstallModal'
 
 export function CliUpdateModal() {
@@ -53,6 +55,8 @@ export function CliUpdateModal() {
         queryClient.invalidateQueries({ queryKey: coderabbitCliQueryKeys.all })
       } else if (cliUpdateModalType === 'commandcode') {
         queryClient.invalidateQueries({ queryKey: commandcodeCliQueryKeys.all })
+      } else if (cliUpdateModalType === 'grok') {
+        queryClient.invalidateQueries({ queryKey: grokCliQueryKeys.all })
       }
 
       // Dismiss any lingering update toast for this CLI type
@@ -92,6 +96,10 @@ export function CliUpdateModal() {
       />
       <CommandCodeCliReinstallModal
         open={cliUpdateModalOpen && cliUpdateModalType === 'commandcode'}
+        onOpenChange={handleOpenChange}
+      />
+      <GrokCliReinstallModal
+        open={cliUpdateModalOpen && cliUpdateModalType === 'grok'}
         onOpenChange={handleOpenChange}
       />
     </>

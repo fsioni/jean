@@ -5,7 +5,6 @@
 //! - User scope:    ~/.cursor/mcp.json              → `mcpServers`
 
 use crate::chat::{McpHealthStatus, McpServerInfo};
-use crate::platform::silent_command;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -85,7 +84,7 @@ pub fn check_mcp_health(
         return Err("Cursor CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.args(["mcp", "list"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -197,9 +196,8 @@ fn run_mcp_approval_command(
         return Err("Cursor CLI not installed".to_string());
     }
 
-    let output = silent_command(&cli_path)
+    let output = crate::platform::cli_command(&cli_path.to_string_lossy(), Some(worktree_path))
         .args(["mcp", verb, identifier])
-        .current_dir(worktree_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()

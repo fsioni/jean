@@ -100,6 +100,44 @@ Additional systems (no dedicated docs yet):
   backend-owned history from local stores where stable (`~/.codex/sessions/**`
   and `~/.claude/projects/<escaped-cwd>/**`) and imports a chosen history row as
   a Jean terminal session running the backend's native resume command.
+
+  **Web-mode persistence.** In web access (Axum HTTP server + WebSocket),
+  panel/side/drawer and modal terminals survive a full browser refresh. Three
+  pieces cooperate:
+  1. **Backend PTY registry** (`src-tauri/src/terminal/registry.rs`) keeps the
+     real `portable_pty` process alive in `TERMINAL_SESSIONS` keyed by
+     `terminal_id`. The frontend is a viewer; refresh never kills the PTY.
+
+  2. **Event replay buffer** (`src-tauri/src/http_server/mod.rs`,
+     `TERMINAL_BUFFER_MAX_EVENTS = 12000` events/terminal and
+     `TERMINAL_BUFFER_MAX_BYTES = 3MB` per terminal) holds the most
+     recent `terminal:output` and `terminal:started` envelopes with monotonic
+     sequence numbers. On WebSocket reconnect — and on full-page refresh via
+     `requestTerminalReplay` — the frontend asks for events after a given
+     `last_seq` and the backend streams the buffered slice.
+
+  3. **UI state hydration** (`src/hooks/useUIStatePersistence.ts`,
+     `restoreTerminalRuntimeState`) is web-only. On load it reads
+     `terminal_instances` / `terminal_active_ids` / `terminal_panel_open` /
+     `terminal_visible` from `ui_state.json`, then asks the backend for
+     `get_active_terminals`. Only persisted terminals whose IDs are still live
+     survive the filter; dead-PTY entries are cleared along with their
+     `sessionTerminalIds` mappings.
+
+  The frontend module-level Map in `src/lib/terminal-instances.ts` is the
+  xterm.js cache; it survives React mount/unmount but not page refresh. After a
+  refresh, `attachToContainer` checks `has_active_terminal` and, if true, calls
+  `requestTerminalReplay(terminalId, 0)` so the buffered output is painted back
+  into a fresh xterm.
+
+  **Ordering pitfall.** `TerminalView`'s auto-create-default-shell effect is
+  gated by `useUIStore.uiStateInitialized`. That flag flips to `true` only
+  after `useUIStatePersistence` finishes its async hydrate — otherwise the
+  effect would race `restoreTerminalRuntimeState`, spawn a phantom shell that
+  gets overwritten when restore completes, and leave an orphan PTY in
+  `TERMINAL_SESSIONS`. Don't remove the `uiStateInitialized` guard without
+  re-checking the race.
+
 - **Background Tasks** - Git/PR polling with focus-aware intervals (`src-tauri/src/background_tasks/`); Auto Fix issue polling/planning/yolo handoff and scheduler active-hours window via `chrono` local time with midnight-crossing support (`src-tauri/src/auto_fix/`)
 - **HTTP Server** - Embedded Axum server + WebSocket for headless/web mode (`src-tauri/src/http_server/`)
 - **Diagnostics** - CPU/memory monitoring panel (`src-tauri/src/diagnostics/`)
@@ -415,3 +453,15 @@ When adding entirely new systems:
 5. **Event-driven bridges** - Keep Rust and React loosely coupled
 6. **Test everything** - Use quality gates to maintain code health
 7. **Document patterns** - Keep docs current as patterns evolve
+
+### Cross-platform CLI resolution and launch
+
+When resolving external CLIs from PATH, use `crate::platform::detect_cli_in_path()` or
+`crate::platform::find_cli_in_host_path()` instead of parsing `where`/`which` output manually.
+On Windows, npm installs can return an extensionless Unix shim before the runnable `.cmd`/`.exe`
+shim; the shared selector ranks `.exe`, `.cmd`, `.bat`, extensionless, then `.ps1`.
+
+When launching a resolved CLI path, use `crate::platform::cli_command()` instead of
+`silent_command()` directly. It keeps `CREATE_NO_WINDOW`, wraps Windows `.cmd`/`.bat` shims with
+`cmd.exe /C`, and routes commands through WSL when WSL mode is enabled. Pass the working directory
+as the `cwd` argument so WSL launches receive `wsl.exe --cd ...` rather than a host-only cwd.

@@ -19,19 +19,23 @@ pub const MANAGED_CLI_BINARY_NAME: &str = "cmdc.cmd";
 pub const MANAGED_CLI_BINARY_NAME: &str = CLI_BINARY_NAME;
 
 #[cfg(windows)]
-pub const CLI_BINARY_CANDIDATES: &[&str] = &[
+pub const MANAGED_CLI_BINARY_CANDIDATES: &[&str] = &[
     "cmdc.cmd",
-    "cmdc.ps1",
     "cmdc.exe",
+    "cmdc.bat",
     "cmd.cmd",
-    "cmd.ps1",
+    "cmd.exe",
     "command-code.cmd",
-    "command-code.ps1",
     "command-code.exe",
 ];
-
 #[cfg(not(windows))]
-pub const CLI_BINARY_CANDIDATES: &[&str] = &[CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME, "cmdc"];
+pub const MANAGED_CLI_BINARY_CANDIDATES: &[&str] =
+    &[CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME, "cmdc"];
+
+#[cfg(windows)]
+pub const CLI_TOOL_CANDIDATES: &[&str] = &["cmdc", "cmd", LEGACY_CLI_BINARY_NAME];
+#[cfg(not(windows))]
+pub const CLI_TOOL_CANDIDATES: &[&str] = &[CLI_BINARY_NAME, LEGACY_CLI_BINARY_NAME, "cmdc"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandCodeSourcePreference {
@@ -69,7 +73,7 @@ pub fn get_cli_binary_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 pub fn managed_binary_candidates_from_dir(cli_dir: PathBuf) -> Vec<PathBuf> {
     let bin_dir = managed_bin_dir_from_dir(cli_dir);
-    CLI_BINARY_CANDIDATES
+    MANAGED_CLI_BINARY_CANDIDATES
         .iter()
         .map(|candidate| bin_dir.join(candidate))
         .collect()
@@ -117,7 +121,7 @@ pub fn find_system_commandcode_binary(app: &AppHandle) -> Option<PathBuf> {
         .or_else(|| get_cli_binary_path(app).ok())
         .and_then(|path| std::fs::canonicalize(path).ok());
 
-    for candidate in CLI_BINARY_CANDIDATES {
+    for candidate in CLI_TOOL_CANDIDATES {
         let detection =
             crate::platform::detect_cli_in_path(candidate, jean_managed_path.as_deref(), None);
         if detection.found {
@@ -166,6 +170,15 @@ mod tests {
                 .join(".bin")
                 .join(MANAGED_CLI_BINARY_NAME)
         ));
+    }
+
+    #[test]
+    fn managed_candidates_are_separate_from_path_tool_names() {
+        assert!(MANAGED_CLI_BINARY_CANDIDATES.contains(&MANAGED_CLI_BINARY_NAME));
+        assert!(CLI_TOOL_CANDIDATES.contains(&CLI_BINARY_NAME));
+        assert!(!CLI_TOOL_CANDIDATES
+            .iter()
+            .any(|name| name.ends_with(".ps1")));
     }
 
     #[test]

@@ -25,7 +25,7 @@ const DEFAULT_GLOBAL_SYSTEM_PROMPT: &str = "\
 - Write detailed specs upfront to reduce ambiguity\n\
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.\n\
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.\n\
-- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.\n\
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/`--print` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.\n\
 - For Codex specifically, when the current execution mode is plan: after the user answers native `request_user_input`/open questions, immediately call `update_plan`/emit `CodexPlan` again with the revised plan before any implementation.\n\
 - Every Codex response that contains or revises a plan while the current execution mode is plan must use `update_plan`/`CodexPlan`; do not provide plain-text-only plans.\n\
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.\n\
@@ -96,13 +96,16 @@ fn execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'static s
             "You are in BUILD MODE. Start implementing immediately. \
              Do NOT enter plan mode and do NOT use ExitPlanMode unless the user explicitly asks \
              for a new plan. If a required decision is missing, use AskUserQuestion instead of \
-             ExitPlanMode.",
+             ExitPlanMode; if AskUserQuestion is not in your tool set, ask inline with a short \
+             numbered list of options and have the user reply with a number.",
         ),
         "yolo" => Some(
             "You are in YOLO EXECUTION MODE. Start implementing immediately. \
              Do NOT enter plan mode and do NOT use ExitPlanMode unless the user explicitly asks \
              for a new plan. Do not ask for confirmation before routine implementation steps. \
-             If a required decision is missing, use AskUserQuestion instead of ExitPlanMode.",
+             If a required decision is missing, use AskUserQuestion instead of ExitPlanMode; \
+             if AskUserQuestion is not in your tool set, ask inline with a short numbered list \
+             of options and have the user reply with a number.",
         ),
         _ => None,
     }
@@ -246,6 +249,51 @@ fn compact_metadata_from_system_message(msg: &serde_json::Value) -> Option<Compa
         })
 }
 
+#[derive(Debug, Clone)]
+struct StreamToolUse {
+    index: usize,
+    id: String,
+    name: String,
+    input: serde_json::Value,
+}
+
+fn stream_event_tool_use(msg: &serde_json::Value) -> Option<StreamToolUse> {
+    let event = msg.get("event")?;
+    if event.get("type").and_then(|v| v.as_str()) != Some("content_block_start") {
+        return None;
+    }
+
+    let block = event.get("content_block")?;
+    if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+        return None;
+    }
+
+    Some(StreamToolUse {
+        index: event.get("index")?.as_u64()? as usize,
+        id: block.get("id")?.as_str()?.to_string(),
+        name: block.get("name")?.as_str()?.to_string(),
+        input: block
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn stream_event_input_delta(msg: &serde_json::Value) -> Option<(usize, &str)> {
+    let event = msg.get("event")?;
+    if event.get("type").and_then(|v| v.as_str()) != Some("content_block_delta") {
+        return None;
+    }
+
+    let index = event.get("index")?.as_u64()? as usize;
+    let delta = event.get("delta")?;
+    if delta.get("type").and_then(|v| v.as_str()) != Some("input_json_delta") {
+        return None;
+    }
+
+    Some((index, delta.get("partial_json")?.as_str()?))
+}
+
 // =============================================================================
 // Detached Claude CLI execution
 // =============================================================================
@@ -309,6 +357,8 @@ fn build_claude_args(
     args.push("--input-format".to_string());
     args.push("stream-json".to_string());
     args.push("--verbose".to_string());
+    args.push("--tools".to_string());
+    args.push("default".to_string());
     // Stream partial messages so long-running tools (Monitor, etc.) can push events
     // to the UI without waiting for message boundaries.
     args.push("--include-partial-messages".to_string());
@@ -600,7 +650,9 @@ fn build_claude_args(
     }
 
     // End-of-turn recap instruction (compact view surfaces this block)
-    system_prompt_parts.push(super::RECAP_INSTRUCTION.to_string());
+    if super::should_add_recap_instruction(app) {
+        system_prompt_parts.push(super::RECAP_INSTRUCTION.to_string());
+    }
 
     // Collect all context files (issues and PRs) and concatenate into a single file
     let mut all_context_paths: Vec<std::path::PathBuf> = Vec::new();
@@ -1004,7 +1056,7 @@ pub fn execute_claude_detached(
     // Get CLI path
     let cli_path = resolve_cli_binary(app);
 
-    if !cli_path.exists() {
+    if !crate::platform::resolved_cli_exists(&cli_path) {
         let error_msg = format!(
             "Claude CLI not found at {}. Please complete setup in Settings > Advanced.",
             cli_path.display()
@@ -1158,6 +1210,11 @@ pub fn tail_claude_output(
     let mut claude_session_id = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut content_blocks: Vec<ContentBlock> = Vec::new();
+    let mut seen_tool_use_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pending_stream_tools: std::collections::HashMap<usize, StreamToolUse> =
+        std::collections::HashMap::new();
+    let mut pending_stream_tool_inputs: std::collections::HashMap<usize, String> =
+        std::collections::HashMap::new();
     let mut completed = false;
     let mut cancelled = false;
     let mut user_cancelled = false; // True only for explicit user cancel (not process death)
@@ -1274,6 +1331,108 @@ pub fn tail_claude_output(
                 .map(|s| s.to_string());
 
             let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            if msg_type == "stream_event" {
+                if let Some(tool) = stream_event_tool_use(&msg) {
+                    pending_stream_tool_inputs.remove(&tool.index);
+                    pending_stream_tools.insert(tool.index, tool);
+                    continue;
+                }
+
+                if let Some((index, partial_json)) = stream_event_input_delta(&msg) {
+                    let Some(pending_tool) = pending_stream_tools.get(&index).cloned() else {
+                        continue;
+                    };
+
+                    if seen_tool_use_ids.contains(&pending_tool.id) {
+                        continue;
+                    }
+
+                    let input_buf = pending_stream_tool_inputs.entry(index).or_default();
+                    input_buf.push_str(partial_json);
+
+                    let input = if input_buf.trim().is_empty() {
+                        pending_tool.input.clone()
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(input_buf) {
+                            Ok(value) => value,
+                            Err(_) => continue,
+                        }
+                    };
+
+                    if pending_tool.name == "AskUserQuestion" || pending_tool.name == "ExitPlanMode"
+                    {
+                        let id = pending_tool.id.clone();
+                        let name = pending_tool.name.clone();
+                        seen_tool_use_ids.insert(id.clone());
+                        tool_calls.push(ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                            output: None,
+                            parent_tool_use_id: current_parent_tool_use_id.clone(),
+                        });
+                        content_blocks.push(ContentBlock::ToolUse {
+                            tool_call_id: id.clone(),
+                        });
+
+                        let event = ToolUseEvent {
+                            session_id: session_id.to_string(),
+                            worktree_id: worktree_id.to_string(),
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                            parent_tool_use_id: current_parent_tool_use_id.clone(),
+                        };
+                        if let Err(e) = app.emit_all("chat:tool_use", &event) {
+                            log::error!("Failed to emit tool_use: {e}");
+                        }
+
+                        let block_event = ToolBlockEvent {
+                            session_id: session_id.to_string(),
+                            worktree_id: worktree_id.to_string(),
+                            tool_call_id: id,
+                        };
+                        if let Err(e) = app.emit_all("chat:tool_block", &block_event) {
+                            log::error!("Failed to emit tool_block: {e}");
+                        }
+
+                        log::trace!(
+                            "Detected blocking tool {name} from stream_event, killing detached process"
+                        );
+                        #[cfg(unix)]
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                        #[cfg(windows)]
+                        {
+                            let _ = crate::platform::silent_command("taskkill")
+                                .args(["/F", "/PID", &pid.to_string()])
+                                .output();
+                        }
+
+                        let done_event = DoneEvent {
+                            session_id: session_id.to_string(),
+                            worktree_id: worktree_id.to_string(),
+                            waiting_for_plan: false,
+                        };
+                        if let Err(e) = app.emit_all("chat:done", &done_event) {
+                            log::error!("Failed to emit done event: {e}");
+                        }
+
+                        return Ok(ClaudeResponse {
+                            content: full_content,
+                            session_id: claude_session_id,
+                            tool_calls,
+                            content_blocks,
+                            cancelled: false,
+                            usage: None,
+                        });
+                    }
+
+                    continue;
+                }
+            }
 
             match msg_type {
                 "assistant" => {
@@ -1420,6 +1579,11 @@ pub fn tail_claude_output(
                                             .get("input")
                                             .cloned()
                                             .unwrap_or(serde_json::Value::Null);
+
+                                        if seen_tool_use_ids.contains(&id) {
+                                            continue;
+                                        }
+                                        seen_tool_use_ids.insert(id.clone());
 
                                         tool_calls.push(ToolCall {
                                             id: id.clone(),
@@ -2223,6 +2387,51 @@ mod tests {
             .contains("Always implement the simplest maintainable solution"));
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("Clickable References"));
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("include clickable links when available"));
+    }
+
+    #[test]
+    fn extracts_tool_use_from_stream_event_content_block_start() {
+        let msg = serde_json::json!({
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "index": 2,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_question",
+                    "name": "AskUserQuestion",
+                    "input": {
+                        "questions": "[{\"question\":\"Pick one\",\"options\":[{\"label\":\"A\"}]}]"
+                    }
+                }
+            }
+        });
+
+        let tool = stream_event_tool_use(&msg).expect("tool_use should be extracted");
+
+        assert_eq!(tool.id, "toolu_question");
+        assert_eq!(tool.name, "AskUserQuestion");
+        assert_eq!(
+            tool.input.get("questions").and_then(|value| value.as_str()),
+            Some("[{\"question\":\"Pick one\",\"options\":[{\"label\":\"A\"}]}]")
+        );
+    }
+
+    #[test]
+    fn extracts_stream_event_input_json_delta() {
+        let msg = serde_json::json!({
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": "{\"questions\":"
+                }
+            }
+        });
+
+        assert_eq!(stream_event_input_delta(&msg), Some((2, "{\"questions\":")));
     }
 
     #[test]

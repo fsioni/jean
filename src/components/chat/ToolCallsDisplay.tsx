@@ -2,9 +2,11 @@ import { memo, useState, useCallback } from 'react'
 import { usePreferences } from '@/services/preferences'
 import type { ToolCall, Question, QuestionAnswer } from '@/types/chat'
 import {
+  getAskUserQuestions,
   hasQuestionAnswerOutput,
   isAskUserQuestion,
   normalizeCodexQuestions,
+  normalizeQuestionMultipleField,
   isPlanToolCall,
 } from '@/types/chat'
 import { AskUserQuestion } from './AskUserQuestion'
@@ -19,12 +21,13 @@ function mergeAskUserQuestions(tools: ToolCall[]): Question[] {
   const merged: Question[] = []
 
   for (const tool of tools) {
-    const questions =
-      (tool.input as { questions?: Question[] })?.questions ?? []
+    const questions = getAskUserQuestions(tool.input) ?? []
     const normalizedQuestions =
       tool.name === 'request_user_input'
         ? normalizeCodexQuestions(questions)
-        : questions
+        : normalizeQuestionMultipleField(
+            questions as (Question & { multiple?: boolean })[]
+          )
     for (const q of normalizedQuestions) {
       // Use header if present, otherwise use question text as fallback key
       const key = q.header ?? q.question

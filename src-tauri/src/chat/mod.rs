@@ -6,6 +6,7 @@ mod commands;
 pub(crate) mod context_instructions;
 pub(crate) mod cursor;
 pub mod detached;
+pub(crate) mod grok;
 pub(crate) mod handoff;
 pub mod jean_mcp;
 mod naming;
@@ -49,6 +50,12 @@ Rules:
 - In plan mode, when a plan is ready, you MUST still call the native plan tool (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent) to present it. The recap does NOT replace the plan tool — never end a plan-mode turn with only a `## Recap` block in place of the plan tool call.
 - Skip the recap entirely if the turn was a single one-line answer with no tool calls.
 - Do NOT repeat tool inputs, file diffs, or raw command output verbatim. Summarize.";
+
+pub(crate) fn should_add_recap_instruction(app: &tauri::AppHandle) -> bool {
+    crate::load_preferences_sync(app)
+        .map(|preferences| preferences.auto_recaps_enabled)
+        .unwrap_or(true)
+}
 
 /// Global counter for active file tailers (sessions being streamed)
 static ACTIVE_TAILER_COUNT: once_cell::sync::Lazy<AtomicUsize> =

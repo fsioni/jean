@@ -22,7 +22,6 @@ export type KeybindingAction =
   | 'approve_plan_worktree_build'
   | 'approve_plan_worktree_yolo'
   | 'open_plan'
-  | 'open_recap'
   | 'restore_last_archived'
   | 'focus_canvas_search'
   | 'toggle_terminal'
@@ -84,7 +83,6 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
   approve_plan_worktree_build: 'mod+alt+enter',
   approve_plan_worktree_yolo: 'mod+alt+y',
   open_plan: 'p',
-  open_recap: 'r',
   restore_last_archived: 'mod+alt+shift+t',
   focus_canvas_search: 'slash',
   toggle_terminal: 'mod+backquote',
@@ -257,13 +255,7 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     default_shortcut: 'p',
     category: 'chat',
   },
-  {
-    action: 'open_recap',
-    label: 'Open recap',
-    description: 'Open the session recap dialog for the selected session',
-    default_shortcut: 'r',
-    category: 'chat',
-  },
+
   {
     action: 'new_worktree',
     label: 'New worktree',

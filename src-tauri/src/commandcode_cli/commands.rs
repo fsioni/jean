@@ -340,7 +340,10 @@ pub async fn check_commandcode_cli_installed(
             path: None,
         });
     }
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => parse_version(&output.stdout),
         Ok(output) => {
             log::warn!(
@@ -379,7 +382,8 @@ pub async fn check_commandcode_cli_auth(app: AppHandle) -> Result<CommandCodeAut
     ] {
         let output = match run_command_with_timeout(
             {
-                let mut command = silent_command(&binary_path);
+                let mut command =
+                    crate::platform::cli_command(&binary_path.to_string_lossy(), None);
                 command.args(args);
                 command
             },
@@ -452,7 +456,7 @@ pub async fn detect_commandcode_in_path(
         });
     };
 
-    let version = silent_command(&found_path)
+    let version = crate::platform::cli_command(&found_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .ok()
@@ -481,7 +485,7 @@ pub async fn list_commandcode_models(app: AppHandle) -> Result<Vec<CommandCodeMo
     }
     let output = run_command_with_timeout(
         {
-            let mut command = silent_command(&binary_path);
+            let mut command = crate::platform::cli_command(&binary_path.to_string_lossy(), None);
             command.arg("--list-models");
             command
         },
@@ -698,7 +702,7 @@ pub async fn install_commandcode_cli(
         ));
     }
 
-    let verify = silent_command(&binary_path)
+    let verify = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to verify Command Code CLI: {e}"))?;

@@ -12,6 +12,18 @@ let sessionsData: { sessions: unknown[] }
 let nativeSessionsData: unknown[]
 let cursorInstalled: boolean
 let commandCodeInstalled: boolean
+let grokInstalled: boolean
+let isMobile: boolean
+let defaultExecutionMode: 'plan' | 'build' | 'yolo'
+
+vi.mock('@/services/preferences', () => ({
+  usePreferences: () => ({
+    data: {
+      default_new_session_kind: 'chat',
+      default_execution_mode: defaultExecutionMode,
+    },
+  }),
+}))
 
 vi.mock('@/services/chat', () => ({
   useCreateSession: () => ({
@@ -30,6 +42,10 @@ vi.mock('@/services/chat', () => ({
 
 vi.mock('@/lib/transport', () => ({
   invoke: (...args: unknown[]) => invoke(...args),
+}))
+
+vi.mock('@/hooks/use-mobile', () => ({
+  useIsMobile: () => isMobile,
 }))
 
 vi.mock('@/services/claude-cli', () => ({
@@ -73,6 +89,16 @@ vi.mock('@/services/commandcode-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/grok-cli', () => ({
+  useGrokCliStatus: () => ({
+    data: {
+      installed: grokInstalled,
+      path: grokInstalled ? '/usr/local/bin/grok' : null,
+    },
+    isLoading: false,
+  }),
+}))
+
 describe('NewSessionModeModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -82,6 +108,9 @@ describe('NewSessionModeModal', () => {
     nativeSessionsData = []
     cursorInstalled = false
     commandCodeInstalled = false
+    grokInstalled = false
+    isMobile = false
+    defaultExecutionMode = 'plan'
     invoke.mockResolvedValue({
       commandArgs: ['--context-arg', 'context-value'],
     })
@@ -163,9 +192,10 @@ describe('NewSessionModeModal', () => {
     )
   })
 
-  it('marks Command Code, not Cursor, as beta in backend choices', () => {
+  it('marks Command Code and Grok, not Cursor, as beta in backend choices', () => {
     cursorInstalled = true
     commandCodeInstalled = true
+    grokInstalled = true
     useUIStore.getState().openNewSessionModeModal({
       worktreeId: 'worktree-1',
       worktreePath: '/tmp/worktree-1',
@@ -177,9 +207,53 @@ describe('NewSessionModeModal', () => {
     expect(screen.getByText('Cursor')).toBeInTheDocument()
     expect(screen.queryByText('Cursor (Beta)')).toBeNull()
     expect(screen.getByText('Command Code (Beta)')).toBeInTheDocument()
+    expect(screen.getByText('Grok (Beta)')).toBeInTheDocument()
     expect(
       screen.getByText('Open native Command Code (Beta) in a terminal session')
     ).toBeInTheDocument()
+    expect(
+      screen.getByText('Open native Grok (Beta) in a terminal session')
+    ).toBeInTheDocument()
+  })
+
+  it('uses compact backend choices and a normal/yolo step on mobile', () => {
+    cursorInstalled = true
+    commandCodeInstalled = true
+    grokInstalled = true
+    isMobile = true
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    expect(screen.getByText('AI backends')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Claude' })).toBeInTheDocument()
+    expect(
+      screen.queryByText('Open native Claude in a terminal session')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Start Claude in yolo mode' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude' }))
+
+    expect(screen.getByText('Claude')).toBeInTheDocument()
+    expect(
+      screen.getByText('Choose how to start Claude for this worktree.')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Start normal' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Start yolo' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start yolo' }))
+
+    expect(screen.getByText('Claude sessions')).toBeInTheDocument()
   })
 
   it('opens an installed backend picker and starts a new terminal session', async () => {
@@ -766,5 +840,54 @@ describe('NewSessionModeModal', () => {
     expect(useUIStore.getState().sessionPrimarySurface['session-chat-1']).toBe(
       'chat'
     )
+  })
+
+  it('applies the default execution mode to new Jean chat sessions', () => {
+    defaultExecutionMode = 'yolo'
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: { onSuccess?: (session: { id: string }) => void }
+      ) => {
+        opts?.onSuccess?.({ id: 'session-yolo' })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(useChatStore.getState().executionModes['session-yolo']).toBe('yolo')
+    expect(invoke).toHaveBeenCalledWith('update_session_state', {
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      sessionId: 'session-yolo',
+      selectedExecutionMode: 'yolo',
+    })
+  })
+
+  it('shows fixed option descriptions without truncation', () => {
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    const jeanDescription = screen.getByText(
+      'Normal ChatWindow session with Jean features'
+    )
+    const terminalDescription = screen.getByText(
+      'Open a plain terminal on this worktree'
+    )
+
+    expect(jeanDescription).not.toHaveClass('truncate')
+    expect(terminalDescription).not.toHaveClass('truncate')
   })
 })

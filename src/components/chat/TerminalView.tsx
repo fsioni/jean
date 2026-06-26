@@ -8,6 +8,7 @@ import {
   useTerminalStore,
   type TerminalInstance,
 } from '@/store/terminal-store'
+import { useUIStore } from '@/store/ui-store'
 import {
   disposeTerminal,
   disposePanelWorktreeTerminals,
@@ -15,6 +16,7 @@ import {
 import { Kbd } from '@/components/ui/kbd'
 import { formatShortcutDisplay } from '@/types/keybindings'
 import { cn } from '@/lib/utils'
+import { useTerminalImageDrop } from './hooks/useTerminalImageDrop'
 import { MODAL_TERMINAL_SECONDARY_ROW_CLASS } from './modal-terminal-layout'
 import '@xterm/xterm/css/xterm.css'
 
@@ -48,6 +50,7 @@ const TerminalTabContent = memo(function TerminalTabContent({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalBg = useTerminalBackgroundColor()
+  const { isDraggingImage, dropHandlers } = useTerminalImageDrop(terminal.id)
   const { initTerminal, fit, focus } = useTerminal({
     terminalId: terminal.id,
     worktreeId,
@@ -102,10 +105,20 @@ const TerminalTabContent = memo(function TerminalTabContent({
 
   return (
     <div
-      className={cn('h-full w-full p-2', !isActive && 'hidden')}
+      data-terminal-id={terminal.id}
+      className={cn('relative h-full w-full p-2', !isActive && 'hidden')}
       style={{ backgroundColor: terminalBg }}
+      onDragOver={dropHandlers.onDragOver}
+      onDragLeave={dropHandlers.onDragLeave}
+      onDrop={dropHandlers.onDrop}
     >
       <div ref={containerRef} className="h-full w-full overflow-hidden" />
+      {isDraggingImage && (
+        <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary bg-background/80 text-sm font-medium text-foreground">
+          <Terminal className="h-5 w-5" aria-hidden />
+          <span>Drop image to insert its path</span>
+        </div>
+      )}
     </div>
   )
 })
@@ -182,23 +195,29 @@ export function TerminalView({
     setTerminalVisible,
     setTerminalPanelOpen,
   } = useTerminalStore.getState()
+  const uiStateInitialized = useUIStore(state => state.uiStateInitialized)
   const [draggedTerminalId, setDraggedTerminalId] = useState<string | null>(
     null
   )
 
-  // Auto-create a terminal only on initial mount (not when tabs are closed)
-  const mountedRef = useRef(false)
+  // Auto-create a default shell when this worktree has no panel terminals AND
+  // UI state hydration has finished. Waiting on `uiStateInitialized` is
+  // critical: on a web refresh the persisted `terminal_instances` arrive
+  // asynchronously via `get_active_terminals`. If we auto-create before that
+  // resolves, the phantom terminal spawns a real PTY on the backend and then
+  // gets overwritten when restore completes — leaving an orphan PTY in
+  // TERMINAL_SESSIONS and a visible flash that looks like "my terminal
+  // disappeared". The effect does not re-fire for tab-close → store-empty
+  // transitions because the dependency set is stable.
   useEffect(() => {
-    if (!mountedRef.current) {
-      mountedRef.current = true
-      const existing = (
-        useTerminalStore.getState().terminals[worktreeId] ?? []
-      ).filter(isPanelTerminal)
-      if (existing.length === 0) {
-        addTerminal(worktreeId)
-      }
+    if (!uiStateInitialized) return
+    const existing = (
+      useTerminalStore.getState().terminals[worktreeId] ?? []
+    ).filter(isPanelTerminal)
+    if (existing.length === 0) {
+      addTerminal(worktreeId)
     }
-  }, [worktreeId, addTerminal])
+  }, [worktreeId, addTerminal, uiStateInitialized])
 
   const handleAddTerminal = useCallback(() => {
     addTerminal(worktreeId)

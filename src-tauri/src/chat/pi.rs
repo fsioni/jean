@@ -2,6 +2,7 @@
 
 use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
+#[cfg(unix)]
 use crate::platform::silent_command;
 use serde_json::Value;
 #[cfg(unix)]
@@ -1206,15 +1207,15 @@ pub fn execute_pi(
         pi_tools_for_mode(execution_mode.unwrap_or("plan"))
     );
 
-        let mut child = silent_command(&cli_path)
-            .args(args)
-            .current_dir(working_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("JEAN_SESSION_ID", session_id)
-            .env("JEAN_WORKTREE_ID", worktree_id)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn PI CLI: {e}"))?;
+        let mut child =
+            crate::platform::cli_command(&cli_path.to_string_lossy(), Some(working_dir))
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .env("JEAN_SESSION_ID", session_id)
+                .env("JEAN_WORKTREE_ID", worktree_id)
+                .spawn()
+                .map_err(|e| format!("Failed to spawn PI CLI: {e}"))?;
         let pid = child.id();
         if let Some(callback) = pid_callback {
             callback(pid);
@@ -1313,14 +1314,13 @@ pub fn execute_one_shot_pi(
         return Err("PI CLI not installed".to_string());
     }
     let dir = working_dir.unwrap_or_else(|| Path::new("."));
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), Some(dir));
     cmd.args(["--mode", "json", "--no-session"]);
     cmd.args(["--model", raw_pi_model(Some(model)).unwrap_or(model)]);
     if let Some(effort) = effort_level {
         cmd.args(["--thinking", effort]);
     }
     cmd.arg(prompt)
-        .current_dir(dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let output = cmd

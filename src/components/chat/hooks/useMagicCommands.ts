@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useChatStore } from '@/store/chat-store'
 import type { ExecutionMode } from '@/types/chat'
+import type { CliBackend } from '@/types/preferences'
 
 export interface WorkflowRunDetail {
   workflowName: string
@@ -12,7 +13,7 @@ export interface WorkflowRunDetail {
 }
 
 export interface InvestigateOverride {
-  backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
+  backend: CliBackend
   model: string
 }
 

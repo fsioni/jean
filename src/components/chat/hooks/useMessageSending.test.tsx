@@ -67,7 +67,7 @@ function renderUseMessageSending({
   opencodeAutoSteer?: boolean
   piAutoSteer?: boolean
   inputValue?: string
-  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
+  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'grok'
   selectedModel?: string
   selectedEffortLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
   createSession?: {
@@ -192,6 +192,62 @@ describe('useMessageSending Codex /goal', () => {
       expect.objectContaining({
         executionMode: 'yolo',
         message: 'Work toward the active goal:\n\nShip the feature',
+      }),
+      expect.any(Object)
+    )
+  })
+})
+
+describe('useMessageSending Grok /goal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.setState({
+      inputDrafts: {},
+      pendingImages: {},
+      pendingFiles: {},
+      pendingTextFiles: {},
+      pendingSkills: {},
+      sendingSessionIds: {},
+      executionModes: {},
+      selectedModels: {},
+      executingModes: {},
+      errors: {},
+      lastSentMessages: {},
+      reviewingSessions: {},
+      waitingForInputSessionIds: {},
+      messageQueues: {},
+      approvedTools: {},
+      streamingContents: {},
+      activeToolCalls: {},
+      streamingContentBlocks: {},
+      streamingThinkingContent: {},
+    })
+  })
+
+  it('passes /goal commands through to Grok without Codex RPC wrapping', async () => {
+    const { result, sendMessage, executionModeRef } = renderUseMessageSending({
+      selectedBackend: 'grok',
+      selectedModel: 'grok/grok-composer-2.5-fast',
+      inputValue: '/goal Ship the Grok feature',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'codex_goal_set',
+      expect.anything()
+    )
+    expect(executionModeRef.current).toBe('plan')
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: 'grok',
+        executionMode: 'plan',
+        message: '/goal Ship the Grok feature',
       }),
       expect.any(Object)
     )
@@ -402,6 +458,42 @@ describe('useMessageSending Codex auto-steer', () => {
       useChatStore.getState().messageQueues['session-1'] ?? []
     ).toHaveLength(0)
     expect(sendMessage.mutate).not.toHaveBeenCalled()
+  })
+
+
+
+  it('steers codex attachments instead of queueing when auto-steer is enabled', async () => {
+    vi.mocked(steerCodexTurn).mockResolvedValue(undefined)
+    const { result } = renderUseMessageSending({
+      inputValue: 'please inspect',
+    })
+    useChatStore.setState({
+      pendingImages: {
+        'session-1': [
+          { id: 'img-1', path: '/tmp/img.png', filename: 'img.png' },
+        ],
+      },
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerCodexTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      `please inspect
+
+[Image attached: /tmp/img.png - Use the Read tool to view this image]`,
+      expect.objectContaining({
+        pendingImages: [
+          expect.objectContaining({ path: '/tmp/img.png' }),
+        ],
+      })
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
   })
 
   it('queues instead of steering when auto-steer is disabled', async () => {

@@ -550,7 +550,7 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/\`--print\` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
 - For Codex specifically, when the current execution mode is plan: after the user answers native \`request_user_input\`/open questions, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
 - Every Codex response that contains or revises a plan while the current execution mode is plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
@@ -792,6 +792,10 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   review_comments_model: 'opencode/gpt-5.3-codex',
 }
 
+/** Grok preset for all magic prompts */
+export const GROK_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('grok/grok-composer-2.5-fast')
+
 /** Default reasoning efforts for Claude backend (null = use model default) */
 export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_issue_effort: null,
@@ -808,6 +812,35 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_advisory_effort: null,
   investigate_linear_issue_effort: null,
   review_comments_effort: null,
+}
+
+export type MagicPromptExecutionMode = Extract<ExecutionMode, 'plan' | 'yolo'>
+
+/**
+ * Per-prompt execution mode overrides for magic prompts that send chat turns.
+ * Field names use snake_case to match Rust struct exactly.
+ */
+export interface MagicPromptModes {
+  investigate_issue_mode: MagicPromptExecutionMode
+  investigate_pr_mode: MagicPromptExecutionMode
+  investigate_workflow_run_mode: MagicPromptExecutionMode
+  investigate_security_alert_mode: MagicPromptExecutionMode
+  investigate_advisory_mode: MagicPromptExecutionMode
+  investigate_linear_issue_mode: MagicPromptExecutionMode
+  review_comments_mode: MagicPromptExecutionMode
+  resolve_conflicts_mode: MagicPromptExecutionMode
+}
+
+/** Default execution modes for chat-style magic prompts */
+export const DEFAULT_MAGIC_PROMPT_MODES: MagicPromptModes = {
+  investigate_issue_mode: 'plan',
+  investigate_pr_mode: 'plan',
+  investigate_workflow_run_mode: 'yolo',
+  investigate_security_alert_mode: 'plan',
+  investigate_advisory_mode: 'plan',
+  investigate_linear_issue_mode: 'plan',
+  review_comments_mode: 'plan',
+  resolve_conflicts_mode: 'yolo',
 }
 
 /** Codex preset: heavier reasoning for investigations, lighter for simple generation */
@@ -936,6 +969,7 @@ export const CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('claude')
 export const CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('codex')
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
   makeBackendsPreset('opencode')
+export const GROK_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('grok')
 
 /**
  * Resolve a magic prompt provider for a given key.
@@ -1006,11 +1040,13 @@ export interface AppPreferences {
   syntax_theme_light: SyntaxTheme // Syntax highlighting theme for light mode
   parallel_execution_prompt_enabled: boolean // Add system prompt to encourage parallel sub-agent execution
   compact_chat_view_enabled: boolean // Collapse intermediate tool calls/replies into a single ticker line, only showing the latest activity
+  auto_recaps_enabled?: boolean // Ask agents to end multi-step/tool turns with a recap
   magic_prompts: MagicPrompts // Customizable prompts for AI-powered features
   magic_prompt_models: MagicPromptModels // Per-prompt model overrides
   magic_prompt_providers: MagicPromptProviders // Per-prompt provider overrides (null = use default_provider)
   magic_prompt_backends: MagicPromptBackends // Per-prompt backend overrides (null = use project/global default_backend)
   magic_prompt_efforts: MagicPromptReasoningEfforts // Per-prompt reasoning effort overrides (null = model default)
+  magic_prompt_modes: MagicPromptModes // Per-prompt execution modes for magic prompts that send chat turns
   file_edit_mode: FileEditMode // How to edit files: inline (CodeMirror) or external (VS Code, etc.)
   ai_language: string // Preferred language for AI responses (empty = default)
   allow_web_tools_in_plan_mode: boolean // Allow WebFetch/WebSearch in plan mode without prompts
@@ -1050,6 +1086,7 @@ export interface AppPreferences {
   selected_cursor_model: CursorModel // Default Cursor model
   selected_pi_model: PiModel // Default PI model
   selected_commandcode_model?: string // Default Command Code model (CLI default)
+  selected_grok_model: GrokModel // Default Grok model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
@@ -1072,6 +1109,7 @@ export interface AppPreferences {
   claude_cli_source: 'jean' | 'path' // Claude CLI source: 'jean' (managed) or 'path' (system PATH)
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
+  grok_cli_source: 'jean' | 'path' // Grok CLI source: 'jean' (managed) or 'path' (system PATH)
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
   pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
   commandcode_cli_source?: 'jean' | 'path' // Command Code CLI source: 'jean' (managed) or 'path' (system PATH)
@@ -1196,31 +1234,33 @@ export type ClaudeModel =
   | 'claude-opus-4-7'
   | 'claude-opus-4-7[1m]'
   | 'claude-opus-4-6'
-  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-6[1m]'
+  | 'claude-opus-4-5-20251101'
   | 'claude-opus-4-8[1m]-fast'
   | 'claude-opus-4-7[1m]-fast'
   | 'claude-opus-4-6-fast'
   | 'claude-opus-4-6[1m]-fast'
   | 'opus' // Legacy/provider-alias: resolved by CLI via ANTHROPIC_DEFAULT_OPUS_MODEL env
   | 'sonnet'
+  | 'claude-sonnet-4-6'
   | 'claude-sonnet-4-6[1m]'
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
   { value: 'claude-fable-5', label: 'Claude Fable 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
+  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-sonnet-4-6[1m]', label: 'Claude Sonnet 4.6 (1M)' },
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku' },
 ]
 
 const legacyClaudeDefaultModelMap = {
-  'claude-opus-4-8': 'claude-opus-4-8[1m]',
-  'claude-opus-4-7': 'claude-opus-4-7[1m]',
-  'claude-opus-4-6': 'claude-opus-4-6[1m]',
   'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
   sonnet: 'claude-sonnet-4-6[1m]',
 } as const satisfies Partial<Record<ClaudeModel, ClaudeModel>>
@@ -1446,6 +1486,7 @@ export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
 export type PiModel = `pi/${string}`
 export type CommandCodeModel = `commandcode/${string}`
+export type GrokModel = `grok/${string}`
 export type MagicPromptModel =
   | ClaudeModel
   | CodexModel
@@ -1453,6 +1494,7 @@ export type MagicPromptModel =
   | CursorModel
   | PiModel
   | CommandCodeModel
+  | GrokModel
 
 /** Check if a model string identifies an OpenCode model */
 export function isOpenCodeModel(model: string): model is OpenCodeModel {
@@ -1472,6 +1514,10 @@ export function isPiModel(model: string): model is PiModel {
 /** Check if a model string identifies a Command Code model */
 export function isCommandCodeModel(model: string): model is CommandCodeModel {
   return model.startsWith('commandcode/')
+}
+/** Check if a model string identifies a Grok model */
+export function isGrokModel(model: string): model is GrokModel {
+  return model.startsWith('grok/')
 }
 
 /** Check if a model string identifies a Codex model */
@@ -1501,6 +1547,7 @@ export type CliBackend =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -1509,6 +1556,7 @@ export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'cursor', label: 'Cursor' },
   { value: 'pi', label: 'Pi (Beta)' },
   { value: 'commandcode', label: 'Command Code (Beta)' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export type TerminalApp =
@@ -1597,6 +1645,7 @@ export const newSessionKindOptions: {
   { value: 'claude', label: 'Claude' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export function getNewSessionKindLabel(
@@ -1840,11 +1889,13 @@ export const defaultPreferences: AppPreferences = {
   syntax_theme_light: 'github-light',
   parallel_execution_prompt_enabled: true, // Default: enabled
   compact_chat_view_enabled: false, // Default: disabled (experimental)
+  auto_recaps_enabled: true, // Default: enabled
   magic_prompts: DEFAULT_MAGIC_PROMPTS,
   magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
   magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
   magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
   magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+  magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
   file_edit_mode: 'external',
   ai_language: '', // Default: empty (Claude's default behavior)
   allow_web_tools_in_plan_mode: true, // Default: enabled
@@ -1883,6 +1934,7 @@ export const defaultPreferences: AppPreferences = {
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
+  selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
@@ -1905,6 +1957,7 @@ export const defaultPreferences: AppPreferences = {
   claude_cli_source: 'jean', // Default: Jean-managed
   codex_cli_source: 'jean', // Default: Jean-managed
   opencode_cli_source: 'jean', // Default: Jean-managed
+  grok_cli_source: 'jean', // Default: Jean-managed
   gh_cli_source: 'jean', // Default: Jean-managed
   pi_cli_source: 'jean', // Default: Jean-managed
   commandcode_cli_source: 'jean', // Default: Jean-managed

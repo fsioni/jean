@@ -80,7 +80,10 @@ fn parse_version(raw: &str) -> Option<String> {
 }
 
 fn get_version(binary: &std::path::Path) -> Option<String> {
-    let output = silent_command(binary).arg("--version").output().ok()?;
+    let output = crate::platform::cli_command(&binary.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -232,7 +235,7 @@ pub async fn check_coderabbit_cli_auth(app: AppHandle) -> Result<CodeRabbitAuthS
     let output = tokio::time::timeout(
         Duration::from_secs(10),
         tokio::task::spawn_blocking(move || {
-            silent_command(&binary_path)
+            crate::platform::cli_command(&binary_path.to_string_lossy(), None)
                 .args(["auth", "status", "--agent"])
                 .output()
         }),
@@ -322,7 +325,7 @@ pub async fn install_coderabbit_cli(app: AppHandle, version: Option<String>) -> 
         ));
     }
 
-    let verify = silent_command(&binary_path)
+    let verify = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to verify CodeRabbit CLI: {e}"))?;
@@ -350,7 +353,7 @@ pub async fn update_coderabbit_cli(app: AppHandle) -> Result<(), String> {
     if !binary_path.exists() {
         return Err("CodeRabbit CLI not installed".to_string());
     }
-    let output = silent_command(&binary_path)
+    let output = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("update")
         .output()
         .map_err(|e| format!("Failed to update CodeRabbit CLI: {e}"))?;

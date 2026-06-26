@@ -16,6 +16,7 @@ use super::config::{
     resolve_cli_binary,
 };
 use crate::http_server::EmitExt;
+#[cfg(target_os = "macos")]
 use crate::platform::silent_command;
 
 /// Extract semver version number from a version string
@@ -155,7 +156,10 @@ pub async fn check_claude_cli_installed(app: AppHandle) -> Result<ClaudeCliStatu
 
     // Try to get the version by running claude --version
     // Use the binary directly - shell wrapper causes PowerShell parsing issues on Windows
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) => {
             if output.status.success() {
                 let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();

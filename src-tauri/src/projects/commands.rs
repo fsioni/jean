@@ -54,6 +54,10 @@ use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 use crate::platform::wsl_aware_command;
 
+fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
+
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\(([^)]*)\)").expect("valid release notes parenthetical regex"));
 static RELEASE_NOTES_LEADING_PR_RE: Lazy<Regex> =
@@ -5370,7 +5374,7 @@ pub async fn link_worktree_pr(
     log::trace!("Linking PR #{pr_number} to worktree {worktree_id}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5378,7 +5382,6 @@ pub async fn link_worktree_pr(
             "--json",
             "number,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5436,7 +5439,7 @@ pub async fn detect_open_pr_for_branch(
     let current_branch = git::get_current_branch(&worktree_path)?;
     let repo = get_repo_identifier(&worktree_path)?;
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "api",
             "--method",
@@ -5449,7 +5452,6 @@ pub async fn detect_open_pr_for_branch(
             "-f",
             "per_page=1",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -5493,9 +5495,8 @@ pub async fn detect_and_link_pr(
     log::trace!("Detecting PR for worktree {worktree_id} at {worktree_path}");
 
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -5584,7 +5585,7 @@ pub async fn trigger_coderabbit_pr_review(
     let gh = resolve_gh_binary(&app);
     let target_pr_number =
         pr_number.ok_or_else(|| "Open or link a PR in Jean first".to_string())?;
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5592,7 +5593,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--json",
             "number,url",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5606,7 +5606,7 @@ pub async fn trigger_coderabbit_pr_review(
     let pr_url = view_json["url"].as_str().unwrap_or("").to_string();
 
     let comment_body = "@coderabbitai review".to_string();
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "comment",
@@ -5614,7 +5614,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--body",
             &comment_body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr comment: {e}"))?;
 
@@ -6031,6 +6030,97 @@ fn extract_structured_output(output: &str) -> Result<String, String> {
     Err("No structured output found in Claude response".to_string())
 }
 
+fn extract_claude_stream_error(stdout: &str) -> Option<String> {
+    let mut assistant_text = String::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("result")
+            && parsed.get("is_error").and_then(|v| v.as_bool()) == Some(true)
+        {
+            if parsed.get("subtype").and_then(|v| v.as_str()) == Some("error_max_turns") {
+                return Some("reached max turns before producing structured output".to_string());
+            }
+
+            if let Some(result) = parsed.get("result").and_then(|v| v.as_str()) {
+                let result = result.trim();
+                if !result.is_empty() {
+                    return Some(result.to_string());
+                }
+            }
+        }
+
+        if parsed.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+            if let Some(content) = parsed
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            assistant_text.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let assistant_text = assistant_text.trim();
+    let lower = assistant_text.to_lowercase();
+    let looks_like_error = lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("authenticate")
+        || lower.contains("unauthorized");
+
+    if assistant_text.is_empty() || !looks_like_error {
+        None
+    } else {
+        Some(assistant_text.to_string())
+    }
+}
+
+fn truncate_error_context(value: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 600;
+    let value = value.trim();
+    if value.chars().count() <= MAX_ERROR_CHARS {
+        value.to_string()
+    } else {
+        format!(
+            "{}…",
+            value.chars().take(MAX_ERROR_CHARS).collect::<String>()
+        )
+    }
+}
+
+fn format_claude_cli_failure(stderr: &str, stdout: &str) -> String {
+    if let Some(error) = extract_claude_stream_error(stdout) {
+        return format!("Claude CLI failed: {error}");
+    }
+
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stderr));
+    }
+
+    let stdout = stdout.trim();
+    if !stdout.is_empty() {
+        return format!("Claude CLI failed: {}", truncate_error_context(stdout));
+    }
+
+    "Claude CLI failed with no output".to_string()
+}
+
 /// Extract the first complete, balanced top-level JSON object from arbitrary
 /// text (PI/other CLIs may wrap JSON in prose). Brace-counts while respecting
 /// string literals and escapes, so braces inside strings don't break bounds.
@@ -6101,12 +6191,12 @@ fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -
         "--no-session-persistence".to_string(),
         "--tools".to_string(),
         tools.to_string(),
+        "--tools".to_string(),
+        "default".to_string(),
         "--max-turns".to_string(),
-        "2".to_string(),
+        "3".to_string(),
         "--json-schema".to_string(),
         schema.to_string(),
-        "--permission-mode".to_string(),
-        "plan".to_string(),
     ]
 }
 
@@ -6405,9 +6495,8 @@ pub async fn create_pr_with_ai_content(
 
     // Check if a PR already exists for this branch before spending time/tokens on AI generation
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -6540,7 +6629,7 @@ pub async fn create_pr_with_ai_content(
 
     // Create the PR using gh CLI
     log::trace!("Creating PR with gh CLI");
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "create",
@@ -6551,7 +6640,6 @@ pub async fn create_pr_with_ai_content(
             "--body",
             &pr_content.body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr create: {e}"))?;
 
@@ -6559,9 +6647,8 @@ pub async fn create_pr_with_ai_content(
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("already exists") {
             // Try to look up the existing PR and link it to the worktree
-            let view_output = silent_command(&gh)
+            let view_output = gh_command(&gh, &worktree_path)
                 .args(["pr", "view", "--json", "number,url,title"])
-                .current_dir(&worktree_path)
                 .output();
 
             if let Ok(view_out) = view_output {
@@ -6637,14 +6724,13 @@ pub async fn merge_github_pr(
     let gh = resolve_gh_binary(&app);
 
     // 1. Check PR status and mergeability
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
             "--json",
             "number,state,mergeable,mergeStateStatus,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -6675,9 +6761,8 @@ pub async fn merge_github_pr(
     let title = pr_info["title"].as_str().unwrap_or("").to_string();
 
     // 2. Merge the PR
-    let merge_output = silent_command(&gh)
+    let merge_output = gh_command(&gh, &worktree_path)
         .args(["pr", "merge", "--merge"])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr merge: {e}"))?;
 
@@ -6809,6 +6894,24 @@ fn generate_pr_content_from_inputs(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating PR content with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
     log::trace!("Generating PR content with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -6816,7 +6919,7 @@ fn generate_pr_content_from_inputs(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -6859,11 +6962,7 @@ fn generate_pr_content_from_inputs(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7438,6 +7537,22 @@ fn generate_commit_message_once(
         });
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating commit message with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
     log::trace!("Generating commit message with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -7445,7 +7560,7 @@ fn generate_commit_message_once(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -7481,11 +7596,7 @@ fn generate_commit_message_once(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7822,16 +7933,13 @@ fn execute_codex_review(
         working_dir
     );
 
-    let mut cmd = crate::platform::silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), working_dir);
     cmd.args(build_codex_review_args(
         actual_model,
         is_fast,
         &schema_file,
         working_dir,
     ));
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
-    }
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -7959,6 +8067,22 @@ fn generate_review(
         });
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Running code review with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -7966,7 +8090,7 @@ fn generate_review(
 
     log::trace!("Running code review with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -8018,11 +8142,7 @@ fn generate_review(
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -8464,7 +8584,10 @@ pub async fn run_coderabbit_review(
         return Err("CodeRabbit CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&binary_path);
+    let mut cmd = crate::platform::cli_command(
+        &binary_path.to_string_lossy(),
+        Some(std::path::Path::new(&worktree_path)),
+    );
     cmd.args(["review", "--agent", "--dir", &worktree_path]);
     if let Some(review_type) = review_type
         .as_deref()
@@ -8472,9 +8595,7 @@ pub async fn run_coderabbit_review(
     {
         cmd.args(["--type", review_type]);
     }
-    cmd.current_dir(&worktree_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let child = cmd
         .spawn()
@@ -8825,7 +8946,7 @@ pub async fn list_github_releases(
     log::trace!("Listing GitHub releases for: {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "release",
             "list",
@@ -8834,7 +8955,6 @@ pub async fn list_github_releases(
             "--limit",
             "30",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh CLI: {e}"))?;
 
@@ -9054,6 +9174,25 @@ fn generate_release_notes_content(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating release notes with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -9061,7 +9200,7 @@ fn generate_release_notes_content(
 
     log::trace!("Generating release notes with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
@@ -9097,11 +9236,7 @@ fn generate_release_notes_content(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Claude CLI failed: stderr={}, stdout={}",
-            stderr.trim(),
-            stdout.trim()
-        ));
+        return Err(format_claude_cli_failure(&stderr, &stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -11568,6 +11703,35 @@ Body
     }
 
     #[test]
+    fn format_claude_cli_failure_extracts_stream_json_auth_error() {
+        let stdout = r#"{"type":"system","subtype":"hook_response","output":"startup hook"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}]},"error":"authentication_failed"}
+{"type":"result","is_error":true,"result":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: Failed to authenticate. API Error: 401 Invalid authentication credentials"
+        );
+        assert!(!result.contains("hook_response"));
+    }
+
+    #[test]
+    fn format_claude_cli_failure_does_not_report_max_turns_summary_as_error() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}"#;
+
+        let result = format_claude_cli_failure("", stdout);
+
+        assert_eq!(
+            result,
+            "Claude CLI failed: reached max turns before producing structured output"
+        );
+        assert!(!result.contains("Looking at the diff"));
+    }
+
+    #[test]
     fn validate_commit_message_rejects_commit_guidance_meta_subject() {
         let result = validate_commit_message(
             "chore: inspect commit message guidance",
@@ -11670,14 +11834,13 @@ Body
         let first = CommitMessageResponse {
             message: "fix: first".into(),
         };
-        let empty = CommitMessageResponse {
-            message: "".into(),
-        };
-        assert_eq!(pick_fallback_commit_message(first, empty).message, "fix: first");
+        let empty = CommitMessageResponse { message: "".into() };
+        assert_eq!(
+            pick_fallback_commit_message(first, empty).message,
+            "fix: first"
+        );
 
-        let empty1 = CommitMessageResponse {
-            message: "".into(),
-        };
+        let empty1 = CommitMessageResponse { message: "".into() };
         let empty2 = CommitMessageResponse {
             message: "   ".into(),
         };
@@ -11699,12 +11862,13 @@ Body
     }
 
     #[test]
-    fn test_build_claude_structured_output_args_uses_two_turns_and_plan_mode() {
+    fn test_build_claude_structured_output_args_includes_default_tools_without_plan_mode() {
         let args = build_claude_structured_output_args("sonnet", "none", REVIEW_SCHEMA);
 
-        assert!(args.windows(2).any(|w| w == ["--max-turns", "2"]));
-        assert!(args.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(args.windows(2).any(|w| w == ["--max-turns", "3"]));
+        assert!(!args.iter().any(|arg| arg == "--permission-mode"));
         assert!(args.windows(2).any(|w| w == ["--tools", "none"]));
+        assert!(args.windows(2).any(|w| w == ["--tools", "default"]));
         assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
         assert!(args
             .windows(2)

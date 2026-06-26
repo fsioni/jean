@@ -68,13 +68,13 @@ export function WorktreeContextMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        {isNativeApp() && runScripts.length === 1 && (
+        {runScripts.length === 1 && (
           <ContextMenuItem onClick={handleRun}>
             <Play className="mr-2 h-4 w-4" />
             Run
           </ContextMenuItem>
         )}
-        {isNativeApp() && runScripts.length > 1 && (
+        {runScripts.length > 1 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger>
               <Play className="mr-2 h-4 w-4" />

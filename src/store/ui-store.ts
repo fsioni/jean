@@ -9,6 +9,7 @@ export type PreferencePane =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
   | 'github'
   | 'coderabbit'
   | 'appearance'
@@ -26,7 +27,6 @@ export type PreferencePane =
 export type OnboardingStartStep = 'claude' | 'gh' | null
 
 export type WorktreePrimarySurface = 'chat' | 'terminal'
-
 export type NewSessionModeOrigin = 'chat' | 'modal' | 'canvas'
 export type NewSessionModeIntent = 'picker' | 'default'
 
@@ -45,6 +45,7 @@ export type CliUpdateModalType =
   | 'pi'
   | 'coderabbit'
   | 'commandcode'
+  | 'grok'
   | null
 
 export type CliLoginModalType =
@@ -55,6 +56,7 @@ export type CliLoginModalType =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
   | 'coderabbit'
   | null
 
@@ -506,7 +508,10 @@ export const useUIStore = create<UIState>()(
 
       setReleaseNotesModalOpen: open =>
         set(
-          { releaseNotesModalOpen: open },
+          state =>
+            state.releaseNotesModalOpen === open
+              ? state
+              : { releaseNotesModalOpen: open },
           undefined,
           'setReleaseNotesModalOpen'
         ),

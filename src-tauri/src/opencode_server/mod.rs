@@ -9,7 +9,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 use crate::opencode_cli::resolve_cli_binary;
-use crate::platform::silent_command;
 
 const DEFAULT_PORT: u16 = 4096;
 const DEFAULT_HOSTNAME: &str = "127.0.0.1";
@@ -199,7 +198,7 @@ pub fn ensure_running(app: &AppHandle) -> Result<String, String> {
         ));
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.arg("serve")
         .arg("--hostname")
         .arg(&hostname)

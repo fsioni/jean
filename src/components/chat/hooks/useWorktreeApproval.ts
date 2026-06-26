@@ -30,6 +30,7 @@ import {
   extractTextFilePaths,
 } from '../message-content-utils'
 import { navigateToApprovedWorktree } from '../worktree-approval-navigation'
+import type { CliBackend } from '@/types/preferences'
 
 const THINKING_LEVEL_VALUES = new Set<ThinkingLevel>([
   'off',
@@ -65,14 +66,7 @@ function mapCodexReasoningToEffort(
 }
 
 function getDefaultModelForBackend(
-  backend:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
-    | undefined,
+  backend: CliBackend | undefined,
   preferences:
     | {
         selected_model?: string | null
@@ -81,6 +75,7 @@ function getDefaultModelForBackend(
         selected_cursor_model?: string | null
         selected_pi_model?: string | null
         selected_commandcode_model?: string | null
+        selected_grok_model?: string | null
       }
     | undefined
 ): string {
@@ -98,6 +93,9 @@ function getDefaultModelForBackend(
   }
   if (backend === 'commandcode') {
     return preferences?.selected_commandcode_model ?? 'commandcode/default'
+  }
+  if (backend === 'grok') {
+    return preferences?.selected_grok_model ?? 'grok/grok-composer-2.5-fast'
   }
   return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
 }
@@ -458,6 +456,7 @@ export function useWorktreeApproval({
             | 'pi'
             | 'commandcode'
         )
+        chatStore.setSelectedBackend(newSession.id, backend as CliBackend)
       }
 
       queryClient.setQueryData<Session>(

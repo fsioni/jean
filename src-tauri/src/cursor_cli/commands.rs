@@ -7,7 +7,6 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use super::config::resolve_cli_binary;
-use crate::platform::silent_command;
 
 const AUTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -254,7 +253,10 @@ pub async fn check_cursor_cli_installed(app: AppHandle) -> Result<CursorCliStatu
         });
     }
 
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => parse_version(&output.stdout),
         Ok(output) => {
             log::warn!(

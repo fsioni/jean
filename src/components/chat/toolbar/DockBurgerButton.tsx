@@ -33,6 +33,7 @@ import {
   useCodexUsage,
 } from '@/services/codex-cli'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
+import type { CliBackend } from '@/types/preferences'
 
 interface DockBurgerButtonProps {
   /** Number of enabled MCP servers; shown as a badge next to the MCP item. */
@@ -69,13 +70,7 @@ export function DockBurgerButton({
 
   const activeBackend = (selectedBackend ??
     preferences?.default_backend ??
-    'claude') as
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+    'claude') as CliBackend
 
   const codexStatus = useCodexCliStatus()
   const codexAuth = useCodexCliAuth({

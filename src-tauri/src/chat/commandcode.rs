@@ -6,7 +6,6 @@
 
 use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
-use crate::platform::silent_command;
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
@@ -190,8 +189,8 @@ pub fn execute_commandcode_headless(
         model
     );
 
-    let mut command = silent_command(&binary_path);
-    command.current_dir(working_dir);
+    let mut command =
+        crate::platform::cli_command(&binary_path.to_string_lossy(), Some(working_dir));
     command
         .arg("-p")
         .arg("--trust")
@@ -419,10 +418,8 @@ pub fn execute_one_shot_commandcode(
         prompt.len(),
         model
     );
-    let mut command = silent_command(&binary_path);
-    if let Some(dir) = working_dir {
-        command.current_dir(dir);
-    }
+    let cwd = working_dir.map(Path::new);
+    let mut command = crate::platform::cli_command(&binary_path.to_string_lossy(), cwd);
     command
         .arg("-p")
         .arg("--trust")

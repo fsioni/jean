@@ -1,4 +1,5 @@
 import { createRef } from 'react'
+import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@/test/test-utils'
 import { CompactMessageList } from './CompactMessageList'
@@ -41,7 +42,10 @@ function message(
   }
 }
 
-function renderCompact(messages: ChatMessage[]) {
+function renderCompact(
+  messages: ChatMessage[],
+  props: Partial<ComponentProps<typeof CompactMessageList>> = {}
+) {
   return render(
     <CompactMessageList
       messages={messages}
@@ -62,6 +66,7 @@ function renderCompact(messages: ChatMessage[]) {
       getSubmittedAnswers={vi.fn(() => undefined)}
       areQuestionsSkipped={vi.fn(() => false)}
       isFindingFixed={vi.fn(() => false)}
+      {...props}
     />
   )
 }
@@ -126,6 +131,98 @@ describe('CompactMessageList', () => {
     expect(activityCard).not.toContainElement(cancelledMarker)
   })
 
+  it('keeps cancelled intermediate assistant text inside the collapsed activity row', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'reset the env'),
+      message(
+        'assistant-1',
+        'assistant',
+        104,
+        'Starting reset.Polling VM.Final partial status.',
+        {
+          cancelled: true,
+          tool_calls: [
+            {
+              id: 'tool-1',
+              name: 'Bash',
+              input: { command: 'rtk ./scripts/dev.sh fresh' },
+              output: 'running',
+            },
+            {
+              id: 'tool-2',
+              name: 'Bash',
+              input: { command: 'rtk limactl list' },
+              output: 'running',
+            },
+          ],
+          content_blocks: [
+            { type: 'text', text: 'Starting reset.' },
+            { type: 'tool_use', tool_call_id: 'tool-1' },
+            { type: 'text', text: 'Polling VM.' },
+            { type: 'tool_use', tool_call_id: 'tool-2' },
+            { type: 'text', text: 'Final partial status.' },
+          ],
+        }
+      ),
+    ])
+
+    const compactTrigger = screen.getByRole('button', {
+      name: /Final partial status/,
+    })
+
+    expect(compactTrigger).toBeVisible()
+    expect(screen.getByText('2 steps')).toBeVisible()
+    expect(screen.getByText('(cancelled)')).toBeVisible()
+    expect(screen.queryByText('Starting reset.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Polling VM.')).not.toBeInTheDocument()
+
+    fireEvent.click(compactTrigger)
+
+    expect(screen.getByText('Starting reset.')).toBeVisible()
+    expect(screen.getByText('Polling VM.')).toBeVisible()
+  })
+
+  it('surfaces only the latest text for non-cancelled compact activity groups', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'reset the env'),
+      message(
+        'assistant-1',
+        'assistant',
+        104,
+        'Starting reset.Polling VM.Final status.',
+        {
+          tool_calls: [
+            {
+              id: 'tool-1',
+              name: 'Bash',
+              input: { command: 'rtk ./scripts/dev.sh fresh' },
+              output: 'running',
+            },
+            {
+              id: 'tool-2',
+              name: 'Bash',
+              input: { command: 'rtk limactl list' },
+              output: 'running',
+            },
+          ],
+          content_blocks: [
+            { type: 'text', text: 'Starting reset.' },
+            { type: 'tool_use', tool_call_id: 'tool-1' },
+            { type: 'text', text: 'Polling VM.' },
+            { type: 'tool_use', tool_call_id: 'tool-2' },
+            { type: 'text', text: 'Final status.' },
+          ],
+        }
+      ),
+    ])
+
+    expect(screen.getAllByText('Final status.').length).toBeGreaterThanOrEqual(
+      1
+    )
+    expect(screen.queryByText('Starting reset.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Polling VM.')).not.toBeInTheDocument()
+  })
+
   it('surfaces steered user prompts as separate visible rows', () => {
     renderCompact([
       message('user-1', 'user', 100, 'do the work'),
@@ -150,6 +247,25 @@ describe('CompactMessageList', () => {
     expect(screen.getByText('also check the tests')).toBeVisible()
     // Activity after the steer renders after the bubble (pure text segment)
     expect(screen.getByText('Done')).toBeVisible()
+  })
+
+  it('renders steered prompts with the same attachment UI as normal user prompts', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'do the work'),
+      message('assistant-1', 'assistant', 104, 'Done', {
+        content_blocks: [
+          {
+            type: 'user_input',
+            text: 'check this\n\n[Image attached: /tmp/screenshot.png - Use the Read tool to view this image]',
+          },
+          { type: 'text', text: 'Done' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByText('check this')).toBeVisible()
+    expect(screen.getByAltText('Attached image 1')).toBeVisible()
+    expect(screen.queryByText(/Image attached:/)).not.toBeInTheDocument()
   })
 
   it('keeps steered prompts in chronological order around activity', () => {
@@ -177,11 +293,11 @@ describe('CompactMessageList', () => {
     const isIt = screen.getByText('is it?')
     const activity = screen.getAllByText('All received')[0]
 
-    // Consecutive steered prompts render inside ONE connected group card
+    // Consecutive steered prompts render inside ONE connected group card.
     expect(whatsup.closest('.divide-y')).toBe(isIt.closest('.divide-y'))
     expect(whatsup.closest('.divide-y')).not.toBeNull()
 
-    // Steered prompts come BEFORE the activity that followed them
+    // Steered prompts come BEFORE the activity that followed them.
     expect(
       whatsup.compareDocumentPosition(isIt) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -190,5 +306,42 @@ describe('CompactMessageList', () => {
         isIt.compareDocumentPosition(activity) &
           Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('copies each steered prompt', () => {
+    const onCopyToInput = vi.fn()
+
+    renderCompact(
+      [
+        message('user-1', 'user', 100, 'hello'),
+        message('assistant-1', 'assistant', 104, 'All received', {
+          content_blocks: [
+            { type: 'user_input', text: 'first queued prompt' },
+            { type: 'user_input', text: 'second queued prompt' },
+          ],
+        }),
+      ],
+      { onCopyToInput }
+    )
+
+    const copyButtons = screen.getAllByRole('button', {
+      name: 'Copy steered prompt',
+    })
+
+    expect(copyButtons).toHaveLength(2)
+
+    const secondCopyButton = copyButtons[1]
+    if (!secondCopyButton) {
+      throw new Error('Expected second copy button')
+    }
+    fireEvent.click(secondCopyButton)
+
+    expect(onCopyToInput).toHaveBeenCalledTimes(1)
+    expect(onCopyToInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        content: 'second queued prompt',
+      })
+    )
   })
 })

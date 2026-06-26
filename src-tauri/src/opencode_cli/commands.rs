@@ -5,6 +5,7 @@ use tauri::AppHandle;
 
 use super::config::{ensure_cli_dir, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 use crate::http_server::EmitExt;
+#[cfg(target_os = "macos")]
 use crate::platform::silent_command;
 
 /// GitHub owner/repo for OpenCode releases.
@@ -205,7 +206,10 @@ pub async fn check_opencode_cli_installed(app: AppHandle) -> Result<OpenCodeCliS
         });
     }
 
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let cleaned = version_str

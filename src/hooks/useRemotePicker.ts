@@ -2,6 +2,10 @@ import { useCallback } from 'react'
 import { useUIStore } from '@/store/ui-store'
 import { getGitRemotes } from '@/services/git-status'
 
+export function pushNeedsRemotePicker(prNumber?: number | null) {
+  return prNumber == null
+}
+
 /**
  * Returns a function that checks remote count before executing an action.
  * - 0 remotes: calls action with "origin" (let git handle the error)

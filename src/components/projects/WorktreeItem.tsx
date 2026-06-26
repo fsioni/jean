@@ -12,6 +12,7 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useRenameWorktree } from '@/services/projects'
@@ -92,6 +93,7 @@ export function WorktreeItem({
   const unpushedCount =
     gitStatus?.unpushed_count ?? worktree.cached_unpushed_count ?? 0
   const pushCount = unpushedCount
+  const pickRemoteOrRun = useRemotePicker(worktree.path)
 
   // Uncommitted changes (working directory)
   const uncommittedAdded =
@@ -502,25 +504,38 @@ export function WorktreeItem({
   )
 
   const handlePush = useCallback(
-    async (e: React.MouseEvent) => {
+    (e: React.MouseEvent) => {
       e.stopPropagation()
-      const opToast = dismissibleToast.loading('Pushing changes...')
-      try {
-        const result = await gitPush(worktree.path, worktree.pr_number)
-        triggerImmediateGitPoll()
-        fetchWorktreesStatus(projectId)
-        if (result.fellBack) {
-          opToast.warning(
-            'Could not push to PR branch, pushed to new branch instead'
+
+      const runPush = async (remote?: string) => {
+        const opToast = dismissibleToast.loading('Pushing changes...')
+        try {
+          const result = await gitPush(
+            worktree.path,
+            worktree.pr_number,
+            remote
           )
-        } else {
-          opToast.success('Changes pushed')
+          triggerImmediateGitPoll()
+          fetchWorktreesStatus(projectId)
+          if (result.fellBack) {
+            opToast.warning(
+              'Could not push to PR branch, pushed to new branch instead'
+            )
+          } else {
+            opToast.success('Changes pushed')
+          }
+        } catch (error) {
+          opToast.error(`Push failed: ${error}`)
         }
-      } catch (error) {
-        opToast.error(`Push failed: ${error}`)
+      }
+
+      if (pushNeedsRemotePicker(worktree.pr_number)) {
+        pickRemoteOrRun(runPush)
+      } else {
+        runPush()
       }
     },
-    [worktree.path, worktree.pr_number, projectId]
+    [pickRemoteOrRun, worktree.path, worktree.pr_number, projectId]
   )
 
   return (

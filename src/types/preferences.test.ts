@@ -14,6 +14,14 @@ describe('magic prompt preference resolvers', () => {
     expect(defaultPreferences.commandcode_cli_source).toBe('jean')
   })
 
+  it('uses Jean-managed Grok CLI by default', () => {
+    expect(defaultPreferences.grok_cli_source).toBe('jean')
+  })
+
+  it('keeps automatic recaps on by default', () => {
+    expect(defaultPreferences.auto_recaps_enabled).toBe(true)
+  })
+
   it('prefers explicit backend overrides', () => {
     expect(
       resolveMagicPromptBackend(

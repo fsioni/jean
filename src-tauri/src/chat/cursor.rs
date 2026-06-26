@@ -2,7 +2,6 @@
 
 use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
-use crate::platform::silent_command;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
@@ -1068,7 +1067,7 @@ pub fn execute_cursor(
     let enabled_mcp_names = parse_enabled_mcp_names(mcp_config);
     crate::cursor_cli::mcp::sync_cursor_mcp_approvals(app, working_dir, &enabled_mcp_names)?;
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.arg("--print")
         .args(["--output-format", "stream-json"])
         .arg("--trust")
@@ -1214,7 +1213,7 @@ pub fn execute_one_shot_cursor(
     }
 
     let dir = working_dir.unwrap_or_else(|| Path::new("."));
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.arg("--print")
         .args(["--output-format", "stream-json"])
         .arg("--trust")

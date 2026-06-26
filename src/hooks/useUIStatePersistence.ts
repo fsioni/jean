@@ -4,10 +4,15 @@ import { useProjects } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
-import { useTerminalStore } from '@/store/terminal-store'
+import {
+  isPanelTerminal,
+  useTerminalStore,
+  type TerminalInstance,
+} from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { browserBackend } from '@/hooks/useBrowserPane'
 import { isNativeApp } from '@/lib/environment'
+import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import type { BrowserTab } from '@/types/browser'
 import type { UIState } from '@/types/ui-state'
@@ -87,13 +92,40 @@ export function useUIStatePersistence() {
       dashboardWorktreeCollapseOverrides,
       projectCanvasSettings,
     } = useProjectsStore.getState()
-    const { leftSidebarSize, leftSidebarVisible } = useUIStore.getState()
     const {
+      leftSidebarSize,
+      leftSidebarVisible,
+      sessionTerminalIds,
+      sessionPrimarySurface,
+    } = useUIStore.getState()
+    const {
+      terminals,
+      activeTerminalIds,
+      terminalPanelOpen,
+      terminalVisible,
+      terminalHeight,
       modalTerminalOpen,
       modalTerminalDockMode,
       modalTerminalWidth,
       modalTerminalHeight,
     } = useTerminalStore.getState()
+    const shouldPersistTerminalRuntime = !isNativeApp()
+    const terminalInstancesForPersist = shouldPersistTerminalRuntime
+      ? Object.fromEntries(
+          Object.entries(terminals)
+            .map(([worktreeId, list]) => [
+              worktreeId,
+              list.map(terminal => ({
+                id: terminal.id,
+                command: terminal.command,
+                command_args: terminal.commandArgs ?? null,
+                label: terminal.label,
+                kind: terminal.kind ?? 'panel',
+              })),
+            ])
+            .filter(([, list]) => (list as unknown[]).length > 0)
+        )
+      : {}
     const browserState = useBrowserStore.getState()
     const browserTabsForPersist = Object.fromEntries(
       Object.entries(browserState.tabs).map(([wid, list]) => [
@@ -119,6 +151,22 @@ export function useUIStatePersistence() {
       modal_terminal_dock_mode: modalTerminalDockMode,
       modal_terminal_width: modalTerminalWidth,
       modal_terminal_height: modalTerminalHeight,
+      // Terminal runtime state (web access only; native app restart must not auto-spawn old shells)
+      terminal_instances: terminalInstancesForPersist,
+      terminal_active_ids: shouldPersistTerminalRuntime
+        ? activeTerminalIds
+        : {},
+      terminal_panel_open: shouldPersistTerminalRuntime
+        ? terminalPanelOpen
+        : {},
+      terminal_visible: shouldPersistTerminalRuntime ? terminalVisible : false,
+      terminal_height: shouldPersistTerminalRuntime ? terminalHeight : 30,
+      session_terminal_ids: shouldPersistTerminalRuntime
+        ? sessionTerminalIds
+        : {},
+      session_primary_surface: shouldPersistTerminalRuntime
+        ? sessionPrimarySurface
+        : {},
       // Browser pane state (per-worktree tabs + 3-surface visibility)
       browser_tabs: browserTabsForPersist,
       browser_active_tab_ids: browserState.activeTabIds,
@@ -335,6 +383,249 @@ export function useUIStatePersistence() {
       })
     }
 
+    const restoreTerminalRuntimeState = async (shouldCancel: () => boolean) => {
+      if (isNativeApp() || shouldCancel()) return
+
+      // PHASE 1: Always restore the *user-intent* UI flags for terminal
+      // surfaces. These are independent of whether any PTYs survived the
+      // previous session — the user expects "I had the panel open" to
+      // persist across refresh even if every shell exited. This must run
+      // before the early-return below so a refresh with zero persisted
+      // terminal instances still restores panel position.
+      const persistedPanelOpen = uiState.terminal_panel_open ?? {}
+      const persistedModalOpen = uiState.modal_terminal_open ?? {}
+      if (shouldCancel()) return
+      useTerminalStore.setState(state => ({
+        terminalPanelOpen: {
+          ...state.terminalPanelOpen,
+          ...persistedPanelOpen,
+        },
+        modalTerminalOpen: {
+          ...state.modalTerminalOpen,
+          ...persistedModalOpen,
+        },
+        terminalVisible: uiState.terminal_visible ?? state.terminalVisible,
+        terminalHeight: uiState.terminal_height ?? state.terminalHeight,
+      }))
+
+      const persistedTerminals = uiState.terminal_instances ?? {}
+      const persistedSessionTerminalIds = uiState.session_terminal_ids ?? {}
+      const persistedSessionPrimarySurface =
+        uiState.session_primary_surface ?? {}
+      const hasPersistedTerminalState =
+        Object.keys(persistedTerminals).length > 0 ||
+        Object.keys(persistedSessionTerminalIds).length > 0
+      if (!hasPersistedTerminalState) return
+
+      // PHASE 2: Restore terminal instances + session mappings. This
+      // requires the backend to confirm the PTYs are still alive; the
+      // race-condition fix in TerminalView guarantees no phantom
+      // `start_terminal` will fire while we wait for this query.
+      let liveTerminalIds = new Set<string>()
+      try {
+        liveTerminalIds = new Set(
+          await invoke<string[]>('get_active_terminals')
+        )
+        if (shouldCancel()) return
+      } catch (error) {
+        if (shouldCancel()) return
+        logger.warn('Failed to query active terminals during UI hydrate', {
+          error,
+        })
+        const fallbackTerminalIds = Object.values(persistedTerminals)
+          .flat()
+          .map(terminal => terminal.id)
+        if (fallbackTerminalIds.length === 0 || shouldCancel()) return
+
+        // If the liveness query fails transiently, keep persisted terminal
+        // metadata in the store instead of presenting an empty terminal list.
+        // TerminalView's auto-create effect runs after uiStateInitialized; an
+        // empty list there would spawn a duplicate PTY while the original may
+        // still be alive on the backend.
+        liveTerminalIds = new Set(fallbackTerminalIds)
+      }
+
+      if (shouldCancel()) return
+
+      if (liveTerminalIds.size === 0) {
+        if (shouldCancel()) return
+        logger.debug('No live terminals to restore after web refresh', {
+          persistedTerminalCount: Object.values(persistedTerminals).reduce(
+            (sum, list) => sum + list.length,
+            0
+          ),
+          persistedSessionTerminalCount: Object.keys(
+            persistedSessionTerminalIds
+          ).length,
+        })
+        // Snapshot any xterm instances the frontend may have already created
+        // before hydrate completed (e.g. a phantom shell from TerminalView's
+        // auto-create mount effect) so we can dispose them below.
+        if (shouldCancel()) return
+        const staleInstanceIds: string[] = []
+        for (const list of Object.values(
+          useTerminalStore.getState().terminals
+        )) {
+          for (const t of list) staleInstanceIds.push(t.id)
+        }
+        if (shouldCancel()) return
+        useTerminalStore.setState({
+          terminals: {},
+          activeTerminalIds: {},
+          runningTerminals: new Set(),
+          failedTerminals: new Set(),
+          modalTerminalOpen: {},
+          terminalPanelOpen: {},
+          terminalVisible: false,
+        })
+        // Clear any persisted session-terminal mappings — those PTYs are dead.
+        // Drop both `sessionTerminalIds[sessionId]` and `sessionPrimarySurface`
+        // for affected sessions so the UI falls back to the chat surface.
+        if (Object.keys(persistedSessionTerminalIds).length > 0) {
+          const deadSessionIds = new Set(
+            Object.keys(persistedSessionTerminalIds)
+          )
+          if (shouldCancel()) return
+          useUIStore.setState(state => {
+            const nextSessionTerminalIds: Record<string, string> = {}
+            for (const [sid, tid] of Object.entries(state.sessionTerminalIds)) {
+              if (!deadSessionIds.has(sid)) nextSessionTerminalIds[sid] = tid
+            }
+            const nextSessionPrimarySurface: Record<
+              string,
+              'chat' | 'terminal'
+            > = {}
+            for (const [sid, surface] of Object.entries(
+              state.sessionPrimarySurface
+            )) {
+              if (!deadSessionIds.has(sid)) {
+                nextSessionPrimarySurface[sid] = surface
+              }
+            }
+            return {
+              sessionTerminalIds: nextSessionTerminalIds,
+              sessionPrimarySurface: nextSessionPrimarySurface,
+            }
+          })
+        }
+        // Dispose frontend xterm instances + drop their buffered input/output.
+        // Dynamic import to avoid a circular dep with terminal-instances.ts.
+        if (shouldCancel()) return
+        const { disposeTerminal } = await import('@/lib/terminal-instances')
+        if (shouldCancel()) return
+        for (const id of staleInstanceIds) {
+          if (shouldCancel()) return
+          await disposeTerminal(id).catch(() => undefined)
+        }
+        return
+      }
+
+      if (shouldCancel()) return
+
+      const restoredTerminals: Record<string, TerminalInstance[]> = {}
+      const restoredActiveIds: Record<string, string> = {}
+      const restoredPanelOpen: Record<string, boolean> = {}
+      const restoredSessionTerminalIds: Record<string, string> = {}
+      const restoredSessionPrimarySurface: Record<string, 'chat' | 'terminal'> =
+        {}
+      const restoredModalOpen = {
+        ...useTerminalStore.getState().modalTerminalOpen,
+      }
+
+      for (const [worktreeId, list] of Object.entries(persistedTerminals)) {
+        const liveList = list
+          .filter(terminal => liveTerminalIds.has(terminal.id))
+          .map(terminal => ({
+            id: terminal.id,
+            worktreeId,
+            command: terminal.command ?? null,
+            commandArgs: terminal.command_args ?? null,
+            label: terminal.label,
+            kind: terminal.kind ?? 'panel',
+          })) satisfies TerminalInstance[]
+
+        if (liveList.length === 0) {
+          restoredModalOpen[worktreeId] = false
+          continue
+        }
+
+        restoredTerminals[worktreeId] = liveList
+        const livePanelIds = liveList.filter(isPanelTerminal).map(t => t.id)
+        const persistedActiveId = uiState.terminal_active_ids?.[worktreeId]
+        if (persistedActiveId && livePanelIds.includes(persistedActiveId)) {
+          restoredActiveIds[worktreeId] = persistedActiveId
+        } else if (livePanelIds[0]) {
+          restoredActiveIds[worktreeId] = livePanelIds[0]
+        }
+
+        if (
+          (uiState.terminal_panel_open?.[worktreeId] ?? false) &&
+          livePanelIds.length > 0
+        ) {
+          restoredPanelOpen[worktreeId] = true
+        }
+      }
+
+      const restoredTerminalIds = new Set(
+        Object.values(restoredTerminals)
+          .flat()
+          .map(terminal => terminal.id)
+      )
+      for (const [sessionId, terminalId] of Object.entries(
+        persistedSessionTerminalIds
+      )) {
+        if (!restoredTerminalIds.has(terminalId)) continue
+        restoredSessionTerminalIds[sessionId] = terminalId
+        const surface = persistedSessionPrimarySurface[sessionId]
+        if (surface === 'terminal' || surface === 'chat') {
+          restoredSessionPrimarySurface[sessionId] = surface
+        } else {
+          restoredSessionPrimarySurface[sessionId] = 'terminal'
+        }
+      }
+
+      if (Object.keys(restoredTerminals).length === 0) {
+        if (shouldCancel()) return
+        useTerminalStore.setState({
+          modalTerminalOpen: restoredModalOpen,
+          terminalPanelOpen: {},
+        })
+        return
+      }
+
+      if (shouldCancel()) return
+
+      logger.info('Restoring live terminal metadata after web refresh', {
+        worktreeCount: Object.keys(restoredTerminals).length,
+        terminalCount: restoredTerminalIds.size,
+      })
+
+      if (shouldCancel()) return
+      useTerminalStore.setState(state => ({
+        terminals: restoredTerminals,
+        activeTerminalIds: restoredActiveIds,
+        runningTerminals: new Set(restoredTerminalIds),
+        terminalPanelOpen: restoredPanelOpen,
+        terminalVisible: uiState.terminal_visible ?? state.terminalVisible,
+        terminalHeight: uiState.terminal_height ?? state.terminalHeight,
+        modalTerminalOpen: restoredModalOpen,
+      }))
+
+      if (Object.keys(restoredSessionTerminalIds).length > 0) {
+        if (shouldCancel()) return
+        useUIStore.setState(state => ({
+          sessionTerminalIds: {
+            ...state.sessionTerminalIds,
+            ...restoredSessionTerminalIds,
+          },
+          sessionPrimarySurface: {
+            ...state.sessionPrimarySurface,
+            ...restoredSessionPrimarySurface,
+          },
+        }))
+      }
+    }
+
     // Restore project access timestamps
     const projectAccessTimestamps = uiState.project_access_timestamps ?? {}
     if (Object.keys(projectAccessTimestamps).length > 0) {
@@ -502,11 +793,20 @@ export function useUIStatePersistence() {
       useChatStore.setState({ lastOpenedPerProject: converted })
     }
 
-    queueMicrotask(() => {
-      setIsInitialized(true)
-      useUIStore.getState().setUIStateInitialized(true)
+    let cancelled = false
+    void restoreTerminalRuntimeState(() => cancelled).finally(() => {
+      if (cancelled) return
+      queueMicrotask(() => {
+        if (cancelled) return
+        setIsInitialized(true)
+        useUIStore.getState().setUIStateInitialized(true)
+      })
+      logger.info('UI state initialization complete')
     })
-    logger.info('UI state initialization complete')
+
+    return () => {
+      cancelled = true
+    }
   }, [uiStateLoaded, uiState, projects, projectsLoaded, isInitialized])
 
   // Step 2: Subscribe to store changes and save (debounced)
@@ -526,12 +826,19 @@ export function useUIStatePersistence() {
       useProjectsStore.getState().projectCanvasSettings
     let prevLeftSidebarSize = useUIStore.getState().leftSidebarSize
     let prevLeftSidebarVisible = useUIStore.getState().leftSidebarVisible
+    let prevSessionTerminalIds = useUIStore.getState().sessionTerminalIds
+    let prevSessionPrimarySurface = useUIStore.getState().sessionPrimarySurface
     let prevWorktreeId = useChatStore.getState().activeWorktreeId
     let prevWorktreePath = useChatStore.getState().activeWorktreePath
     let prevLastActiveWorktreeId = useChatStore.getState().lastActiveWorktreeId
     let prevActiveSessionIds = useChatStore.getState().activeSessionIds
     let prevReviewSidebarVisible = useChatStore.getState().reviewSidebarVisible
     let prevLastOpenedPerProject = useChatStore.getState().lastOpenedPerProject
+    let prevTerminalInstances = useTerminalStore.getState().terminals
+    let prevTerminalActiveIds = useTerminalStore.getState().activeTerminalIds
+    let prevTerminalPanelOpen = useTerminalStore.getState().terminalPanelOpen
+    let prevTerminalVisible = useTerminalStore.getState().terminalVisible
+    let prevTerminalHeight = useTerminalStore.getState().terminalHeight
     let prevModalTerminalOpen = useTerminalStore.getState().modalTerminalOpen
     let prevModalTerminalDockMode =
       useTerminalStore.getState().modalTerminalDockMode
@@ -586,15 +893,26 @@ export function useUIStatePersistence() {
       }
     })
 
-    // Subscribe to ui-store changes (sidebar size and visibility)
+    // Subscribe to ui-store changes (sidebar size/visibility and session terminal mapping)
     const unsubUI = useUIStore.subscribe(state => {
       const sizeChanged = state.leftSidebarSize !== prevLeftSidebarSize
       const visibilityChanged =
         state.leftSidebarVisible !== prevLeftSidebarVisible
+      const sessionTerminalIdsChanged =
+        state.sessionTerminalIds !== prevSessionTerminalIds
+      const sessionPrimarySurfaceChanged =
+        state.sessionPrimarySurface !== prevSessionPrimarySurface
 
-      if (sizeChanged || visibilityChanged) {
+      if (
+        sizeChanged ||
+        visibilityChanged ||
+        sessionTerminalIdsChanged ||
+        sessionPrimarySurfaceChanged
+      ) {
         prevLeftSidebarSize = state.leftSidebarSize
         prevLeftSidebarVisible = state.leftSidebarVisible
+        prevSessionTerminalIds = state.sessionTerminalIds
+        prevSessionPrimarySurface = state.sessionPrimarySurface
         const currentState = getCurrentUIState()
         debouncedSaveRef.current?.(currentState)
       }
@@ -631,8 +949,14 @@ export function useUIStatePersistence() {
       }
     })
 
-    // Subscribe to terminal-store changes (modal terminal drawer state)
+    // Subscribe to terminal-store changes (terminal tabs + modal drawer state)
     const unsubTerminal = useTerminalStore.subscribe(state => {
+      const terminalsChanged = state.terminals !== prevTerminalInstances
+      const activeIdsChanged = state.activeTerminalIds !== prevTerminalActiveIds
+      const panelOpenChanged = state.terminalPanelOpen !== prevTerminalPanelOpen
+      const terminalVisibleChanged =
+        state.terminalVisible !== prevTerminalVisible
+      const terminalHeightChanged = state.terminalHeight !== prevTerminalHeight
       const openChanged = state.modalTerminalOpen !== prevModalTerminalOpen
       const dockModeChanged =
         state.modalTerminalDockMode !== prevModalTerminalDockMode
@@ -640,7 +964,22 @@ export function useUIStatePersistence() {
       const heightChanged =
         state.modalTerminalHeight !== prevModalTerminalHeight
 
-      if (openChanged || dockModeChanged || widthChanged || heightChanged) {
+      if (
+        terminalsChanged ||
+        activeIdsChanged ||
+        panelOpenChanged ||
+        terminalVisibleChanged ||
+        terminalHeightChanged ||
+        openChanged ||
+        dockModeChanged ||
+        widthChanged ||
+        heightChanged
+      ) {
+        prevTerminalInstances = state.terminals
+        prevTerminalActiveIds = state.activeTerminalIds
+        prevTerminalPanelOpen = state.terminalPanelOpen
+        prevTerminalVisible = state.terminalVisible
+        prevTerminalHeight = state.terminalHeight
         prevModalTerminalOpen = state.modalTerminalOpen
         prevModalTerminalDockMode = state.modalTerminalDockMode
         prevModalTerminalWidth = state.modalTerminalWidth

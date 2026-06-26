@@ -160,6 +160,100 @@ pub fn wsl_aware_command(program: &str, cwd: Option<&std::path::Path>) -> Comman
     cmd
 }
 
+fn is_windows_batch_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliLaunchPlan {
+    program: String,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
+}
+
+fn cli_launch_plan(
+    program: &str,
+    cwd: Option<&std::path::Path>,
+    is_windows: bool,
+    wsl_enabled: bool,
+    wsl_distro: &str,
+) -> CliLaunchPlan {
+    if is_windows && wsl_enabled {
+        let mut args = vec!["-d".to_string(), wsl_distro.to_string()];
+        if let Some(dir) = cwd {
+            args.extend(["--cd".to_string(), win_to_wsl_path(&dir.to_string_lossy())]);
+        }
+        args.extend(["--".to_string(), program.to_string()]);
+        return CliLaunchPlan {
+            program: "wsl.exe".to_string(),
+            args,
+            cwd: None,
+        };
+    }
+
+    if is_windows && is_windows_batch_file(program) {
+        return CliLaunchPlan {
+            program: "cmd.exe".to_string(),
+            args: vec!["/C".to_string(), program.to_string()],
+            cwd: cwd.map(std::path::Path::to_path_buf),
+        };
+    }
+
+    CliLaunchPlan {
+        program: program.to_string(),
+        args: Vec::new(),
+        cwd: cwd.map(std::path::Path::to_path_buf),
+    }
+}
+
+/// Create a Command for a resolved CLI path.
+///
+/// This routes Unix paths through WSL when WSL mode is enabled and wraps
+/// Windows `.cmd`/`.bat` npm shims in `cmd.exe /C`, because CreateProcessW
+/// cannot launch those scripts directly.
+pub fn cli_command(program: &str, cwd: Option<&std::path::Path>) -> Command {
+    let config = get_wsl_config();
+    let plan = cli_launch_plan(program, cwd, cfg!(windows), config.enabled, &config.distro);
+    let mut cmd = silent_command(plan.program);
+    cmd.args(plan.args);
+    if let Some(dir) = plan.cwd {
+        cmd.current_dir(dir);
+    }
+    cmd
+}
+
+/// True when `path` is a Unix-style absolute path that only exists inside WSL.
+pub fn is_wsl_unix_path(path: &std::path::Path) -> bool {
+    path.to_string_lossy().starts_with('/')
+}
+
+/// Check whether a resolved CLI path/tool is available in the current execution
+/// context. In WSL mode, Unix paths must be checked inside the distro instead
+/// of with Windows filesystem APIs.
+pub fn resolved_cli_exists(path: &std::path::Path) -> bool {
+    let config = get_wsl_config();
+    if cfg!(windows) && config.enabled {
+        let tool = path.to_string_lossy();
+        if tool.starts_with('/') {
+            return wsl_file_executable(&config.distro, &tool);
+        }
+        return check_wsl_tool(&config.distro, &tool);
+    }
+
+    path.exists()
+}
+
+/// Build a command for a resolved CLI path/tool in the current execution
+/// context. In WSL mode this routes through `wsl.exe --cd <cwd> -- <tool>`.
+pub fn resolved_cli_command(path: &std::path::Path, cwd: Option<&std::path::Path>) -> Command {
+    let program = path.to_string_lossy();
+    wsl_aware_command(&program, cwd)
+}
+
 /// Check if WSL is available on this system.
 #[cfg(windows)]
 pub fn is_wsl_available() -> bool {
@@ -558,6 +652,20 @@ mod tests {
     }
 
     #[test]
+    fn test_is_wsl_unix_path_detects_linux_absolute_path() {
+        assert!(is_wsl_unix_path(std::path::Path::new(
+            "/home/alice/.local/share/jean/gh-cli/gh"
+        )));
+    }
+
+    #[test]
+    fn test_is_wsl_unix_path_rejects_windows_path() {
+        assert!(!is_wsl_unix_path(std::path::Path::new(
+            r"C:\Users\alice\AppData\Roaming\jean\gh-cli\gh.exe"
+        )));
+    }
+
+    #[test]
     fn test_win_to_wsl_path_unc_wsl_dollar() {
         assert_eq!(win_to_wsl_path(r"\\wsl$\Ubuntu\home\user"), "/home/user");
     }
@@ -611,6 +719,73 @@ mod tests {
         assert!(program.contains("git"));
         assert!(!program.contains("wsl.exe"));
         assert_eq!(cmd.get_current_dir(), Some(cwd));
+    }
+
+    #[test]
+    fn cli_launch_plan_wraps_windows_cmd_shim() {
+        let plan = cli_launch_plan(
+            r"C:\Users\u\AppData\Roaming\npm\codex.cmd",
+            Some(std::path::Path::new(r"C:\tmp")),
+            true,
+            false,
+            "Ubuntu",
+        );
+
+        assert_eq!(plan.program, "cmd.exe");
+        assert_eq!(
+            plan.args,
+            vec!["/C", r"C:\Users\u\AppData\Roaming\npm\codex.cmd"]
+        );
+        assert_eq!(plan.cwd, Some(std::path::PathBuf::from(r"C:\tmp")));
+    }
+
+    #[test]
+    fn cli_launch_plan_wraps_windows_bat_shim() {
+        let plan = cli_launch_plan(r"C:\tools\run.bat", None, true, false, "Ubuntu");
+
+        assert_eq!(plan.program, "cmd.exe");
+        assert_eq!(plan.args, vec!["/C", r"C:\tools\run.bat"]);
+        assert_eq!(plan.cwd, None);
+    }
+
+    #[test]
+    fn cli_launch_plan_routes_windows_wsl_mode_through_wsl_exe() {
+        let plan = cli_launch_plan(
+            "/home/u/.local/bin/codex",
+            Some(std::path::Path::new(r"C:\Users\u\repo")),
+            true,
+            true,
+            "Ubuntu",
+        );
+
+        assert_eq!(plan.program, "wsl.exe");
+        assert_eq!(
+            plan.args,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/mnt/c/Users/u/repo",
+                "--",
+                "/home/u/.local/bin/codex"
+            ]
+        );
+        assert_eq!(plan.cwd, None);
+    }
+
+    #[test]
+    fn cli_launch_plan_uses_direct_binary_for_normal_host_exe() {
+        let plan = cli_launch_plan(
+            r"C:\tools\codex.exe",
+            Some(std::path::Path::new(r"C:\repo")),
+            true,
+            false,
+            "Ubuntu",
+        );
+
+        assert_eq!(plan.program, r"C:\tools\codex.exe");
+        assert!(plan.args.is_empty());
+        assert_eq!(plan.cwd, Some(std::path::PathBuf::from(r"C:\repo")));
     }
 
     #[test]

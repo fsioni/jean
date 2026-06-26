@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   codexModelOptions,
   getModelFastInfo,
@@ -46,6 +46,7 @@ interface CachedModelCatalog {
 interface FetchModelCatalogOptions {
   fetchImpl?: typeof fetch
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+  cacheBust?: boolean
 }
 
 export const modelCatalogQueryKeys = {
@@ -183,11 +184,23 @@ export function clearCachedModelCatalog(
   storage?.removeItem(MODEL_CATALOG_CACHE_KEY)
 }
 
-async function fetchWithTimeout(fetchImpl: typeof fetch): Promise<Response> {
+function getModelCatalogUrl(cacheBust: boolean): string {
+  if (!cacheBust) return MODEL_CATALOG_URL
+  const separator = MODEL_CATALOG_URL.includes('?') ? '&' : '?'
+  return `${MODEL_CATALOG_URL}${separator}t=${Date.now()}`
+}
+
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  cacheBust: boolean
+): Promise<Response> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), MODEL_CATALOG_TIMEOUT_MS)
   try {
-    return await fetchImpl(MODEL_CATALOG_URL, { signal: controller.signal })
+    return await fetchImpl(getModelCatalogUrl(cacheBust), {
+      signal: controller.signal,
+      cache: 'no-store',
+    })
   } finally {
     clearTimeout(timeout)
   }
@@ -196,9 +209,10 @@ async function fetchWithTimeout(fetchImpl: typeof fetch): Promise<Response> {
 export async function fetchModelCatalog({
   fetchImpl = fetch,
   storage = getDefaultStorage(),
+  cacheBust = false,
 }: FetchModelCatalogOptions = {}): Promise<ModelCatalog> {
   try {
-    const response = await fetchWithTimeout(fetchImpl)
+    const response = await fetchWithTimeout(fetchImpl, cacheBust)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const parsed = parseModelCatalog(await response.json())
     if (!parsed) throw new Error('Invalid model catalog')
@@ -209,6 +223,12 @@ export async function fetchModelCatalog({
   }
 }
 
+export function refreshModelCatalog(
+  options: Omit<FetchModelCatalogOptions, 'cacheBust'> = {}
+): Promise<ModelCatalog> {
+  return fetchModelCatalog({ ...options, cacheBust: true })
+}
+
 export function useModelCatalog() {
   return useQuery({
     queryKey: modelCatalogQueryKeys.all,
@@ -216,6 +236,17 @@ export function useModelCatalog() {
     staleTime: MODEL_CATALOG_REFRESH_MS,
     refetchInterval: MODEL_CATALOG_REFRESH_MS,
     refetchOnWindowFocus: false,
+  })
+}
+
+export function useRefreshModelCatalog() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => refreshModelCatalog(),
+    onSuccess: catalog => {
+      queryClient.setQueryData(modelCatalogQueryKeys.all, catalog)
+    },
   })
 }
 

@@ -20,6 +20,18 @@ function getExtension(filename: string): string {
   return filename.split('.').pop()?.toLowerCase() ?? ''
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  // Concatenate in chunks: `binary += fromCharCode(byte)` per byte is O(n²) and
+  // janks on multi-MB images; apply() over ~32KB slices keeps it linear.
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
 export type AttachmentFileKind = 'raster' | 'svg' | 'unsupported'
 
 export function classifyAttachmentFile(
@@ -112,13 +124,7 @@ export async function processAttachmentFile(
   })
 
   try {
-    const dataBuffer = await file.arrayBuffer()
-    const bytes = new Uint8Array(dataBuffer)
-    let binary = ''
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte)
-    }
-    const base64Data = btoa(binary)
+    const base64Data = await fileToBase64(file)
 
     const result = await invoke<SaveImageResponse>('save_pasted_image', {
       data: base64Data,
@@ -146,5 +152,60 @@ export async function processAttachmentFiles(
 ): Promise<void> {
   for (const file of files) {
     await processAttachmentFile(file, sessionId)
+  }
+}
+
+/**
+ * Save an image (or SVG) file to disk and return its absolute path, WITHOUT
+ * attaching it to any chat session. Used when a file is dropped onto a terminal
+ * so the saved path can be written into the pty. Returns null (and surfaces a
+ * toast) when the file is unsupported, too large, or fails to save.
+ */
+export async function saveImageFileToDisk(file: File): Promise<string | null> {
+  const kind = classifyAttachmentFile(file)
+
+  if (kind === 'unsupported') {
+    toast.error('Unsupported image type', {
+      description: 'Allowed types: PNG, JPEG, GIF, WebP, SVG',
+    })
+    return null
+  }
+
+  try {
+    if (kind === 'svg') {
+      if (file.size > MAX_TEXT_SIZE) {
+        toast.error('SVG too large', { description: 'Maximum size is 10MB' })
+        return null
+      }
+      const svgText = await file.text()
+      const result = await invoke<SaveTextResponse>('save_pasted_text', {
+        content: svgText,
+      })
+      return result.path
+    }
+
+    if (file.size > MAX_IMAGE_SIZE) {
+      toast.error('Image too large', { description: 'Maximum size is 10MB' })
+      return null
+    }
+
+    const mimeType = file.type || getImageMimeTypeFromFilename(file.name)
+    if (!mimeType) {
+      toast.error('Unsupported image type', {
+        description: 'Allowed types: PNG, JPEG, GIF, WebP, SVG',
+      })
+      return null
+    }
+
+    const base64Data = await fileToBase64(file)
+    const result = await invoke<SaveImageResponse>('save_pasted_image', {
+      data: base64Data,
+      mimeType,
+    })
+    return result.path
+  } catch (error) {
+    console.error('Failed to save dropped image:', error)
+    toast.error('Failed to save image', { description: String(error) })
+    return null
   }
 }

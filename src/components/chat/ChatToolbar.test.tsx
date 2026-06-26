@@ -116,10 +116,12 @@ describe('ChatToolbar pending questions', () => {
     expect(screen.getByRole('button', { name: /settings/i })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: /more actions/i }))
-    await user.click(screen.getByText('Magic'))
 
-    expect(onOpenMagicModal).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Magic')).not.toBeInTheDocument()
+    expect(screen.getByText('Save Context')).toBeInTheDocument()
+    expect(onOpenMagicModal).not.toHaveBeenCalled()
 
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: /settings/i }))
 
     expect(screen.getByText('Model')).toBeInTheDocument()
