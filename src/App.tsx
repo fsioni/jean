@@ -9,7 +9,8 @@ import {
   setWsDataReady,
   useWsAuthError,
   preloadInitialData,
-  refetchInitialData,
+  prefetchReconnectInitialData,
+  consumeReconnectInitialData,
   setAppDataDir,
   hasPreloadedData,
   listen,
@@ -43,6 +44,8 @@ import type { AppPreferences } from './types/preferences'
 import { useChatStore } from './store/chat-store'
 import { useProjectsStore } from './store/projects-store'
 import { useFontSettings } from './hooks/use-font-settings'
+import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigation'
+import { useLinuxFileDrop } from './hooks/useLinuxFileDrop'
 import { useZoom } from './hooks/use-zoom'
 import { useImmediateSessionStateSave } from './hooks/useImmediateSessionStateSave'
 import { useCliVersionCheck } from './hooks/useCliVersionCheck'
@@ -61,6 +64,7 @@ import {
 import { scheduleIdleWork } from './lib/idle'
 import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
+import { collectWorktreePaths } from './lib/initial-data-cache'
 import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 
 interface AutoFixStoppedEvent {
@@ -132,6 +136,14 @@ function App() {
   const featureTourOpen = useUIStore(state => state.featureTourOpen)
   const jeanMcpIntroOpen = useUIStore(state => state.jeanMcpIntroOpen)
   const hasStartedTransportRef = useRef(false)
+
+  // Prevent a stray file drop from navigating the webview to file:// (which
+  // would lock the whole window). Always-on catch-all for views without their
+  // own drop handler.
+  usePreventFileDropNavigation()
+
+  // Linux: route OS file drops (intercepted in Rust) to a terminal or the chat.
+  useLinuxFileDrop()
 
   // Holds the update object so the title bar indicator can trigger install later
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -243,13 +255,23 @@ function App() {
           )
         }
       }
+      const worktreePaths = collectWorktreePaths(data.worktreesByProject)
+      if (Object.keys(worktreePaths).length > 0) {
+        const currentState = useChatStore.getState()
+        useChatStore.setState({
+          worktreePaths: {
+            ...currentState.worktreePaths,
+            ...worktreePaths,
+          },
+        })
+      }
+
       // Seed sessions for each worktree (WorktreeSessions struct)
       // Also restore Zustand state for reviewing/waiting status
       if (data.sessionsByWorktree) {
         const reviewingUpdates: Record<string, boolean> = {}
         const waitingUpdates: Record<string, boolean> = {}
         const sessionMappings: Record<string, string> = {}
-        const worktreePaths: Record<string, string> = {}
 
         for (const [worktreeId, sessionsData] of Object.entries(
           data.sessionsByWorktree
@@ -279,17 +301,6 @@ function App() {
           }
         }
 
-        // Get worktree paths from worktreesByProject
-        if (data.worktreesByProject) {
-          for (const worktrees of Object.values(data.worktreesByProject)) {
-            for (const wt of worktrees as { id: string; path: string }[]) {
-              if (wt.id && wt.path) {
-                worktreePaths[wt.id] = wt.path
-              }
-            }
-          }
-        }
-
         // Update Zustand store with session state
         const currentState = useChatStore.getState()
         const storeUpdates: Partial<ReturnType<typeof useChatStore.getState>> =
@@ -299,12 +310,6 @@ function App() {
           storeUpdates.sessionWorktreeMap = {
             ...currentState.sessionWorktreeMap,
             ...sessionMappings,
-          }
-        }
-        if (Object.keys(worktreePaths).length > 0) {
-          storeUpdates.worktreePaths = {
-            ...currentState.worktreePaths,
-            ...worktreePaths,
           }
         }
         // Clear stale waiting/reviewing state for sessions actively running a turn.
@@ -496,6 +501,29 @@ function App() {
       // Seed UI state into cache
       if (data.uiState) {
         queryClient.setQueryData(['ui-state'], data.uiState)
+        const uiState = data.uiState as { active_project_id?: string | null }
+        const activeProjectId = uiState.active_project_id
+        if (activeProjectId) {
+          const { selectedProjectId, expandProject, selectProject } =
+            useProjectsStore.getState()
+          const { activeWorktreePath } = useChatStore.getState()
+          const projects = Array.isArray(data.projects) ? data.projects : []
+          const projectExists = projects.some(
+            project =>
+              typeof project === 'object' &&
+              project !== null &&
+              'id' in project &&
+              project.id === activeProjectId &&
+              (!('is_folder' in project) || !project.is_folder)
+          )
+          if (!selectedProjectId && !activeWorktreePath && projectExists) {
+            logger.info('Restoring active project from reconnect UI state', {
+              activeProjectId,
+            })
+            selectProject(activeProjectId)
+            expandProject(activeProjectId)
+          }
+        }
       }
       // Cache app data dir for browser-mode file URL conversion
       if (data.appDataDir) {
@@ -646,19 +674,28 @@ function App() {
   const wsDataReady = useWsDataReady()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
-    if (isNativeApp() || !wsConnected) return
+    if (isNativeApp()) return
+
+    if (!wsConnected) {
+      if (hadWsConnectionRef.current) {
+        const activeSessionIds = useChatStore.getState().activeSessionIds
+        const selectedProjectId = useProjectsStore.getState().selectedProjectId
+        void prefetchReconnectInitialData(activeSessionIds, selectedProjectId)
+      }
+      return
+    }
 
     const reconnected = hadWsConnectionRef.current
     hadWsConnectionRef.current = true
 
     if (reconnected) {
-      // Try to use the prefetch that was started during the backoff wait.
+      // Use the prefetch that was started during the backoff wait.
       // Falls back to a fresh fetch with the browser's active session IDs
       // so the server loads the correct sessions even when ui_state.json
       // on disk is stale (debounced save hasn't flushed yet).
       const activeSessionIds = useChatStore.getState().activeSessionIds
       const selectedProjectId = useProjectsStore.getState().selectedProjectId
-      const dataPromise = refetchInitialData(
+      const dataPromise = consumeReconnectInitialData(
         activeSessionIds,
         selectedProjectId
       )

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     setMagicModalOpen: vi.fn(),
+    setReleaseNotesModalMode: vi.fn(),
     selectWorktree: vi.fn(),
     invokeMock: vi.fn(),
     invalidateQueries: vi.fn(),
@@ -45,6 +46,7 @@ interface UiState {
   setUpdatePrModalOpen: ReturnType<typeof vi.fn>
   setReviewCommentsModalOpen: ReturnType<typeof vi.fn>
   setReleaseNotesModalOpen: ReturnType<typeof vi.fn>
+  setReleaseNotesModalMode: ReturnType<typeof vi.fn>
   setLinkedProjectsModalOpen: ReturnType<typeof vi.fn>
 }
 
@@ -70,6 +72,7 @@ vi.mock('@/store/ui-store', () => ({
         setUpdatePrModalOpen: vi.fn(),
         setReviewCommentsModalOpen: vi.fn(),
         setReleaseNotesModalOpen: vi.fn(),
+        setReleaseNotesModalMode: mocks.setReleaseNotesModalMode,
         setLinkedProjectsModalOpen: vi.fn(),
       }
       return selector ? selector(state) : state
@@ -79,6 +82,7 @@ vi.mock('@/store/ui-store', () => ({
         setUpdatePrModalOpen: vi.fn(),
         setReviewCommentsModalOpen: vi.fn(),
         setReleaseNotesModalOpen: vi.fn(),
+        setReleaseNotesModalMode: mocks.setReleaseNotesModalMode,
         setLinkedProjectsModalOpen: vi.fn(),
       }),
     }
@@ -422,6 +426,70 @@ describe('MagicModal manual PR link', () => {
     })
   })
 
+  it('uses the PR conflict flow from magic when local conflicts are not present yet', async () => {
+    const user = userEvent.setup()
+    mocks.worktree.pr_number = 31
+    mocks.worktree.pr_url = 'https://github.com/o/r/pull/31'
+    mocks.invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_merge_conflicts') {
+        return Promise.resolve({
+          has_conflicts: false,
+          conflicts: [],
+          conflict_diff: '',
+        })
+      }
+      if (command === 'fetch_and_merge_base') {
+        return Promise.resolve({
+          has_conflicts: true,
+          conflicts: ['src/pr-file.ts'],
+          conflict_diff: '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main',
+        })
+      }
+      if (command === 'create_session') {
+        return Promise.resolve({
+          id: 'pr-conflict-session',
+          name: 'PR: resolve conflicts',
+          order: 1,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+          backend: 'claude',
+        })
+      }
+      if (command === 'send_chat_message') {
+        return Promise.resolve({ id: 'message-1' })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    render(<MagicModal />)
+
+    await user.click(screen.getByRole('button', { name: /resolve conflicts/i }))
+    await user.click(
+      screen.getByRole('button', { name: /^resolve conflicts$/i })
+    )
+
+    await waitFor(() => {
+      expect(mocks.invokeMock).toHaveBeenCalledWith('fetch_and_merge_base', {
+        worktreeId: 'wt-1',
+      })
+      expect(mocks.invokeMock).toHaveBeenCalledWith(
+        'send_chat_message',
+        expect.objectContaining({
+          sessionId: 'pr-conflict-session',
+          executionMode: 'yolo',
+          backend: 'codex',
+        })
+      )
+    })
+    const sendCall = mocks.invokeMock.mock.calls.find(
+      call => call[0] === 'send_chat_message'
+    )
+    expect(sendCall?.[1].message).toContain(
+      'I merged `origin/main` into this branch to resolve PR conflicts'
+    )
+  })
+
   it('asks for confirmation before reverting the last commit from the magic option', async () => {
     const user = userEvent.setup()
     mocks.invokeMock.mockImplementation((command: string) => {
@@ -458,6 +526,16 @@ describe('MagicModal manual PR link', () => {
       'revert_last_local_commit',
       expect.anything()
     )
+  })
+
+  it('opens release post generation from the magic release section', async () => {
+    const user = userEvent.setup()
+    render(<MagicModal />)
+
+    await user.click(screen.getByRole('button', { name: /release post/i }))
+
+    expect(mocks.setReleaseNotesModalMode).toHaveBeenCalledWith('post')
+    expect(mocks.setMagicModalOpen).toHaveBeenCalledWith(false)
   })
 
   it('reverts the last commit only after confirmation', async () => {

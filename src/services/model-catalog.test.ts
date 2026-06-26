@@ -23,40 +23,46 @@ function createStorage() {
 }
 
 describe('model catalog', () => {
-  it('fetches the GitHub CDN catalog and caches it', async () => {
+  it('fetches the GitHub CDN catalog without HTTP cache and caches it', async () => {
     const storage = createStorage()
-    const fetchImpl = vi.fn(async (url: Parameters<typeof fetch>[0]) => {
-      expect(String(url)).toBe(MODEL_CATALOG_URL)
-      return new Response(
-        JSON.stringify({
-          version: 1,
-          updated_at: '2026-06-09T00:00:00Z',
-          defaults: { claude: 'claude-fable-5', codex: 'gpt-5.5' },
-          backends: {
-            claude: {
-              models: [
-                {
-                  id: 'claude-fable-5',
-                  label: 'Claude Fable 5',
-                  supports_fast: false,
-                },
-              ],
+    const fetchImpl = vi.fn(
+      async (
+        url: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        expect(String(url)).toBe(MODEL_CATALOG_URL)
+        expect(init?.cache).toBe('no-store')
+        return new Response(
+          JSON.stringify({
+            version: 1,
+            updated_at: '2026-06-09T00:00:00Z',
+            defaults: { claude: 'claude-fable-5', codex: 'gpt-5.5' },
+            backends: {
+              claude: {
+                models: [
+                  {
+                    id: 'claude-fable-5',
+                    label: 'Claude Fable 5',
+                    supports_fast: false,
+                  },
+                ],
+              },
+              codex: {
+                models: [
+                  {
+                    id: 'gpt-5.5',
+                    label: 'GPT 5.5',
+                    fast_id: 'gpt-5.5-fast',
+                    supports_fast: true,
+                  },
+                ],
+              },
             },
-            codex: {
-              models: [
-                {
-                  id: 'gpt-5.5',
-                  label: 'GPT 5.5',
-                  fast_id: 'gpt-5.5-fast',
-                  supports_fast: true,
-                },
-              ],
-            },
-          },
-        }),
-        { status: 200 }
-      )
-    })
+          }),
+          { status: 200 }
+        )
+      }
+    )
 
     const catalog = await fetchModelCatalog({ fetchImpl, storage })
 
@@ -76,6 +82,47 @@ describe('model catalog', () => {
     expect(readCachedModelCatalog(storage)?.defaults.claude).toBe(
       'claude-fable-5'
     )
+  })
+
+  it('cache-busts the CDN URL when explicitly refreshing the catalog', async () => {
+    const storage = createStorage()
+    const fetchImpl = vi.fn(
+      async (
+        url: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        const parsedUrl = new URL(String(url))
+        expect(`${parsedUrl.origin}${parsedUrl.pathname}`).toBe(
+          MODEL_CATALOG_URL
+        )
+        expect(parsedUrl.searchParams.get('t')).toMatch(/^\d+$/)
+        expect(init?.cache).toBe('no-store')
+
+        return new Response(
+          JSON.stringify({
+            version: 1,
+            updated_at: '2026-06-10T00:00:00Z',
+            defaults: { claude: 'claude-fresh' },
+            backends: {
+              claude: {
+                models: [{ id: 'claude-fresh', label: 'Claude Fresh' }],
+              },
+            },
+          }),
+          { status: 200 }
+        )
+      }
+    )
+
+    const catalog = await fetchModelCatalog({
+      fetchImpl,
+      storage,
+      cacheBust: true,
+    })
+
+    expect(getCatalogModelOptions(catalog, 'claude')).toEqual([
+      { value: 'claude-fresh', label: 'Claude Fresh' },
+    ])
   })
 
   it('returns the previously fetched catalog when the network fetch fails', async () => {

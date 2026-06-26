@@ -430,6 +430,7 @@ async fn start_issue_auto_fix(
         None,
         None,
         None,
+        None,
         Some("auto_fix".to_string()),
     )
     .await?;

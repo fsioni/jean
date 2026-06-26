@@ -85,6 +85,58 @@ describe('transport bootstrap', () => {
     )
   })
 
+  it('starts reconnect init fetch before websocket comes back and reuses it', async () => {
+    const transport = await loadTransportModule()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    const prefetch = transport.prefetchReconnectInitialData(
+      { 'worktree-1': 'session-1' },
+      'project-1'
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
+    )
+
+    await expect(
+      transport.consumeReconnectInitialData(
+        { 'worktree-1': 'session-1' },
+        'project-1'
+      )
+    ).resolves.toEqual({})
+    await prefetch
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries reconnect init fetch on consume when the prefetch failed', async () => {
+    const transport = await loadTransportModule()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    fetchMock
+      .mockResolvedValueOnce({ ok: false } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ projects: [] }),
+      } as Response)
+
+    await transport.prefetchReconnectInitialData(
+      { 'worktree-1': 'session-1' },
+      'project-1'
+    )
+
+    await expect(
+      transport.consumeReconnectInitialData(
+        { 'worktree-1': 'session-1' },
+        'project-1'
+      )
+    ).resolves.toEqual({ projects: [] })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 

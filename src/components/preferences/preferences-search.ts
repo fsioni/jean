@@ -760,6 +760,12 @@ const magicPromptDefinitions: {
     keywords: ['release notes prompt', 'changelog prompt'],
   },
   {
+    key: 'release_post',
+    title: 'Release Post Prompt',
+    description: 'Generate short social release posts.',
+    keywords: ['release post prompt', 'twitter post prompt', 'social post prompt'],
+  },
+  {
     key: 'context_summary',
     title: 'Context Summary Prompt',
     description: 'Summarize conversation context for reuse.',

@@ -4,6 +4,7 @@ import { persistEnqueue } from '@/services/chat'
 import { useChatStore } from '@/store/chat-store'
 import { buildMcpConfigJson } from '@/services/mcp'
 import { getFilename } from '@/lib/path-utils'
+import type { CliBackend } from '@/types/preferences'
 import type {
   QueuedMessage,
   ClaudeCommand,
@@ -26,9 +27,7 @@ interface UsePendingAttachmentsParams {
   isCodexBackendRef: RefObject<boolean>
   mcpServersDataRef: RefObject<McpServerInfo[] | undefined>
   enabledMcpServersRef: RefObject<string[]>
-  selectedBackendRef: RefObject<
-    'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
-  >
+  selectedBackendRef: RefObject<CliBackend>
   setInputDraft: (sessionId: string, draft: string) => void
   sendMessageNow: (queuedMsg: QueuedMessage) => void
 }

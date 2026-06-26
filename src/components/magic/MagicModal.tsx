@@ -19,6 +19,7 @@ import {
   Link2,
   ShieldAlert,
   Loader2,
+  Megaphone,
 } from 'lucide-react'
 import {
   Dialog,
@@ -58,6 +59,7 @@ import {
 } from '@/services/github'
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
 import { invoke } from '@/lib/transport'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
@@ -102,6 +104,7 @@ import {
   CODEX_MODEL_OPTIONS,
   MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
+  GROK_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
 import { ReviewMethodModal } from '@/components/chat/ReviewMethodModal'
@@ -122,6 +125,7 @@ type MagicOption =
   | 'merge'
   | 'resolve-conflicts'
   | 'release-notes'
+  | 'release-post'
   | 'investigate-issue'
   | 'investigate-pr'
   | 'investigate-advisory'
@@ -149,6 +153,7 @@ const CANVAS_ALLOWED_OPTIONS = new Set<MagicOption>([
   'review',
   'review-comments',
   'release-notes',
+  'release-post',
   'merge',
   'merge-pr',
   'resolve-conflicts',
@@ -303,6 +308,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           key: 'G',
         },
         {
+          id: 'release-post',
+          label: 'Generate Release Post',
+          icon: Megaphone,
+          key: 'X',
+        },
+        {
           id: 'update-pr',
           label: 'Generate PR Description',
           icon: RefreshCw,
@@ -363,6 +374,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   m: 'merge',
   f: 'resolve-conflicts',
   g: 'release-notes',
+  x: 'release-post',
   i: 'investigate-issue',
   a: 'investigate-pr',
   y: 'investigate-advisory',
@@ -447,6 +459,9 @@ export function MagicModal() {
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({
     enabled: installedBackends.includes('opencode'),
   })
+  const { data: availableGrokModels } = useAvailableGrokModels({
+    enabled: installedBackends.includes('grok'),
+  })
 
   // Build columns dynamically based on PR state
   const magicColumns = useMemo(() => buildMagicColumns(hasOpenPr), [hasOpenPr])
@@ -494,6 +509,16 @@ export function MagicModal() {
     }))
   }, [availableOpencodeModels])
 
+  const grokModelOptions = useMemo(() => {
+    const models = availableGrokModels?.length
+      ? availableGrokModels.map(model => ({
+          value: `grok/${model.id}`,
+          label: model.label || model.id,
+        }))
+      : GROK_MODEL_OPTIONS
+    return models
+  }, [availableGrokModels])
+
   const investigateDefaults = useMemo(() => {
     if (!investigateType) return null
 
@@ -519,7 +544,10 @@ export function MagicModal() {
             : backend === 'commandcode'
               ? (preferences?.selected_commandcode_model ??
                 'commandcode/default')
-              : (preferences?.selected_model ?? 'sonnet'))
+              : backend === 'grok'
+                ? (preferences?.selected_grok_model ??
+                  'grok/grok-composer-2.5-fast')
+                : (preferences?.selected_model ?? 'sonnet'))
     const provider = resolveMagicPromptProvider(
       preferences?.magic_prompt_providers,
       providerKey,
@@ -548,7 +576,10 @@ export function MagicModal() {
             : backend === 'commandcode'
               ? (preferences?.selected_commandcode_model ??
                 'commandcode/default')
-              : (preferences?.selected_model ?? 'sonnet'))
+              : backend === 'grok'
+                ? (preferences?.selected_grok_model ??
+                  'grok/grok-composer-2.5-fast')
+                : (preferences?.selected_model ?? 'sonnet'))
     const provider = resolveMagicPromptProvider(
       preferences?.magic_prompt_providers,
       RESOLVE_CONFLICTS_PROVIDER_KEY,
@@ -620,11 +651,13 @@ export function MagicModal() {
           return CODEX_MODEL_OPTIONS
         case 'opencode':
           return opencodeModelOptions
+        case 'grok':
+          return grokModelOptions
         default:
           return investigateClaudeModelOptions
       }
     },
-    [investigateClaudeModelOptions, opencodeModelOptions]
+    [grokModelOptions, investigateClaudeModelOptions, opencodeModelOptions]
   )
 
   const customInvestigateModelOptions = useMemo(
@@ -648,6 +681,10 @@ export function MagicModal() {
         return 'Codex'
       case 'opencode':
         return 'OpenCode'
+      case 'cursor':
+        return 'Cursor'
+      case 'grok':
+        return 'Grok (Beta)'
       default:
         return 'Claude'
     }
@@ -691,11 +728,13 @@ export function MagicModal() {
           return CODEX_MODEL_OPTIONS
         case 'opencode':
           return opencodeModelOptions
+        case 'grok':
+          return grokModelOptions
         default:
           return resolveClaudeModelOptions
       }
     },
-    [opencodeModelOptions, resolveClaudeModelOptions]
+    [grokModelOptions, opencodeModelOptions, resolveClaudeModelOptions]
   )
 
   const customResolveModelOptions = useMemo(
@@ -1091,6 +1130,178 @@ export function MagicModal() {
               'get_merge_conflicts',
               { worktreeId: selectedWorktreeId }
             )
+
+            if (
+              !result.has_conflicts &&
+              (worktree.pr_number || worktree.pr_url)
+            ) {
+              const prResult = await invoke<MergeConflictsResponse>(
+                'fetch_and_merge_base',
+                { worktreeId: selectedWorktreeId }
+              )
+
+              if (!prResult.has_conflicts) {
+                toast.success('No conflicts — base branch merged cleanly', {
+                  id: toastId,
+                })
+                triggerImmediateGitPoll()
+                return
+              }
+
+              toast.warning(
+                `Found conflicts in ${prResult.conflicts.length} file(s)`,
+                {
+                  id: toastId,
+                  description: 'Opening conflict resolution session...',
+                }
+              )
+
+              const {
+                registerWorktreePath,
+                setActiveSession,
+                copySessionSettings,
+                activeSessionIds,
+                setExecutionMode,
+                setExecutingMode,
+                setLastSentMessage,
+                setError,
+                clearInputDraft,
+              } = useChatStore.getState()
+              const currentSessionId = activeSessionIds[selectedWorktreeId]
+
+              const newSession = await invoke<Session>('create_session', {
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                name: 'PR: resolve conflicts',
+              })
+
+              if (currentSessionId)
+                copySessionSettings(currentSessionId, newSession.id)
+
+              const resolvedProvider = resolveMagicPromptProvider(
+                preferences?.magic_prompt_providers,
+                RESOLVE_CONFLICTS_PROVIDER_KEY,
+                preferences?.default_provider
+              )
+              const resolvedBackend =
+                override?.backend ??
+                resolveMagicPromptBackend(
+                  preferences?.magic_prompt_backends,
+                  RESOLVE_CONFLICTS_BACKEND_KEY,
+                  project?.default_backend ??
+                    preferences?.default_backend ??
+                    'claude'
+                ) ??
+                'claude'
+              const resolvedModel =
+                override?.model ??
+                preferences?.magic_prompt_models?.[
+                  RESOLVE_CONFLICTS_MODEL_KEY
+                ] ??
+                (resolvedBackend === 'codex'
+                  ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+                  : resolvedBackend === 'opencode'
+                    ? (preferences?.selected_opencode_model ??
+                      'opencode/gpt-5.3-codex')
+                    : resolvedBackend === 'cursor'
+                      ? (preferences?.selected_cursor_model ?? 'cursor/auto')
+                      : (preferences?.selected_model ?? 'sonnet'))
+              const resolvedSessionProvider =
+                override?.backend && override.backend !== 'claude'
+                  ? null
+                  : resolvedProvider
+
+              useChatStore
+                .getState()
+                .setSelectedBackend(newSession.id, resolvedBackend)
+              useChatStore
+                .getState()
+                .setSelectedModel(newSession.id, resolvedModel)
+              useChatStore
+                .getState()
+                .setSelectedProvider(newSession.id, resolvedSessionProvider)
+
+              invoke('set_session_backend', {
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                sessionId: newSession.id,
+                backend: resolvedBackend,
+              }).catch(() => undefined)
+              invoke('set_session_model', {
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                sessionId: newSession.id,
+                model: resolvedModel,
+              }).catch(() => undefined)
+              invoke('set_session_provider', {
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                sessionId: newSession.id,
+                provider: resolvedSessionProvider,
+              }).catch(() => undefined)
+
+              registerWorktreePath(selectedWorktreeId, worktree.path)
+              setActiveSession(selectedWorktreeId, newSession.id)
+              window.dispatchEvent(
+                new CustomEvent('open-worktree-modal', {
+                  detail: {
+                    worktreeId: selectedWorktreeId,
+                    worktreePath: worktree.path,
+                  },
+                })
+              )
+
+              const conflictFiles = prResult.conflicts.join('\n- ')
+              const diffSection = prResult.conflict_diff
+                ? `\n\nHere is the diff showing the conflict details:\n\n\`\`\`diff\n${prResult.conflict_diff}\n\`\`\``
+                : ''
+              const baseBranch = project?.default_branch || 'main'
+              const resolveInstructions =
+                preferences?.magic_prompts?.resolve_conflicts ??
+                DEFAULT_RESOLVE_CONFLICTS_PROMPT
+
+              const conflictPrompt = `I merged \`origin/${baseBranch}\` into this branch to resolve PR conflicts, but there are merge conflicts.
+
+Conflicts in these files:
+- ${conflictFiles}${diffSection}
+
+${resolveInstructions}`
+
+              setLastSentMessage(newSession.id, conflictPrompt)
+              setError(newSession.id, null)
+              setExecutionMode(newSession.id, 'yolo')
+              setExecutingMode(newSession.id, 'yolo')
+              clearInputDraft(newSession.id)
+              invoke('update_session_state', {
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                sessionId: newSession.id,
+                selectedExecutionMode: 'yolo',
+              }).catch(() => undefined)
+
+              await invoke('send_chat_message', {
+                sessionId: newSession.id,
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                message: conflictPrompt,
+                model: resolvedModel,
+                executionMode: 'yolo',
+                backend:
+                  resolvedBackend !== 'claude' ? resolvedBackend : undefined,
+                customProfileName:
+                  resolvedSessionProvider &&
+                  resolvedSessionProvider !== '__anthropic__'
+                    ? resolvedSessionProvider
+                    : undefined,
+                chromeEnabled: preferences?.chrome_enabled ?? false,
+                aiLanguage: preferences?.ai_language,
+              })
+
+              queryClient.invalidateQueries({
+                queryKey: chatQueryKeys.sessions(selectedWorktreeId),
+              })
+              return
+            }
 
             if (!result.has_conflicts) {
               toast.info('No merge conflicts detected', { id: toastId })
@@ -1685,13 +1896,18 @@ ${resolveInstructions}`
         return
       }
 
-      // release-notes only needs a project selected, not a worktree
-      if (option === 'release-notes') {
+      // Release generation only needs a project selected, not a worktree
+      if (option === 'release-notes' || option === 'release-post') {
         if (!selectedProjectId) {
           notify('No project selected', undefined, { type: 'error' })
           setMagicModalOpen(false)
           return
         }
+        useUIStore
+          .getState()
+          .setReleaseNotesModalMode(
+            option === 'release-post' ? 'post' : 'notes'
+          )
         useUIStore.getState().setReleaseNotesModalOpen(true)
         setMagicModalOpen(false)
         return
@@ -2226,7 +2442,9 @@ ${resolveInstructions}`
                         size="sm"
                         hideIcon={
                           installedBackends.filter(backend =>
-                            ['claude', 'codex', 'opencode'].includes(backend)
+                            ['claude', 'codex', 'opencode', 'grok'].includes(
+                              backend
+                            )
                           ).length <= 1
                         }
                         onClick={() => setInvestigateSelectionMode('custom')}
@@ -2242,6 +2460,9 @@ ${resolveInstructions}`
                         )}
                         {installedBackends.includes('opencode') && (
                           <SelectItem value="opencode">OpenCode</SelectItem>
+                        )}
+                        {installedBackends.includes('grok') && (
+                          <SelectItem value="grok">Grok (Beta)</SelectItem>
                         )}
                       </SelectContent>
                     </Select>
@@ -2374,7 +2595,9 @@ ${resolveInstructions}`
                         size="sm"
                         hideIcon={
                           installedBackends.filter(backend =>
-                            ['claude', 'codex', 'opencode'].includes(backend)
+                            ['claude', 'codex', 'opencode', 'grok'].includes(
+                              backend
+                            )
                           ).length <= 1
                         }
                         onClick={() => setResolveSelectionMode('custom')}
@@ -2390,6 +2613,9 @@ ${resolveInstructions}`
                         )}
                         {installedBackends.includes('opencode') && (
                           <SelectItem value="opencode">OpenCode</SelectItem>
+                        )}
+                        {installedBackends.includes('grok') && (
+                          <SelectItem value="grok">Grok (Beta)</SelectItem>
                         )}
                       </SelectContent>
                     </Select>

@@ -46,6 +46,7 @@ export type Backend =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
 
 /**
  * Execution mode for Claude CLI permission handling
@@ -123,7 +124,7 @@ export interface PlanToolInput {
   plan_preview?: string
   explanation?: string
   steps?: PlanStep[]
-  source?: 'claude' | 'codex'
+  source?: 'claude' | 'codex' | 'grok'
 }
 
 /**
@@ -205,7 +206,7 @@ export interface Session {
   messages: ChatMessage[]
   /** Message count (populated separately for efficiency when full messages not needed) */
   message_count?: number
-  /** Backend for this session (claude, codex, opencode, or cursor) */
+  /** Backend for this session (claude, codex, opencode, cursor, or grok) */
   backend?: Backend
   /** Claude CLI session ID for resuming conversations */
   claude_session_id?: string
@@ -221,6 +222,8 @@ export interface Session {
   pi_session_id?: string
   /** Command Code uses standalone headless invocations; stores no native resume id */
   commandcode_session_id?: string
+  /** Grok headless session ID for resuming conversations */
+  grok_session_id?: string
   /** Selected model for this session */
   selected_model?: string
   /** Selected thinking level for this session */

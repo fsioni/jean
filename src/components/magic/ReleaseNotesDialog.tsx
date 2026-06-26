@@ -40,13 +40,21 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useProjects } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { resolveMagicPromptProvider } from '@/types/preferences'
-import type { GitHubRelease, ReleaseNotesResponse } from '@/types/projects'
+import type {
+  GitHubRelease,
+  ReleaseNotesResponse,
+  ReleasePostResponse,
+} from '@/types/projects'
 
 type Phase = 'select' | 'generate' | 'result'
 
 export function ReleaseNotesDialog() {
   const { triggerLogin: triggerGhLogin, isGhInstalled } = useGhLogin()
-  const { releaseNotesModalOpen, setReleaseNotesModalOpen } = useUIStore()
+  const {
+    releaseNotesModalOpen,
+    releaseNotesModalMode,
+    setReleaseNotesModalOpen,
+  } = useUIStore()
   const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
   const { data: preferences } = usePreferences()
 
@@ -71,6 +79,7 @@ export function ReleaseNotesDialog() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [repoUrl, setRepoUrl] = useState<string | null>(null)
+  const [releaseUrl, setReleaseUrl] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -121,6 +130,7 @@ export function ReleaseNotesDialog() {
         setIsGenerating(false)
         setCopied(false)
         setRepoUrl(null)
+        setReleaseUrl(null)
       }
       setReleaseNotesModalOpen(open)
     },
@@ -136,34 +146,58 @@ export function ReleaseNotesDialog() {
       setIsGenerating(true)
 
       try {
-        const result = await invoke<ReleaseNotesResponse>(
-          'generate_release_notes',
-          {
-            projectPath: selectedProject.path,
-            tag: release.tagName,
-            releaseName: release.name || release.tagName,
-            customPrompt: preferences?.magic_prompts?.release_notes,
-            model: preferences?.magic_prompt_models?.release_notes_model,
-            customProfileName: resolveMagicPromptProvider(
-              preferences?.magic_prompt_providers,
-              'release_notes_provider',
-              preferences?.default_provider
-            ),
-            reasoningEffort:
-              preferences?.magic_prompt_efforts?.release_notes_effort ?? null,
-          }
-        )
-        setGeneratedTitle(result.title)
-        setGeneratedBody(result.body)
+        const commonArgs = {
+          projectPath: selectedProject.path,
+          tag: release.tagName,
+          releaseName: release.name || release.tagName,
+          customPrompt:
+            releaseNotesModalMode === 'notes'
+              ? preferences?.magic_prompts?.release_notes
+              : preferences?.magic_prompts?.release_post,
+          model:
+            releaseNotesModalMode === 'notes'
+              ? preferences?.magic_prompt_models?.release_notes_model
+              : preferences?.magic_prompt_models?.release_post_model,
+          customProfileName: resolveMagicPromptProvider(
+            preferences?.magic_prompt_providers,
+            releaseNotesModalMode === 'notes'
+              ? 'release_notes_provider'
+              : 'release_post_provider',
+            preferences?.default_provider
+          ),
+          reasoningEffort:
+            (releaseNotesModalMode === 'notes'
+              ? preferences?.magic_prompt_efforts?.release_notes_effort
+              : preferences?.magic_prompt_efforts?.release_post_effort) ?? null,
+        }
+        if (releaseNotesModalMode === 'post') {
+          const result = await invoke<ReleasePostResponse>(
+            'generate_release_post',
+            commonArgs
+          )
+          setGeneratedTitle('Release post')
+          setGeneratedBody(result.post)
+          setReleaseUrl(result.release_url)
+        } else {
+          const result = await invoke<ReleaseNotesResponse>(
+            'generate_release_notes',
+            commonArgs
+          )
+          setGeneratedTitle(result.title)
+          setGeneratedBody(result.body)
+          setReleaseUrl(null)
+        }
         setPhase('result')
       } catch (error) {
-        toast.error(`Failed to generate release notes: ${error}`)
+        toast.error(
+          `Failed to generate release ${releaseNotesModalMode === 'post' ? 'post' : 'notes'}: ${error}`
+        )
         setPhase('select')
       } finally {
         setIsGenerating(false)
       }
     },
-    [selectedProject?.path, preferences]
+    [selectedProject?.path, preferences, releaseNotesModalMode]
   )
 
   const handleRegenerate = useCallback(() => {
@@ -178,14 +212,18 @@ export function ReleaseNotesDialog() {
     setGeneratedTitle('')
     setGeneratedBody('')
     setCopied(false)
+    setReleaseUrl(null)
   }, [])
 
   const handleCopy = useCallback(async () => {
-    const text = `# ${generatedTitle}\n\n${generatedBody}`
+    const text =
+      releaseNotesModalMode === 'post'
+        ? generatedBody
+        : `# ${generatedTitle}\n\n${generatedBody}`
     await copyToClipboard(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }, [generatedTitle, generatedBody])
+  }, [generatedTitle, generatedBody, releaseNotesModalMode])
 
   const handleCreateRelease = useCallback(async () => {
     if (!repoUrl) return
@@ -252,10 +290,12 @@ export function ReleaseNotesDialog() {
             <FileText className="h-4 w-4" />
             <span className="flex-1">
               {phase === 'select'
-                ? `Release Notes for ${selectedProject?.name ?? 'Project'}`
+                ? `${releaseNotesModalMode === 'post' ? 'Release Post' : 'Release Notes'} for ${selectedProject?.name ?? 'Project'}`
                 : phase === 'generate'
                   ? 'Generating...'
-                  : 'Release Notes'}
+                  : releaseNotesModalMode === 'post'
+                    ? 'Release Post'
+                    : 'Release Notes'}
             </span>
             {phase === 'select' && (
               <Tooltip>
@@ -332,8 +372,9 @@ export function ReleaseNotesDialog() {
               {!isLoadingReleases && !releasesError && releases.length > 0 && (
                 <div className="py-1">
                   <div className="px-4 py-1 text-xs text-muted-foreground">
-                    Select a release to compare changes since. Jean will inspect
-                    matched merged PRs and closing issue references.
+                    {releaseNotesModalMode === 'post'
+                      ? 'Select a GitHub release. Jean will generate a short post with the release link.'
+                      : 'Select a release to compare changes since. Jean will inspect matched merged PRs and closing issue references.'}
                   </div>
                   {releases.map((release, index) => (
                     <ReleaseItem
@@ -357,7 +398,7 @@ export function ReleaseNotesDialog() {
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               <span className="text-sm text-muted-foreground">
-                Generating release notes since{' '}
+                Generating release {releaseNotesModalMode === 'post' ? 'post for' : 'notes since'}{' '}
                 <span className="font-medium text-foreground">
                   {selectedRelease?.tagName}
                 </span>
@@ -370,20 +411,24 @@ export function ReleaseNotesDialog() {
         {/* Phase 3: Result */}
         {phase === 'result' && (
           <div className="flex flex-col flex-1 min-h-0 px-4 pb-4 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Title
-              </label>
-              <Input
-                value={generatedTitle}
-                onChange={e => setGeneratedTitle(e.target.value)}
-                className="text-base md:text-sm"
-              />
-            </div>
+            {releaseNotesModalMode === 'notes' && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  Title
+                </label>
+                <Input
+                  value={generatedTitle}
+                  onChange={e => setGeneratedTitle(e.target.value)}
+                  className="text-base md:text-sm"
+                />
+              </div>
+            )}
 
             <div className="flex-1 flex flex-col min-h-0">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Body
+                {releaseNotesModalMode === 'post'
+                  ? `Post (${generatedBody.length}/280)`
+                  : 'Body'}
               </label>
               <Textarea
                 value={generatedBody}
@@ -408,7 +453,17 @@ export function ReleaseNotesDialog() {
                 Regenerate
               </Button>
               <div className="flex-1" />
-              {repoUrl && (
+              {releaseNotesModalMode === 'post' && releaseUrl && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openExternal(releaseUrl)}
+                >
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                  Open Release
+                </Button>
+              )}
+              {releaseNotesModalMode === 'notes' && repoUrl && (
                 <Button
                   variant="outline"
                   size="sm"

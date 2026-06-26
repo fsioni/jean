@@ -77,7 +77,26 @@ beforeEach(() => {
 })
 
 describe('BackendModelPickerContent', () => {
-  it('keeps Claude 1M variants plus models without 1M support', () => {
+  it('shows a manual refresh button for CDN-backed Claude and Codex model lists', () => {
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="codex"
+        selectedModel="gpt-5.5"
+        selectedProvider={null}
+        installedBackends={['claude', 'codex']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole('button', { name: /refresh model list/i })
+    ).toBeInTheDocument()
+  })
+  it('keeps Claude 1M variants plus standard models', () => {
     render(
       <BackendModelPickerContent
         open
@@ -97,9 +116,9 @@ describe('BackendModelPickerContent', () => {
     expect(screen.getByText('Opus 4.7 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.6 (1M)')).toBeInTheDocument()
     expect(screen.getByText('Sonnet 4.6 (1M)')).toBeInTheDocument()
+    expect(screen.getByText('Sonnet 4.6')).toBeInTheDocument()
     expect(screen.getByText('Opus 4.5')).toBeInTheDocument()
     expect(screen.getByText('Haiku')).toBeInTheDocument()
-    expect(screen.queryByText('Sonnet 4.6')).toBeNull()
   })
 
   it('renders backend sidebar and switches backend+model on selection', async () => {
@@ -134,14 +153,14 @@ describe('BackendModelPickerContent', () => {
     expect(onRequestClose).toHaveBeenCalled()
   })
 
-  it('shows the beta sidebar dot on Command Code, not Cursor', () => {
+  it('shows the beta sidebar dot on Command Code and Grok, not Cursor', () => {
     render(
       <BackendModelPickerContent
         open
         selectedBackend="cursor"
         selectedModel="cursor/auto"
         selectedProvider={null}
-        installedBackends={['cursor', 'commandcode']}
+        installedBackends={['cursor', 'commandcode', 'grok']}
         customCliProfiles={[]}
         onModelChange={vi.fn()}
         onBackendModelChange={vi.fn()}
@@ -153,9 +172,11 @@ describe('BackendModelPickerContent', () => {
     const commandCodeTab = screen.getByRole('tab', {
       name: 'Command Code (Beta)',
     })
+    const grokTab = screen.getByRole('tab', { name: 'Grok (Beta)' })
 
     expect(cursorTab.querySelector('.bg-yellow-500')).toBeNull()
     expect(commandCodeTab.querySelector('.bg-yellow-500')).not.toBeNull()
+    expect(grokTab.querySelector('.bg-yellow-500')).not.toBeNull()
   })
 
   it('does not add an empty custom Command Code model option', async () => {

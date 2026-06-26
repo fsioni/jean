@@ -12,6 +12,7 @@ let sessionsData: { sessions: unknown[] }
 let nativeSessionsData: unknown[]
 let cursorInstalled: boolean
 let commandCodeInstalled: boolean
+let grokInstalled: boolean
 
 vi.mock('@/services/chat', () => ({
   useCreateSession: () => ({
@@ -73,6 +74,16 @@ vi.mock('@/services/commandcode-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/grok-cli', () => ({
+  useGrokCliStatus: () => ({
+    data: {
+      installed: grokInstalled,
+      path: grokInstalled ? '/usr/local/bin/grok' : null,
+    },
+    isLoading: false,
+  }),
+}))
+
 describe('NewSessionModeModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -82,6 +93,7 @@ describe('NewSessionModeModal', () => {
     nativeSessionsData = []
     cursorInstalled = false
     commandCodeInstalled = false
+    grokInstalled = false
     invoke.mockResolvedValue({
       commandArgs: ['--context-arg', 'context-value'],
     })
@@ -163,9 +175,10 @@ describe('NewSessionModeModal', () => {
     )
   })
 
-  it('marks Command Code, not Cursor, as beta in backend choices', () => {
+  it('marks Command Code and Grok, not Cursor, as beta in backend choices', () => {
     cursorInstalled = true
     commandCodeInstalled = true
+    grokInstalled = true
     useUIStore.getState().openNewSessionModeModal({
       worktreeId: 'worktree-1',
       worktreePath: '/tmp/worktree-1',
@@ -177,8 +190,12 @@ describe('NewSessionModeModal', () => {
     expect(screen.getByText('Cursor')).toBeInTheDocument()
     expect(screen.queryByText('Cursor (Beta)')).toBeNull()
     expect(screen.getByText('Command Code (Beta)')).toBeInTheDocument()
+    expect(screen.getByText('Grok (Beta)')).toBeInTheDocument()
     expect(
       screen.getByText('Open native Command Code (Beta) in a terminal session')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Open native Grok (Beta) in a terminal session')
     ).toBeInTheDocument()
   })
 

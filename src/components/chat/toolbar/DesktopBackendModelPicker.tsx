@@ -10,11 +10,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getModelFastInfo, type CustomCliProfile } from '@/types/preferences'
+import {
+  getModelFastInfo,
+  type CliBackend,
+  type CustomCliProfile,
+} from '@/types/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
 import { cn } from '@/lib/utils'
 import { Kbd } from '@/components/ui/kbd'
 import { BackendLabel } from '@/components/ui/backend-label'
@@ -34,29 +39,13 @@ interface DesktopBackendModelPickerProps {
   sessionHasMessages?: boolean
   providerLocked?: boolean
   triggerClassName?: string
-  selectedBackend:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+  selectedBackend: CliBackend
   selectedModel: string
   selectedProvider: string | null
-  installedBackends: (
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
-  )[]
+  installedBackends: CliBackend[]
   customCliProfiles: CustomCliProfile[]
   onModelChange: (model: string) => void
-  onBackendModelChange: (
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode',
-    model: string
-  ) => void
+  onBackendModelChange: (backend: CliBackend, model: string) => void
 }
 
 export function DesktopBackendModelPicker({
@@ -95,6 +84,9 @@ export function DesktopBackendModelPicker({
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels({
     enabled: installedBackends.includes('commandcode'),
   })
+  const { data: availableGrokModels } = useAvailableGrokModels({
+    enabled: installedBackends.includes('grok'),
+  })
 
   const opencodeModelOptions = useMemo(() => {
     if (opencodeModelsError) return []
@@ -128,6 +120,14 @@ export function DesktopBackendModelPicker({
       })),
     [availableCommandCodeModels]
   )
+  const grokModelOptions = useMemo(
+    () =>
+      availableGrokModels?.map(model => ({
+        value: `grok/${model.id}`,
+        label: model.label,
+      })),
+    [availableGrokModels]
+  )
 
   const { backendModelSections, selectedModelLabel } = useToolbarDerivedState({
     selectedBackend,
@@ -137,6 +137,7 @@ export function DesktopBackendModelPicker({
     cursorModelOptions,
     piModelOptions,
     commandcodeModelOptions,
+    grokModelOptions,
     customCliProfiles,
     installedBackends,
   })

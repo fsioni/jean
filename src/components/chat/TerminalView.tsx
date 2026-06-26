@@ -15,6 +15,7 @@ import {
 import { Kbd } from '@/components/ui/kbd'
 import { formatShortcutDisplay } from '@/types/keybindings'
 import { cn } from '@/lib/utils'
+import { useTerminalImageDrop } from './hooks/useTerminalImageDrop'
 import { MODAL_TERMINAL_SECONDARY_ROW_CLASS } from './modal-terminal-layout'
 import '@xterm/xterm/css/xterm.css'
 
@@ -48,6 +49,7 @@ const TerminalTabContent = memo(function TerminalTabContent({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalBg = useTerminalBackgroundColor()
+  const { isDraggingImage, dropHandlers } = useTerminalImageDrop(terminal.id)
   const { initTerminal, fit, focus } = useTerminal({
     terminalId: terminal.id,
     worktreeId,
@@ -102,10 +104,20 @@ const TerminalTabContent = memo(function TerminalTabContent({
 
   return (
     <div
-      className={cn('h-full w-full p-2', !isActive && 'hidden')}
+      data-terminal-id={terminal.id}
+      className={cn('relative h-full w-full p-2', !isActive && 'hidden')}
       style={{ backgroundColor: terminalBg }}
+      onDragOver={dropHandlers.onDragOver}
+      onDragLeave={dropHandlers.onDragLeave}
+      onDrop={dropHandlers.onDrop}
     >
       <div ref={containerRef} className="h-full w-full overflow-hidden" />
+      {isDraggingImage && (
+        <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary bg-background/80 text-sm font-medium text-foreground">
+          <Terminal className="h-5 w-5" aria-hidden />
+          <span>Drop image to insert its path</span>
+        </div>
+      )}
     </div>
   )
 })

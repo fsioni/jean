@@ -24,6 +24,7 @@ fn backend_label(backend: &Backend) -> &'static str {
         Backend::Cursor => "cursor",
         Backend::Pi => "pi",
         Backend::Commandcode => "commandcode",
+        Backend::Grok => "grok",
     }
 }
 
@@ -72,11 +73,41 @@ pub(crate) fn latest_completed_backend(metadata: &SessionMetadata) -> Option<Bac
             {
                 return Some(Backend::Commandcode);
             }
+            if run.grok_session_id.is_some()
+                || run.model.as_deref().is_some_and(crate::is_grok_model)
+            {
+                return Some(Backend::Grok);
+            }
             if run.claude_session_id.is_some() {
                 return Some(Backend::Claude);
             }
             None
         })
+}
+
+pub(crate) fn latest_completed_custom_profile(metadata: &SessionMetadata) -> Option<String> {
+    metadata
+        .runs
+        .iter()
+        .rev()
+        .find(|run| {
+            matches!(
+                run.status,
+                RunStatus::Completed | RunStatus::Cancelled | RunStatus::Crashed
+            ) && matches!(run.backend, Some(Backend::Claude))
+        })
+        .and_then(|run| run.custom_profile_name.clone())
+}
+
+pub(crate) fn should_inject_claude_profile_handoff(
+    current_backend: &Backend,
+    previous_backend: Option<&Backend>,
+    previous_profile: Option<&str>,
+    current_profile: Option<&str>,
+) -> bool {
+    current_backend == &Backend::Claude
+        && previous_backend == Some(&Backend::Claude)
+        && previous_profile != current_profile
 }
 
 pub(crate) fn format_handoff_history(messages: &[ChatMessage], max_chars: usize) -> String {
@@ -144,6 +175,20 @@ pub(crate) fn build_handoff_prompt(
     template
         .replace("{previous_backend}", backend_label(previous_backend))
         .replace("{current_backend}", backend_label(current_backend))
+        .replace("{history}", history)
+}
+
+pub(crate) fn build_claude_profile_handoff_prompt(
+    template: &str,
+    previous_profile: Option<&str>,
+    current_profile: Option<&str>,
+    history: &str,
+) -> String {
+    let previous = previous_profile.unwrap_or("anthropic");
+    let current = current_profile.unwrap_or("anthropic");
+    template
+        .replace("{previous_backend}", &format!("claude/{previous}"))
+        .replace("{current_backend}", &format!("claude/{current}"))
         .replace("{history}", history)
 }
 
@@ -275,6 +320,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: None,
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Completed,
@@ -287,8 +333,92 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert_eq!(latest_completed_backend(&metadata), Some(Backend::Claude));
+    }
+
+    #[test]
+    fn detects_claude_custom_profile_switch() {
+        assert!(should_inject_claude_profile_handoff(
+            &Backend::Claude,
+            Some(&Backend::Claude),
+            None,
+            Some("OpenRouter")
+        ));
+        assert!(should_inject_claude_profile_handoff(
+            &Backend::Claude,
+            Some(&Backend::Claude),
+            Some("OpenRouter"),
+            None
+        ));
+        assert!(!should_inject_claude_profile_handoff(
+            &Backend::Claude,
+            Some(&Backend::Claude),
+            Some("OpenRouter"),
+            Some("OpenRouter")
+        ));
+        assert!(!should_inject_claude_profile_handoff(
+            &Backend::Codex,
+            Some(&Backend::Claude),
+            Some("OpenRouter"),
+            Some("MiniMax")
+        ));
+    }
+
+    #[test]
+    fn tracks_latest_completed_claude_custom_profile() {
+        let mut metadata = metadata_with_legacy_run(RunEntry {
+            run_id: "run-1".to_string(),
+            user_message_id: "user-1".to_string(),
+            user_message: "hi".to_string(),
+            model: Some("sonnet".to_string()),
+            execution_mode: None,
+            thinking_level: None,
+            effort_level: None,
+            backend: Some(Backend::Claude),
+            custom_profile_name: Some("OpenRouter".to_string()),
+            started_at: 1,
+            ended_at: Some(2),
+            status: RunStatus::Completed,
+            assistant_message_id: None,
+            cancelled: false,
+            recovered: false,
+            claude_session_id: Some("claude-1".to_string()),
+            pid: None,
+            usage: None,
+            codex_thread_id: None,
+            codex_turn_id: None,
+            cursor_chat_id: None,
+        });
+        metadata.runs.push(RunEntry {
+            run_id: "run-2".to_string(),
+            user_message_id: "user-2".to_string(),
+            user_message: "hi".to_string(),
+            model: Some("gpt-5.5".to_string()),
+            execution_mode: None,
+            thinking_level: None,
+            effort_level: None,
+            backend: Some(Backend::Codex),
+            custom_profile_name: None,
+            started_at: 3,
+            ended_at: Some(4),
+            status: RunStatus::Completed,
+            assistant_message_id: None,
+            cancelled: false,
+            recovered: false,
+            claude_session_id: None,
+            pid: None,
+            usage: None,
+            codex_thread_id: Some("codex-1".to_string()),
+            codex_turn_id: None,
+            cursor_chat_id: None,
+        });
+
+        assert_eq!(
+            latest_completed_custom_profile(&metadata),
+            Some("OpenRouter".to_string())
+        );
     }
 }

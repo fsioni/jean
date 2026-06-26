@@ -266,6 +266,21 @@ export const MessageItem = memo(function MessageItem({
     onCopyToInput?.(message)
   }, [onCopyToInput, message])
 
+  const handleCopySteeredText = useCallback(
+    (text: string) => {
+      onCopyToInput?.({
+        id: `${message.id}-steered-copy`,
+        session_id: message.session_id,
+        role: 'user',
+        content: text,
+        timestamp: message.timestamp,
+        content_blocks: [],
+        tool_calls: [],
+      })
+    },
+    [message.id, message.session_id, message.timestamp, onCopyToInput]
+  )
+
   // Content for the message box (shared between user and assistant)
   const resolvedPlan = resolvePlanContent({
     toolCalls: message.tool_calls ?? [],
@@ -528,7 +543,16 @@ export const MessageItem = memo(function MessageItem({
                             )
                           }
                           case 'userInput':
-                            return <SteeredPromptGroup texts={item.texts} />
+                            return (
+                              <SteeredPromptGroup
+                                texts={item.texts}
+                                onCopyText={
+                                  onCopyToInput
+                                    ? handleCopySteeredText
+                                    : undefined
+                                }
+                              />
+                            )
                           case 'task':
                             return (
                               <TaskCallInline

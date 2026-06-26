@@ -33,11 +33,18 @@ import type { LinearIssue, LoadedLinearIssueContext } from '@/types/linear'
 import type { MagicPromptProviders } from '@/types/preferences'
 import type { SessionWithContext } from '../LoadContextItems'
 
+interface LinearIssueContextContent {
+  identifier: string
+  title: string
+  content: string
+}
+
 export interface ViewingContext {
   type: 'issue' | 'pr' | 'security' | 'advisory' | 'saved' | 'linear'
   number?: number
   ghsaId?: string
   slug?: string
+  identifier?: string
   title: string
   content: string
 }
@@ -571,14 +578,34 @@ export function useLoadContextHandlers({
   const handleViewLinearIssue = useCallback(
     async (ctx: LoadedLinearIssueContext) => {
       if (!activeSessionId || !projectId) return
-      // Show the identifier and title in a simple viewer
-      setViewingContext({
-        type: 'linear',
-        title: `${ctx.identifier}: ${ctx.title}`,
-        content: '',
-      })
+      try {
+        const contents = await invoke<LinearIssueContextContent[]>(
+          'get_linear_issue_context_contents',
+          {
+            sessionId: activeSessionId,
+            worktreeId: worktreeId ?? undefined,
+            projectId,
+          }
+        )
+        const match = contents.find(
+          content =>
+            content.identifier.toLowerCase() === ctx.identifier.toLowerCase()
+        )
+        if (!match) {
+          toast.error(`Failed to load context: ${ctx.identifier} not found`)
+          return
+        }
+        setViewingContext({
+          type: 'linear',
+          identifier: ctx.identifier,
+          title: `${ctx.identifier}: ${ctx.title}`,
+          content: match.content,
+        })
+      } catch (error) {
+        toast.error(`Failed to load context: ${error}`)
+      }
     },
-    [activeSessionId, projectId]
+    [activeSessionId, worktreeId, projectId]
   )
 
   const handleSelectLinearIssue = useCallback(

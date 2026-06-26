@@ -12,6 +12,7 @@ import { preferencesQueryKeys } from '@/services/preferences'
 import {
   resolveMagicPromptProvider,
   type AppPreferences,
+  type CliBackend,
   type NotificationSound,
 } from '@/types/preferences'
 import { triggerImmediateGitPoll } from '@/services/git-status'
@@ -2030,6 +2031,7 @@ export default function useStreamingEvents({
               | 'pi'
               | 'commandcode'
           )
+          store.setSelectedBackend(session_id, value as CliBackend)
           break
         case 'model':
           store.setSelectedModel(session_id, value)

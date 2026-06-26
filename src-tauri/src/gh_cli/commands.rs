@@ -239,7 +239,7 @@ pub fn resolve_github_api_token(app: &AppHandle) -> Option<String> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let managed_gh = resolve_gh_binary(app);
-    if managed_gh.exists() {
+    if crate::platform::resolved_cli_exists(&managed_gh) {
         candidates.push(managed_gh);
     } else if let Ok(path) = get_gh_cli_binary_path(app) {
         if path.exists() {
@@ -249,7 +249,10 @@ pub fn resolve_github_api_token(app: &AppHandle) -> Option<String> {
     candidates.push(PathBuf::from("gh"));
 
     for program in candidates {
-        let output = match silent_command(&program).args(["auth", "token"]).output() {
+        let output = match crate::platform::resolved_cli_command(&program, None)
+            .args(["auth", "token"])
+            .output()
+        {
             Ok(output) => output,
             Err(_) => continue,
         };

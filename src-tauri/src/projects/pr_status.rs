@@ -1,7 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::platform::silent_command;
 use serde::{Deserialize, Serialize};
+
+fn gh_command(gh: &std::path::Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(std::path::Path::new(project_path)))
+}
 
 /// PR state from GitHub API
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -94,7 +97,7 @@ pub fn get_pr_status(
     log::trace!("Fetching PR status for #{pr_number} in {repo_path}");
 
     // Run gh pr view
-    let output = silent_command(gh_binary)
+    let output = gh_command(gh_binary, repo_path)
         .args([
             "pr",
             "view",
@@ -102,7 +105,6 @@ pub fn get_pr_status(
             "--json",
             "state,isDraft,reviewDecision,statusCheckRollup,mergeable",
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 

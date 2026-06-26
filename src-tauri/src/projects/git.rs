@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{JeanConfig, MergeType};
 
+fn gh_command(gh: &Path, repo_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(repo_path)))
+}
+
 static WORKTREE_CREATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 const WORKTREE_CREATE_ATTEMPTS: usize = 4;
 
@@ -895,7 +899,7 @@ pub fn git_push_to_pr(
     log::trace!("Pushing to PR #{pr_number} remote branch in {repo_path}");
 
     // 1. Query PR info from GitHub
-    let gh_output = silent_command(gh_binary)
+    let gh_output = gh_command(gh_binary, repo_path)
         .args([
             "pr",
             "view",
@@ -903,7 +907,6 @@ pub fn git_push_to_pr(
             "--json",
             "headRefName,isCrossRepository,headRepositoryOwner,headRepository",
         ])
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -1357,9 +1360,8 @@ pub fn gh_pr_checkout(
         args.extend(["-b", name]);
     }
 
-    let output = silent_command(gh_binary)
+    let output = gh_command(gh_binary, worktree_path)
         .args(&args)
-        .current_dir(worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr checkout: {e}"))?;
 
@@ -1767,9 +1769,8 @@ pub fn open_pull_request(
 
     log::trace!("Running gh command with args: {:?}", args);
 
-    let output = silent_command(gh_binary)
+    let output = gh_command(gh_binary, repo_path)
         .args(&args)
-        .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr create: {e}"))?;
 

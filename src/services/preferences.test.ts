@@ -27,6 +27,7 @@ import {
   DEFAULT_MAGIC_PROMPT_PROVIDERS,
   DEFAULT_MAGIC_PROMPT_BACKENDS,
   DEFAULT_MAGIC_PROMPT_EFFORTS,
+  DEFAULT_MAGIC_PROMPT_MODES,
   modelOptions,
   normalizeClaudeModel,
   normalizeCodexModel,
@@ -88,20 +89,26 @@ const createWrapper = (queryClient: QueryClient) => {
 }
 
 describe('model option helpers', () => {
-  it('uses 1M Claude variants where available and keeps no-1M-only models', () => {
+  it('offers Claude 1M variants alongside standard context models', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
       'claude-fable-5',
       'claude-opus-4-8[1m]',
+      'claude-opus-4-8',
       'claude-opus-4-7[1m]',
+      'claude-opus-4-7',
       'claude-opus-4-6[1m]',
+      'claude-opus-4-6',
       'claude-opus-4-5-20251101',
       'claude-sonnet-4-6[1m]',
+      'claude-sonnet-4-6',
       'haiku',
     ])
     expect(normalizeClaudeModel('sonnet')).toBe('claude-sonnet-4-6[1m]')
     expect(normalizeClaudeModel('claude-fable-5')).toBe('claude-fable-5')
-    expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8[1m]')
-    expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7[1m]')
+    expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8')
+    expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7')
+    expect(normalizeClaudeModel('claude-opus-4-6')).toBe('claude-opus-4-6')
+    expect(normalizeClaudeModel('claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
 
   it('offers Codex fast modes for default selectors', () => {
@@ -212,6 +219,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -252,6 +260,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -274,6 +283,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -364,6 +374,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -404,6 +415,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -426,6 +438,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -485,6 +498,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -526,6 +540,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -548,6 +563,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -608,6 +624,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -648,6 +665,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -670,6 +688,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -732,6 +751,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -772,6 +792,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -794,6 +815,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -898,6 +920,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -938,6 +961,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -960,6 +984,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,
@@ -1020,6 +1045,7 @@ describe('preferences service', () => {
         magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
         magic_prompt_backends: DEFAULT_MAGIC_PROMPT_BACKENDS,
         magic_prompt_efforts: DEFAULT_MAGIC_PROMPT_EFFORTS,
+        magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
         allow_web_tools_in_plan_mode: true,
@@ -1060,6 +1086,7 @@ describe('preferences service', () => {
         selected_opencode_model: 'opencode/gpt-5.3-codex',
         selected_cursor_model: 'cursor/auto',
         selected_pi_model: 'pi/sonnet',
+        selected_grok_model: 'grok/grok-composer-2.5-fast',
         default_codex_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
         codex_multi_agent_enabled: false,
@@ -1082,6 +1109,7 @@ describe('preferences service', () => {
         claude_cli_source: 'jean',
         codex_cli_source: 'jean',
         opencode_cli_source: 'jean',
+        grok_cli_source: 'path',
         gh_cli_source: 'jean',
         wsl_mode_chosen: false,
         wsl_enabled: false,

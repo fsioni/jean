@@ -44,6 +44,7 @@ import type {
 import {
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_RESOLVE_CONFLICTS_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
   type CliBackend,
@@ -262,6 +263,7 @@ export function useGitOperations({
       backend,
       model,
       provider,
+      executionMode,
     }: {
       session: Session
       worktreeId: string
@@ -270,12 +272,13 @@ export function useGitOperations({
       backend: CliBackend
       model: string
       provider: string | null
+      executionMode: 'plan' | 'yolo'
     }) => {
       const store = useChatStore.getState()
       store.setLastSentMessage(session.id, prompt)
       store.setError(session.id, null)
-      store.setExecutionMode(session.id, 'yolo')
-      store.setExecutingMode(session.id, 'yolo')
+      store.setExecutionMode(session.id, executionMode)
+      store.setExecutingMode(session.id, executionMode)
       store.clearInputDraft(session.id)
 
       const isCustomProvider = Boolean(provider && provider !== '__anthropic__')
@@ -290,7 +293,7 @@ export function useGitOperations({
           worktreePath,
           message: prompt,
           model,
-          executionMode: 'yolo',
+          executionMode,
           thinkingLevel: selectedThinkingLevelRef.current,
           effortLevel: usesEffortLevel
             ? selectedEffortLevelRef.current
@@ -344,6 +347,9 @@ export function useGitOperations({
           defaultBackend
         ) ??
         defaultBackend) as CliBackend
+      const executionMode =
+        preferences?.magic_prompt_modes?.resolve_conflicts_mode ??
+        DEFAULT_MAGIC_PROMPT_MODES.resolve_conflicts_mode
       const model =
         override?.model ??
         preferences?.magic_prompt_models?.resolve_conflicts_model ??
@@ -359,7 +365,7 @@ export function useGitOperations({
           ? null
           : resolvedProvider
 
-      return { backend, model, provider }
+      return { backend, model, provider, executionMode }
     },
     [project?.default_backend, preferences]
   )
@@ -1041,6 +1047,88 @@ export function useGitOperations({
           { worktreeId: activeWorktreeId }
         )
 
+        if (
+          !result.has_conflicts &&
+          (worktree.pr_number || worktree.pr_url)
+        ) {
+          const prResult = await invoke<MergeConflictsResponse>(
+            'fetch_and_merge_base',
+            { worktreeId: activeWorktreeId }
+          )
+
+          if (!prResult.has_conflicts) {
+            toast.success('No conflicts — base branch merged cleanly', {
+              id: toastId,
+            })
+            triggerImmediateGitPoll()
+            triggerImmediateRemotePoll()
+            return
+          }
+
+          toast.warning(
+            `Found conflicts in ${prResult.conflicts.length} file(s)`,
+            {
+              id: toastId,
+              description: 'Opening conflict resolution session...',
+            }
+          )
+
+          const { setActiveSession, copySessionSettings, activeSessionIds } =
+            useChatStore.getState()
+          const currentSessionId = activeSessionIds[activeWorktreeId]
+
+          const newSession = await invoke<Session>('create_session', {
+            worktreeId: activeWorktreeId,
+            worktreePath: worktree.path,
+            name: 'PR: resolve conflicts',
+          })
+
+          if (currentSessionId)
+            copySessionSettings(currentSessionId, newSession.id)
+          const conflictSelection = resolveConflictSessionSelection(override)
+          applyResolveConflictSessionSelection(
+            newSession.id,
+            activeWorktreeId,
+            worktree.path,
+            override
+          )
+
+          setActiveSession(activeWorktreeId, newSession.id)
+
+          const conflictFiles = prResult.conflicts.join('\n- ')
+          const diffSection = prResult.conflict_diff
+            ? `\n\nHere is the diff showing the conflict details:\n\n\`\`\`diff\n${prResult.conflict_diff}\n\`\`\``
+            : ''
+          const baseBranch = project?.default_branch || 'main'
+          const resolveInstructions =
+            preferences?.magic_prompts?.resolve_conflicts ??
+            DEFAULT_RESOLVE_CONFLICTS_PROMPT
+
+          const conflictPrompt = `I merged \`origin/${baseBranch}\` into this branch to resolve PR conflicts, but there are merge conflicts.
+
+Conflicts in these files:
+- ${conflictFiles}${diffSection}
+
+${resolveInstructions}`
+
+          sendConflictResolutionPrompt({
+            session: newSession,
+            worktreeId: activeWorktreeId,
+            worktreePath: worktree.path,
+            prompt: conflictPrompt,
+            ...conflictSelection,
+          })
+
+          queryClient.invalidateQueries({
+            queryKey: chatQueryKeys.sessions(activeWorktreeId),
+          })
+
+          setTimeout(() => {
+            inputRef.current?.focus()
+          }, 100)
+          return
+        }
+
         if (!result.has_conflicts) {
           toast.info('No merge conflicts detected', { id: toastId })
           return
@@ -1117,6 +1205,7 @@ ${resolveInstructions}`
     [
       activeWorktreeId,
       worktree,
+      project,
       preferences,
       queryClient,
       inputRef,

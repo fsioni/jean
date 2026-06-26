@@ -18,6 +18,7 @@ import type {
   WorktreeSessions,
 } from '@/types/chat'
 import type { SessionCardData } from '../session-card-utils'
+import type { CliBackend } from '@/types/preferences'
 import {
   extractImagePaths,
   extractSkillPaths,
@@ -58,14 +59,7 @@ function mapCodexReasoningToEffort(
 }
 
 function getDefaultModelForBackend(
-  backend:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
-    | undefined,
+  backend: CliBackend | undefined,
   preferences:
     | {
         selected_model?: string | null
@@ -74,6 +68,7 @@ function getDefaultModelForBackend(
         selected_cursor_model?: string | null
         selected_pi_model?: string | null
         selected_commandcode_model?: string | null
+        selected_grok_model?: string | null
       }
     | undefined
 ): string {
@@ -91,6 +86,9 @@ function getDefaultModelForBackend(
   }
   if (backend === 'commandcode') {
     return preferences?.selected_commandcode_model ?? 'commandcode/default'
+  }
+  if (backend === 'grok') {
+    return preferences?.selected_grok_model ?? 'grok/grok-composer-2.5-fast'
   }
   return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
 }
@@ -373,6 +371,7 @@ export function useClearContextApproval({
             | 'pi'
             | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, backend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model
       // immediately. Without this, session?.backend (from query cache) defaults to 'claude'

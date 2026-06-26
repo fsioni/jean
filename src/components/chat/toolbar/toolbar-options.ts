@@ -90,6 +90,11 @@ export const PI_MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: 'pi/haiku', label: 'Haiku (PI)' },
 ]
 
+export const GROK_MODEL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'grok/grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
+  { value: 'grok/grok-build', label: 'Grok Build' },
+]
+
 export const THINKING_LEVEL_OPTIONS: {
   value: ThinkingLevel
   label: string
@@ -134,3 +139,9 @@ export const PI_EFFORT_LEVEL_OPTIONS: {
   { value: 'high', label: 'High', description: 'High' },
   { value: 'xhigh', label: 'xHigh', description: 'Extra high' },
 ]
+
+// Grok supports low/medium/high/xhigh/max natively. ultracode is a Jean
+// main-loop concept (xHigh + workflows), not a Grok CLI effort level.
+export const GROK_EFFORT_LEVEL_OPTIONS = EFFORT_LEVEL_OPTIONS.filter(
+  option => option.value !== 'ultracode'
+)

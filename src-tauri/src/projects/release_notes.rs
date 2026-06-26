@@ -8,6 +8,10 @@ use tauri::AppHandle;
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
 
+fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
+
 pub type PrIssueRefsMap = BTreeMap<u32, BTreeMap<String, BTreeSet<u32>>>;
 
 static PR_NUMBER_IN_SUBJECT_RE: Lazy<Regex> =
@@ -195,7 +199,7 @@ fn load_pull_requests(
     tag_date: &str,
 ) -> Result<Vec<GitHubPullRequestCandidate>, String> {
     let search = format!("merged:>={tag_date}");
-    let output = silent_command(gh)
+    let output = gh_command(gh, project_path)
         .args([
             "pr",
             "list",
@@ -208,7 +212,6 @@ fn load_pull_requests(
             "--json",
             "number,title,body,closingIssuesReferences,mergeCommit",
         ])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr list: {e}"))?;
 
@@ -230,9 +233,8 @@ fn load_pull_request_commits(
     project_path: &str,
     pr_number: u32,
 ) -> Result<Vec<GitHubPullRequestCommit>, String> {
-    let output = silent_command(gh)
+    let output = gh_command(gh, project_path)
         .args(["pr", "view", &pr_number.to_string(), "--json", "commits"])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view for #{pr_number}: {e}"))?;
 
@@ -276,7 +278,7 @@ fn load_pull_request_detail(
         commits: Vec<GitHubPullRequestCommit>,
     }
 
-    let output = silent_command(gh)
+    let output = gh_command(gh, project_path)
         .args([
             "pr",
             "view",
@@ -284,7 +286,6 @@ fn load_pull_request_detail(
             "--json",
             "number,title,body,closingIssuesReferences,commits",
         ])
-        .current_dir(project_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view for #{pr_number}: {e}"))?;
 

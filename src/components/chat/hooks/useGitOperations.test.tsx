@@ -53,6 +53,8 @@ const worktree: Worktree = {
   name: 'feature',
   path: '/repo/worktree',
   branch: 'feature',
+  pr_number: 31,
+  pr_url: 'https://github.com/o/r/pull/31',
   created_at: 1,
   order: 0,
 }
@@ -176,5 +178,59 @@ describe('useGitOperations conflict resolution', () => {
       'I have merge conflicts that need to be resolved.'
     )
     expect(sentArgs?.message).toContain('Resolve and finish.')
+  })
+
+  it('uses the PR conflict flow when no local conflicts exist yet', async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'get_merge_conflicts') {
+        return Promise.resolve({
+          has_conflicts: false,
+          conflicts: [],
+          conflict_diff: '',
+        })
+      }
+      if (command === 'fetch_and_merge_base') {
+        return Promise.resolve({
+          has_conflicts: true,
+          conflicts: ['src/pr-file.ts'],
+          conflict_diff: '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main',
+        })
+      }
+      if (command === 'create_session') {
+        const session: Session = {
+          id: 'pr-conflict-session',
+          name: 'PR: resolve conflicts',
+          order: 1,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+          backend: 'claude',
+        }
+        return Promise.resolve(session)
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const { result, sendMessage } = renderGitOperations()
+
+    await act(async () => {
+      await result.current.handleResolveConflicts()
+    })
+
+    expect(mocks.invoke).toHaveBeenCalledWith('fetch_and_merge_base', {
+      worktreeId: 'wt-1',
+    })
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'pr-conflict-session',
+        executionMode: 'yolo',
+        backend: 'codex',
+      }),
+      expect.any(Object)
+    )
+    const sentArgs = sendMessage.mutate.mock.calls[0]?.[0]
+    expect(sentArgs?.message).toContain(
+      'I merged `origin/main` into this branch to resolve PR conflicts'
+    )
   })
 })

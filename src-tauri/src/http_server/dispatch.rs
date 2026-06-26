@@ -945,6 +945,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let result = crate::jean_mcp_core::start_background_investigation(
                 app.clone(),
                 worktree_id,
@@ -958,6 +960,7 @@ pub async fn dispatch_command(
                 chrome_enabled,
                 ai_language,
                 parallel_execution_prompt,
+                execution_mode,
             )
             .await?;
             to_value(result)
@@ -1083,8 +1086,6 @@ pub async fn dispatch_command(
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let message: String = from_field(&args, "message")?;
             let model: Option<String> = from_field_opt(&args, "model")?;
-            let execution_mode: Option<String> =
-                field_opt(&args, "executionMode", "execution_mode")?;
             let thinking_level_raw: Option<String> =
                 field_opt(&args, "thinkingLevel", "thinking_level")?;
             let parallel_execution_prompt: Option<String> = field_opt(
@@ -1092,6 +1093,8 @@ pub async fn dispatch_command(
                 "parallelExecutionPrompt",
                 "parallel_execution_prompt",
             )?;
+            let execution_mode: Option<String> =
+                field_opt(&args, "executionMode", "execution_mode")?;
             let ai_language: Option<String> = field_opt(&args, "aiLanguage", "ai_language")?;
             let allowed_tools: Option<Vec<String>> =
                 field_opt(&args, "allowedTools", "allowed_tools")?;
@@ -2203,6 +2206,30 @@ pub async fn dispatch_command(
             let result = crate::cursor_cli::get_cursor_install_command(app.clone()).await?;
             to_value(result)
         }
+        "check_grok_cli_installed" => {
+            let result = crate::grok_cli::check_grok_cli_installed(app.clone()).await?;
+            to_value(result)
+        }
+        "detect_grok_in_path" => {
+            let result = crate::grok_cli::detect_grok_in_path(app.clone()).await?;
+            to_value(result)
+        }
+        "check_grok_cli_auth" => {
+            let result = crate::grok_cli::check_grok_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "list_grok_models" => {
+            let result = crate::grok_cli::list_grok_models(app.clone()).await?;
+            to_value(result)
+        }
+        "get_grok_install_command" => {
+            let result = crate::grok_cli::get_grok_install_command().await?;
+            to_value(result)
+        }
+        "login_grok_cli_device" => {
+            crate::grok_cli::login_grok_cli_device(app.clone()).await?;
+            Ok(Value::Null)
+        }
         "check_pi_cli_installed" => {
             let result = crate::pi_cli::check_pi_cli_installed(app.clone()).await?;
             to_value(result)
@@ -2570,7 +2597,16 @@ pub async fn dispatch_command(
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let message: String = from_field(&args, "message")?;
-            crate::chat::steer_codex_turn(app.clone(), worktree_id, session_id, message).await?;
+            let queued_message: Option<Value> =
+                field_opt(&args, "queuedMessage", "queued_message")?;
+            crate::chat::steer_codex_turn(
+                app.clone(),
+                worktree_id,
+                session_id,
+                message,
+                queued_message,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "steer_opencode_turn" => {
@@ -2801,6 +2837,29 @@ pub async fn dispatch_command(
             let reasoning_effort: Option<String> =
                 field_opt(&args, "reasoningEffort", "reasoning_effort")?;
             let result = crate::projects::generate_release_notes(
+                app.clone(),
+                project_path,
+                tag,
+                release_name,
+                custom_prompt,
+                model,
+                custom_profile_name,
+                reasoning_effort,
+            )
+            .await?;
+            to_value(result)
+        }
+        "generate_release_post" => {
+            let project_path: String = field(&args, "projectPath", "project_path")?;
+            let tag: String = from_field(&args, "tag")?;
+            let release_name: String = field(&args, "releaseName", "release_name")?;
+            let custom_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
+            let model: Option<String> = from_field_opt(&args, "model")?;
+            let custom_profile_name: Option<String> =
+                field_opt(&args, "customProfileName", "custom_profile_name")?;
+            let reasoning_effort: Option<String> =
+                field_opt(&args, "reasoningEffort", "reasoning_effort")?;
+            let result = crate::projects::generate_release_post(
                 app.clone(),
                 project_path,
                 tag,

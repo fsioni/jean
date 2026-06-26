@@ -45,6 +45,7 @@ mod codex_cli;
 mod commandcode_cli;
 mod cursor_cli;
 mod gh_cli;
+mod grok_cli;
 pub mod http_server;
 pub mod jean_mcp_config;
 pub mod jean_mcp_core;
@@ -137,7 +138,7 @@ fn is_wsl_available() -> bool {
 pub struct AppPreferences {
     pub theme: String,
     #[serde(default = "default_model")]
-    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-7[1m], haiku
+    pub selected_model: String, // Claude model: claude-fable-5, claude-opus-4-8[1m], claude-opus-4-8, haiku
     #[serde(default = "default_thinking_level")]
     pub thinking_level: String, // Thinking level: off, think, megathink, ultrathink
     #[serde(default = "default_effort_level")]
@@ -196,6 +197,8 @@ pub struct AppPreferences {
     pub magic_prompt_backends: MagicPromptBackends, // Per-prompt backend overrides (None = use project/global default_backend)
     #[serde(default)]
     pub magic_prompt_efforts: MagicPromptReasoningEfforts, // Per-prompt reasoning effort overrides
+    #[serde(default)]
+    pub magic_prompt_modes: MagicPromptModes, // Per-prompt execution modes for chat-style magic prompts
     #[serde(default)]
     pub magic_models_auto_initialized: bool, // Whether magic prompt models were auto-set based on installed backends
     #[serde(default = "default_file_edit_mode")]
@@ -276,6 +279,8 @@ pub struct AppPreferences {
     pub selected_pi_model: String, // Default PI model
     #[serde(default = "default_commandcode_model")]
     pub selected_commandcode_model: String, // Default Command Code model
+    #[serde(default = "default_grok_model")]
+    pub selected_grok_model: String, // Default Grok model
     #[serde(default = "default_codex_reasoning_effort")]
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
     #[serde(default = "default_codex_goal_execution_mode")]
@@ -318,6 +323,8 @@ pub struct AppPreferences {
     pub codex_cli_source: String, // Codex CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub opencode_cli_source: String, // OpenCode CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default = "default_grok_cli_source")]
+    pub grok_cli_source: String, // Grok CLI source: currently "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub gh_cli_source: String, // GitHub CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default)]
@@ -451,11 +458,8 @@ fn default_model() -> String {
 
 fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
     match model {
-        "claude-opus-4-8" => Some("claude-opus-4-8[1m]"),
-        "claude-opus-4-7" => Some("claude-opus-4-7[1m]"),
         "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
-        "claude-opus-4-6" => Some("claude-opus-4-6[1m]"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
         "sonnet" => Some("claude-sonnet-4-6[1m]"),
         _ => None,
@@ -615,6 +619,14 @@ fn default_commandcode_model() -> String {
     "commandcode/default".to_string()
 }
 
+fn default_grok_model() -> String {
+    "grok/grok-composer-2.5-fast".to_string()
+}
+
+fn default_grok_cli_source() -> String {
+    "path".to_string()
+}
+
 fn default_codex_reasoning_effort() -> String {
     "high".to_string()
 }
@@ -722,6 +734,13 @@ mod tests {
     }
 
     #[test]
+    fn migrate_default_claude_model_keeps_standard_non_1m_models() {
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-8"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-7"), None);
+        assert_eq!(super::migrate_default_claude_model("claude-opus-4-6"), None);
+    }
+
+    #[test]
     fn app_preferences_default_web_access_sounds_enabled_for_existing_prefs() {
         let mut prefs_json = serde_json::to_value(AppPreferences::default()).unwrap();
         prefs_json
@@ -815,6 +834,13 @@ mod tests {
                 "review_comments_effort": "medium",
             }),
         );
+        object.insert(
+            "magic_prompt_modes".to_string(),
+            json!({
+                "investigate_issue_mode": "yolo",
+                "review_comments_mode": "plan"
+            }),
+        );
 
         let prefs: AppPreferences = serde_json::from_value(prefs_json).unwrap();
 
@@ -837,6 +863,8 @@ mod tests {
             prefs.magic_prompt_efforts.review_comments_effort.as_deref(),
             Some("medium")
         );
+        assert_eq!(prefs.magic_prompt_modes.investigate_issue_mode, "yolo");
+        assert_eq!(prefs.magic_prompt_modes.review_comments_mode, "plan");
     }
 }
 
@@ -883,6 +911,8 @@ pub struct MagicPrompts {
     pub investigate_workflow_run: Option<String>,
     #[serde(default)]
     pub release_notes: Option<String>,
+    #[serde(default)]
+    pub release_post: Option<String>,
     #[serde(default)]
     pub session_naming: Option<String>,
     #[serde(default)]
@@ -1348,6 +1378,26 @@ fn default_release_notes_prompt() -> String {
         .to_string()
 }
 
+fn default_release_post_prompt() -> String {
+    r#"Write one short release announcement for Twitter/X, Mastodon, Bluesky, LinkedIn, and similar platforms.
+
+Release: {release_name}
+Tag: {tag}
+GitHub release link: {release_url}
+
+Release notes:
+{release_body}
+
+Instructions:
+- Be a bit more generous than a terse tweet, but keep the full post under 280 characters including the GitHub release link.
+- Include the exact GitHub release link.
+- Put each feature, fix, or improvement on its own line.
+- Mention the most user-facing changes or theme.
+- Keep it clear, upbeat, and not hype-heavy.
+- Do not use markdown headings."#
+        .to_string()
+}
+
 fn default_session_naming_prompt() -> String {
     r#"<task>Generate a short, human-friendly name for this chat session based on the user's request.</task>
 
@@ -1535,6 +1585,8 @@ pub struct MagicPromptModels {
     #[serde(default = "default_sonnet_model")]
     pub release_notes_model: String,
     #[serde(default = "default_sonnet_model")]
+    pub release_post_model: String,
+    #[serde(default = "default_sonnet_model")]
     pub session_naming_model: String,
     #[serde(default = "default_model")]
     pub investigate_security_alert_model: String,
@@ -1562,6 +1614,7 @@ impl Default for MagicPromptModels {
             context_summary_model: default_model(),
             resolve_conflicts_model: default_model(),
             release_notes_model: default_sonnet_model(),
+            release_post_model: default_sonnet_model(),
             session_naming_model: default_sonnet_model(),
             investigate_security_alert_model: default_model(),
             investigate_advisory_model: default_model(),
@@ -1618,12 +1671,19 @@ pub fn is_pi_model(model: &str) -> bool {
     model.starts_with("pi/")
 }
 
+/// Returns true if the given model string identifies a Grok model.
+/// Grok model IDs are prefixed with "grok/" (e.g. "grok/grok-composer-2.5-fast").
+pub fn is_grok_model(model: &str) -> bool {
+    model.starts_with("grok/")
+}
+
 /// Returns true if the given model string identifies a Codex model.
 /// Codex model IDs contain "codex" or start with "gpt-", but NOT OpenCode models.
 pub fn is_codex_model(model: &str) -> bool {
     !is_opencode_model(model)
         && !is_cursor_model(model)
         && !is_pi_model(model)
+        && !is_grok_model(model)
         && (model.contains("codex") || model.starts_with("gpt-"))
 }
 
@@ -1648,6 +1708,8 @@ pub struct MagicPromptProviders {
     pub resolve_conflicts_provider: Option<String>,
     #[serde(default)]
     pub release_notes_provider: Option<String>,
+    #[serde(default)]
+    pub release_post_provider: Option<String>,
     #[serde(default)]
     pub session_naming_provider: Option<String>,
     #[serde(default)]
@@ -1682,6 +1744,8 @@ pub struct MagicPromptBackends {
     #[serde(default)]
     pub release_notes_backend: Option<String>,
     #[serde(default)]
+    pub release_post_backend: Option<String>,
+    #[serde(default)]
     pub session_naming_backend: Option<String>,
     #[serde(default)]
     pub investigate_security_alert_backend: Option<String>,
@@ -1715,6 +1779,8 @@ pub struct MagicPromptReasoningEfforts {
     #[serde(default)]
     pub release_notes_effort: Option<String>,
     #[serde(default)]
+    pub release_post_effort: Option<String>,
+    #[serde(default)]
     pub session_naming_effort: Option<String>,
     #[serde(default)]
     pub investigate_security_alert_effort: Option<String>,
@@ -1726,12 +1792,56 @@ pub struct MagicPromptReasoningEfforts {
     pub review_comments_effort: Option<String>,
 }
 
+fn default_magic_prompt_plan_mode() -> String {
+    "plan".to_string()
+}
+
+fn default_magic_prompt_yolo_mode() -> String {
+    "yolo".to_string()
+}
+
+/// Per-prompt execution mode overrides for magic prompts that send chat turns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MagicPromptModes {
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_pr_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub investigate_workflow_run_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_security_alert_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_advisory_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub investigate_linear_issue_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub review_comments_mode: String,
+    #[serde(default = "default_magic_prompt_yolo_mode")]
+    pub resolve_conflicts_mode: String,
+}
+
+impl Default for MagicPromptModes {
+    fn default() -> Self {
+        Self {
+            investigate_issue_mode: default_magic_prompt_plan_mode(),
+            investigate_pr_mode: default_magic_prompt_plan_mode(),
+            investigate_workflow_run_mode: default_magic_prompt_yolo_mode(),
+            investigate_security_alert_mode: default_magic_prompt_plan_mode(),
+            investigate_advisory_mode: default_magic_prompt_plan_mode(),
+            investigate_linear_issue_mode: default_magic_prompt_plan_mode(),
+            review_comments_mode: default_magic_prompt_plan_mode(),
+            resolve_conflicts_mode: default_magic_prompt_yolo_mode(),
+        }
+    }
+}
+
 impl MagicPrompts {
     /// Migrate prompts that match the current default to None.
     /// This ensures users who never customized a prompt get auto-updated defaults.
     fn migrate_defaults(&mut self) {
         type DefaultEntry<'a> = (fn() -> String, &'a mut Option<String>);
-        let defaults: [DefaultEntry; 17] = [
+        let defaults: [DefaultEntry; 18] = [
             (
                 default_investigate_issue_prompt,
                 &mut self.investigate_issue,
@@ -1750,6 +1860,7 @@ impl MagicPrompts {
                 &mut self.investigate_workflow_run,
             ),
             (default_release_notes_prompt, &mut self.release_notes),
+            (default_release_post_prompt, &mut self.release_post),
             (default_session_naming_prompt, &mut self.session_naming),
             (
                 default_parallel_execution_prompt,
@@ -1827,6 +1938,7 @@ impl Default for AppPreferences {
             magic_prompt_providers: MagicPromptProviders::default(),
             magic_prompt_backends: MagicPromptBackends::default(),
             magic_prompt_efforts: MagicPromptReasoningEfforts::default(),
+            magic_prompt_modes: MagicPromptModes::default(),
             magic_models_auto_initialized: false,
             file_edit_mode: default_file_edit_mode(),
             ai_language: String::new(),
@@ -1868,6 +1980,7 @@ impl Default for AppPreferences {
             selected_cursor_model: default_cursor_model(),
             selected_pi_model: default_pi_model(),
             selected_commandcode_model: default_commandcode_model(),
+            selected_grok_model: default_grok_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: false,
@@ -1889,6 +2002,7 @@ impl Default for AppPreferences {
             claude_cli_source: default_cli_source(),
             codex_cli_source: default_cli_source(),
             opencode_cli_source: default_cli_source(),
+            grok_cli_source: default_grok_cli_source(),
             gh_cli_source: default_cli_source(),
             wsl_mode_chosen: false,
             wsl_enabled: false,
@@ -3581,6 +3695,128 @@ pub fn run() {
                 }
             }
 
+            // FIX: Handle OS file drops ourselves on Linux/WebKitGTK.
+            //
+            // The app runs with `dragDropEnabled: false` (so internal DOM drag &
+            // drop works for list/tree reordering). The trade-off on WebKitGTK is
+            // that dropping an OS file makes the webview handle it natively: on an
+            // editable field it inserts the path text, on a non-editable area it
+            // navigates the whole webview to that `file://` (blanking/locking the
+            // UI). DOM `preventDefault` does NOT cancel this (tauri-apps/tauri#12052),
+            // and Tauri's own native drag-drop is broken on Linux too (#9725).
+            //
+            // So we intercept at the GTK widget level: on `drag-drop` (mouse
+            // release) we CLAIM the drop (return true → WebKitGTK's editor/navigation
+            // does not run) and request the URI list ourselves; in
+            // `drag-data-received` we read the file paths + pointer position, stop the
+            // default handler, and forward them to the frontend, which routes each
+            // drop to a terminal (write the path into its pty) or the chat (attach
+            // the image). `drag-data-received` also fires during hover, so a flag set
+            // in `drag-drop` gates it to genuine drops only.
+            #[cfg(target_os = "linux")]
+            if !headless {
+                if let Some(window) = app.get_webview_window("main") {
+                    let drop_app = app.handle().clone();
+                    let installed = window.with_webview(move |webview| {
+                        use gtk::prelude::WidgetExt;
+                        use std::cell::Cell;
+                        use std::rc::Rc;
+                        use tauri::Emitter;
+                        use webkit2gtk::glib;
+                        use webkit2gtk::glib::object::ObjectExt;
+
+                        let wv: webkit2gtk::WebView = webview.inner();
+
+                        // WebKitGTK requests the drag data during hover (to validate
+                        // the target), so `drag-data-received` fires before release.
+                        // Only act on the ACTUAL drop: `drag-drop` (mouse release)
+                        // sets this flag and explicitly requests the data.
+                        let is_dropping = Rc::new(Cell::new(false));
+
+                        let drop_flag = is_dropping.clone();
+                        wv.connect_drag_drop(move |wv, ctx, _x, _y, time| {
+                            // Only claim OS file drops. WebKitGTK routes internal
+                            // DOM drag & drop (e.g. terminal-tab reordering, which
+                            // carries `text/plain`) through this same GTK signal;
+                            // returning true there short-circuits WebKit's default
+                            // handler, so the page never receives the `drop` event
+                            // and the reorder silently breaks. A real file drop is
+                            // the only drag that offers `text/uri-list`, so gate on
+                            // it and let everything else fall through to WebKit.
+                            let target = gtk::gdk::Atom::intern("text/uri-list");
+                            if !ctx.list_targets().contains(&target) {
+                                return false;
+                            }
+                            // Claim the drop (return true) so WebKitGTK's editor does
+                            // NOT insert the file path into editable fields, and
+                            // request the URI list ourselves → drag-data-received.
+                            drop_flag.set(true);
+                            wv.drag_get_data(ctx, &target, time);
+                            true
+                        });
+
+                        let recv_flag = is_dropping.clone();
+                        wv.connect_drag_data_received(
+                            move |wv, _ctx, _x, _y, data, _info, _time| {
+                                use gtk::gdk::prelude::SeatExt;
+                                use gtk::prelude::WidgetExt;
+
+                                // Ignore data requested during hover (not a real drop).
+                                if !recv_flag.replace(false) {
+                                    return;
+                                }
+                                // Stop WebKitGTK's default handler from loading the
+                                // dropped file (which blanks/locks the window).
+                                wv.stop_signal_emission_by_name("drag-data-received");
+
+                                // Convert file:// URIs to real paths (percent-decoded).
+                                let paths: Vec<String> = data
+                                    .uris()
+                                    .iter()
+                                    .filter_map(|uri| glib::filename_from_uri(uri).ok())
+                                    .map(|(path, _host)| {
+                                        path.to_string_lossy().into_owned()
+                                    })
+                                    .collect();
+                                if paths.is_empty() {
+                                    return;
+                                }
+
+                                // Drop position: query the pointer relative to the
+                                // webview's window at release time.
+                                let (x, y) = wv
+                                    .window()
+                                    .and_then(|win| {
+                                        wv.display().default_seat().and_then(|seat| {
+                                            seat.pointer().map(|pointer| {
+                                                let (_w, px, py, _mask) =
+                                                    win.device_position(&pointer);
+                                                (px, py)
+                                            })
+                                        })
+                                    })
+                                    .unwrap_or((0, 0));
+                                log::debug!("[file-drop] paths={paths:?} x={x} y={y}");
+                                if let Err(e) = drop_app.emit(
+                                    "linux-file-drop",
+                                    serde_json::json!({ "paths": paths, "x": x, "y": y }),
+                                ) {
+                                    log::warn!("[file-drop] emit failed: {e}");
+                                }
+                            },
+                        );
+                    });
+                    match installed {
+                        Ok(()) => log::debug!(
+                            "[file-drop] Installed Linux drag-data-received interceptor"
+                        ),
+                        Err(e) => {
+                            log::warn!("[file-drop] Failed to install interceptor: {e}")
+                        }
+                    }
+                }
+            }
+
             // Kill orphaned OpenCode server from a previous crash (if any).
             // Spawned async — cleanup involves blocking I/O (HTTP health check with
             // 1.2s timeout, process kill, 300ms sleep) that can delay startup by ~1.5s.
@@ -4024,6 +4260,7 @@ pub fn run() {
             projects::cancel_review_with_ai,
             projects::list_github_releases,
             projects::generate_release_notes,
+            projects::generate_release_post,
             projects::commit_changes,
             projects::open_project_on_github,
             projects::open_branch_on_github,
@@ -4298,6 +4535,13 @@ pub fn run() {
             cursor_cli::check_cursor_cli_auth,
             cursor_cli::list_cursor_models,
             cursor_cli::get_cursor_install_command,
+            // Grok CLI management commands
+            grok_cli::check_grok_cli_installed,
+            grok_cli::detect_grok_in_path,
+            grok_cli::check_grok_cli_auth,
+            grok_cli::list_grok_models,
+            grok_cli::get_grok_install_command,
+            grok_cli::login_grok_cli_device,
             // OpenCode CLI management commands
             opencode_cli::check_opencode_cli_installed,
             opencode_cli::detect_opencode_in_path,

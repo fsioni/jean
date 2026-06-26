@@ -9,6 +9,7 @@ import {
   SVG_EXTENSION,
 } from '../image-constants'
 import { isNativeApp } from '@/lib/environment'
+import { dragHasFiles } from '@/lib/drag-drop-utils'
 import { processAttachmentFiles } from '../attachment-processing'
 
 /** Tracks image paths currently being processed to prevent duplicates */
@@ -43,10 +44,7 @@ export function useDragAndDropImages(
 
     let browserLastDropTime = 0
 
-    const hasFiles = (event: DragEvent) => {
-      const types = Array.from(event.dataTransfer?.types ?? [])
-      return types.includes('Files')
-    }
+    const hasFiles = (event: DragEvent) => dragHasFiles(event.dataTransfer)
 
     const handleBrowserDragEnter = (event: DragEvent) => {
       if (!hasFiles(event)) return
@@ -190,7 +188,7 @@ export function useDragAndDropImages(
 /**
  * Process a dropped SVG file by reading its text content and saving as a text file.
  */
-async function processDroppedSvg(
+export async function processDroppedSvg(
   sourcePath: string,
   sessionId: string
 ): Promise<void> {
@@ -227,7 +225,7 @@ async function processDroppedSvg(
 /**
  * Process a dropped image file by saving it via Tauri and adding to pending images.
  */
-async function processDroppedImage(
+export async function processDroppedImage(
   sourcePath: string,
   sessionId: string
 ): Promise<void> {

@@ -76,6 +76,20 @@ impl WsAuth {
     }
 }
 
+fn selected_project_id_for_init(
+    selected_project: Option<&str>,
+    ui_state: Option<&crate::UIState>,
+) -> Option<String> {
+    selected_project
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            ui_state
+                .and_then(|u| u.active_project_id.clone())
+                .filter(|s| !s.is_empty())
+        })
+}
+
 #[derive(Serialize, Clone)]
 pub struct BindHostOption {
     pub host: String,
@@ -336,6 +350,48 @@ const INIT_MESSAGE_WINDOW: usize = 50;
 /// continues over the WebSocket connection.
 const INIT_REPLAY_EVENT_CAP: usize = 200;
 
+type WorktreesByProject = std::collections::HashMap<String, Vec<crate::projects::types::Worktree>>;
+type SessionsByWorktree = std::collections::HashMap<String, crate::chat::types::WorktreeSessions>;
+
+async fn load_selected_project_bootstrap(
+    app: AppHandle,
+    project_id: String,
+) -> (WorktreesByProject, SessionsByWorktree) {
+    let worktrees = crate::projects::list_worktrees(app.clone(), project_id.clone())
+        .await
+        .unwrap_or_default();
+
+    let sessions_futures: Vec<_> = worktrees
+        .iter()
+        .map(|wt| {
+            let app = app.clone();
+            let worktree_id = wt.id.clone();
+            let worktree_path = wt.path.clone();
+            async move {
+                let sessions = crate::chat::get_sessions(
+                    app,
+                    worktree_id.clone(),
+                    worktree_path,
+                    None,       // include_archived
+                    Some(true), // include_message_counts
+                )
+                .await
+                .unwrap_or_default();
+                (worktree_id, sessions)
+            }
+        })
+        .collect();
+
+    let sessions_by_worktree = futures_util::future::join_all(sessions_futures)
+        .await
+        .into_iter()
+        .collect();
+
+    let mut worktrees_by_project = std::collections::HashMap::new();
+    worktrees_by_project.insert(project_id, worktrees);
+    (worktrees_by_project, sessions_by_worktree)
+}
+
 fn parse_active_sessions_param(value: Option<&str>) -> std::collections::HashMap<String, String> {
     value
         .unwrap_or("")
@@ -359,6 +415,51 @@ async fn reconnect_init_response(params: WsAuth, state: AppState) -> Response {
 
     if let Ok(app_data_dir) = state.app.path().app_data_dir() {
         response["appDataDir"] = Value::String(app_data_dir.to_string_lossy().to_string());
+    }
+
+    let (projects_result, ui_state_result) = tokio::join!(
+        crate::projects::list_projects(state.app.clone()),
+        crate::load_ui_state(state.app.clone()),
+    );
+
+    let projects = match projects_result {
+        Ok(projects) => projects,
+        Err(e) => {
+            log::error!("Failed to load projects for reconnect /api/init: {e}");
+            vec![]
+        }
+    };
+    let ui_state = match ui_state_result {
+        Ok(ui_state) => Some(ui_state),
+        Err(e) => {
+            log::error!("Failed to load ui_state for reconnect /api/init: {e}");
+            None
+        }
+    };
+
+    if let Ok(val) = serde_json::to_value(&projects) {
+        response["projects"] = val;
+    }
+    if let Some(ref ui) = ui_state {
+        if let Ok(val) = serde_json::to_value(ui) {
+            response["uiState"] = val;
+        }
+    }
+
+    let selected_project_id =
+        selected_project_id_for_init(params.selected_project.as_deref(), ui_state.as_ref());
+    let selected_project = selected_project_id
+        .as_deref()
+        .and_then(|id| projects.iter().find(|p| p.id == id && !p.is_folder));
+    if let Some(project) = selected_project {
+        let (worktrees_by_project, sessions_by_worktree) =
+            load_selected_project_bootstrap(state.app.clone(), project.id.clone()).await;
+        if let Ok(val) = serde_json::to_value(&worktrees_by_project) {
+            response["worktreesByProject"] = val;
+        }
+        if let Ok(val) = serde_json::to_value(&sessions_by_worktree) {
+            response["sessionsByWorktree"] = val;
+        }
     }
 
     let browser_active_sessions = parse_active_sessions_param(params.active_sessions.as_deref());
@@ -501,17 +602,8 @@ async fn init_handler(Query(params): Query<WsAuth>, State(state): State<AppState
     // Resolve the "focused" project to scope the payload around.
     // Priority: browser override query param > ui_state.active_project_id.
     // Fall back to active_worktree_id's parent project if no active_project_id.
-    let selected_project_id: Option<String> = params
-        .selected_project
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            ui_state
-                .as_ref()
-                .and_then(|u| u.active_project_id.clone())
-                .filter(|s| !s.is_empty())
-        });
+    let selected_project_id: Option<String> =
+        selected_project_id_for_init(params.selected_project.as_deref(), ui_state.as_ref());
 
     // Validate the selected project exists and is a real project (not a folder).
     let selected_project = selected_project_id
@@ -521,52 +613,15 @@ async fn init_handler(Query(params): Query<WsAuth>, State(state): State<AppState
     // Fetch worktrees + sessions (counts only) ONLY for the selected project.
     // All other projects' worktrees/sessions are lazy-loaded by the frontend
     // when the user navigates.
-    let (worktrees_by_project, sessions_by_worktree): (
-        std::collections::HashMap<String, Vec<crate::projects::types::Worktree>>,
-        std::collections::HashMap<String, crate::chat::types::WorktreeSessions>,
-    ) = if let Some(project) = selected_project {
-        let worktrees = crate::projects::list_worktrees(state.app.clone(), project.id.clone())
-            .await
-            .unwrap_or_default();
-
-        let sessions_futures: Vec<_> = worktrees
-            .iter()
-            .map(|wt| {
-                let app = state.app.clone();
-                let worktree_id = wt.id.clone();
-                let worktree_path = wt.path.clone();
-                async move {
-                    let sessions = crate::chat::get_sessions(
-                        app,
-                        worktree_id.clone(),
-                        worktree_path,
-                        None,       // include_archived
-                        Some(true), // include_message_counts
-                    )
-                    .await
-                    .unwrap_or_default();
-                    (worktree_id, sessions)
-                }
-            })
-            .collect();
-
-        let sessions_by_wt: std::collections::HashMap<
-            String,
-            crate::chat::types::WorktreeSessions,
-        > = futures_util::future::join_all(sessions_futures)
-            .await
-            .into_iter()
-            .collect();
-
-        let mut wt_map = std::collections::HashMap::new();
-        wt_map.insert(project.id.clone(), worktrees);
-        (wt_map, sessions_by_wt)
-    } else {
-        (
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-        )
-    };
+    let (worktrees_by_project, sessions_by_worktree): (WorktreesByProject, SessionsByWorktree) =
+        if let Some(project) = selected_project {
+            load_selected_project_bootstrap(state.app.clone(), project.id.clone()).await
+        } else {
+            (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            )
+        };
 
     // Only worktrees in the selected project are "known" for validation/cleanup.
     // Entries in ui_state.active_session_ids for worktrees outside this scope
@@ -1454,6 +1509,46 @@ mod tests {
         assert!(options.iter().any(|option| option.host == "127.0.0.1"));
         assert!(options.iter().any(|option| option.host == "0.0.0.0"));
     }
+
+    #[test]
+    fn selected_project_id_for_init_prefers_browser_state() {
+        let ui_state = crate::UIState {
+            active_project_id: Some("disk-project".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            super::selected_project_id_for_init(Some("browser-project"), Some(&ui_state)),
+            Some("browser-project".to_string())
+        );
+    }
+
+    #[test]
+    fn selected_project_id_for_init_falls_back_to_ui_state() {
+        let ui_state = crate::UIState {
+            active_project_id: Some("disk-project".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            super::selected_project_id_for_init(None, Some(&ui_state)),
+            Some("disk-project".to_string())
+        );
+    }
+
+    #[test]
+    fn selected_project_id_for_init_ignores_empty_values() {
+        let ui_state = crate::UIState {
+            active_project_id: Some(String::new()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            super::selected_project_id_for_init(Some(""), Some(&ui_state)),
+            None
+        );
+    }
+
     #[test]
     fn test_path_is_in_known_roots_allows_nested_project_file() {
         let dir = tempfile::tempdir().expect("temp dir");

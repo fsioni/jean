@@ -508,6 +508,12 @@ export interface ReleaseNotesResponse {
   body: string
 }
 
+/** Response from generate_release_post command */
+export interface ReleasePostResponse {
+  post: string
+  release_url: string
+}
+
 // =============================================================================
 // Local Merge
 // =============================================================================

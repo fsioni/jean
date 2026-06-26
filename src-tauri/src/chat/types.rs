@@ -102,6 +102,7 @@ pub enum Backend {
     Cursor,
     Pi,
     Commandcode,
+    Grok,
 }
 
 impl<'de> Deserialize<'de> for Backend {
@@ -121,6 +122,7 @@ impl<'de> Deserialize<'de> for Backend {
             "cursor" => Backend::Cursor,
             "pi" => Backend::Pi,
             "commandcode" => Backend::Commandcode,
+            "grok" => Backend::Grok,
             "claude" | "" => Backend::Claude,
             other => {
                 log::warn!("Unknown chat backend '{other}', falling back to claude");
@@ -128,6 +130,17 @@ impl<'de> Deserialize<'de> for Backend {
             }
         };
         Ok(backend)
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::Backend;
+
+    #[test]
+    fn backend_deserializes_grok() {
+        let backend: Backend = serde_json::from_str("\"grok\"").unwrap();
+        assert_eq!(backend, Backend::Grok);
     }
 }
 
@@ -582,6 +595,9 @@ pub struct Session {
     /// Command Code uses standalone headless invocations; this stores no native resume id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commandcode_session_id: Option<String>,
+    /// Grok headless session ID for resuming conversations
+    #[serde(default)]
+    pub grok_session_id: Option<String>,
     /// Selected model for this session
     #[serde(default)]
     pub selected_model: Option<String>,
@@ -786,6 +802,7 @@ impl Session {
             cursor_chat_id: None,
             pi_session_id: None,
             commandcode_session_id: None,
+            grok_session_id: None,
             selected_model: None,
             selected_thinking_level: None,
             selected_effort_level: None,
@@ -1001,6 +1018,7 @@ impl SessionMetadata {
             cursor_chat_id: self.cursor_chat_id.clone(),
             pi_session_id: self.pi_session_id.clone(),
             commandcode_session_id: self.commandcode_session_id.clone(),
+            grok_session_id: self.grok_session_id.clone(),
             selected_model: self.selected_model.clone(),
             selected_thinking_level: self.selected_thinking_level.clone(),
             selected_effort_level: self.selected_effort_level.clone(),
@@ -1293,6 +1311,10 @@ pub struct RunEntry {
     /// switches without relying on provider-owned resume history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<Backend>,
+    /// Claude CLI custom provider profile used for this run. None means
+    /// Anthropic/default Claude.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_profile_name: Option<String>,
     /// Unix timestamp when run started
     pub started_at: u64,
     /// Unix timestamp when run ended (None if still running)
@@ -1328,6 +1350,9 @@ pub struct RunEntry {
     /// Cursor chat ID — persisted per-run so future runs can resume the same chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_chat_id: Option<String>,
+    /// Grok headless session ID — persisted per-run for conversation continuity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grok_session_id: Option<String>,
 }
 
 impl RunEntry {
@@ -1402,6 +1427,9 @@ pub struct SessionMetadata {
     /// Command Code uses standalone headless invocations; this stores no native resume id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commandcode_session_id: Option<String>,
+    /// Grok headless session ID for resuming conversations
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grok_session_id: Option<String>,
     /// Selected model for this session
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_model: Option<String>,
@@ -1569,6 +1597,8 @@ pub struct SessionDebugInfo {
     pub pi_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commandcode_session_id: Option<String>,
+    /// Grok headless session ID (if any)
+    pub grok_session_id: Option<String>,
     /// Path to Claude CLI's JSONL file (in ~/.claude/projects/)
     pub claude_jsonl_file: Option<String>,
     /// List of JSONL run log files for this session
@@ -1598,6 +1628,7 @@ impl SessionMetadata {
             cursor_chat_id: None,
             pi_session_id: None,
             commandcode_session_id: None,
+            grok_session_id: None,
             selected_model: None,
             selected_thinking_level: None,
             selected_effort_level: None,
@@ -2034,6 +2065,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: None,
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Completed,
@@ -2046,6 +2078,7 @@ mod tests {
             codex_thread_id: Some("thread-1".to_string()),
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         let restored = metadata.to_session();
@@ -2073,6 +2106,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: None,
+            custom_profile_name: None,
             started_at: 1234567890,
             ended_at: None,
             status: RunStatus::Running,
@@ -2085,6 +2119,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert!(metadata.find_run("run-1").is_some());
@@ -2102,6 +2137,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: Some(Backend::Codex),
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Cancelled,
@@ -2114,6 +2150,7 @@ mod tests {
             codex_thread_id: Some("thread-1".to_string()),
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         // Cancelled-with-content now renders user + partial assistant (incl tool calls).
@@ -2152,6 +2189,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: Some(Backend::Codex),
+            custom_profile_name: None,
             started_at: 1,
             ended_at: Some(2),
             status: RunStatus::Cancelled,
@@ -2164,6 +2202,7 @@ mod tests {
             codex_thread_id: Some("thread-1".to_string()),
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
         metadata.runs.push(RunEntry {
             run_id: "run-completed".to_string(),
@@ -2174,6 +2213,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: Some(Backend::Codex),
+            custom_profile_name: None,
             started_at: 3,
             ended_at: Some(4),
             status: RunStatus::Completed,
@@ -2186,6 +2226,7 @@ mod tests {
             codex_thread_id: Some("thread-1".to_string()),
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         // Cancelled partial turn (user + assistant) + completed turn (user + assistant) = 4.
@@ -2214,6 +2255,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: None,
+            custom_profile_name: None,
             started_at: 1234567890,
             ended_at: None,
             status: RunStatus::Completed,
@@ -2226,6 +2268,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert!(metadata.latest_claude_session_id().is_none());
@@ -2240,6 +2283,7 @@ mod tests {
             thinking_level: None,
             effort_level: None,
             backend: None,
+            custom_profile_name: None,
             started_at: 1234567891,
             ended_at: None,
             status: RunStatus::Completed,
@@ -2252,6 +2296,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert_eq!(metadata.latest_claude_session_id(), Some("claude-sess-abc"));
