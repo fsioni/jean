@@ -856,9 +856,12 @@ mod tests {
 
         let bind_host = resolve_headless_bind_host(&prefs, &overrides.host);
         let token_required = resolve_headless_token_required(&prefs, &overrides);
-        let err =
-            validate_headless_security(&bind_host, !token_required, overrides.allow_unsafe_no_token)
-                .unwrap_err();
+        let err = validate_headless_security(
+            &bind_host,
+            !token_required,
+            overrides.allow_unsafe_no_token,
+        )
+        .unwrap_err();
 
         assert!(err.contains("Refusing to disable token authentication"));
     }
@@ -3082,11 +3085,7 @@ async fn start_http_server_headless(
 
     let token_required = resolve_headless_token_required(&prefs, overrides);
 
-    validate_headless_security(
-        &bind_host,
-        !token_required,
-        overrides.allow_unsafe_no_token,
-    )?;
+    validate_headless_security(&bind_host, !token_required, overrides.allow_unsafe_no_token)?;
 
     // Token: CLI --token used directly (not persisted), otherwise load/generate
     let token = if let Some(ref t) = overrides.token {
