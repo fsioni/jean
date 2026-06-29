@@ -173,6 +173,7 @@ export interface InitialData {
   preferences?: unknown
   uiState?: unknown
   appDataDir?: string
+  serverPlatform?: 'mac' | 'windows' | 'linux'
   webBuildId?: string
   appVersion?: string
 }

@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{ws::WebSocketUpgrade, Path as AxumPath, Query, State},
-    http::{header, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -15,8 +15,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
+use super::assets;
 use super::auth;
 use super::websocket::handle_ws_connection;
 use super::EmitExt;
@@ -118,6 +119,16 @@ impl Default for WebBuildInfo {
     }
 }
 
+fn server_platform_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "linux"
+    }
+}
+
 async fn read_web_build_info(dist_path: &std::path::Path) -> WebBuildInfo {
     let path = dist_path.join("jean-build.json");
     match tokio::fs::read_to_string(&path).await {
@@ -126,8 +137,10 @@ async fn read_web_build_info(dist_path: &std::path::Path) -> WebBuildInfo {
             WebBuildInfo::default()
         }),
         Err(e) => {
-            log::debug!("No web build info at {}: {e}", path.display());
-            WebBuildInfo::default()
+            log::debug!("No filesystem web build info at {}: {e}", path.display());
+            assets::get("jean-build.json")
+                .and_then(|data| serde_json::from_slice::<WebBuildInfo>(&data).ok())
+                .unwrap_or_default()
         }
     }
 }
@@ -213,12 +226,11 @@ pub async fn start_server(
         dist_path: dist_path.clone(),
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = cors_layer_from_env();
 
     let router = Router::new()
+        .route("/healthz", get(health_handler))
+        .route("/readyz", get(ready_handler))
         .route("/ws", get(ws_handler))
         .route("/api/auth", get(auth_handler))
         .route("/api/init", get(init_handler))
@@ -269,18 +281,66 @@ pub async fn start_server(
     })
 }
 
+fn cors_layer_from_env() -> CorsLayer {
+    let mut layer = CorsLayer::new().allow_methods(Any).allow_headers(Any);
+    let raw = std::env::var("JEAN_ALLOWED_ORIGINS").unwrap_or_default();
+    let origins: Vec<HeaderValue> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                log::warn!("Ignoring invalid JEAN_ALLOWED_ORIGINS entry '{origin}': {e}");
+                None
+            }
+        })
+        .collect();
+
+    if raw.trim() == "*" {
+        layer = layer.allow_origin(AllowOrigin::any());
+    } else if !origins.is_empty() {
+        layer = layer.allow_origin(AllowOrigin::list(origins));
+    }
+
+    layer
+}
+
+async fn health_handler() -> Response {
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+async fn ready_handler(State(state): State<AppState>) -> Response {
+    let broadcaster_ready = state.app.try_state::<WsBroadcaster>().is_some();
+    let status = if broadcaster_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status,
+        Json(serde_json::json!({
+            "ok": broadcaster_ready,
+            "http": true,
+            "websocket_broadcaster": broadcaster_ready,
+        })),
+    )
+        .into_response()
+}
+
 /// WebSocket upgrade handler with token auth.
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     Query(params): Query<WsAuth>,
     State(state): State<AppState>,
 ) -> Response {
     // Validate token (skip if token not required)
-    if state.token_required {
-        let provided = params.token.as_deref().unwrap_or_default();
-        if !auth::validate_token(provided, &state.token) {
-            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
-        }
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
+    {
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
     }
 
     // Get broadcast receiver for this client
@@ -298,7 +358,11 @@ async fn ws_handler(
 
 /// Token validation endpoint. Returns 200 with { ok: true } on success,
 /// or 401 with { ok: false, error: "..." } on failure.
-async fn auth_handler(Query(params): Query<WsAuth>, State(state): State<AppState>) -> Response {
+async fn auth_handler(
+    headers: HeaderMap,
+    Query(params): Query<WsAuth>,
+    State(state): State<AppState>,
+) -> Response {
     let build_info = read_web_build_info(&state.dist_path).await;
 
     // If token not required, always return success
@@ -312,8 +376,7 @@ async fn auth_handler(Query(params): Query<WsAuth>, State(state): State<AppState
         .into_response();
     }
 
-    let provided = params.token.unwrap_or_default();
-    if auth::validate_token(&provided, &state.token) {
+    if request_is_authorized(params.token.as_deref(), &headers, &state.token) {
         Json(serde_json::json!({
             "ok": true,
             "webBuildId": build_info.web_build_id,
@@ -329,12 +392,15 @@ async fn auth_handler(Query(params): Query<WsAuth>, State(state): State<AppState
     }
 }
 
-async fn version_handler(Query(params): Query<WsAuth>, State(state): State<AppState>) -> Response {
-    if state.token_required {
-        let provided = params.token.as_deref().unwrap_or_default();
-        if !auth::validate_token(provided, &state.token) {
-            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
-        }
+async fn version_handler(
+    headers: HeaderMap,
+    Query(params): Query<WsAuth>,
+    State(state): State<AppState>,
+) -> Response {
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
+    {
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
     }
 
     Json(read_web_build_info(&state.dist_path).await).into_response()
@@ -573,13 +639,16 @@ async fn reconnect_init_response(params: WsAuth, state: AppState) -> Response {
 /// user lands on (project list + currently-selected project's worktrees +
 /// windowed messages for the focused session). Additional data is lazy-loaded
 /// by the frontend via TanStack Query hooks when the user navigates.
-async fn init_handler(Query(params): Query<WsAuth>, State(state): State<AppState>) -> Response {
+async fn init_handler(
+    headers: HeaderMap,
+    Query(params): Query<WsAuth>,
+    State(state): State<AppState>,
+) -> Response {
     // Validate token (skip if token not required)
-    if state.token_required {
-        let provided = params.token.as_deref().unwrap_or_default();
-        if !auth::validate_token(provided, &state.token) {
-            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
-        }
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
+    {
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
     }
 
     if params.is_reconnect() {
@@ -597,6 +666,7 @@ async fn init_handler(Query(params): Query<WsAuth>, State(state): State<AppState
     let build_info = read_web_build_info(&state.dist_path).await;
     response["webBuildId"] = Value::String(build_info.web_build_id.clone());
     response["appVersion"] = Value::String(build_info.app_version.clone());
+    response["serverPlatform"] = Value::String(server_platform_name().to_string());
 
     let projects = match projects_result {
         Ok(projects) => projects,
@@ -941,15 +1011,15 @@ fn mime_from_extension(path: &std::path::Path) -> &'static str {
 /// that Tauri's asset:// protocol would serve in native mode.
 async fn file_handler(
     AxumPath(filepath): AxumPath<String>,
+    headers: HeaderMap,
     Query(params): Query<WsAuth>,
     State(state): State<AppState>,
 ) -> Response {
     // Validate token
-    if state.token_required {
-        let provided = params.token.unwrap_or_default();
-        if !auth::validate_token(&provided, &state.token) {
-            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
-        }
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
+    {
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
     }
 
     // Resolve app data directory
@@ -1000,12 +1070,11 @@ async fn file_handler(
     }
 }
 
-fn validate_token(params: &WsAuth, state: &AppState) -> Result<(), Response> {
-    if state.token_required {
-        let provided = params.token.clone().unwrap_or_default();
-        if !auth::validate_token(&provided, &state.token) {
-            return Err((StatusCode::UNAUTHORIZED, "Invalid token").into_response());
-        }
+fn validate_token(params: &WsAuth, headers: &HeaderMap, state: &AppState) -> Result<(), Response> {
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), headers, &state.token)
+    {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid token").into_response());
     }
     Ok(())
 }
@@ -1043,10 +1112,11 @@ fn path_is_in_known_roots(path: &std::path::Path, roots: &[std::path::PathBuf]) 
 /// the native asset protocol's project directory allowlist.
 async fn project_file_handler(
     AxumPath(filepath): AxumPath<String>,
+    headers: HeaderMap,
     Query(params): Query<WsAuth>,
     State(state): State<AppState>,
 ) -> Response {
-    if let Err(response) = validate_token(&params, &state) {
+    if let Err(response) = validate_token(&params, &headers, &state) {
         return response;
     }
 
@@ -1106,11 +1176,22 @@ async fn static_handler(uri: Uri, State(state): State<AppState>) -> Response {
         return (StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-    let index_path = state.dist_path.join("index.html");
+    if let Some(response) = try_static_filesystem_response(raw_path, &state.dist_path).await {
+        return response;
+    }
+
+    embedded_static_response(raw_path)
+}
+
+async fn try_static_filesystem_response(
+    raw_path: &str,
+    dist_path: &std::path::Path,
+) -> Option<Response> {
+    let index_path = dist_path.join("index.html");
     let requested_path = if raw_path.is_empty() {
         index_path.clone()
     } else {
-        state.dist_path.join(raw_path)
+        dist_path.join(raw_path)
     };
 
     let path = match tokio::fs::metadata(&requested_path).await {
@@ -1119,21 +1200,21 @@ async fn static_handler(uri: Uri, State(state): State<AppState>) -> Response {
         _ => index_path.clone(),
     };
 
-    let canonical_base = match tokio::fs::canonicalize(&state.dist_path).await {
+    let canonical_base = match tokio::fs::canonicalize(dist_path).await {
         Ok(path) => path,
-        Err(_) => return (StatusCode::NOT_FOUND, "Frontend dist not found").into_response(),
+        Err(_) => return None,
     };
     let canonical_path = match tokio::fs::canonicalize(&path).await {
         Ok(path) => path,
-        Err(_) => return (StatusCode::NOT_FOUND, "File not found").into_response(),
+        Err(_) => return None,
     };
     if !canonical_path.starts_with(canonical_base) {
-        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+        return Some((StatusCode::FORBIDDEN, "Access denied").into_response());
     }
 
     let bytes = match tokio::fs::read(&canonical_path).await {
         Ok(bytes) => bytes,
-        Err(_) => return (StatusCode::NOT_FOUND, "Cannot read file").into_response(),
+        Err(_) => return None,
     };
 
     let canonical_index = index_path.canonicalize().unwrap_or(index_path);
@@ -1144,13 +1225,53 @@ async fn static_handler(uri: Uri, State(state): State<AppState>) -> Response {
         "public, max-age=31536000, immutable"
     };
 
+    Some(
+        Response::builder()
+            .header(
+                header::CONTENT_TYPE,
+                static_mime_from_extension(&canonical_path),
+            )
+            .header(header::CACHE_CONTROL, cache_control)
+            .body(Body::from(bytes))
+            .unwrap()
+            .into_response(),
+    )
+}
+
+fn embedded_asset_path_for_request(raw_path: &str) -> &str {
+    if raw_path.is_empty() || !raw_path.contains('.') {
+        "index.html"
+    } else {
+        raw_path
+    }
+}
+
+fn embedded_static_response(raw_path: &str) -> Response {
+    let asset_path = embedded_asset_path_for_request(raw_path);
+    let data = assets::get(asset_path).or_else(|| assets::get("index.html"));
+
+    let Some(data) = data else {
+        return (
+            StatusCode::NOT_FOUND,
+            "Frontend assets not found. Run `bun run build` before building jean-server.",
+        )
+            .into_response();
+    };
+
+    let is_index = asset_path == "index.html";
+    let cache_control = if is_index || asset_path == "jean-build.json" {
+        "no-store"
+    } else {
+        "public, max-age=31536000, immutable"
+    };
+
     Response::builder()
         .header(
             header::CONTENT_TYPE,
-            static_mime_from_extension(&canonical_path),
+            static_mime_from_extension(std::path::Path::new(asset_path)),
         )
         .header(header::CACHE_CONTROL, cache_control)
-        .body(Body::from(bytes))
+        .body(Body::from(data.into_owned()))
         .unwrap()
 }
 
@@ -1236,6 +1357,26 @@ fn format_http_url(host: &str, port: u16) -> String {
     } else {
         format!("http://{host}:{port}")
     }
+}
+
+fn token_from_query_or_bearer(query_token: Option<&str>, headers: &HeaderMap) -> Option<String> {
+    if let Some(token) = query_token.filter(|token| !token.is_empty()) {
+        return Some(token.to_string());
+    }
+
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?.trim();
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn request_is_authorized(query_token: Option<&str>, headers: &HeaderMap, expected: &str) -> bool {
+    token_from_query_or_bearer(query_token, headers)
+        .as_deref()
+        .is_some_and(|provided| auth::validate_token(provided, expected))
 }
 
 pub fn list_bind_host_options() -> Vec<BindHostOption> {
@@ -1356,9 +1497,11 @@ pub async fn get_server_status(app: AppHandle) -> ServerStatus {
 mod tests {
     use super::{
         bind_host_option_label, bind_host_option_rank, display_host_for_bind_ip,
-        display_ip_for_bind_ip_with_candidates, format_http_url, is_tailscale_ipv4, parse_bind_ip,
-        path_is_in_known_roots, validate_bind_host,
+        display_ip_for_bind_ip_with_candidates, embedded_asset_path_for_request, format_http_url,
+        is_tailscale_ipv4, parse_bind_ip, path_is_in_known_roots, token_from_query_or_bearer,
+        validate_bind_host,
     };
+    use axum::http::{HeaderMap, HeaderValue};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -1374,6 +1517,34 @@ mod tests {
         assert_eq!(
             parse_bind_ip("::1").unwrap(),
             IpAddr::V6(Ipv6Addr::LOCALHOST)
+        );
+    }
+
+    #[test]
+    fn token_auth_accepts_bearer_authorization_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token"),
+        );
+
+        assert_eq!(
+            token_from_query_or_bearer(None, &headers),
+            Some("secret-token".to_string())
+        );
+    }
+
+    #[test]
+    fn token_auth_prefers_query_token_for_browser_compatibility() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer header-token"),
+        );
+
+        assert_eq!(
+            token_from_query_or_bearer(Some("query-token"), &headers),
+            Some("query-token".to_string())
         );
     }
 
@@ -1481,6 +1652,23 @@ mod tests {
     }
 
     #[test]
+    fn embedded_asset_path_maps_root_and_spa_routes_to_index() {
+        assert_eq!(embedded_asset_path_for_request(""), "index.html");
+        assert_eq!(
+            embedded_asset_path_for_request("projects/abc"),
+            "index.html"
+        );
+    }
+
+    #[test]
+    fn embedded_asset_path_keeps_asset_paths() {
+        assert_eq!(
+            embedded_asset_path_for_request("assets/app.js"),
+            "assets/app.js"
+        );
+    }
+
+    #[test]
     fn wildcard_display_urls_never_use_unspecified_hosts() {
         let ipv6_url = format_http_url(
             &display_ip_for_bind_ip_with_candidates(
@@ -1575,6 +1763,14 @@ mod tests {
             super::selected_project_id_for_init(Some(""), Some(&ui_state)),
             None
         );
+    }
+
+    #[test]
+    fn server_platform_name_matches_supported_frontend_values() {
+        assert!(matches!(
+            super::server_platform_name(),
+            "mac" | "windows" | "linux"
+        ));
     }
 
     #[test]

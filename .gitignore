@@ -12,6 +12,7 @@ node_modules
 package-lock.json
 dist/*
 !dist/.gitkeep
+src-tauri/dist/
 dist-ssr
 *.local
 *.local.*

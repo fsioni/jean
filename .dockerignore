@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+src-tauri/target
+dist
+.DS_Store
+*.log
+.env
+screenshots
+tmp

@@ -1,6 +1,6 @@
 import type { ThinkingLevel, EffortLevel, ExecutionMode } from './chat'
 import { DEFAULT_KEYBINDINGS, type KeybindingsMap } from './keybindings'
-import { isMacOS, isWindows } from '../lib/platform'
+import { getServerPlatform, isServerWindows } from '../lib/platform'
 
 export type CodexGoalExecutionMode = Extract<ExecutionMode, 'build' | 'yolo'>
 
@@ -1582,9 +1582,7 @@ export type TerminalApp =
 type Platform = 'mac' | 'windows' | 'linux'
 
 function getCurrentPlatform(): Platform {
-  if (isMacOS) return 'mac'
-  if (isWindows) return 'windows'
-  return 'linux'
+  return getServerPlatform()
 }
 
 const allTerminalOptions: {
@@ -1604,8 +1602,14 @@ const allTerminalOptions: {
   },
 ]
 
+export function getTerminalOptions(): { value: TerminalApp; label: string }[] {
+  return allTerminalOptions.filter(opt =>
+    opt.platforms.includes(getCurrentPlatform())
+  )
+}
+
 export const terminalOptions: { value: TerminalApp; label: string }[] =
-  allTerminalOptions.filter(opt => opt.platforms.includes(getCurrentPlatform()))
+  getTerminalOptions()
 
 export type EditorApp = 'zed' | 'vscode' | 'cursor' | 'xcode' | 'intellij'
 
@@ -1633,8 +1637,14 @@ const allEditorOptions: {
   },
 ]
 
+export function getEditorOptions(): { value: EditorApp; label: string }[] {
+  return allEditorOptions.filter(opt =>
+    opt.platforms.includes(getCurrentPlatform())
+  )
+}
+
 export const editorOptions: { value: EditorApp; label: string }[] =
-  allEditorOptions.filter(opt => opt.platforms.includes(getCurrentPlatform()))
+  getEditorOptions()
 
 export type OpenInDefault = 'editor' | 'terminal' | 'finder' | 'github'
 
@@ -1879,7 +1889,7 @@ export const defaultPreferences: AppPreferences = {
   selected_model: 'claude-opus-4-8[1m]',
   thinking_level: 'ultrathink',
   default_effort_level: 'high',
-  terminal: isWindows ? 'powershell' : 'terminal',
+  terminal: isServerWindows() ? 'powershell' : 'terminal',
   terminal_renderer: 'xterm',
   terminal_font: 'jetbrains-mono',
   terminal_font_size: 13,

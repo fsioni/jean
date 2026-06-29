@@ -43,6 +43,8 @@ vi.mock('@/lib/platform', () => ({
   isMacOS: true,
   isWindows: false,
   isLinux: false,
+  getServerPlatform: vi.fn(() => 'mac'),
+  isServerWindows: vi.fn(() => false),
   getModifierSymbol: vi.fn(() => '⌘'),
   getFileManagerName: vi.fn(() => 'Finder'),
   openExternal: vi.fn(),
@@ -1200,3 +1202,4 @@ describe('preferences service', () => {
     })
   })
 })
+

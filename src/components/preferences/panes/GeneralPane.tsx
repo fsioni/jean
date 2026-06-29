@@ -140,8 +140,8 @@ import {
   effortLevelOptions,
   codexReasoningOptions,
   backendOptions,
-  terminalOptions,
-  editorOptions,
+  getTerminalOptions,
+  getEditorOptions,
   gitPollIntervalOptions,
   remotePollIntervalOptions,
   archiveRetentionOptions,
@@ -3938,7 +3938,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {editorOptions.map(option => (
+                    {getEditorOptions().map(option => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>
@@ -3961,7 +3961,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {terminalOptions.map(option => (
+                    {getTerminalOptions().map(option => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>

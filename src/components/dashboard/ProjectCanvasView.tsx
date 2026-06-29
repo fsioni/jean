@@ -20,6 +20,7 @@ import {
 import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { cn } from '@/lib/utils'
+import { isNativeApp } from '@/lib/environment'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import {
   Search,
@@ -854,6 +855,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilterTab, setActiveFilterTab] = useState<CanvasFilterTab>('all')
   const isMobile = useIsMobile()
+  const isNative = isNativeApp()
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false)
   const showWorktreeLabelContextMenu = shouldShowWorktreeLabelContextMenu({
     isMobile,
@@ -3018,12 +3020,14 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                       Open in {getEditorLabel(preferences?.editor)}
                     </DropdownMenuItem>
 
-                    <DropdownMenuItem
-                      onSelect={() => openInFinder.mutate(project.path)}
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                      Open in Finder
-                    </DropdownMenuItem>
+                    {isNative && (
+                      <DropdownMenuItem
+                        onSelect={() => openInFinder.mutate(project.path)}
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                        Open in Finder
+                      </DropdownMenuItem>
+                    )}
 
                     <DropdownMenuItem
                       onSelect={() =>

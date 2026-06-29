@@ -4,9 +4,10 @@
  * - Windows (PowerShell): `& "path" args`
  * - Unix (sh/zsh/bash):   `'path' args`  (with internal single-quote escaping)
  */
+import { isServerWindows } from './platform'
+
 export function escapeCliCommand(path: string, args?: string): string {
-  const isWindows = navigator.userAgent.includes('Windows')
-  if (isWindows) {
+  if (isServerWindows()) {
     return args ? `& "${path}" ${args}` : `& "${path}"`
   }
   const escaped = `'${path.replace(/'/g, "'\\''")}'`

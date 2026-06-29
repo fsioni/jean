@@ -1,9 +1,10 @@
 [package]
 name = "jean"
-version = "0.1.60"
+version = "0.1.61"
 description = "Jean - AI Assistant"
 authors = ["Andras Bacsai"]
 edition = "2021"
+default-run = "jean"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -56,6 +57,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 arboard = { version = "3", features = ["wayland-data-control"] }  # Native clipboard image read (Linux WebKitGTK fallback)
 if-addrs = "0.13"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # Local machine time for Auto Fix active-hours window
+rust-embed = { version = "8", features = ["debug-embed"] }  # Embed web assets for single-binary headless server
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

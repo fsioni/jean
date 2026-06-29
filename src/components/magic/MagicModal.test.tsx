@@ -203,6 +203,8 @@ vi.mock('@/lib/platform', () => ({
   isMacOS: false,
   isWindows: false,
   isLinux: true,
+  getServerPlatform: vi.fn(() => 'linux'),
+  isServerWindows: vi.fn(() => false),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal()),

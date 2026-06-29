@@ -43,6 +43,8 @@ vi.mock('@/lib/platform', () => ({
   isMacOS: false,
   isWindows: false,
   isLinux: true,
+  getServerPlatform: vi.fn(() => 'linux'),
+  isServerWindows: vi.fn(() => false),
 }))
 
 const ref = <T,>(current: T): RefObject<T> => ({ current })

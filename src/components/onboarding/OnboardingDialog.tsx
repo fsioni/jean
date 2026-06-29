@@ -78,7 +78,7 @@ import {
   type MagicPromptBackends,
   type MagicPromptModels,
 } from '@/types/preferences'
-import { isWindows } from '@/lib/platform'
+import { isServerWindows } from '@/lib/platform'
 import { WslSetupStep } from './WslSetupStep'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
@@ -733,7 +733,7 @@ function OnboardingDialogContent() {
 
     // On Windows, show WSL mode selection first if not yet chosen
     if (
-      isWindows &&
+      isServerWindows() &&
       preferences &&
       !preferences.wsl_mode_chosen &&
       !onboardingStartStep
@@ -778,7 +778,7 @@ function OnboardingDialogContent() {
     // can change their WSL/native choice, then backend-select (via Continue
     // on the WSL step). Non-Windows goes straight to backend-select.
     if (onboardingManuallyTriggered) {
-      const firstStep: OnboardingStep = isWindows
+      const firstStep: OnboardingStep = isServerWindows()
         ? 'wsl-setup'
         : 'backend-select'
       dbg('init effect: manual trigger →', firstStep)
