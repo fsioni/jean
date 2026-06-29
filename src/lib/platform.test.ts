@@ -55,3 +55,21 @@ describe('openExternal', () => {
     expect(openUrlMock).not.toHaveBeenCalled()
   })
 })
+
+describe('server platform detection', () => {
+  it('uses the Jean server platform instead of the browser platform when provided', async () => {
+    vi.stubGlobal('window', { open: vi.fn() })
+    vi.stubGlobal('navigator', { platform: 'Win32' })
+
+    const { getServerPlatform, isServerWindows, setServerPlatform } =
+      await import('./platform')
+
+    setServerPlatform('linux')
+
+    expect(getServerPlatform()).toBe('linux')
+    expect(isServerWindows()).toBe(false)
+
+    setServerPlatform('windows')
+    expect(isServerWindows()).toBe(true)
+  })
+})

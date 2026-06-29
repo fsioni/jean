@@ -313,6 +313,26 @@ export interface WorktreePathExistsEvent {
       createdAt: string
     }[]
   }
+  /** PR context to use when creating a new worktree with the suggested name */
+  pr_context?: {
+    number: number
+    title: string
+    body?: string
+    headRefName: string
+    baseRefName: string
+    comments: {
+      author: { login: string }
+      body: string
+      createdAt: string
+    }[]
+    reviews: {
+      author: { login: string }
+      body: string
+      state: string
+      submittedAt: string
+    }[]
+    diff?: string
+  }
   /** Security alert context to use when creating a new worktree with the suggested name */
   security_context?: SecurityAlertContext
   /** Advisory context to use when creating a new worktree with the suggested name */

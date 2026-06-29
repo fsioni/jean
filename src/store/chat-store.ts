@@ -35,7 +35,7 @@ export interface ScheduledWakeupState extends ScheduledWakeup {
 }
 import type { ReviewResponse } from '@/types/projects'
 import { invoke } from '@/lib/transport'
-import type { ClaudeModel, CodexModel } from '@/types/preferences'
+import type { ClaudeModel, CodexModel, CliBackend } from '@/types/preferences'
 export type { ClaudeModel, CodexModel }
 
 /** Default model to use when none is selected (fallback only - preferences take priority) */
@@ -150,10 +150,7 @@ interface ChatUIState {
   effortLevels: Record<string, EffortLevel>
 
   // Selected backend per session (claude, codex, opencode, or cursor)
-  selectedBackends: Record<
-    string,
-    'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
-  >
+  selectedBackends: Record<string, CliBackend>
 
   // Selected model per session (for tracking what model was used)
   selectedModels: Record<string, string>
@@ -452,10 +449,7 @@ interface ChatUIState {
   getEffortLevel: (sessionId: string) => EffortLevel
 
   // Actions - Selected backend (session-based)
-  setSelectedBackend: (
-    sessionId: string,
-    backend: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
-  ) => void
+  setSelectedBackend: (sessionId: string, backend: CliBackend) => void
 
   // Actions - Selected model (session-based)
   setSelectedModel: (sessionId: string, model: string) => void

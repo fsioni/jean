@@ -105,6 +105,7 @@ import { ClickUpTaskWidget } from '@/components/clickup/ClickUpTaskWidget'
 import { LabelModal } from './LabelModal'
 import { useSessionArchive } from './hooks/useSessionArchive'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import {
@@ -348,6 +349,8 @@ export function SessionChatModal({
   const currentLabel = useChatStore(state =>
     labelSessionId ? (state.sessionLabels[labelSessionId] ?? null) : null
   )
+
+
 
   // Rename session state
   const renameSession = useRenameSession()
@@ -726,26 +729,41 @@ export function SessionChatModal({
     [worktreeId, worktreePath, defaultBranch, project?.id]
   )
 
+  const pickRemoteOrRun = useRemotePicker(worktreePath)
+
   const handlePush = useCallback(
-    async (e: React.MouseEvent) => {
+    (e: React.MouseEvent) => {
       e.stopPropagation()
-      const opToast = dismissibleToast.loading('Pushing changes...')
-      try {
-        const result = await gitPush(worktreePath, worktree?.pr_number)
-        triggerImmediateGitPoll()
-        if (project) fetchWorktreesStatus(project.id)
-        if (result.fellBack) {
-          opToast.warning(
-            'Could not push to PR branch, pushed to new branch instead'
+
+      const runPush = async (remote?: string) => {
+        const opToast = dismissibleToast.loading('Pushing changes...')
+        try {
+          const result = await gitPush(
+            worktreePath,
+            worktree?.pr_number,
+            remote
           )
-        } else {
-          opToast.success('Changes pushed')
+          triggerImmediateGitPoll()
+          if (project) fetchWorktreesStatus(project.id)
+          if (result.fellBack) {
+            opToast.warning(
+              'Could not push to PR branch, pushed to new branch instead'
+            )
+          } else {
+            opToast.success('Changes pushed')
+          }
+        } catch (error) {
+          opToast.error(`Push failed: ${error}`)
         }
-      } catch (error) {
-        opToast.error(`Push failed: ${error}`)
+      }
+
+      if (pushNeedsRemotePicker(worktree?.pr_number)) {
+        pickRemoteOrRun(runPush)
+      } else {
+        runPush()
       }
     },
-    [worktree, worktreePath, project]
+    [pickRemoteOrRun, worktree, worktreePath, project]
   )
 
   const handleUncommittedDiffClick = useCallback(() => {
@@ -1248,6 +1266,13 @@ export function SessionChatModal({
                             {sessionLabel ? 'Remove Label' : 'Add Label'}
                           </ContextMenuItem>
                           <ContextMenuItem
+                            // "Mark as Idle" only clears the manual reviewing
+                            // flag. When review is driven by AI review_results,
+                            // clearing the flag leaves the session in review —
+                            // no effect — so disable it there.
+                            disabled={
+                              status === 'review' && !!session.review_results
+                            }
                             onSelect={() => {
                               const { reviewingSessions, setSessionReviewing } =
                                 useChatStore.getState()
@@ -1387,6 +1412,7 @@ export function SessionChatModal({
         sessionId={labelSessionId}
         currentLabel={currentLabel}
       />
+
       <CloseWorktreeDialog
         open={closeConfirmOpen}
         onOpenChange={setCloseConfirmOpen}

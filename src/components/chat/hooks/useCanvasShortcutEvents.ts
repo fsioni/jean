@@ -89,7 +89,6 @@ export function useCanvasShortcutEvents({
   const [planDialogCard, setPlanDialogCard] = useState<SessionCardData | null>(
     null
   )
-
   // Label modal state
   const [labelModalSessionId, setLabelModalSessionId] = useState<string | null>(
     null

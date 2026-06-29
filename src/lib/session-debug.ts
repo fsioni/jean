@@ -65,7 +65,7 @@ export function resolveSessionDebugDetails(params: {
     finalBackend === 'codex'
       ? (preferences?.selected_codex_model ?? 'gpt-5.5')
       : finalBackend === 'opencode'
-        ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
+        ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
         : finalBackend === 'cursor'
           ? (preferences?.selected_cursor_model ?? 'cursor/auto')
           : finalBackend === 'pi'

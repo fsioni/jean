@@ -145,6 +145,16 @@ export async function listen<T>(
   return wsTransport.listen<T>(event, handler)
 }
 
+/**
+ * Request buffered terminal events from the backend. Used by browser-mode
+ * terminal reattachment after a full page refresh, when in-memory sequence
+ * tracking was lost but the Rust PTY and replay buffer are still alive.
+ */
+export function requestTerminalReplay(terminalId: string, lastSeq = 0): void {
+  if (isNativeApp()) return
+  wsTransport.requestTerminalReplay(terminalId, lastSeq)
+}
+
 // ---------------------------------------------------------------------------
 // Initial data preloading (used in browser mode)
 // ---------------------------------------------------------------------------
@@ -163,12 +173,14 @@ export interface InitialData {
   preferences?: unknown
   uiState?: unknown
   appDataDir?: string
+  serverPlatform?: 'mac' | 'windows' | 'linux'
   webBuildId?: string
   appVersion?: string
 }
 
 let initialDataPromise: Promise<InitialData | null> | null = null
 let initialDataResolved = false
+let reconnectInitialDataPromise: Promise<InitialData | null> | null = null
 
 /**
  * Build the /api/init URL with the given query params.
@@ -264,6 +276,42 @@ export async function refetchInitialData(
   } catch {
     return null
   }
+}
+
+/**
+ * Start loading reconnect bootstrap data while the WebSocket is still
+ * reconnecting, so the UI can re-seed immediately once the socket is open.
+ */
+export function prefetchReconnectInitialData(
+  activeSessionIds?: Record<string, string>,
+  selectedProjectId?: string | null
+): Promise<InitialData | null> {
+  if (!reconnectInitialDataPromise) {
+    reconnectInitialDataPromise = refetchInitialData(
+      activeSessionIds,
+      selectedProjectId
+    )
+  }
+  return reconnectInitialDataPromise
+}
+
+/**
+ * Use the in-flight reconnect bootstrap fetch if one exists; otherwise fetch
+ * now. The consumed promise is cleared so a future reconnect gets fresh data.
+ */
+export async function consumeReconnectInitialData(
+  activeSessionIds?: Record<string, string>,
+  selectedProjectId?: string | null
+): Promise<InitialData | null> {
+  const prefetched = reconnectInitialDataPromise
+  const promise =
+    prefetched ?? refetchInitialData(activeSessionIds, selectedProjectId)
+  reconnectInitialDataPromise = null
+  const data = await promise
+  if (!data && prefetched) {
+    return refetchInitialData(activeSessionIds, selectedProjectId)
+  }
+  return data
 }
 
 /**
@@ -714,6 +762,30 @@ class WsTransport {
         this.connect()
       }
     })
+  }
+
+  /** Request terminal replay and keep this terminal tracked for reconnects. */
+  requestTerminalReplay(terminalId: string, lastSeq = 0): void {
+    this._activeTerminals.add(terminalId)
+    const currentLastSeq = this._lastSeqByTerminal.get(terminalId)
+    const effectiveLastSeq =
+      currentLastSeq == null ? lastSeq : Math.max(lastSeq, currentLastSeq)
+    this._lastSeqByTerminal.set(terminalId, effectiveLastSeq)
+
+    const payload = JSON.stringify({
+      type: 'terminal_replay',
+      terminal_id: terminalId,
+      last_seq: effectiveLastSeq,
+    })
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(payload)
+      return
+    }
+
+    if (this._connectEnabled) {
+      this.connect()
+    }
   }
 
   /** Register an event listener. Returns an unlisten function. */

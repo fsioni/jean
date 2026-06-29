@@ -45,6 +45,7 @@ mod codex_cli;
 mod commandcode_cli;
 mod cursor_cli;
 mod gh_cli;
+mod grok_cli;
 pub mod http_server;
 pub mod jean_mcp_config;
 pub mod jean_mcp_core;
@@ -192,6 +193,8 @@ pub struct AppPreferences {
     pub parallel_execution_prompt_enabled: bool, // Add system prompt to encourage parallel sub-agent execution
     #[serde(default = "default_compact_chat_view_enabled")]
     pub compact_chat_view_enabled: bool, // Collapse intermediate tool calls into single ticker line
+    #[serde(default = "default_auto_recaps_enabled")]
+    pub auto_recaps_enabled: bool, // Ask agents to end multi-step turns with a recap block
     #[serde(default)]
     pub magic_prompts: MagicPrompts, // Customizable prompts for AI-powered features
     #[serde(default)]
@@ -218,6 +221,8 @@ pub struct AppPreferences {
     pub review_sound: String, // Sound when session finishes reviewing: none, workwork
     #[serde(default = "default_web_access_sounds_enabled")]
     pub web_access_sounds_enabled: bool, // Play notification sounds in browser/web access views
+    #[serde(default = "default_desktop_notifications_enabled")]
+    pub desktop_notifications_enabled: bool, // Show native OS banner when a session needs input or finishes (only while backgrounded)
     #[serde(default)]
     pub http_server_enabled: bool, // Whether HTTP server is enabled
     #[serde(default)]
@@ -284,6 +289,8 @@ pub struct AppPreferences {
     pub selected_pi_model: String, // Default PI model
     #[serde(default = "default_commandcode_model")]
     pub selected_commandcode_model: String, // Default Command Code model
+    #[serde(default = "default_grok_model")]
+    pub selected_grok_model: String, // Default Grok model
     #[serde(default = "default_codex_reasoning_effort")]
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
     #[serde(default = "default_codex_goal_execution_mode")]
@@ -326,6 +333,8 @@ pub struct AppPreferences {
     pub codex_cli_source: String, // Codex CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub opencode_cli_source: String, // OpenCode CLI source: "jean" (managed) or "path" (system PATH)
+    #[serde(default = "default_grok_cli_source")]
+    pub grok_cli_source: String, // Grok CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default = "default_cli_source")]
     pub gh_cli_source: String, // GitHub CLI source: "jean" (managed) or "path" (system PATH)
     #[serde(default)]
@@ -547,7 +556,11 @@ fn default_parallel_execution_prompt_enabled() -> bool {
 }
 
 fn default_compact_chat_view_enabled() -> bool {
-    false // Disabled by default (experimental)
+    true // Enabled by default
+}
+
+fn default_auto_recaps_enabled() -> bool {
+    true // Enabled by default
 }
 
 fn default_chrome_enabled() -> bool {
@@ -605,7 +618,7 @@ fn default_codex_model() -> String {
 }
 
 fn default_opencode_model() -> String {
-    "opencode/gpt-5.3-codex".to_string()
+    "opencode/gpt-5.5".to_string()
 }
 
 fn default_cursor_model() -> String {
@@ -618,6 +631,14 @@ fn default_pi_model() -> String {
 
 fn default_commandcode_model() -> String {
     "commandcode/default".to_string()
+}
+
+fn default_grok_model() -> String {
+    "grok/grok-composer-2.5-fast".to_string()
+}
+
+fn default_grok_cli_source() -> String {
+    default_cli_source()
 }
 
 fn default_codex_reasoning_effort() -> String {
@@ -652,6 +673,10 @@ fn default_web_access_sounds_enabled() -> bool {
     true
 }
 
+fn default_desktop_notifications_enabled() -> bool {
+    true
+}
+
 fn default_http_server_port() -> u16 {
     3456
 }
@@ -679,7 +704,11 @@ fn resolve_http_server_bind_host(prefs: &AppPreferences) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_global_system_prompt, resolve_http_server_bind_host, AppPreferences};
+    use super::{
+        default_global_system_prompt, parse_cli_args_from, resolve_headless_bind_host,
+        resolve_headless_token_required, resolve_http_server_bind_host, validate_headless_security,
+        AppPreferences,
+    };
     use serde_json::json;
 
     #[test]
@@ -724,6 +753,123 @@ mod tests {
 
         prefs.http_server_localhost_only = false;
         assert_eq!(resolve_http_server_bind_host(&prefs), "0.0.0.0");
+    }
+
+    #[test]
+    fn parse_cli_args_reads_headless_env_defaults() {
+        let env = [
+            ("JEAN_HEADLESS", "1"),
+            ("JEAN_HOST", "127.0.0.1"),
+            ("JEAN_PORT", "4567"),
+            ("JEAN_TOKEN", "secret"),
+        ];
+
+        let args = parse_cli_args_from(["jean"], env).unwrap();
+
+        assert!(args.headless);
+        assert_eq!(args.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(args.port, Some(4567));
+        assert_eq!(args.token.as_deref(), Some("secret"));
+        assert!(!args.no_token);
+    }
+
+    #[test]
+    fn cli_args_override_env_defaults() {
+        let env = [
+            ("JEAN_HEADLESS", "1"),
+            ("JEAN_HOST", "127.0.0.1"),
+            ("JEAN_PORT", "4567"),
+            ("JEAN_TOKEN", "secret"),
+        ];
+
+        let args = parse_cli_args_from(
+            [
+                "jean",
+                "--host",
+                "100.64.0.1",
+                "--port",
+                "5678",
+                "--token",
+                "cli-secret",
+            ],
+            env,
+        )
+        .unwrap();
+
+        assert_eq!(args.host.as_deref(), Some("100.64.0.1"));
+        assert_eq!(args.port, Some(5678));
+        assert_eq!(args.token.as_deref(), Some("cli-secret"));
+    }
+
+    #[test]
+    fn no_token_and_token_are_mutually_exclusive_across_env_and_cli() {
+        let err = parse_cli_args_from(["jean", "--token", "secret"], [("JEAN_NO_TOKEN", "1")])
+            .unwrap_err();
+
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn headless_defaults_to_localhost_when_no_host_is_configured() {
+        let prefs = AppPreferences::default();
+        let host = resolve_headless_bind_host(&prefs, &None);
+
+        assert_eq!(host, "127.0.0.1");
+    }
+
+    #[test]
+    fn headless_rejects_no_token_on_wildcard_host_without_unsafe_flag() {
+        let err = validate_headless_security("0.0.0.0", true, false).unwrap_err();
+
+        assert!(err.contains("Refusing to disable token authentication"));
+    }
+
+    #[test]
+    fn headless_allows_no_token_on_wildcard_host_with_unsafe_flag() {
+        assert!(validate_headless_security("0.0.0.0", true, true).is_ok());
+    }
+
+    #[test]
+    fn explicit_headless_token_requires_auth_even_when_preference_disabled() {
+        let prefs = AppPreferences {
+            http_server_token_required: false,
+            ..Default::default()
+        };
+        let overrides = super::HttpServerOverrides {
+            host: None,
+            port: None,
+            token: Some("secret".to_string()),
+            no_token: false,
+            allow_unsafe_no_token: false,
+        };
+
+        assert!(resolve_headless_token_required(&prefs, &overrides));
+    }
+
+    #[test]
+    fn headless_rejects_disabled_token_preference_on_wildcard_host() {
+        let prefs = AppPreferences {
+            http_server_token_required: false,
+            ..Default::default()
+        };
+        let overrides = super::HttpServerOverrides {
+            host: Some("0.0.0.0".to_string()),
+            port: None,
+            token: None,
+            no_token: false,
+            allow_unsafe_no_token: false,
+        };
+
+        let bind_host = resolve_headless_bind_host(&prefs, &overrides.host);
+        let token_required = resolve_headless_token_required(&prefs, &overrides);
+        let err = validate_headless_security(
+            &bind_host,
+            !token_required,
+            overrides.allow_unsafe_no_token,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("Refusing to disable token authentication"));
     }
 
     #[test]
@@ -1284,7 +1430,7 @@ Investigate the loaded security {advisoryWord} ({advisoryRefs})
         .to_string()
 }
 
-fn default_investigate_linear_issue_prompt() -> String {
+pub(crate) fn default_investigate_linear_issue_prompt() -> String {
     r#"<task>
 
 Investigate the loaded Linear {linearWord} ({linearRefs})
@@ -1639,12 +1785,19 @@ pub fn is_pi_model(model: &str) -> bool {
     model.starts_with("pi/")
 }
 
+/// Returns true if the given model string identifies a Grok model.
+/// Grok model IDs are prefixed with "grok/" (e.g. "grok/grok-composer-2.5-fast").
+pub fn is_grok_model(model: &str) -> bool {
+    model.starts_with("grok/")
+}
+
 /// Returns true if the given model string identifies a Codex model.
 /// Codex model IDs contain "codex" or start with "gpt-", but NOT OpenCode models.
 pub fn is_codex_model(model: &str) -> bool {
     !is_opencode_model(model)
         && !is_cursor_model(model)
         && !is_pi_model(model)
+        && !is_grok_model(model)
         && (model.contains("codex") || model.starts_with("gpt-"))
 }
 
@@ -1887,6 +2040,7 @@ impl Default for AppPreferences {
             syntax_theme_light: default_syntax_theme_light(),
             parallel_execution_prompt_enabled: default_parallel_execution_prompt_enabled(),
             compact_chat_view_enabled: default_compact_chat_view_enabled(),
+            auto_recaps_enabled: default_auto_recaps_enabled(),
             magic_prompts: MagicPrompts::default(),
             magic_prompt_models: MagicPromptModels::default(),
             magic_prompt_providers: MagicPromptProviders::default(),
@@ -1900,6 +2054,7 @@ impl Default for AppPreferences {
             waiting_sound: default_waiting_sound(),
             review_sound: default_review_sound(),
             web_access_sounds_enabled: default_web_access_sounds_enabled(),
+            desktop_notifications_enabled: default_desktop_notifications_enabled(),
             http_server_enabled: false,
             http_server_auto_start: false,
             http_server_port: default_http_server_port(),
@@ -1934,6 +2089,7 @@ impl Default for AppPreferences {
             selected_cursor_model: default_cursor_model(),
             selected_pi_model: default_pi_model(),
             selected_commandcode_model: default_commandcode_model(),
+            selected_grok_model: default_grok_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: false,
@@ -1955,6 +2111,7 @@ impl Default for AppPreferences {
             claude_cli_source: default_cli_source(),
             codex_cli_source: default_cli_source(),
             opencode_cli_source: default_cli_source(),
+            grok_cli_source: default_grok_cli_source(),
             gh_cli_source: default_cli_source(),
             wsl_mode_chosen: false,
             wsl_enabled: false,
@@ -2042,6 +2199,34 @@ pub struct UIState {
     #[serde(default)]
     pub modal_terminal_height: Option<f64>,
 
+    /// Terminal instances persisted per worktree for web refresh reconnect
+    #[serde(default)]
+    pub terminal_instances: std::collections::HashMap<String, Vec<TerminalInstancePersisted>>,
+
+    /// Active terminal id per worktree
+    #[serde(default)]
+    pub terminal_active_ids: std::collections::HashMap<String, String>,
+
+    /// Terminal panel open state per worktree
+    #[serde(default)]
+    pub terminal_panel_open: std::collections::HashMap<String, bool>,
+
+    /// Global terminal panel expanded/collapsed state
+    #[serde(default)]
+    pub terminal_visible: Option<bool>,
+
+    /// Terminal panel height percentage
+    #[serde(default)]
+    pub terminal_height: Option<f64>,
+
+    /// Session terminal id per session for full-screen terminal surfaces
+    #[serde(default)]
+    pub session_terminal_ids: std::collections::HashMap<String, String>,
+
+    /// Session primary surface per session
+    #[serde(default)]
+    pub session_primary_surface: std::collections::HashMap<String, String>,
+
     /// Browser tabs persisted per worktree (worktreeId → list of {id, url, title})
     #[serde(default)]
     pub browser_tabs: std::collections::HashMap<String, Vec<BrowserTabPersisted>>,
@@ -2114,6 +2299,18 @@ pub struct LastOpenedEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalInstancePersisted {
+    pub id: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub command_args: Option<Vec<String>>,
+    pub label: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabPersisted {
     pub id: String,
     pub url: String,
@@ -2147,6 +2344,13 @@ impl Default for UIState {
             modal_terminal_pinned: None,
             modal_terminal_width: None,
             modal_terminal_height: None,
+            terminal_instances: std::collections::HashMap::new(),
+            terminal_active_ids: std::collections::HashMap::new(),
+            terminal_panel_open: std::collections::HashMap::new(),
+            terminal_visible: None,
+            terminal_height: None,
+            session_terminal_ids: std::collections::HashMap::new(),
+            session_primary_surface: std::collections::HashMap::new(),
             browser_tabs: std::collections::HashMap::new(),
             browser_active_tab_ids: std::collections::HashMap::new(),
             browser_side_pane_open: std::collections::HashMap::new(),
@@ -2872,7 +3076,6 @@ async fn stop_http_server(app: AppHandle) -> Result<(), String> {
 async fn start_http_server_headless(
     app: AppHandle,
     default_port: u16,
-    bind_all_interfaces: bool,
     overrides: &HttpServerOverrides,
 ) -> Result<http_server::server::ServerStatus, String> {
     use std::sync::Arc;
@@ -2883,21 +3086,12 @@ async fn start_http_server_headless(
     // Port: CLI override > preference
     let port = overrides.port.unwrap_or(default_port);
 
-    // Host: CLI --host overrides bind_all_interfaces and preference
-    let bind_host = if let Some(ref host) = overrides.host {
-        host.clone()
-    } else if bind_all_interfaces {
-        "0.0.0.0".to_string()
-    } else {
-        resolve_http_server_bind_host(&prefs)
-    };
+    // Host: CLI/env override > saved preference.
+    let bind_host = resolve_headless_bind_host(&prefs, &overrides.host);
 
-    // Token required: --no-token overrides preference
-    let token_required = if overrides.no_token {
-        false
-    } else {
-        prefs.http_server_token_required
-    };
+    let token_required = resolve_headless_token_required(&prefs, overrides);
+
+    validate_headless_security(&bind_host, !token_required, overrides.allow_unsafe_no_token)?;
 
     // Token: CLI --token used directly (not persisted), otherwise load/generate
     let token = if let Some(ref t) = overrides.token {
@@ -3306,12 +3500,14 @@ pub fn fix_macos_path() {
 }
 
 /// Parsed CLI arguments for headless server mode.
+#[derive(Debug)]
 struct CliArgs {
     headless: bool,
     host: Option<String>,
     port: Option<u16>,
     token: Option<String>,
     no_token: bool,
+    allow_unsafe_no_token: bool,
 }
 
 /// CLI overrides for HTTP server configuration.
@@ -3321,6 +3517,7 @@ struct HttpServerOverrides {
     port: Option<u16>,
     token: Option<String>,
     no_token: bool,
+    allow_unsafe_no_token: bool,
 }
 
 fn print_cli_help() {
@@ -3331,14 +3528,18 @@ fn print_cli_help() {
     println!();
     println!("Options:");
     println!("  --headless          Run without GUI (HTTP server only)");
-    println!(
-        "  --host <addr>       Bind to an IP address or localhost (default: 0.0.0.0 in headless)"
-    );
+    println!("  --host <addr>       Bind to an IP address or localhost (default: 127.0.0.1)");
     println!("  --port <port>       HTTP server port (overrides saved preference)");
     println!("  --token <token>     Use specific auth token (not persisted)");
     println!("  --no-token          Disable token authentication");
+    println!("  --allow-unsafe-no-token");
+    println!("                      Allow --no-token with a wildcard bind host");
     println!("  --help              Show this help message");
     println!("  --version           Show version");
+    println!();
+    println!("Environment:");
+    println!("  JEAN_HEADLESS=1 JEAN_HOST JEAN_PORT JEAN_TOKEN JEAN_NO_TOKEN=1");
+    println!("  JEAN_ALLOW_UNSAFE_NO_TOKEN=1");
 }
 
 fn parse_cli_args() -> CliArgs {
@@ -3353,51 +3554,107 @@ fn parse_cli_args() -> CliArgs {
         std::process::exit(0);
     }
 
-    let headless = args.iter().any(|a| a == "--headless");
-    let no_token = args.iter().any(|a| a == "--no-token");
+    match parse_cli_args_from(args, std::env::vars()) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
 
-    let mut host = None;
-    let mut port = None;
-    let mut token = None;
+fn env_truthy(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn parse_cli_args_from<A, E, K, V>(args: A, env: E) -> Result<CliArgs, String>
+where
+    A: IntoIterator,
+    A::Item: AsRef<str>,
+    E: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    let env: std::collections::HashMap<String, String> = env
+        .into_iter()
+        .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
+        .collect();
+
+    let mut headless = env_truthy(env.get("JEAN_HEADLESS").map(String::as_str));
+    let mut no_token = env_truthy(env.get("JEAN_NO_TOKEN").map(String::as_str));
+    let mut allow_unsafe_no_token =
+        env_truthy(env.get("JEAN_ALLOW_UNSAFE_NO_TOKEN").map(String::as_str));
+    let mut host = env
+        .get("JEAN_HOST")
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty());
+    let mut port = match env
+        .get("JEAN_PORT")
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        Some(value) => Some(
+            value
+                .parse::<u16>()
+                .map_err(|_| "JEAN_PORT must be a valid port number (1-65535)".to_string())?,
+        ),
+        None => None,
+    };
+    let mut token = env
+        .get("JEAN_TOKEN")
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
 
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "--headless" => {
+                headless = true;
+            }
             "--host" => {
                 host = iter.next().cloned();
-                if host.is_none() {
-                    eprintln!("Error: --host requires an address argument");
-                    std::process::exit(1);
-                }
+                host.as_ref()
+                    .filter(|h| !h.trim().is_empty())
+                    .ok_or_else(|| "--host requires an address argument".to_string())?;
             }
             "--port" => {
                 if let Some(val) = iter.next() {
                     match val.parse::<u16>() {
                         Ok(p) => port = Some(p),
                         Err(_) => {
-                            eprintln!("Error: --port requires a valid port number (1-65535)");
-                            std::process::exit(1);
+                            return Err("--port requires a valid port number (1-65535)".to_string());
                         }
                     }
                 } else {
-                    eprintln!("Error: --port requires a port number argument");
-                    std::process::exit(1);
+                    return Err("--port requires a port number argument".to_string());
                 }
             }
             "--token" => {
                 token = iter.next().cloned();
-                if token.is_none() {
-                    eprintln!("Error: --token requires a token argument");
-                    std::process::exit(1);
-                }
+                token
+                    .as_ref()
+                    .filter(|t| !t.trim().is_empty())
+                    .ok_or_else(|| "--token requires a token argument".to_string())?;
+            }
+            "--no-token" => {
+                no_token = true;
+            }
+            "--allow-unsafe-no-token" => {
+                allow_unsafe_no_token = true;
             }
             _ => {} // ignore unknown flags (Tauri/OS may pass their own)
         }
     }
 
     if token.is_some() && no_token {
-        eprintln!("Error: --token and --no-token are mutually exclusive");
-        std::process::exit(1);
+        return Err("--token and --no-token are mutually exclusive".to_string());
     }
 
     if !headless && (host.is_some() || port.is_some() || token.is_some() || no_token) {
@@ -3406,12 +3663,50 @@ fn parse_cli_args() -> CliArgs {
         );
     }
 
-    CliArgs {
+    Ok(CliArgs {
         headless,
         host,
         port,
         token,
         no_token,
+        allow_unsafe_no_token,
+    })
+}
+
+fn resolve_headless_bind_host(prefs: &AppPreferences, override_host: &Option<String>) -> String {
+    override_host
+        .as_deref()
+        .and_then(|host| normalize_http_bind_host(Some(host)))
+        .unwrap_or_else(|| resolve_http_server_bind_host(prefs))
+}
+
+fn is_wildcard_bind_host(host: &str) -> bool {
+    matches!(host.trim(), "0.0.0.0" | "::")
+}
+
+fn validate_headless_security(
+    bind_host: &str,
+    token_auth_disabled: bool,
+    allow_unsafe_no_token: bool,
+) -> Result<(), String> {
+    if token_auth_disabled && is_wildcard_bind_host(bind_host) && !allow_unsafe_no_token {
+        return Err(
+            "Refusing to disable token authentication while binding to all interfaces. Use a token, bind to 127.0.0.1, or pass --allow-unsafe-no-token.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn resolve_headless_token_required(
+    prefs: &AppPreferences,
+    overrides: &HttpServerOverrides,
+) -> bool {
+    if overrides.no_token {
+        false
+    } else if overrides.token.is_some() {
+        true
+    } else {
+        prefs.http_server_token_required
     }
 }
 
@@ -3419,6 +3714,11 @@ fn parse_cli_args() -> CliArgs {
 #[cfg(test)]
 mod magic_prompt_tests {
     use super::*;
+
+    #[test]
+    fn app_preferences_enables_compact_chat_view_by_default() {
+        assert!(AppPreferences::default().compact_chat_view_enabled);
+    }
 
     #[test]
     fn migrate_defaults_clears_legacy_commit_message_prompt() {
@@ -3525,7 +3825,7 @@ pub fn run() {
     // - JEAN_FORCE_X11=1 to force X11 backend in non-AppImage runs (default: no)
     // - WEBKIT_DISABLE_COMPOSITING_MODE=0 to re-enable GPU compositing (risky)
     #[cfg(target_os = "linux")]
-    {
+    if !headless {
         log::trace!("Setting WebKit compatibility fixes for Linux");
 
         // Detect if running inside an AppImage
@@ -4071,6 +4371,7 @@ pub fn run() {
                 port: cli_args.port,
                 token: cli_args.token,
                 no_token: cli_args.no_token,
+                allow_unsafe_no_token: cli_args.allow_unsafe_no_token,
             };
             tauri::async_runtime::spawn(async move {
                 match load_preferences(app_handle_http.clone()).await {
@@ -4080,7 +4381,6 @@ pub fn run() {
                         match start_http_server_headless(
                             app_handle_http,
                             port,
-                            headless, // In headless mode, bind to 0.0.0.0
                             &server_overrides,
                         )
                         .await
@@ -4393,6 +4693,8 @@ pub fn run() {
             chat::get_session,
             chat::load_older_session_messages,
             chat::list_native_cli_sessions,
+            chat::bind_native_cli_session,
+            chat::track_native_cli_session,
             chat::create_session,
             chat::rename_session,
             chat::regenerate_session_name,
@@ -4449,6 +4751,7 @@ pub fn run() {
             chat::list_pending_wakeups,
             // Chat commands - Image handling
             chat::read_clipboard_image,
+            chat::write_clipboard_text,
             chat::save_pasted_image,
             chat::save_dropped_image,
             chat::delete_pasted_image,
@@ -4525,6 +4828,17 @@ pub fn run() {
             cursor_cli::check_cursor_cli_auth,
             cursor_cli::list_cursor_models,
             cursor_cli::get_cursor_install_command,
+            // Grok CLI management commands
+            grok_cli::check_grok_cli_installed,
+            grok_cli::detect_grok_in_path,
+            grok_cli::check_grok_cli_auth,
+            grok_cli::list_grok_models,
+            grok_cli::get_available_grok_versions,
+            grok_cli::get_grok_install_command,
+            grok_cli::install_grok_cli,
+            grok_cli::uninstall_grok_cli,
+            grok_cli::update_grok_cli,
+            grok_cli::login_grok_cli_device,
             // OpenCode CLI management commands
             opencode_cli::check_opencode_cli_installed,
             opencode_cli::detect_opencode_in_path,
@@ -4576,7 +4890,13 @@ pub fn run() {
             opencode_server::stop_opencode_server,
             opencode_server::get_opencode_server_status,
         ])
-        .build(tauri::generate_context!())
+        .build({
+            let mut context = tauri::generate_context!();
+            if headless {
+                context.config_mut().app.windows.clear();
+            }
+            context
+        })
         .expect("error building tauri application")
         .run(move |app_handle, event| match &event {
             tauri::RunEvent::Exit => {

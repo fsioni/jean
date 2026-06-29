@@ -43,7 +43,6 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
-        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -84,7 +83,6 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
-        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -127,7 +125,6 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
-        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -169,7 +166,6 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
-        onOpenMagicModal={vi.fn()}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
@@ -183,7 +179,7 @@ describe('MobileToolbarMenu', () => {
     expect(onRevertLastCommit).toHaveBeenCalledTimes(1)
   })
 
-  it('opens Magic from the mobile actions menu while enabled', async () => {
+  it('does not expose the desktop Magic modal from the mobile actions menu', async () => {
     const user = userEvent.setup()
     const onOpenMagicModal = vi.fn()
 
@@ -202,15 +198,14 @@ describe('MobileToolbarMenu', () => {
         onReview={vi.fn()}
         onMerge={vi.fn()}
         onMergePr={vi.fn()}
-        onOpenMagicModal={onOpenMagicModal}
         handlePullClick={vi.fn()}
         handlePushClick={vi.fn()}
       />
     )
 
     await user.click(screen.getByRole('button', { name: /more actions/i }))
-    await user.click(screen.getByText('Magic'))
 
-    expect(onOpenMagicModal).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Magic')).not.toBeInTheDocument()
+    expect(onOpenMagicModal).not.toHaveBeenCalled()
   })
 })

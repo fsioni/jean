@@ -104,6 +104,50 @@ describe('CompactMessageList', () => {
     expect(screen.getByText('1 step')).toBeVisible()
   })
 
+  it('renders Command Code read_file activity with normalized labels', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'read files'),
+      message('assistant-1', 'assistant', 104, 'I read files.', {
+        tool_calls: [
+          {
+            id: 'tool-1',
+            name: 'read_file',
+            input: { absolutePath: '/tmp/package.json' },
+          },
+          {
+            id: 'tool-2',
+            name: 'read_file',
+            input: { absolutePath: '/tmp/README.md' },
+          },
+          {
+            id: 'tool-3',
+            name: 'read_file',
+            input: { absolutePath: '/tmp/AGENTS.md', limit: 20 },
+          },
+        ],
+        content_blocks: [
+          { type: 'text', text: 'Reading files.' },
+          { type: 'tool_use', tool_call_id: 'tool-1' },
+          { type: 'tool_use', tool_call_id: 'tool-2' },
+          { type: 'tool_use', tool_call_id: 'tool-3' },
+          { type: 'text', text: 'I read files.' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByRole('button', { name: /3 steps/ })).toBeVisible()
+    expect(screen.queryByText(/unhandled tool/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /3 steps/ }))
+
+    expect(screen.getByRole('button', { name: /3 Read/ })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: /3 Read/ }))
+
+    expect(screen.getAllByText('Read')).toHaveLength(2)
+    expect(screen.getByText('Read 20 lines')).toBeVisible()
+    expect(screen.getByText('package.json')).toBeVisible()
+  })
+
   it('renders cancelled marker outside the compact activity card', () => {
     renderCompact([
       message('user-1', 'user', 100, 'check status'),
@@ -249,6 +293,25 @@ describe('CompactMessageList', () => {
     expect(screen.getByText('Done')).toBeVisible()
   })
 
+  it('renders steered prompts with the same attachment UI as normal user prompts', () => {
+    renderCompact([
+      message('user-1', 'user', 100, 'do the work'),
+      message('assistant-1', 'assistant', 104, 'Done', {
+        content_blocks: [
+          {
+            type: 'user_input',
+            text: 'check this\n\n[Image attached: /tmp/screenshot.png - Use the Read tool to view this image]',
+          },
+          { type: 'text', text: 'Done' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByText('check this')).toBeVisible()
+    expect(screen.getByAltText('Attached image 1')).toBeVisible()
+    expect(screen.queryByText(/Image attached:/)).not.toBeInTheDocument()
+  })
+
   it('keeps steered prompts in chronological order around activity', () => {
     renderCompact([
       message('user-1', 'user', 100, 'hello'),
@@ -274,11 +337,11 @@ describe('CompactMessageList', () => {
     const isIt = screen.getByText('is it?')
     const activity = screen.getAllByText('All received')[0]
 
-    // Consecutive steered prompts render inside ONE connected group card
+    // Consecutive steered prompts render inside ONE connected group card.
     expect(whatsup.closest('.divide-y')).toBe(isIt.closest('.divide-y'))
     expect(whatsup.closest('.divide-y')).not.toBeNull()
 
-    // Steered prompts come BEFORE the activity that followed them
+    // Steered prompts come BEFORE the activity that followed them.
     expect(
       whatsup.compareDocumentPosition(isIt) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -289,7 +352,7 @@ describe('CompactMessageList', () => {
     ).toBeTruthy()
   })
 
-  it('copies each steered prompt from a connected group', () => {
+  it('copies each steered prompt', () => {
     const onCopyToInput = vi.fn()
 
     renderCompact(
@@ -312,7 +375,9 @@ describe('CompactMessageList', () => {
     expect(copyButtons).toHaveLength(2)
 
     const secondCopyButton = copyButtons[1]
-    if (!secondCopyButton) throw new Error('Expected second copy button')
+    if (!secondCopyButton) {
+      throw new Error('Expected second copy button')
+    }
     fireEvent.click(secondCopyButton)
 
     expect(onCopyToInput).toHaveBeenCalledTimes(1)

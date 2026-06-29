@@ -339,7 +339,7 @@ describe('DesktopBackendModelPicker', () => {
     render(
       <DesktopBackendModelPicker
         selectedBackend="opencode"
-        selectedModel="opencode/gpt-5.3-codex"
+        selectedModel="opencode/gpt-5.5"
         selectedProvider={null}
         installedBackends={['opencode']}
         customCliProfiles={[]}

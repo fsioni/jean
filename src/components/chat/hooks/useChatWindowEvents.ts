@@ -6,7 +6,6 @@ import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { cancelChatMessage } from '@/services/chat'
-import { isNativeApp } from '@/lib/environment'
 import { logger } from '@/lib/logger'
 import type { ContentBlock, QueuedMessage, Session } from '@/types/chat'
 
@@ -350,7 +349,7 @@ export function useChatWindowEvents({
     const handleLoad = () => handleLoadContext()
     const handleRun = () => {
       const first = runScripts[0]
-      if (!isNativeApp() || !activeWorktreeId || !first) return
+      if (!activeWorktreeId || !first) return
       useTerminalStore.getState().startRun(activeWorktreeId, first)
     }
     window.addEventListener('command:save-context', handleSave)

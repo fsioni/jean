@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { Activity, Loader2 } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import type {
   ToolCall,
@@ -6,8 +7,17 @@ import type {
   Question,
   QuestionAnswer,
 } from '@/types/chat'
+import {
+  getAskUserQuestions,
+  normalizeQuestionMultipleField,
+} from '@/types/chat'
 import { AskUserQuestion } from './AskUserQuestion'
-import { ToolCallInline, TaskCallInline, StackedGroup } from './ToolCallInline'
+import {
+  ToolCallInline,
+  TaskCallInline,
+  StackedGroup,
+  TOOL_CALL_ROW_CLASS,
+} from './ToolCallInline'
 import {
   buildTimeline,
   findPlanFilePath,
@@ -23,6 +33,21 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { logger } from '@/lib/logger'
+
+
+function WorkingVisualRow() {
+  return (
+    <div className="rounded-md border border-border/50 bg-muted/30 min-w-0">
+      <div className={TOOL_CALL_ROW_CLASS}>
+        <Activity className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        <span className="font-medium shrink-0 flex-none whitespace-nowrap">
+          Working…
+        </span>
+        <Loader2 className="ml-auto h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />
+      </div>
+    </div>
+  )
+}
 
 interface StreamingMessageProps {
   /** Session ID for the streaming message */
@@ -43,6 +68,8 @@ interface StreamingMessageProps {
   onQuestionSkip: (toolCallId: string) => void
   /** Callback when user clicks a file path */
   onFileClick: (path: string) => void
+  /** Worktree path for resolving file mentions */
+  worktreePath?: string
   /** Check if a question has been answered */
   isQuestionAnswered: (sessionId: string, toolCallId: string) => boolean
   /** Get submitted answers for a question */
@@ -68,6 +95,7 @@ export const StreamingMessage = memo(function StreamingMessage({
   onQuestionAnswer,
   onQuestionSkip,
   onFileClick,
+  worktreePath,
   isQuestionAnswered,
   getSubmittedAnswers,
   areQuestionsSkipped,
@@ -200,6 +228,7 @@ export const StreamingMessage = memo(function StreamingMessage({
                                   return (
                                     <SteeredPromptGroup
                                       texts={item.texts}
+                                      worktreePath={worktreePath}
                                       onCopyText={onCopySteeredText}
                                     />
                                   )
@@ -237,18 +266,14 @@ export const StreamingMessage = memo(function StreamingMessage({
                                     sessionId,
                                     item.tool.id
                                   )
-                                  const rawInput = item.tool.input as {
-                                    questions: (Question & {
-                                      multiple?: boolean
-                                    })[]
-                                  }
                                   // Normalize OpenCode's "multiple" → "multiSelect"
                                   const normalizedQuestions =
-                                    rawInput.questions.map(q => ({
-                                      ...q,
-                                      multiSelect:
-                                        q.multiSelect ?? q.multiple === true,
-                                    }))
+                                    normalizeQuestionMultipleField(
+                                      (getAskUserQuestions(item.tool.input) ??
+                                        []) as (Question & {
+                                        multiple?: boolean
+                                      })[]
+                                    )
                                   return (
                                     <AskUserQuestion
                                       toolCallId={item.tool.id}
@@ -328,6 +353,9 @@ export const StreamingMessage = memo(function StreamingMessage({
                           </ErrorBoundary>
                         )
                       })}
+                      {timeline.at(-1)?.type === 'userInput' && (
+                        <WorkingVisualRow />
+                      )}
                       {resolvedPlan.content && !hasRenderedPlanItem && (
                         <div data-plan-display>
                           <PlanDisplay

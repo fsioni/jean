@@ -72,13 +72,7 @@ interface ChatInputProps {
   formRef: React.RefObject<HTMLFormElement | null>
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   installedBackends?: CliBackend[]
-  selectedBackend?:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+  selectedBackend?: CliBackend
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -1162,10 +1156,10 @@ export const ChatInput = memo(function ChatInput({
       // Cancel pending debounced save (it still has the old "/command" value)
       clearTimeout(debouncedSaveRef.current)
 
-      // Built-in `/goal` is not a command-template — it dispatches an
-      // app-server RPC. Insert "/goal " literal so the user types an
-      // objective; useMessageSending intercepts at submit.
-      if (command.path === '<built-in:codex-goal>') {
+      // Built-in `/goal` is not a command-template. Insert "/goal "
+      // literal so the user types an objective; submit handling either
+      // intercepts it for Codex or passes it through to native backends.
+      if (command.path === '<built-in:goal>') {
         const literal = '/goal '
         if (inputRef.current) {
           inputRef.current.value = literal

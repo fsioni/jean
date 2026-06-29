@@ -264,7 +264,7 @@ describe('useStreamingEvents cancellation sanitization', () => {
             pendingFiles: [],
             pendingSkills: [],
             pendingTextFiles: [],
-            model: 'opencode/gpt-5.3-codex',
+            model: 'opencode/gpt-5.5',
             provider: null,
             executionMode: 'plan',
             thinkingLevel: 'off',

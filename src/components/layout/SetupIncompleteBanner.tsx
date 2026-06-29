@@ -4,6 +4,7 @@ import {
   useOpencodeCliStatus,
   useOpencodeCliAuth,
 } from '@/services/opencode-cli'
+import { useGrokCliStatus, useGrokCliAuth } from '@/services/grok-cli'
 import { useGhCliStatus, useGhCliAuth } from '@/services/gh-cli'
 import { useUIStore } from '@/store/ui-store'
 import { isNativeApp } from '@/lib/environment'
@@ -16,6 +17,7 @@ export function SetupIncompleteBanner() {
   const claudeStatus = useClaudeCliStatus()
   const codexStatus = useCodexCliStatus()
   const opencodeStatus = useOpencodeCliStatus()
+  const grokStatus = useGrokCliStatus()
   const ghStatus = useGhCliStatus()
 
   const claudeAuth = useClaudeCliAuth({
@@ -24,6 +26,9 @@ export function SetupIncompleteBanner() {
   const codexAuth = useCodexCliAuth({ enabled: !!codexStatus.data?.installed })
   const opencodeAuth = useOpencodeCliAuth({
     enabled: !!opencodeStatus.data?.installed,
+  })
+  const grokAuth = useGrokCliAuth({
+    enabled: !!grokStatus.data?.installed,
   })
   const ghAuth = useGhCliAuth({ enabled: !!ghStatus.data?.installed })
 
@@ -35,6 +40,7 @@ export function SetupIncompleteBanner() {
     claudeStatus.isLoading ||
     codexStatus.isLoading ||
     opencodeStatus.isLoading ||
+    grokStatus.isLoading ||
     ghStatus.isLoading
 
   if (isLoading) {
@@ -50,7 +56,8 @@ export function SetupIncompleteBanner() {
   const hasAiBackendReady =
     (!!claudeStatus.data?.installed && !!claudeAuth.data?.authenticated) ||
     (!!codexStatus.data?.installed && !!codexAuth.data?.authenticated) ||
-    (!!opencodeStatus.data?.installed && !!opencodeAuth.data?.authenticated)
+    (!!opencodeStatus.data?.installed && !!opencodeAuth.data?.authenticated) ||
+    (!!grokStatus.data?.installed && !!grokAuth.data?.authenticated)
 
   // Everything is set up — no banner needed
   if (ghReady && hasAiBackendReady) return null

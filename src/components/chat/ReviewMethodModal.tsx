@@ -162,7 +162,7 @@ function CodeRabbitChoice({
         <span className="block text-sm font-medium leading-none">
           CodeRabbit
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">
+        <span className="mt-1 block text-xs leading-snug text-muted-foreground">
           Trigger via CLI or PR comment
         </span>
       </span>
@@ -240,7 +240,7 @@ function ReviewChoice({
             </span>
           )}
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">
+        <span className="mt-1 block text-xs leading-snug text-muted-foreground">
           {subtitle}
         </span>
       </span>

@@ -54,6 +54,10 @@ use crate::http_server::EmitExt;
 use crate::platform::silent_command;
 use crate::platform::wsl_aware_command;
 
+fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
+    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+}
+
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\(([^)]*)\)").expect("valid release notes parenthetical regex"));
 static RELEASE_NOTES_LEADING_PR_RE: Lazy<Regex> =
@@ -239,6 +243,15 @@ pub fn generate_unique_suffix_name(
         if !name_in_storage && !branch_in_git {
             break candidate;
         }
+    }
+}
+
+fn generate_pr_worktree_name(pr_number: u32, head_ref_name: &str) -> String {
+    let sanitized_head = sanitize_folder_name(head_ref_name);
+    if sanitized_head.is_empty() {
+        format!("pr-{pr_number}")
+    } else {
+        format!("pr-{pr_number}-{sanitized_head}")
     }
 }
 
@@ -1061,7 +1074,7 @@ pub async fn create_worktree(
         // worktree:branch_exists / worktree:path_exists events (BranchConflictDialog).
         custom
     } else if let Some(ref ctx) = pr_context {
-        let pr_branch = ctx.head_ref_name.clone();
+        let pr_branch = generate_pr_worktree_name(ctx.number, &ctx.head_ref_name);
         // Check if this branch name already exists, if so, add a suffix
         if data.worktree_name_exists(&project_id, &pr_branch) {
             let mut counter = 2;
@@ -1359,6 +1372,7 @@ pub async fn create_worktree(
                     archived_worktree_id: archived_info.as_ref().map(|(id, _)| id.clone()),
                     archived_worktree_name: archived_info.map(|(_, name)| name),
                     issue_context: issue_context_clone.clone(),
+                    pr_context: pr_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
                     origin: worktree_origin_clone.clone(),
@@ -2116,6 +2130,7 @@ pub async fn create_worktree_from_existing_branch(
                     archived_worktree_id: archived_info.as_ref().map(|(id, _)| id.clone()),
                     archived_worktree_name: archived_info.map(|(_, name)| name),
                     issue_context: issue_context_clone.clone(),
+                    pr_context: pr_context_clone.clone(),
                     security_context: security_context_clone.clone(),
                     advisory_context: advisory_context_clone.clone(),
                     origin: None,
@@ -2545,8 +2560,10 @@ pub async fn checkout_pr(
     // Get valid base branch for creating the worktree
     let base_branch = git::get_valid_base_branch(&project.path, &project.default_branch)?;
 
-    // Generate worktree name from PR (for the directory/worktree name, not the branch)
-    let worktree_name = pr_detail.head_ref_name.clone();
+    // Generate worktree name from PR (for the directory/worktree name, not the branch).
+    // Fork PRs often use generic heads like "main"; scope by PR number to avoid
+    // producing ambiguous names like "main-2".
+    let worktree_name = generate_pr_worktree_name(pr_number, &pr_detail.head_ref_name);
     log::info!("[checkout_pr] Generated base worktree name: '{worktree_name}'");
 
     // Remove any archived worktree records for this PR from data so they don't
@@ -5382,7 +5399,7 @@ pub async fn link_worktree_pr(
     log::trace!("Linking PR #{pr_number} to worktree {worktree_id}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5390,7 +5407,6 @@ pub async fn link_worktree_pr(
             "--json",
             "number,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5448,7 +5464,7 @@ pub async fn detect_open_pr_for_branch(
     let current_branch = git::get_current_branch(&worktree_path)?;
     let repo = get_repo_identifier(&worktree_path)?;
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "api",
             "--method",
@@ -5461,7 +5477,6 @@ pub async fn detect_open_pr_for_branch(
             "-f",
             "per_page=1",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh api: {e}"))?;
 
@@ -5505,9 +5520,8 @@ pub async fn detect_and_link_pr(
     log::trace!("Detecting PR for worktree {worktree_id} at {worktree_path}");
 
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -5596,7 +5610,7 @@ pub async fn trigger_coderabbit_pr_review(
     let gh = resolve_gh_binary(&app);
     let target_pr_number =
         pr_number.ok_or_else(|| "Open or link a PR in Jean first".to_string())?;
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
@@ -5604,7 +5618,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--json",
             "number,url",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -5618,7 +5631,7 @@ pub async fn trigger_coderabbit_pr_review(
     let pr_url = view_json["url"].as_str().unwrap_or("").to_string();
 
     let comment_body = "@coderabbitai review".to_string();
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "comment",
@@ -5626,7 +5639,6 @@ pub async fn trigger_coderabbit_pr_review(
             "--body",
             &comment_body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr comment: {e}"))?;
 
@@ -6204,6 +6216,8 @@ fn build_claude_structured_output_args(model: &str, tools: &str, schema: &str) -
         "--no-session-persistence".to_string(),
         "--tools".to_string(),
         tools.to_string(),
+        "--tools".to_string(),
+        "default".to_string(),
         "--max-turns".to_string(),
         "3".to_string(),
         "--json-schema".to_string(),
@@ -6506,9 +6520,8 @@ pub async fn create_pr_with_ai_content(
 
     // Check if a PR already exists for this branch before spending time/tokens on AI generation
     let gh = resolve_gh_binary(&app);
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args(["pr", "view", "--json", "number,url,title"])
-        .current_dir(&worktree_path)
         .output();
 
     if let Ok(view_out) = view_output {
@@ -6641,7 +6654,7 @@ pub async fn create_pr_with_ai_content(
 
     // Create the PR using gh CLI
     log::trace!("Creating PR with gh CLI");
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "create",
@@ -6652,7 +6665,6 @@ pub async fn create_pr_with_ai_content(
             "--body",
             &pr_content.body,
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr create: {e}"))?;
 
@@ -6660,9 +6672,8 @@ pub async fn create_pr_with_ai_content(
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("already exists") {
             // Try to look up the existing PR and link it to the worktree
-            let view_output = silent_command(&gh)
+            let view_output = gh_command(&gh, &worktree_path)
                 .args(["pr", "view", "--json", "number,url,title"])
-                .current_dir(&worktree_path)
                 .output();
 
             if let Ok(view_out) = view_output {
@@ -6731,36 +6742,89 @@ pub struct MergePrResponse {
 ///
 /// Returns `--squash`, `--merge`, or `--rebase`, preferring squash. Repositories
 /// often disable merge commits, so a hardcoded `--merge` would fail with exit
-/// code 1; this queries the repo settings and falls back to `--squash` when they
+/// code 1; this queries the repo settings and falls back to `--merge` when they
 /// can't be read.
 fn resolve_repo_merge_flag(gh: &std::path::Path, worktree_path: &str) -> &'static str {
-    let output = silent_command(gh)
+    let output = gh_command(gh, worktree_path)
         .args([
             "repo",
             "view",
             "--json",
             "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed",
         ])
-        .current_dir(worktree_path)
         .output();
 
     if let Ok(output) = output {
         if output.status.success() {
             if let Ok(settings) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                if settings["squashMergeAllowed"].as_bool().unwrap_or(false) {
-                    return "--squash";
-                }
-                if settings["mergeCommitAllowed"].as_bool().unwrap_or(false) {
-                    return "--merge";
-                }
-                if settings["rebaseMergeAllowed"].as_bool().unwrap_or(false) {
-                    return "--rebase";
-                }
+                return resolve_merge_flag_from_repo_settings(&settings);
             }
         }
     }
 
-    "--squash"
+    "--merge"
+}
+
+fn resolve_merge_flag_from_repo_settings(settings: &serde_json::Value) -> &'static str {
+    if settings["squashMergeAllowed"].as_bool().unwrap_or(false) {
+        return "--squash";
+    }
+    if settings["mergeCommitAllowed"].as_bool().unwrap_or(false) {
+        return "--merge";
+    }
+    if settings["rebaseMergeAllowed"].as_bool().unwrap_or(false) {
+        return "--rebase";
+    }
+
+    "--merge"
+}
+
+#[cfg(test)]
+mod merge_pr_tests {
+    use super::*;
+
+    #[test]
+    fn selects_squash_when_allowed() {
+        let settings = serde_json::json!({
+            "squashMergeAllowed": true,
+            "mergeCommitAllowed": true,
+            "rebaseMergeAllowed": true
+        });
+
+        assert_eq!(resolve_merge_flag_from_repo_settings(&settings), "--squash");
+    }
+
+    #[test]
+    fn selects_merge_when_squash_is_disabled() {
+        let settings = serde_json::json!({
+            "squashMergeAllowed": false,
+            "mergeCommitAllowed": true,
+            "rebaseMergeAllowed": true
+        });
+
+        assert_eq!(resolve_merge_flag_from_repo_settings(&settings), "--merge");
+    }
+
+    #[test]
+    fn selects_rebase_when_only_rebase_is_allowed() {
+        let settings = serde_json::json!({
+            "squashMergeAllowed": false,
+            "mergeCommitAllowed": false,
+            "rebaseMergeAllowed": true
+        });
+
+        assert_eq!(resolve_merge_flag_from_repo_settings(&settings), "--rebase");
+    }
+
+    #[test]
+    fn falls_back_to_merge_for_missing_or_malformed_settings() {
+        let settings = serde_json::json!({
+            "squashMergeAllowed": "yes",
+            "rebaseMergeAllowed": null
+        });
+
+        assert_eq!(resolve_merge_flag_from_repo_settings(&settings), "--merge");
+    }
 }
 
 /// Merge the open GitHub PR for the current branch using `gh pr merge`.
@@ -6775,14 +6839,13 @@ pub async fn merge_github_pr(
     let gh = resolve_gh_binary(&app);
 
     // 1. Check PR status and mergeability
-    let view_output = silent_command(&gh)
+    let view_output = gh_command(&gh, &worktree_path)
         .args([
             "pr",
             "view",
             "--json",
             "number,state,mergeable,mergeStateStatus,url,title",
         ])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
 
@@ -6817,9 +6880,8 @@ pub async fn merge_github_pr(
     //    commits (e.g. squash-only repos like Planexpo), so resolve the method
     //    from the repo settings first (preferring squash).
     let merge_flag = resolve_repo_merge_flag(&gh, &worktree_path);
-    let merge_output = silent_command(&gh)
+    let merge_output = gh_command(&gh, &worktree_path)
         .args(["pr", "merge", merge_flag])
-        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run gh pr merge: {e}"))?;
 
@@ -6951,6 +7013,24 @@ fn generate_pr_content_from_inputs(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating PR content with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(repo_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: PrContentResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok PR content JSON: {e}, content: {json_str}");
+            format!("Failed to parse PR content: {e}")
+        })?;
+        response.body = augment_pr_references_in_body(&response.body, related_pr_issue_refs);
+        return Ok(response);
+    }
+
     log::trace!("Generating PR content with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -6958,8 +7038,9 @@ fn generate_pr_content_from_inputs(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
         "",
@@ -7576,6 +7657,22 @@ fn generate_commit_message_once(
         });
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating commit message with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok commit message JSON: {e}, content: {json_str}");
+            format!("Failed to parse commit message: {e}")
+        });
+    }
+
     log::trace!("Generating commit message with Claude CLI (JSON schema)");
 
     let cli_path = resolve_cli_binary(app);
@@ -7583,8 +7680,9 @@ fn generate_commit_message_once(
         return Err("Claude CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
         "",
@@ -7956,16 +8054,13 @@ fn execute_codex_review(
         working_dir
     );
 
-    let mut cmd = crate::platform::silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), working_dir);
     cmd.args(build_codex_review_args(
         actual_model,
         is_fast,
         &schema_file,
         working_dir,
     ));
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
-    }
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -8093,6 +8188,22 @@ fn generate_review(
         });
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Running code review with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            prompt,
+            model_str,
+            working_dir,
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        return serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok review JSON: {e}, content: {json_str}");
+            format!("Failed to parse review: {e}")
+        });
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -8100,8 +8211,9 @@ fn generate_review(
 
     log::trace!("Running code review with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
         "none",
@@ -8594,7 +8706,10 @@ pub async fn run_coderabbit_review(
         return Err("CodeRabbit CLI not installed".to_string());
     }
 
-    let mut cmd = silent_command(&binary_path);
+    let mut cmd = crate::platform::cli_command(
+        &binary_path.to_string_lossy(),
+        Some(std::path::Path::new(&worktree_path)),
+    );
     cmd.args(["review", "--agent", "--dir", &worktree_path]);
     if let Some(review_type) = review_type
         .as_deref()
@@ -8602,9 +8717,7 @@ pub async fn run_coderabbit_review(
     {
         cmd.args(["--type", review_type]);
     }
-    cmd.current_dir(&worktree_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let child = cmd
         .spawn()
@@ -8955,7 +9068,7 @@ pub async fn list_github_releases(
     log::trace!("Listing GitHub releases for: {project_path}");
 
     let gh = resolve_gh_binary(&app);
-    let output = silent_command(&gh)
+    let output = gh_command(&gh, &project_path)
         .args([
             "release",
             "list",
@@ -8964,7 +9077,6 @@ pub async fn list_github_releases(
             "--limit",
             "30",
         ])
-        .current_dir(&project_path)
         .output()
         .map_err(|e| format!("Failed to run gh CLI: {e}"))?;
 
@@ -9184,6 +9296,25 @@ fn generate_release_notes_content(
         return Ok(response);
     }
 
+    if backend == crate::chat::types::Backend::Grok {
+        log::trace!("Generating release notes with Grok");
+        let json_str = crate::chat::grok::execute_one_shot_grok(
+            app,
+            &prompt,
+            model_str,
+            Some(std::path::Path::new(project_path)),
+            reasoning_effort,
+        )?;
+        let json_str = extract_json_object_from_text(&json_str)?;
+        let mut response: ReleaseNotesResponse = serde_json::from_str(&json_str).map_err(|e| {
+            log::error!("Failed to parse Grok release notes JSON: {e}, content: {json_str}");
+            format!("Failed to parse release notes: {e}")
+        })?;
+        response.body =
+            augment_pr_references_in_body(&response.body, &release_notes_context.pr_issue_refs);
+        return Ok(response);
+    }
+
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
         return Err("Claude CLI not installed".to_string());
@@ -9191,8 +9322,9 @@ fn generate_release_notes_content(
 
     log::trace!("Generating release notes with Claude CLI (JSON schema)");
 
-    let mut cmd = silent_command(&cli_path);
+    let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args(build_claude_structured_output_args(
         model_str,
         "",
@@ -11459,6 +11591,19 @@ mod tests {
     }
 
     #[test]
+    fn pr_worktree_name_is_scoped_by_pr_number_for_generic_heads() {
+        assert_eq!(generate_pr_worktree_name(396, "main"), "pr-396-main");
+    }
+
+    #[test]
+    fn pr_worktree_name_sanitizes_slash_separated_heads() {
+        assert_eq!(
+            generate_pr_worktree_name(397, "feature/notifications"),
+            "pr-397-feature_notifications"
+        );
+    }
+
+    #[test]
     fn test_extract_icon_hrefs_collects_multiple_local_icons() {
         let source = r#"
             <link rel="stylesheet" href="/app.css">
@@ -11861,12 +12006,13 @@ Body
     }
 
     #[test]
-    fn test_build_claude_structured_output_args_disables_tools_without_plan_mode() {
+    fn test_build_claude_structured_output_args_includes_default_tools_without_plan_mode() {
         let args = build_claude_structured_output_args("sonnet", "none", REVIEW_SCHEMA);
 
         assert!(args.windows(2).any(|w| w == ["--max-turns", "3"]));
         assert!(!args.iter().any(|arg| arg == "--permission-mode"));
         assert!(args.windows(2).any(|w| w == ["--tools", "none"]));
+        assert!(args.windows(2).any(|w| w == ["--tools", "default"]));
         assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
         assert!(args
             .windows(2)

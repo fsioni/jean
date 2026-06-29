@@ -24,6 +24,7 @@ fn backend_label(backend: &Backend) -> &'static str {
         Backend::Cursor => "cursor",
         Backend::Pi => "pi",
         Backend::Commandcode => "commandcode",
+        Backend::Grok => "grok",
     }
 }
 
@@ -71,6 +72,11 @@ pub(crate) fn latest_completed_backend(metadata: &SessionMetadata) -> Option<Bac
                 .is_some_and(|model| model.starts_with("commandcode/"))
             {
                 return Some(Backend::Commandcode);
+            }
+            if run.grok_session_id.is_some()
+                || run.model.as_deref().is_some_and(crate::is_grok_model)
+            {
+                return Some(Backend::Grok);
             }
             if run.claude_session_id.is_some() {
                 return Some(Backend::Claude);
@@ -327,6 +333,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert_eq!(latest_completed_backend(&metadata), Some(Backend::Claude));
@@ -384,6 +391,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
         metadata.runs.push(RunEntry {
             run_id: "run-2".to_string(),
@@ -407,6 +415,7 @@ mod tests {
             codex_thread_id: Some("codex-1".to_string()),
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         });
 
         assert_eq!(

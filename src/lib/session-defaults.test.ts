@@ -14,7 +14,7 @@ describe('resolveDefaultModelForBackend', () => {
   it.each([
     ['claude', 'claude-opus-4-8[1m]'],
     ['codex', 'gpt-5.5'],
-    ['opencode', 'opencode/gpt-5.3-codex'],
+    ['opencode', 'opencode/gpt-5.5'],
     ['cursor', 'cursor/auto'],
   ] as const)(
     'falls back to the built-in %s default when no preference exists',

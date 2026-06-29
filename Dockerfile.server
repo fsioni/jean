@@ -1,0 +1,46 @@
+FROM oven/bun:1.2.22 AS frontend
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+FROM rust:1-bookworm AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libwebkit2gtk-4.1-dev \
+    libappindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+COPY src-tauri ./src-tauri
+COPY --from=frontend /app/dist ./dist
+RUN cd src-tauri && RUSTC_WRAPPER= cargo build --release --bin jean-server
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    openssh-client \
+    libwebkit2gtk-4.1-0 \
+    libayatana-appindicator3-1 \
+    librsvg2-2 \
+    xdg-utils \
+    xvfb \
+    xauth \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /bin/bash jean \
+    && mkdir -p /home/jean/.cache /home/jean/.config /home/jean/.local/share/com.jean.desktop /tmp/.X11-unix \
+    && chown -R jean:jean /home/jean \
+    && chmod 1777 /tmp/.X11-unix
+COPY --from=builder /app/src-tauri/target/release/jean-server /usr/local/bin/jean-server
+COPY scripts/docker-entrypoint.sh /usr/local/bin/jean-server-entrypoint
+RUN chmod +x /usr/local/bin/jean-server-entrypoint
+USER jean
+ENV JEAN_HOST=0.0.0.0 \
+    JEAN_PORT=3456
+EXPOSE 3456
+VOLUME ["/home/jean/.local/share/com.jean.desktop"]
+ENTRYPOINT ["/usr/local/bin/jean-server-entrypoint"]

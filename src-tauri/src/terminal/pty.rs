@@ -16,6 +16,14 @@ fn get_user_shell() -> String {
     crate::platform::get_default_shell()
 }
 
+fn is_windows_batch_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
 /// Spawn a terminal, optionally running a command
 ///
 /// When `command_args` is provided alongside `command`, the binary at `command`
@@ -121,9 +129,16 @@ pub fn spawn_terminal(
                 return Err(format!("Binary not found: {run_command}"));
             }
 
-            // Direct binary invocation — CommandBuilder uses execvp which handles
-            // spaces in paths natively. No shell wrapper needed.
-            let mut c = CommandBuilder::new(run_command);
+            let mut c = if cfg!(windows) && is_windows_batch_file(run_command) {
+                let mut c = CommandBuilder::new("cmd.exe");
+                c.arg("/C");
+                c.arg(run_command);
+                c
+            } else {
+                // Direct binary invocation — CommandBuilder uses execvp which handles
+                // spaces in paths natively. No shell wrapper needed.
+                CommandBuilder::new(run_command)
+            };
             for arg in args {
                 c.arg(arg);
             }
@@ -444,4 +459,19 @@ pub fn kill_all_terminals() -> usize {
     eprintln!("[TERMINAL CLEANUP] Cleanup complete, killed {count} terminal(s)");
 
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_windows_batch_file;
+
+    #[test]
+    fn detects_windows_batch_shims_case_insensitively() {
+        assert!(is_windows_batch_file(
+            r"C:\Users\u\AppData\Roaming\npm\opencode.CMD"
+        ));
+        assert!(is_windows_batch_file(r"C:\tools\run.bat"));
+        assert!(!is_windows_batch_file(r"C:\tools\opencode.exe"));
+        assert!(!is_windows_batch_file(r"C:\tools\opencode"));
+    }
 }

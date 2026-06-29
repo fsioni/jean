@@ -25,9 +25,11 @@ import type {
   ToolCall,
 } from '@/types/chat'
 import {
+  getAskUserQuestions,
   hasQuestionAnswerOutput,
   isAskUserQuestion,
   isPlanToolCall,
+  normalizeQuestionMultipleField,
 } from '@/types/chat'
 import { MessageItem } from './MessageItem'
 import { AskUserQuestion } from './AskUserQuestion'
@@ -44,6 +46,11 @@ import {
   restorePrependScrollAnchor,
   type PrependScrollAnchor,
 } from './message-scroll-anchor'
+import {
+  RECAP_HEADING_RE,
+  extractRecapSection,
+  stripRecapFromMessage,
+} from './recap-utils'
 
 const SCROLL_THRESHOLD = 300
 
@@ -209,26 +216,6 @@ function isPureTextAssistantMessage(message: ChatMessage): boolean {
   return Boolean(blockText.trim() || message.content?.trim())
 }
 
-const RECAP_HEADING_RE = /^##\s+Recap\s*$/im
-
-/**
- * If `text` contains a `## Recap` markdown heading, returns the slice from
- * that heading to the next H1/H2 (or end of string). Otherwise returns null.
- * The backend instructs the assistant (via system prompt) to terminate every
- * multi-step turn with this section, so the compact view can surface a short
- * summary instead of the full tool-stripped prose replay.
- */
-function extractRecapSection(text: string): string | null {
-  const match = RECAP_HEADING_RE.exec(text)
-  if (!match) return null
-  const start = match.index
-  const afterHeading = start + match[0].length
-  const rest = text.slice(afterHeading)
-  const nextHeading = /^#{1,2}\s+/m.exec(rest)
-  const end = nextHeading ? afterHeading + nextHeading.index : text.length
-  return text.slice(start, end).trim() || null
-}
-
 /**
  * Returns the latest assistant prose text in a compact group as plain text.
  * Walks newest → oldest and returns the first non-empty result. If the latest
@@ -261,61 +248,6 @@ function findLatestAssistantText(
     return texts[texts.length - 1] ?? null
   }
   return null
-}
-
-/**
- * Trims the `## Recap` section (and everything after it up to the next H1/H2)
- * from a markdown string. Returns the original string unchanged when no recap
- * heading is present.
- */
-function stripRecapFromText(text: string): string {
-  const match = RECAP_HEADING_RE.exec(text)
-  if (!match) return text
-  const start = match.index
-  const afterHeading = start + match[0].length
-  const rest = text.slice(afterHeading)
-  const nextHeading = /^#{1,2}\s+/m.exec(rest)
-  const before = text.slice(0, start).trimEnd()
-  const after = nextHeading ? text.slice(afterHeading + nextHeading.index) : ''
-  return after ? `${before}\n\n${after}`.trim() : before
-}
-
-/**
- * Returns a clone of `message` with the `## Recap` section removed from any
- * text content blocks. Used so the latest assistant message doesn't duplicate
- * the recap that already renders in the `latestText` block under the activity
- * row.
- */
-function stripRecapFromMessage(message: ChatMessage): ChatMessage {
-  const blocks = message.content_blocks
-  let changed = false
-  let newBlocks: ContentBlock[] | undefined
-  if (blocks && blocks.length > 0) {
-    newBlocks = []
-    for (const block of blocks) {
-      if (block?.type === 'text' && RECAP_HEADING_RE.test(block.text)) {
-        const stripped = stripRecapFromText(block.text)
-        changed = true
-        if (stripped) newBlocks.push({ ...block, text: stripped })
-      } else {
-        newBlocks.push(block)
-      }
-    }
-  }
-  let newContent = message.content
-  if (newContent && RECAP_HEADING_RE.test(newContent)) {
-    const stripped = stripRecapFromText(newContent)
-    if (stripped !== newContent) {
-      newContent = stripped
-      changed = true
-    }
-  }
-  if (!changed) return message
-  return {
-    ...message,
-    ...(newBlocks ? { content_blocks: newBlocks } : {}),
-    ...(newContent !== message.content ? { content: newContent } : {}),
-  }
 }
 
 /**
@@ -657,13 +589,11 @@ function CompactQuestionMessage({
           hasFollowUpMessage ||
           isQuestionAnswered(sessionId, item.tool.id) ||
           hasQuestionAnswerOutput(item.tool.output)
-        const rawInput = item.tool.input as {
-          questions: (Question & { multiple?: boolean })[]
-        }
-        const normalizedQuestions = rawInput.questions.map(q => ({
-          ...q,
-          multiSelect: q.multiSelect ?? q.multiple === true,
-        }))
+        const normalizedQuestions = normalizeQuestionMultipleField(
+          (getAskUserQuestions(item.tool.input) ?? []) as (Question & {
+            multiple?: boolean
+          })[]
+        )
         return (
           <AskUserQuestion
             key={item.key}
@@ -1170,6 +1100,7 @@ export const CompactMessageList = memo(
                 <div key={item.key} className="pb-4">
                   <SteeredPromptGroup
                     texts={item.texts}
+                    worktreePath={worktreePath}
                     onCopyText={
                       onCopyToInput
                         ? text =>

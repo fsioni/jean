@@ -20,6 +20,7 @@ import { CommandPalette } from '@/components/command-palette/CommandPalette'
 import { QuitConfirmationDialog } from './QuitConfirmationDialog'
 import { BranchConflictDialog } from '@/components/worktree/BranchConflictDialog'
 import { TeardownOutputDialog } from '@/components/worktree/TeardownOutputDialog'
+import { WindowResizeHandles } from './WindowResizeHandles'
 
 // Lazy-loaded heavy modals (code splitting)
 const LeftSideBar = lazy(() =>
@@ -197,7 +198,7 @@ import {
   useWorktreeEvents,
 } from '@/services/projects'
 import { isNativeApp } from '@/lib/environment'
-import { isWindows } from '@/lib/platform'
+import { isLinux, isWindows } from '@/lib/platform'
 
 // Left sidebar resize constraints (pixels)
 const MIN_SIDEBAR_WIDTH = 150
@@ -481,6 +482,8 @@ export function MainWindow() {
         roundedClass
       )}
     >
+      {isNativeApp() && isLinux && <WindowResizeHandles />}
+
       {/* Touch swipe-down pull indicator */}
       {isTouch && swipeDown.isSwiping && (
         <div

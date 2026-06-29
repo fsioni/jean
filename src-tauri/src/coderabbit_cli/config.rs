@@ -1,6 +1,5 @@
 //! Configuration and path management for the CodeRabbit CLI.
 
-use crate::platform::silent_command;
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -67,39 +66,21 @@ fn should_use_system_path(
     }
 }
 
-fn which_coderabbit() -> Option<PathBuf> {
-    let which_cmd = if cfg!(target_os = "windows") {
-        "where"
-    } else {
-        "which"
-    };
-
-    let output = silent_command(which_cmd).arg("coderabbit").output().ok()?;
-    if !output.status.success() {
-        return None;
+fn which_coderabbit(jean_managed: Option<&std::path::Path>) -> Option<PathBuf> {
+    let wsl = crate::platform::get_wsl_config();
+    if wsl.enabled {
+        return crate::platform::wsl_which(&wsl.distro, "coderabbit", None).map(PathBuf::from);
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.exists())
+    crate::platform::find_cli_in_host_path("coderabbit", jean_managed)
 }
 
 pub fn find_system_coderabbit_binary(app: &AppHandle) -> Option<PathBuf> {
-    let found_path = which_coderabbit()?;
     let jean_managed_path = get_coderabbit_binary_path(app)
         .ok()
         .and_then(|path| std::fs::canonicalize(path).ok());
 
-    if let Some(jean_path) = jean_managed_path {
-        if std::fs::canonicalize(&found_path).ok().as_ref() == Some(&jean_path) {
-            return None;
-        }
-    }
-
-    Some(found_path)
+    which_coderabbit(jean_managed_path.as_deref())
 }
 
 pub fn jean_managed_coderabbit_installed(app: &AppHandle) -> bool {

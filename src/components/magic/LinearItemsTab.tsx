@@ -105,6 +105,7 @@ export function LinearItemsTab({
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => onViewLoaded(ctx)}
+                        aria-label={`View context for ${ctx.identifier}`}
                         className="p-1 rounded hover:bg-accent-foreground/10"
                       >
                         <Eye className="h-3.5 w-3.5 text-muted-foreground" />

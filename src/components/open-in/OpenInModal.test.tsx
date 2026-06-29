@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@/test/test-utils'
 import { OpenInModal } from './OpenInModal'
 
+const nativeState = vi.hoisted(() => ({ value: true }))
+
 const mocks = vi.hoisted(() => ({
   setOpenInModalOpen: vi.fn(),
   openPreferencesPane: vi.fn(),
@@ -74,7 +76,7 @@ vi.mock('@/services/preferences', () => ({
 }))
 
 vi.mock('@/lib/environment', () => ({
-  isNativeApp: () => true,
+  isNativeApp: () => nativeState.value,
 }))
 
 vi.mock('@/lib/platform', () => ({
@@ -82,6 +84,8 @@ vi.mock('@/lib/platform', () => ({
   isMacOS: true,
   isWindows: false,
   isLinux: false,
+  getServerPlatform: vi.fn(() => 'mac'),
+  isServerWindows: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/transport', () => ({
@@ -153,6 +157,16 @@ vi.mock('@/services/github', () => ({
 describe('OpenInModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    nativeState.value = true
+  })
+
+  it('hides Finder in browser/headless mode', async () => {
+    nativeState.value = false
+
+    render(<OpenInModal />)
+
+    expect(await screen.findByText('GitHub')).toBeInTheDocument()
+    expect(screen.queryByText('Finder')).not.toBeInTheDocument()
   })
 
   it('shows worktree and loaded security/advisory context URLs', async () => {

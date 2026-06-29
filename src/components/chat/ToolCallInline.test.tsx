@@ -91,6 +91,118 @@ describe('ToolCallInline', () => {
     expect(expandedContent).toBeInTheDocument()
   })
 
+  it('renders Command Code read_file calls as file reads', () => {
+    render(
+      <ToolCallInline
+        toolCall={{
+          id: 'tool-commandcode-read-1',
+          name: 'read_file',
+          input: {
+            absolutePath: '/Users/example/project/package.json',
+            limit: 20,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('Read 20 lines')).toBeInTheDocument()
+    expect(screen.getByText('package.json')).toBeInTheDocument()
+    expect(screen.queryByText(/unhandled tool/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button'))
+
+    expect(
+      screen.getByText((_, element) =>
+        Boolean(
+          element?.classList.contains('whitespace-pre-wrap') &&
+          element.textContent ===
+            'Path: /Users/example/project/package.json\nLimit: 20'
+        )
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('renders Command Code shell_command calls as Bash', () => {
+    render(
+      <ToolCallInline
+        toolCall={{
+          id: 'tool-commandcode-shell-1',
+          name: 'shell_command',
+          input: {
+            command: 'date',
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('date')).toBeInTheDocument()
+    expect(screen.queryByText(/unhandled tool/i)).not.toBeInTheDocument()
+  })
+
+  it('renders additional Command Code snake_case tools without the unhandled fallback', () => {
+    const tools = [
+      {
+        id: 'tool-write',
+        name: 'write_file',
+        input: {
+          filePath: '/Users/example/project/.ai/demo.md',
+          content: '# Demo',
+        },
+        label: 'Write',
+        detail: 'demo.md',
+      },
+      {
+        id: 'tool-glob',
+        name: 'glob',
+        input: { pattern: '*.md' },
+        label: 'Glob',
+        detail: '*.md',
+      },
+      {
+        id: 'tool-grep',
+        name: 'grep',
+        input: { pattern: 'version', include: ['package.json'] },
+        label: 'Grep',
+        detail: '"version"',
+      },
+      {
+        id: 'tool-list',
+        name: 'read_directory',
+        input: { path: '/Users/example/project/.ai' },
+        label: 'List',
+        detail: '/Users/example/project/.ai',
+      },
+      {
+        id: 'tool-multi-read',
+        name: 'read_multiple_files',
+        input: {
+          targetDirectory: '/Users/example/project/.ai',
+          include: ['*.md'],
+        },
+        label: 'Read Multiple Files',
+        detail: '*.md in /Users/example/project/.ai',
+      },
+    ]
+
+    for (const tool of tools) {
+      const { unmount } = render(
+        <ToolCallInline
+          toolCall={{
+            id: tool.id,
+            name: tool.name,
+            input: tool.input,
+          }}
+        />
+      )
+
+      expect(screen.getByText(tool.label)).toBeInTheDocument()
+      expect(screen.getByText(tool.detail)).toBeInTheDocument()
+      expect(screen.queryByText(/unhandled tool/i)).not.toBeInTheDocument()
+      unmount()
+    }
+  })
+
   it('renders FileChange diffs without duplicate raw output', () => {
     const { container } = render(
       <ToolCallInline

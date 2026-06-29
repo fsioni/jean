@@ -35,6 +35,21 @@ import {
   useOpenCodePathDetection,
 } from '@/services/opencode-cli'
 import {
+  usePiCliSetup,
+  usePiCliAuth,
+  usePiPathDetection,
+} from '@/services/pi-cli'
+import {
+  useCommandCodeCliSetup,
+  useCommandCodeCliAuth,
+  useCommandCodePathDetection,
+} from '@/services/commandcode-cli'
+import {
+  useGrokCliSetup,
+  useGrokCliAuth,
+  useGrokPathDetection,
+} from '@/services/grok-cli'
+import {
   useGhCliSetup,
   useGhCliAuth,
   useGhPathDetection,
@@ -49,14 +64,35 @@ import {
 } from './CliSetupComponents'
 import { toast } from 'sonner'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
-import { isWindows } from '@/lib/platform'
+import {
+  CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  CODEX_DEFAULT_MAGIC_PROMPT_MODELS,
+  OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  PI_DEFAULT_MAGIC_PROMPT_MODELS,
+  COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  GROK_DEFAULT_MAGIC_PROMPT_MODELS,
+  type MagicPromptBackends,
+  type MagicPromptModels,
+} from '@/types/preferences'
+import { isServerWindows } from '@/lib/platform'
 import { WslSetupStep } from './WslSetupStep'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 
-type AIBackend = 'claude' | 'codex' | 'opencode'
+type AIBackend = 'claude' | 'codex' | 'opencode' | 'pi' | 'commandcode' | 'grok'
 type CliType = AIBackend | 'gh'
 
-const AI_BACKENDS: AIBackend[] = ['claude', 'codex', 'opencode']
+const AI_BACKENDS: AIBackend[] = [
+  'claude',
+  'codex',
+  'opencode',
+  'pi',
+  'commandcode',
+  'grok',
+]
 
 type OnboardingStep =
   | 'wsl-setup'
@@ -73,6 +109,18 @@ type OnboardingStep =
   | 'opencode-installing'
   | 'opencode-auth-checking'
   | 'opencode-auth-login'
+  | 'pi-setup'
+  | 'pi-installing'
+  | 'pi-auth-checking'
+  | 'pi-auth-login'
+  | 'commandcode-setup'
+  | 'commandcode-installing'
+  | 'commandcode-auth-checking'
+  | 'commandcode-auth-login'
+  | 'grok-setup'
+  | 'grok-installing'
+  | 'grok-auth-checking'
+  | 'grok-auth-login'
   | 'gh-setup'
   | 'gh-installing'
   | 'gh-auth-checking'
@@ -94,6 +142,12 @@ const BACK_NAVIGABLE_STEPS: readonly OnboardingStep[] = [
   'claude-auth-login',
   'codex-auth-login',
   'opencode-auth-login',
+  'pi-setup',
+  'pi-auth-login',
+  'commandcode-setup',
+  'commandcode-auth-login',
+  'grok-setup',
+  'grok-auth-login',
   'gh-setup',
   'gh-auth-login',
 ] as const
@@ -129,13 +183,57 @@ const backendLabel: Record<CliType, string> = {
   claude: 'Claude CLI',
   codex: 'Codex CLI',
   opencode: 'OpenCode CLI',
+  pi: 'PI CLI',
+  commandcode: 'Command Code CLI',
+  grok: 'Grok CLI',
   gh: 'GitHub CLI',
+}
+
+const BETA_BACKENDS = new Set<AIBackend>(['pi', 'commandcode', 'grok'])
+
+function magicDefaultsForBackend(
+  backend: AIBackend
+): { models: MagicPromptModels; backends: MagicPromptBackends } | null {
+  if (backend === 'codex') {
+    return {
+      models: CODEX_DEFAULT_MAGIC_PROMPT_MODELS,
+      backends: CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    }
+  }
+  if (backend === 'opencode') {
+    return {
+      models: OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+      backends: OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    }
+  }
+  if (backend === 'pi') {
+    return {
+      models: PI_DEFAULT_MAGIC_PROMPT_MODELS,
+      backends: PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    }
+  }
+  if (backend === 'commandcode') {
+    return {
+      models: COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+      backends: COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    }
+  }
+  if (backend === 'grok') {
+    return {
+      models: GROK_DEFAULT_MAGIC_PROMPT_MODELS,
+      backends: GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    }
+  }
+  return null
 }
 
 function stepToBackend(step: OnboardingStep): AIBackend | null {
   if (step.startsWith('claude-')) return 'claude'
   if (step.startsWith('codex-')) return 'codex'
   if (step.startsWith('opencode-')) return 'opencode'
+  if (step.startsWith('pi-')) return 'pi'
+  if (step.startsWith('commandcode-')) return 'commandcode'
+  if (step.startsWith('grok-')) return 'grok'
   return null
 }
 
@@ -166,8 +264,14 @@ function OnboardingDialogContent() {
   const pathDetection = useClaudePathDetection()
   const codexPathDetection = useCodexPathDetection()
   const opencodePathDetection = useOpenCodePathDetection()
+  const piPathDetection = usePiPathDetection()
+  const commandcodePathDetection = useCommandCodePathDetection()
+  const grokPathDetection = useGrokPathDetection()
   const codexSetup = useCodexCliSetup()
   const opencodeSetup = useOpenCodeCliSetup()
+  const piSetup = usePiCliSetup()
+  const commandcodeSetup = useCommandCodeCliSetup()
+  const grokSetup = useGrokCliSetup()
   const ghPathDetection = useGhPathDetection()
   const ghSetup = useGhCliSetup()
 
@@ -178,6 +282,11 @@ function OnboardingDialogContent() {
   const opencodeAuth = useOpenCodeCliAuth({
     enabled: !!opencodeSetup.status?.installed,
   })
+  const piAuth = usePiCliAuth({ enabled: !!piSetup.status?.installed })
+  const commandcodeAuth = useCommandCodeCliAuth({
+    enabled: !!commandcodeSetup.status?.installed,
+  })
+  const grokAuth = useGrokCliAuth({ enabled: !!grokSetup.status?.installed })
   const ghAuth = useGhCliAuth({ enabled: !!ghSetup.status?.installed })
 
   const [step, _setStepRaw] = useState<OnboardingStep>('backend-select')
@@ -207,19 +316,34 @@ function OnboardingDialogContent() {
   const [claudeVersion, setClaudeVersion] = useState<string | null>(null)
   const [codexVersion, setCodexVersion] = useState<string | null>(null)
   const [opencodeVersion, setOpencodeVersion] = useState<string | null>(null)
+  const [piVersion, setPiVersion] = useState<string | null>(null)
+  const [commandcodeVersion, setCommandcodeVersion] = useState<string | null>(
+    null
+  )
+  const [grokVersion, setGrokVersion] = useState<string | null>(null)
   const [ghVersion, setGhVersion] = useState<string | null>(null)
 
   const [claudeInstallFailed, setClaudeInstallFailed] = useState(false)
   const [codexInstallFailed, setCodexInstallFailed] = useState(false)
   const [opencodeInstallFailed, setOpencodeInstallFailed] = useState(false)
+  const [piInstallFailed, setPiInstallFailed] = useState(false)
+  const [commandcodeInstallFailed, setCommandcodeInstallFailed] =
+    useState(false)
+  const [grokInstallFailed, setGrokInstallFailed] = useState(false)
   const [ghInstallFailed, setGhInstallFailed] = useState(false)
   const [claudePathSelected, setClaudePathSelected] = useState(false)
   const [codexPathSelected, setCodexPathSelected] = useState(false)
   const [opencodePathSelected, setOpencodePathSelected] = useState(false)
+  const [piPathSelected, setPiPathSelected] = useState(false)
+  const [commandcodePathSelected, setCommandcodePathSelected] = useState(false)
+  const [grokPathSelected, setGrokPathSelected] = useState(false)
   const [ghPathSelected, setGhPathSelected] = useState(false)
   const [claudeLoginAttempt, setClaudeLoginAttempt] = useState(0)
   const [codexLoginAttempt, setCodexLoginAttempt] = useState(0)
   const [opencodeLoginAttempt, setOpencodeLoginAttempt] = useState(0)
+  const [piLoginAttempt, setPiLoginAttempt] = useState(0)
+  const [commandcodeLoginAttempt, setCommandcodeLoginAttempt] = useState(0)
+  const [grokLoginAttempt, setGrokLoginAttempt] = useState(0)
   const [ghLoginAttempt, setGhLoginAttempt] = useState(0)
 
   const goBack = useCallback(() => {
@@ -245,6 +369,24 @@ function OnboardingDialogContent() {
       setOpencodeInstallFailed(false)
       return
     }
+    if (current === 'pi-setup' && piPathSelected) {
+      dbg('step: BACK (sub-state) pi-setup installer → picker')
+      setPiPathSelected(false)
+      setPiInstallFailed(false)
+      return
+    }
+    if (current === 'commandcode-setup' && commandcodePathSelected) {
+      dbg('step: BACK (sub-state) commandcode-setup installer → picker')
+      setCommandcodePathSelected(false)
+      setCommandcodeInstallFailed(false)
+      return
+    }
+    if (current === 'grok-setup' && grokPathSelected) {
+      dbg('step: BACK (sub-state) grok-setup installer → picker')
+      setGrokPathSelected(false)
+      setGrokInstallFailed(false)
+      return
+    }
     if (current === 'gh-setup' && ghPathSelected) {
       dbg('step: BACK (sub-state) gh-setup installer → picker')
       setGhPathSelected(false)
@@ -267,6 +409,15 @@ function OnboardingDialogContent() {
       } else if (prev === 'opencode-setup') {
         setOpencodePathSelected(false)
         setOpencodeInstallFailed(false)
+      } else if (prev === 'pi-setup') {
+        setPiPathSelected(false)
+        setPiInstallFailed(false)
+      } else if (prev === 'commandcode-setup') {
+        setCommandcodePathSelected(false)
+        setCommandcodeInstallFailed(false)
+      } else if (prev === 'grok-setup') {
+        setGrokPathSelected(false)
+        setGrokInstallFailed(false)
       } else if (prev === 'gh-setup') {
         setGhPathSelected(false)
         setGhInstallFailed(false)
@@ -279,6 +430,9 @@ function OnboardingDialogContent() {
     claudePathSelected,
     codexPathSelected,
     opencodePathSelected,
+    piPathSelected,
+    commandcodePathSelected,
+    grokPathSelected,
     ghPathSelected,
   ])
 
@@ -288,6 +442,9 @@ function OnboardingDialogContent() {
     (step === 'claude-setup' && claudePathSelected) ||
     (step === 'codex-setup' && codexPathSelected) ||
     (step === 'opencode-setup' && opencodePathSelected) ||
+    (step === 'pi-setup' && piPathSelected) ||
+    (step === 'commandcode-setup' && commandcodePathSelected) ||
+    (step === 'grok-setup' && grokPathSelected) ||
     (step === 'gh-setup' && ghPathSelected)
   const canGoBack =
     (historyStack.length > 0 || hasSubStateBack) &&
@@ -305,6 +462,9 @@ function OnboardingDialogContent() {
   const claudeLoginTerminalId = `onboarding-claude-login-${loginSessionSeed}-${claudeLoginAttempt}`
   const codexLoginTerminalId = `onboarding-codex-login-${loginSessionSeed}-${codexLoginAttempt}`
   const opencodeLoginTerminalId = `onboarding-opencode-login-${loginSessionSeed}-${opencodeLoginAttempt}`
+  const piLoginTerminalId = `onboarding-pi-login-${loginSessionSeed}-${piLoginAttempt}`
+  const commandcodeLoginTerminalId = `onboarding-commandcode-login-${loginSessionSeed}-${commandcodeLoginAttempt}`
+  const grokLoginTerminalId = `onboarding-grok-login-${loginSessionSeed}-${grokLoginAttempt}`
   const ghLoginTerminalId = `onboarding-gh-login-${loginSessionSeed}-${ghLoginAttempt}`
 
   const stableClaudeVersions = claudeSetup.versions.filter(v => !v.prerelease)
@@ -312,6 +472,11 @@ function OnboardingDialogContent() {
   const stableOpencodeVersions = opencodeSetup.versions.filter(
     v => !v.prerelease
   )
+  const stablePiVersions = piSetup.versions.filter(v => !v.prerelease)
+  const stableCommandcodeVersions = commandcodeSetup.versions.filter(
+    v => !v.prerelease
+  )
+  const stableGrokVersions = grokSetup.versions.filter(v => !v.prerelease)
   const stableGhVersions = ghSetup.versions.filter(v => !v.prerelease)
 
   useEffect(() => {
@@ -339,6 +504,28 @@ function OnboardingDialogContent() {
   }, [opencodeVersion, stableOpencodeVersions])
 
   useEffect(() => {
+    if (!piVersion && stablePiVersions.length > 0) {
+      queueMicrotask(() => setPiVersion(stablePiVersions[0]?.version ?? null))
+    }
+  }, [piVersion, stablePiVersions])
+
+  useEffect(() => {
+    if (!commandcodeVersion && stableCommandcodeVersions.length > 0) {
+      queueMicrotask(() =>
+        setCommandcodeVersion(stableCommandcodeVersions[0]?.version ?? null)
+      )
+    }
+  }, [commandcodeVersion, stableCommandcodeVersions])
+
+  useEffect(() => {
+    if (!grokVersion && stableGrokVersions.length > 0) {
+      queueMicrotask(() =>
+        setGrokVersion(stableGrokVersions[0]?.version ?? null)
+      )
+    }
+  }, [grokVersion, stableGrokVersions])
+
+  useEffect(() => {
     if (!ghVersion && stableGhVersions.length > 0) {
       queueMicrotask(() => setGhVersion(stableGhVersions[0]?.version ?? null))
     }
@@ -353,10 +540,18 @@ function OnboardingDialogContent() {
       } else if (backend === 'codex') {
         ready =
           !!codexSetup.status?.installed && !!codexAuth.data?.authenticated
-      } else {
+      } else if (backend === 'opencode') {
         ready =
           !!opencodeSetup.status?.installed &&
           !!opencodeAuth.data?.authenticated
+      } else if (backend === 'pi') {
+        ready = !!piSetup.status?.installed && !!piAuth.data?.authenticated
+      } else if (backend === 'commandcode') {
+        ready =
+          !!commandcodeSetup.status?.installed &&
+          !!commandcodeAuth.data?.authenticated
+      } else {
+        ready = !!grokSetup.status?.installed && !!grokAuth.data?.authenticated
       }
       dbg('isBackendReady:', backend, '→', ready)
       return ready
@@ -368,6 +563,12 @@ function OnboardingDialogContent() {
       codexAuth.data?.authenticated,
       opencodeSetup.status?.installed,
       opencodeAuth.data?.authenticated,
+      piSetup.status?.installed,
+      piAuth.data?.authenticated,
+      commandcodeSetup.status?.installed,
+      commandcodeAuth.data?.authenticated,
+      grokSetup.status?.installed,
+      grokAuth.data?.authenticated,
     ]
   )
 
@@ -422,10 +623,31 @@ function OnboardingDialogContent() {
     [selectedBackends, getNextStepForBackend, getNextStepAfterBackends]
   )
 
+  const aiBackendsLoading =
+    claudeSetup.isStatusLoading ||
+    codexSetup.isStatusLoading ||
+    opencodeSetup.isStatusLoading ||
+    piSetup.isStatusLoading ||
+    commandcodeSetup.isStatusLoading ||
+    grokSetup.isStatusLoading ||
+    (claudeSetup.status?.installed &&
+      (claudeAuth.isLoading || claudeAuth.isFetching)) ||
+    (codexSetup.status?.installed &&
+      (codexAuth.isLoading || codexAuth.isFetching)) ||
+    (opencodeSetup.status?.installed &&
+      (opencodeAuth.isLoading || opencodeAuth.isFetching)) ||
+    (piSetup.status?.installed && (piAuth.isLoading || piAuth.isFetching)) ||
+    (commandcodeSetup.status?.installed &&
+      (commandcodeAuth.isLoading || commandcodeAuth.isFetching)) ||
+    (grokSetup.status?.installed && (grokAuth.isLoading || grokAuth.isFetching))
+
   const loadingInitialState =
     claudeSetup.isStatusLoading ||
     codexSetup.isStatusLoading ||
     opencodeSetup.isStatusLoading ||
+    piSetup.isStatusLoading ||
+    commandcodeSetup.isStatusLoading ||
+    grokSetup.isStatusLoading ||
     ghSetup.isStatusLoading ||
     (claudeSetup.status?.installed &&
       (claudeAuth.isLoading || claudeAuth.isFetching)) ||
@@ -433,20 +655,34 @@ function OnboardingDialogContent() {
       (codexAuth.isLoading || codexAuth.isFetching)) ||
     (opencodeSetup.status?.installed &&
       (opencodeAuth.isLoading || opencodeAuth.isFetching)) ||
+    (piSetup.status?.installed && (piAuth.isLoading || piAuth.isFetching)) ||
+    (commandcodeSetup.status?.installed &&
+      (commandcodeAuth.isLoading || commandcodeAuth.isFetching)) ||
+    (grokSetup.status?.installed &&
+      (grokAuth.isLoading || grokAuth.isFetching)) ||
     (ghSetup.status?.installed && (ghAuth.isLoading || ghAuth.isFetching))
 
   dbg('loadingInitialState:', loadingInitialState, {
     claudeStatusLoading: claudeSetup.isStatusLoading,
     codexStatusLoading: codexSetup.isStatusLoading,
     opencodeStatusLoading: opencodeSetup.isStatusLoading,
+    piStatusLoading: piSetup.isStatusLoading,
+    commandcodeStatusLoading: commandcodeSetup.isStatusLoading,
+    grokStatusLoading: grokSetup.isStatusLoading,
     ghStatusLoading: ghSetup.isStatusLoading,
     claudeInstalled: claudeSetup.status?.installed,
     codexInstalled: codexSetup.status?.installed,
     opencodeInstalled: opencodeSetup.status?.installed,
+    piInstalled: piSetup.status?.installed,
+    commandcodeInstalled: commandcodeSetup.status?.installed,
+    grokInstalled: grokSetup.status?.installed,
     ghInstalled: ghSetup.status?.installed,
     claudeAuthLoading: claudeAuth.isLoading,
     codexAuthLoading: codexAuth.isLoading,
     opencodeAuthLoading: opencodeAuth.isLoading,
+    piAuthLoading: piAuth.isLoading,
+    commandcodeAuthLoading: commandcodeAuth.isLoading,
+    grokAuthLoading: grokAuth.isLoading,
     ghAuthLoading: ghAuth.isLoading,
   })
 
@@ -475,20 +711,29 @@ function OnboardingDialogContent() {
       setClaudeInstallFailed(false)
       setCodexInstallFailed(false)
       setOpencodeInstallFailed(false)
+      setPiInstallFailed(false)
+      setCommandcodeInstallFailed(false)
+      setGrokInstallFailed(false)
       setGhInstallFailed(false)
       setClaudePathSelected(false)
       setCodexPathSelected(false)
       setOpencodePathSelected(false)
+      setPiPathSelected(false)
+      setCommandcodePathSelected(false)
+      setGrokPathSelected(false)
       setGhPathSelected(false)
       setClaudeLoginAttempt(0)
       setCodexLoginAttempt(0)
       setOpencodeLoginAttempt(0)
+      setPiLoginAttempt(0)
+      setCommandcodeLoginAttempt(0)
+      setGrokLoginAttempt(0)
       setGhLoginAttempt(0)
     })
 
     // On Windows, show WSL mode selection first if not yet chosen
     if (
-      isWindows &&
+      isServerWindows() &&
       preferences &&
       !preferences.wsl_mode_chosen &&
       !onboardingStartStep
@@ -533,11 +778,14 @@ function OnboardingDialogContent() {
     // can change their WSL/native choice, then backend-select (via Continue
     // on the WSL step). Non-Windows goes straight to backend-select.
     if (onboardingManuallyTriggered) {
-      const firstStep: OnboardingStep = isWindows
+      const firstStep: OnboardingStep = isServerWindows()
         ? 'wsl-setup'
         : 'backend-select'
       dbg('init effect: manual trigger →', firstStep)
-      queueMicrotask(() => setStep(firstStep, { replace: true }))
+      queueMicrotask(() => {
+        setSelectedBackends(readyBackends)
+        setStep(firstStep, { replace: true })
+      })
       return
     }
 
@@ -667,6 +915,60 @@ function OnboardingDialogContent() {
     opencodeAuth.fetchStatus,
     opencodeAuth.error,
     opencodeSetup.status?.installed,
+    moveToNextBackendOrGh,
+    setStep,
+  ])
+
+  useEffect(() => {
+    if (step !== 'pi-auth-checking') return
+    if (piAuth.isLoading || piAuth.isFetching) return
+
+    if (piAuth.data?.authenticated) {
+      queueMicrotask(() => moveToNextBackendOrGh('pi'))
+    } else {
+      queueMicrotask(() => setStep('pi-auth-login'))
+    }
+  }, [
+    step,
+    piAuth.isLoading,
+    piAuth.isFetching,
+    piAuth.data?.authenticated,
+    moveToNextBackendOrGh,
+    setStep,
+  ])
+
+  useEffect(() => {
+    if (step !== 'commandcode-auth-checking') return
+    if (commandcodeAuth.isLoading || commandcodeAuth.isFetching) return
+
+    if (commandcodeAuth.data?.authenticated) {
+      queueMicrotask(() => moveToNextBackendOrGh('commandcode'))
+    } else {
+      queueMicrotask(() => setStep('commandcode-auth-login'))
+    }
+  }, [
+    step,
+    commandcodeAuth.isLoading,
+    commandcodeAuth.isFetching,
+    commandcodeAuth.data?.authenticated,
+    moveToNextBackendOrGh,
+    setStep,
+  ])
+
+  useEffect(() => {
+    if (step !== 'grok-auth-checking') return
+    if (grokAuth.isLoading || grokAuth.isFetching) return
+
+    if (grokAuth.data?.authenticated) {
+      queueMicrotask(() => moveToNextBackendOrGh('grok'))
+    } else {
+      queueMicrotask(() => setStep('grok-auth-login'))
+    }
+  }, [
+    step,
+    grokAuth.isLoading,
+    grokAuth.isFetching,
+    grokAuth.data?.authenticated,
     moveToNextBackendOrGh,
     setStep,
   ])
@@ -881,6 +1183,84 @@ function OnboardingDialogContent() {
     setStep,
   ])
 
+  const handlePiJeanSelect = useCallback(() => {
+    setPiPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { pi_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (piSetup.status?.installed) {
+            setStep('pi-auth-checking')
+            piAuth.refetch()
+          }
+        },
+        onError: () => {
+          setPiPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    piSetup.status?.installed,
+    piAuth,
+    setStep,
+  ])
+
+  const handleCommandcodeJeanSelect = useCallback(() => {
+    setCommandcodePathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { commandcode_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (commandcodeSetup.status?.installed) {
+            setStep('commandcode-auth-checking')
+            commandcodeAuth.refetch()
+          }
+        },
+        onError: () => {
+          setCommandcodePathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    commandcodeSetup.status?.installed,
+    commandcodeAuth,
+    setStep,
+  ])
+
+  const handleGrokJeanSelect = useCallback(() => {
+    setGrokPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { grok_cli_source: 'jean' },
+      {
+        onSuccess: () => {
+          if (grokSetup.status?.installed) {
+            setStep('grok-auth-checking')
+            grokAuth.refetch()
+          }
+        },
+        onError: () => {
+          setGrokPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [
+    preferences,
+    patchPreferences,
+    grokSetup.status?.installed,
+    grokAuth,
+    setStep,
+  ])
+
   const handleGhJeanSelect = useCallback(() => {
     dbg('handleGhJeanSelect: saving gh_cli_source=jean')
     setGhPathSelected(true)
@@ -953,6 +1333,60 @@ function OnboardingDialogContent() {
     }
   }, [preferences, patchPreferences, opencodeAuth, setStep])
 
+  const handlePiPathSelect = useCallback(() => {
+    setPiPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { pi_cli_source: 'path' },
+      {
+        onSuccess: () => {
+          setStep('pi-auth-checking')
+          piAuth.refetch()
+        },
+        onError: () => {
+          setPiPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [preferences, patchPreferences, piAuth, setStep])
+
+  const handleCommandcodePathSelect = useCallback(() => {
+    setCommandcodePathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { commandcode_cli_source: 'path' },
+      {
+        onSuccess: () => {
+          setStep('commandcode-auth-checking')
+          commandcodeAuth.refetch()
+        },
+        onError: () => {
+          setCommandcodePathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [preferences, patchPreferences, commandcodeAuth, setStep])
+
+  const handleGrokPathSelect = useCallback(() => {
+    setGrokPathSelected(true)
+    if (!preferences) return
+    patchPreferences.mutate(
+      { grok_cli_source: 'path' },
+      {
+        onSuccess: () => {
+          setStep('grok-auth-checking')
+          grokAuth.refetch()
+        },
+        onError: () => {
+          setGrokPathSelected(false)
+          toast.error('Failed to save CLI source preference')
+        },
+      }
+    )
+  }, [preferences, patchPreferences, grokAuth, setStep])
+
   const handleGhPathSelect = useCallback(() => {
     dbg('handleGhPathSelect: saving gh_cli_source=path')
     setGhPathSelected(true)
@@ -1011,6 +1445,51 @@ function OnboardingDialogContent() {
     })
   }, [opencodeVersion, opencodeSetup, opencodeAuth])
 
+  const handlePiInstall = useCallback(() => {
+    if (!piVersion) return
+    setStep('pi-installing')
+    piSetup.install(piVersion, {
+      onSuccess: () => {
+        setStep('pi-auth-checking')
+        piAuth.refetch()
+      },
+      onError: () => {
+        setPiInstallFailed(true)
+        setStep('pi-setup')
+      },
+    })
+  }, [piVersion, piSetup, piAuth])
+
+  const handleCommandcodeInstall = useCallback(() => {
+    if (!commandcodeVersion) return
+    setStep('commandcode-installing')
+    commandcodeSetup.install(commandcodeVersion, {
+      onSuccess: () => {
+        setStep('commandcode-auth-checking')
+        commandcodeAuth.refetch()
+      },
+      onError: () => {
+        setCommandcodeInstallFailed(true)
+        setStep('commandcode-setup')
+      },
+    })
+  }, [commandcodeVersion, commandcodeSetup, commandcodeAuth])
+
+  const handleGrokInstall = useCallback(() => {
+    if (!grokVersion) return
+    setStep('grok-installing')
+    grokSetup.install(grokVersion, {
+      onSuccess: () => {
+        setStep('grok-auth-checking')
+        grokAuth.refetch()
+      },
+      onError: () => {
+        setGrokInstallFailed(true)
+        setStep('grok-setup')
+      },
+    })
+  }, [grokVersion, grokSetup, grokAuth])
+
   const handleGhInstall = useCallback(() => {
     dbg('handleGhInstall: version =', ghVersion)
     if (!ghVersion) return
@@ -1050,6 +1529,21 @@ function OnboardingDialogContent() {
     dbg('handleOpencodeLoginComplete: refetch result =', result.data)
   }, [opencodeAuth, setStep])
 
+  const handlePiLoginComplete = useCallback(async () => {
+    setStep('pi-auth-checking')
+    await piAuth.refetch()
+  }, [piAuth, setStep])
+
+  const handleCommandcodeLoginComplete = useCallback(async () => {
+    setStep('commandcode-auth-checking')
+    await commandcodeAuth.refetch()
+  }, [commandcodeAuth, setStep])
+
+  const handleGrokLoginComplete = useCallback(async () => {
+    setStep('grok-auth-checking')
+    await grokAuth.refetch()
+  }, [grokAuth, setStep])
+
   const handleGhLoginComplete = useCallback(async () => {
     dbg('handleGhLoginComplete: refetching auth')
     setStep('gh-auth-checking')
@@ -1069,6 +1563,18 @@ function OnboardingDialogContent() {
     setOpencodeLoginAttempt(prev => prev + 1)
   }, [])
 
+  const handlePiLoginRetry = useCallback(() => {
+    setPiLoginAttempt(prev => prev + 1)
+  }, [])
+
+  const handleCommandcodeLoginRetry = useCallback(() => {
+    setCommandcodeLoginAttempt(prev => prev + 1)
+  }, [])
+
+  const handleGrokLoginRetry = useCallback(() => {
+    setGrokLoginAttempt(prev => prev + 1)
+  }, [])
+
   const handleGhLoginRetry = useCallback(() => {
     setGhLoginAttempt(prev => prev + 1)
   }, [])
@@ -1077,12 +1583,25 @@ function OnboardingDialogContent() {
     claudeSetup.refetchStatus()
     codexSetup.refetchStatus()
     opencodeSetup.refetchStatus()
+    piSetup.refetchStatus()
+    commandcodeSetup.refetchStatus()
+    grokSetup.refetchStatus()
     ghSetup.refetchStatus()
     // Set the first selected backend as the default so the preference
     // isn't left pointing at an uninstalled backend (e.g. 'claude').
     const [firstBackend] = selectedBackends
     if (firstBackend && preferences) {
-      patchPreferences.mutate({ default_backend: firstBackend })
+      const magicDefaults = magicDefaultsForBackend(firstBackend)
+      patchPreferences.mutate({
+        default_backend: firstBackend,
+        ...(magicDefaults
+          ? {
+              magic_prompt_models: magicDefaults.models,
+              magic_prompt_backends: magicDefaults.backends,
+              magic_models_auto_initialized: true,
+            }
+          : {}),
+      })
     }
     // Atomically close onboarding and mark as dismissed so it doesn't reappear on reload
     useUIStore.setState({
@@ -1094,6 +1613,9 @@ function OnboardingDialogContent() {
     claudeSetup,
     codexSetup,
     opencodeSetup,
+    piSetup,
+    commandcodeSetup,
+    grokSetup,
     ghSetup,
     selectedBackends,
     preferences,
@@ -1169,6 +1691,60 @@ function OnboardingDialogContent() {
       }
     }
 
+    if (step === 'pi-setup' || step === 'pi-installing') {
+      return {
+        type: 'pi',
+        title: 'PI CLI',
+        description: 'PI CLI enables PI-backed AI sessions.',
+        versions: stablePiVersions,
+        isVersionsLoading: piSetup.isVersionsLoading,
+        isVersionsError: piSetup.isVersionsError,
+        onRetryVersions: piSetup.refetchVersions,
+        isInstalling: piSetup.isInstalling,
+        installError: piInstallFailed ? piSetup.installError : null,
+        progress: piSetup.progress,
+        install: piSetup.install,
+        currentVersion: piSetup.status?.version,
+      }
+    }
+
+    if (step === 'commandcode-setup' || step === 'commandcode-installing') {
+      return {
+        type: 'commandcode',
+        title: 'Command Code CLI',
+        description:
+          'Command Code CLI enables Command Code-backed AI sessions.',
+        versions: stableCommandcodeVersions,
+        isVersionsLoading: commandcodeSetup.isVersionsLoading,
+        isVersionsError: commandcodeSetup.isVersionsError,
+        onRetryVersions: commandcodeSetup.refetchVersions,
+        isInstalling: commandcodeSetup.isInstalling,
+        installError: commandcodeInstallFailed
+          ? commandcodeSetup.installError
+          : null,
+        progress: commandcodeSetup.progress,
+        install: commandcodeSetup.install,
+        currentVersion: commandcodeSetup.status?.version,
+      }
+    }
+
+    if (step === 'grok-setup' || step === 'grok-installing') {
+      return {
+        type: 'grok',
+        title: 'Grok CLI',
+        description: 'Grok CLI enables Grok-backed AI sessions.',
+        versions: stableGrokVersions,
+        isVersionsLoading: grokSetup.isVersionsLoading,
+        isVersionsError: grokSetup.isVersionsError,
+        onRetryVersions: grokSetup.refetchVersions,
+        isInstalling: grokSetup.isInstalling,
+        installError: grokInstallFailed ? grokSetup.installError : null,
+        progress: grokSetup.progress,
+        install: grokSetup.install,
+        currentVersion: grokSetup.status?.version,
+      }
+    }
+
     if (step === 'gh-setup' || step === 'gh-installing') {
       return {
         type: 'gh',
@@ -1197,6 +1773,10 @@ function OnboardingDialogContent() {
     codexSetup.status?.installed && step === 'codex-setup'
   const isOpencodeReinstall =
     opencodeSetup.status?.installed && step === 'opencode-setup'
+  const isPiReinstall = piSetup.status?.installed && step === 'pi-setup'
+  const isCommandcodeReinstall =
+    commandcodeSetup.status?.installed && step === 'commandcode-setup'
+  const isGrokReinstall = grokSetup.status?.installed && step === 'grok-setup'
   const isGhReinstall = ghSetup.status?.installed && step === 'gh-setup'
 
   // When CLI source is 'path', use the path detection result for login command
@@ -1218,6 +1798,21 @@ function OnboardingDialogContent() {
       ? opencodePathDetection.data.path
       : (opencodeSetup.status?.path ?? '')
   const opencodeLoginArgs = ['auth', 'login']
+  const piLoginCommand =
+    piPathSelected && piPathDetection.data?.path
+      ? piPathDetection.data.path
+      : (piSetup.status?.path ?? '')
+  const piLoginArgs: string[] = []
+  const commandcodeLoginCommand =
+    commandcodePathSelected && commandcodePathDetection.data?.path
+      ? commandcodePathDetection.data.path
+      : (commandcodeSetup.status?.path ?? '')
+  const commandcodeLoginArgs = ['login']
+  const grokLoginCommand =
+    grokPathSelected && grokPathDetection.data?.path
+      ? grokPathDetection.data.path
+      : (grokSetup.status?.path ?? '')
+  const grokLoginArgs = ['login']
   const ghLoginCommand =
     ghPathSelected && ghPathDetection.data?.path
       ? ghPathDetection.data.path
@@ -1246,6 +1841,27 @@ function OnboardingDialogContent() {
       pathSelected: opencodePathSelected,
       detectedPath: opencodePathDetection.data?.path,
     },
+    pi: {
+      cmd: piLoginCommand,
+      args: piLoginArgs,
+      path: piSetup.status?.path,
+      pathSelected: piPathSelected,
+      detectedPath: piPathDetection.data?.path,
+    },
+    commandcode: {
+      cmd: commandcodeLoginCommand,
+      args: commandcodeLoginArgs,
+      path: commandcodeSetup.status?.path,
+      pathSelected: commandcodePathSelected,
+      detectedPath: commandcodePathDetection.data?.path,
+    },
+    grok: {
+      cmd: grokLoginCommand,
+      args: grokLoginArgs,
+      path: grokSetup.status?.path,
+      pathSelected: grokPathSelected,
+      detectedPath: grokPathDetection.data?.path,
+    },
     gh: {
       cmd: ghLoginCommand,
       args: ghLoginArgs,
@@ -1256,14 +1872,15 @@ function OnboardingDialogContent() {
   })
 
   const getDialogContent = () => {
-    if (step === 'wsl-setup') {
+    const dialogStep = step as OnboardingStep
+    if (dialogStep === 'wsl-setup') {
       return {
         title: 'Welcome to Jean',
         description: 'Choose your development environment.',
       }
     }
 
-    if (step === 'backend-select') {
+    if (dialogStep === 'backend-select') {
       return {
         title: onboardingManuallyTriggered
           ? 'Install AI Backends'
@@ -1274,7 +1891,7 @@ function OnboardingDialogContent() {
       }
     }
 
-    if (step === 'complete') {
+    if (dialogStep === 'complete') {
       return {
         title: 'Setup Complete',
         description:
@@ -1282,7 +1899,7 @@ function OnboardingDialogContent() {
       }
     }
 
-    if (step === 'gh-setup' || step === 'gh-installing') {
+    if (dialogStep === 'gh-setup' || dialogStep === 'gh-installing') {
       const hasPathCli = ghPathDetection.data?.found
       return {
         title: isGhReinstall ? 'Change GitHub CLI Version' : 'Setup GitHub CLI',
@@ -1294,19 +1911,19 @@ function OnboardingDialogContent() {
       }
     }
 
-    if (step === 'gh-auth-checking' || step === 'gh-auth-login') {
+    if (dialogStep === 'gh-auth-checking' || dialogStep === 'gh-auth-login') {
       return {
         title: 'Authenticate GitHub CLI',
         description: 'GitHub CLI authentication is required to continue.',
       }
     }
 
-    const currentBackend = stepToBackend(step)
+    const currentBackend = stepToBackend(dialogStep)
     const backendName = currentBackend
       ? backendLabel[currentBackend]
       : 'AI Backend'
 
-    if (step === 'claude-setup' || step === 'claude-installing') {
+    if (dialogStep === 'claude-setup' || dialogStep === 'claude-installing') {
       const isReinstall = isClaudeReinstall
 
       return {
@@ -1321,7 +1938,7 @@ function OnboardingDialogContent() {
       }
     }
 
-    if (step === 'codex-setup' || step === 'codex-installing') {
+    if (dialogStep === 'codex-setup' || dialogStep === 'codex-installing') {
       const isReinstall = isCodexReinstall
       const hasPathCli = codexPathDetection.data?.found
 
@@ -1337,7 +1954,10 @@ function OnboardingDialogContent() {
       }
     }
 
-    if (step === 'opencode-setup' || step === 'opencode-installing') {
+    if (
+      dialogStep === 'opencode-setup' ||
+      dialogStep === 'opencode-installing'
+    ) {
       const isReinstall = isOpencodeReinstall
       const hasPathCli = opencodePathDetection.data?.found
 
@@ -1353,13 +1973,61 @@ function OnboardingDialogContent() {
       }
     }
 
+    if (dialogStep === 'pi-setup' || dialogStep === 'pi-installing') {
+      return {
+        title: isPiReinstall
+          ? `Change ${backendName} Version`
+          : `Setup ${backendName}`,
+        description: isPiReinstall
+          ? 'Select a version to install. This will replace the current installation.'
+          : piPathDetection.data?.found
+            ? 'Choose to use your system PI or install with Jean.'
+            : 'Select a version to install.',
+      }
+    }
+
     if (
-      step === 'claude-auth-checking' ||
-      step === 'claude-auth-login' ||
-      step === 'codex-auth-checking' ||
-      step === 'codex-auth-login' ||
-      step === 'opencode-auth-checking' ||
-      step === 'opencode-auth-login'
+      dialogStep === 'commandcode-setup' ||
+      dialogStep === 'commandcode-installing'
+    ) {
+      return {
+        title: isCommandcodeReinstall
+          ? `Change ${backendName} Version`
+          : `Setup ${backendName}`,
+        description: isCommandcodeReinstall
+          ? 'Select a version to install. This will replace the current installation.'
+          : commandcodePathDetection.data?.found
+            ? 'Choose to use your system Command Code or install with Jean.'
+            : 'Select a version to install.',
+      }
+    }
+
+    if (dialogStep === 'grok-setup' || dialogStep === 'grok-installing') {
+      return {
+        title: isGrokReinstall
+          ? `Change ${backendName} Version`
+          : `Setup ${backendName}`,
+        description: isGrokReinstall
+          ? 'Select a version to install. This will replace the current installation.'
+          : grokPathDetection.data?.found
+            ? 'Choose to use your system Grok or install with Jean.'
+            : 'Select a version to install.',
+      }
+    }
+
+    if (
+      dialogStep === 'claude-auth-checking' ||
+      dialogStep === 'claude-auth-login' ||
+      dialogStep === 'codex-auth-checking' ||
+      dialogStep === 'codex-auth-login' ||
+      dialogStep === 'opencode-auth-checking' ||
+      dialogStep === 'opencode-auth-login' ||
+      dialogStep === 'pi-auth-checking' ||
+      dialogStep === 'pi-auth-login' ||
+      dialogStep === 'commandcode-auth-checking' ||
+      dialogStep === 'commandcode-auth-login' ||
+      dialogStep === 'grok-auth-checking' ||
+      dialogStep === 'grok-auth-login'
     ) {
       return {
         title: `Authenticate ${backendName}`,
@@ -1377,7 +2045,10 @@ function OnboardingDialogContent() {
     const isBackendStep =
       step.startsWith('claude-') ||
       step.startsWith('codex-') ||
-      step.startsWith('opencode-')
+      step.startsWith('opencode-') ||
+      step.startsWith('pi-') ||
+      step.startsWith('commandcode-') ||
+      step.startsWith('grok-')
     const isGhStep = step.startsWith('gh-')
 
     const backendComplete = !isBackendSelection && !isBackendStep
@@ -1470,12 +2141,16 @@ function OnboardingDialogContent() {
                     ? AI_BACKENDS.filter(isBackendReady)
                     : []
                 }
+                isLoading={!!aiBackendsLoading}
               />
             ) : step === 'complete' ? (
               <SuccessState
                 claudeVersion={claudeSetup.status?.version}
                 codexVersion={codexSetup.status?.version}
                 opencodeVersion={opencodeSetup.status?.version}
+                piVersion={piSetup.status?.version}
+                commandcodeVersion={commandcodeSetup.status?.version}
+                grokVersion={grokSetup.status?.version}
                 ghVersion={ghSetup.status?.version}
                 onContinue={handleComplete}
               />
@@ -1494,6 +2169,15 @@ function OnboardingDialogContent() {
                 cliName="OpenCode CLI"
                 progress={cliData.progress}
               />
+            ) : step === 'pi-installing' && cliData ? (
+              <InstallingState cliName="PI CLI" progress={cliData.progress} />
+            ) : step === 'commandcode-installing' && cliData ? (
+              <InstallingState
+                cliName="Command Code CLI"
+                progress={cliData.progress}
+              />
+            ) : step === 'grok-installing' && cliData ? (
+              <InstallingState cliName="Grok CLI" progress={cliData.progress} />
             ) : step === 'gh-installing' && cliData ? (
               <InstallingState
                 cliName="GitHub CLI"
@@ -1505,6 +2189,12 @@ function OnboardingDialogContent() {
               <AuthCheckingState cliName="Codex CLI" />
             ) : step === 'opencode-auth-checking' ? (
               <AuthCheckingState cliName="OpenCode CLI" />
+            ) : step === 'pi-auth-checking' ? (
+              <AuthCheckingState cliName="PI CLI" />
+            ) : step === 'commandcode-auth-checking' ? (
+              <AuthCheckingState cliName="Command Code CLI" />
+            ) : step === 'grok-auth-checking' ? (
+              <AuthCheckingState cliName="Grok CLI" />
             ) : step === 'gh-auth-checking' ? (
               <AuthCheckingState cliName="GitHub CLI" />
             ) : step === 'claude-setup' && !claudePathSelected ? (
@@ -1542,6 +2232,42 @@ function OnboardingDialogContent() {
                 jeanInstalled={!!opencodeSetup.status?.installed}
                 onSelectPath={handleOpencodePathSelect}
                 onSelectJean={handleOpencodeJeanSelect}
+              />
+            ) : step === 'pi-setup' && !piPathSelected ? (
+              <CliPathSelector
+                cliName="PI CLI"
+                pathFound={!!piPathDetection.data?.found}
+                pathVersion={piPathDetection.data?.version ?? null}
+                pathPath={piPathDetection.data?.path ?? null}
+                isLoading={piPathSelected}
+                currentSource={preferences?.pi_cli_source ?? null}
+                jeanInstalled={!!piSetup.status?.installed}
+                onSelectPath={handlePiPathSelect}
+                onSelectJean={handlePiJeanSelect}
+              />
+            ) : step === 'commandcode-setup' && !commandcodePathSelected ? (
+              <CliPathSelector
+                cliName="Command Code CLI"
+                pathFound={!!commandcodePathDetection.data?.found}
+                pathVersion={commandcodePathDetection.data?.version ?? null}
+                pathPath={commandcodePathDetection.data?.path ?? null}
+                isLoading={commandcodePathSelected}
+                currentSource={preferences?.commandcode_cli_source ?? null}
+                jeanInstalled={!!commandcodeSetup.status?.installed}
+                onSelectPath={handleCommandcodePathSelect}
+                onSelectJean={handleCommandcodeJeanSelect}
+              />
+            ) : step === 'grok-setup' && !grokPathSelected ? (
+              <CliPathSelector
+                cliName="Grok CLI"
+                pathFound={!!grokPathDetection.data?.found}
+                pathVersion={grokPathDetection.data?.version ?? null}
+                pathPath={grokPathDetection.data?.path ?? null}
+                isLoading={grokPathSelected}
+                currentSource={preferences?.grok_cli_source ?? null}
+                jeanInstalled={!!grokSetup.status?.installed}
+                onSelectPath={handleGrokPathSelect}
+                onSelectJean={handleGrokJeanSelect}
               />
             ) : step === 'claude-auth-login' ? (
               claudeLoginCommand ? (
@@ -1585,6 +2311,48 @@ function OnboardingDialogContent() {
               ) : (
                 <AuthCheckingState cliName="OpenCode CLI" />
               )
+            ) : step === 'pi-auth-login' ? (
+              piLoginCommand ? (
+                <AuthLoginState
+                  key={piLoginTerminalId}
+                  cliName="PI CLI"
+                  terminalId={piLoginTerminalId}
+                  command={piLoginCommand}
+                  commandArgs={piLoginArgs}
+                  onComplete={handlePiLoginComplete}
+                  onRetry={handlePiLoginRetry}
+                />
+              ) : (
+                <AuthCheckingState cliName="PI CLI" />
+              )
+            ) : step === 'commandcode-auth-login' ? (
+              commandcodeLoginCommand ? (
+                <AuthLoginState
+                  key={commandcodeLoginTerminalId}
+                  cliName="Command Code CLI"
+                  terminalId={commandcodeLoginTerminalId}
+                  command={commandcodeLoginCommand}
+                  commandArgs={commandcodeLoginArgs}
+                  onComplete={handleCommandcodeLoginComplete}
+                  onRetry={handleCommandcodeLoginRetry}
+                />
+              ) : (
+                <AuthCheckingState cliName="Command Code CLI" />
+              )
+            ) : step === 'grok-auth-login' ? (
+              grokLoginCommand ? (
+                <AuthLoginState
+                  key={grokLoginTerminalId}
+                  cliName="Grok CLI"
+                  terminalId={grokLoginTerminalId}
+                  command={grokLoginCommand}
+                  commandArgs={grokLoginArgs}
+                  onComplete={handleGrokLoginComplete}
+                  onRetry={handleGrokLoginRetry}
+                />
+              ) : (
+                <AuthCheckingState cliName="Grok CLI" />
+              )
             ) : step === 'gh-setup' && !ghPathSelected ? (
               <CliPathSelector
                 cliName="GitHub CLI"
@@ -1623,7 +2391,13 @@ function OnboardingDialogContent() {
                         ? handleCodexInstall
                         : cliData.type === 'opencode'
                           ? handleOpencodeInstall
-                          : handleGhInstall
+                          : cliData.type === 'pi'
+                            ? handlePiInstall
+                            : cliData.type === 'commandcode'
+                              ? handleCommandcodeInstall
+                              : cliData.type === 'grok'
+                                ? handleGrokInstall
+                                : handleGhInstall
                   }
                 />
               ) : (
@@ -1637,12 +2411,22 @@ function OnboardingDialogContent() {
                         ? codexVersion
                         : cliData.type === 'opencode'
                           ? opencodeVersion
-                          : ghVersion
+                          : cliData.type === 'pi'
+                            ? piVersion
+                            : cliData.type === 'commandcode'
+                              ? commandcodeVersion
+                              : cliData.type === 'grok'
+                                ? grokVersion
+                                : ghVersion
                   }
                   currentVersion={
                     (cliData.type === 'claude' && isClaudeReinstall) ||
                     (cliData.type === 'codex' && isCodexReinstall) ||
                     (cliData.type === 'opencode' && isOpencodeReinstall) ||
+                    (cliData.type === 'pi' && isPiReinstall) ||
+                    (cliData.type === 'commandcode' &&
+                      isCommandcodeReinstall) ||
+                    (cliData.type === 'grok' && isGrokReinstall) ||
                     (cliData.type === 'gh' && isGhReinstall)
                       ? cliData.currentVersion
                       : null
@@ -1657,7 +2441,13 @@ function OnboardingDialogContent() {
                         ? setCodexVersion
                         : cliData.type === 'opencode'
                           ? setOpencodeVersion
-                          : setGhVersion
+                          : cliData.type === 'pi'
+                            ? setPiVersion
+                            : cliData.type === 'commandcode'
+                              ? setCommandcodeVersion
+                              : cliData.type === 'grok'
+                                ? setGrokVersion
+                                : setGhVersion
                   }
                   onInstall={
                     cliData.type === 'claude'
@@ -1666,7 +2456,13 @@ function OnboardingDialogContent() {
                         ? handleCodexInstall
                         : cliData.type === 'opencode'
                           ? handleOpencodeInstall
-                          : handleGhInstall
+                          : cliData.type === 'pi'
+                            ? handlePiInstall
+                            : cliData.type === 'commandcode'
+                              ? handleCommandcodeInstall
+                              : cliData.type === 'grok'
+                                ? handleGrokInstall
+                                : handleGhInstall
                   }
                 />
               )
@@ -1675,6 +2471,7 @@ function OnboardingDialogContent() {
                 selectedBackends={selectedBackends}
                 onToggle={handleBackendToggle}
                 onContinue={handleBackendSelectionContinue}
+                isLoading={!!aiBackendsLoading}
               />
             )}
           </div>
@@ -1704,6 +2501,7 @@ interface BackendSelectionStateProps {
   onToggle: (backend: AIBackend, checked: boolean) => void
   onContinue: () => void
   readyBackends?: AIBackend[]
+  isLoading?: boolean
 }
 
 function BackendSelectionState({
@@ -1711,9 +2509,17 @@ function BackendSelectionState({
   onToggle,
   onContinue,
   readyBackends = [],
+  isLoading = false,
 }: BackendSelectionStateProps) {
   return (
     <div className="space-y-6">
+      {isLoading && (
+        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Checking installed backends...
+        </div>
+      )}
+
       <div className="space-y-3">
         {AI_BACKENDS.map(backend => {
           const id = `backend-${backend}`
@@ -1735,6 +2541,11 @@ function BackendSelectionState({
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium">{label}</p>
+                  {BETA_BACKENDS.has(backend) && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                      beta
+                    </span>
+                  )}
                   {isReady && (
                     <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
                       installed
@@ -1743,7 +2554,7 @@ function BackendSelectionState({
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {isReady
-                    ? `Reconfigure ${label} (change source or version).`
+                    ? `Reconfigure ${label}.`
                     : `Install and authenticate ${label}.`}
                 </p>
               </div>
@@ -1758,8 +2569,13 @@ function BackendSelectionState({
         versions.
       </p>
 
-      <Button onClick={onContinue} className="w-full" size="lg">
-        Continue
+      <Button
+        onClick={onContinue}
+        className="w-full"
+        size="lg"
+        disabled={isLoading}
+      >
+        {isLoading ? 'Checking backends...' : 'Continue'}
       </Button>
     </div>
   )
@@ -1769,6 +2585,9 @@ interface SuccessStateProps {
   claudeVersion: string | null | undefined
   codexVersion: string | null | undefined
   opencodeVersion: string | null | undefined
+  piVersion: string | null | undefined
+  commandcodeVersion: string | null | undefined
+  grokVersion: string | null | undefined
   ghVersion: string | null | undefined
   onContinue: () => void
 }
@@ -1777,6 +2596,9 @@ function SuccessState({
   claudeVersion,
   codexVersion,
   opencodeVersion,
+  piVersion,
+  commandcodeVersion,
+  grokVersion,
   ghVersion,
   onContinue,
 }: SuccessStateProps) {
@@ -1788,10 +2610,16 @@ function SuccessState({
           {claudeVersion && <p>Claude CLI: v{claudeVersion}</p>}
           {codexVersion && <p>Codex CLI: v{codexVersion}</p>}
           {opencodeVersion && <p>OpenCode CLI: v{opencodeVersion}</p>}
+          {piVersion && <p>PI CLI: v{piVersion}</p>}
+          {commandcodeVersion && <p>Command Code CLI: v{commandcodeVersion}</p>}
+          {grokVersion && <p>Grok CLI: v{grokVersion}</p>}
           {ghVersion && <p>GitHub CLI: v{ghVersion}</p>}
           {!claudeVersion &&
             !codexVersion &&
             !opencodeVersion &&
+            !piVersion &&
+            !commandcodeVersion &&
+            !grokVersion &&
             !ghVersion && <p>Setup complete</p>}
         </div>
       </div>

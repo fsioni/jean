@@ -8,7 +8,7 @@ const prefs = {
   yolo_backend: 'codex',
   selected_model: 'claude-opus-4-8[1m]',
   selected_codex_model: 'gpt-5.5',
-  selected_opencode_model: 'opencode/gpt-5.3-codex',
+  selected_opencode_model: 'opencode/gpt-5.5',
   selected_cursor_model: 'cursor/auto',
   default_backend: 'claude',
 }

@@ -7,6 +7,7 @@ import {
   Settings,
   RefreshCw,
   BellDot,
+  Download,
 } from 'lucide-react'
 import type { AppCommand } from './types'
 import { useUIStore } from '@/store/ui-store'
@@ -90,6 +91,40 @@ export const projectCommands: AppCommand[] = [
         featureTourOpen: true,
         onboardingOpen: false,
         onboardingManuallyTriggered: false,
+      })
+    },
+  },
+
+  {
+    id: 'help.install-ai-backends',
+    label: 'Install AI Backends',
+    description: 'Open onboarding to install or reconfigure AI backend CLIs',
+    icon: Download,
+    group: 'help',
+    keywords: [
+      'install',
+      'setup',
+      'boarding',
+      'onboarding',
+      'backend',
+      'backends',
+      'ai',
+      'cli',
+      'claude',
+      'codex',
+      'opencode',
+      'pi',
+      'command',
+      'grok',
+    ],
+
+    execute: () => {
+      useUIStore.setState({
+        featureTourOpen: false,
+        onboardingOpen: true,
+        onboardingManuallyTriggered: true,
+        onboardingDismissed: false,
+        onboardingStartStep: null,
       })
     },
   },

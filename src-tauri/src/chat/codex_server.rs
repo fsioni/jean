@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 
 use crate::codex_cli::resolve_cli_binary;
-use crate::platform::{is_process_alive, silent_command};
+use crate::platform::is_process_alive;
 
 // =============================================================================
 // Types
@@ -342,7 +342,7 @@ fn ensure_running_inner(app: &AppHandle) -> Result<(), String> {
     }
 
     let cli_path = resolve_cli_binary(app)?;
-    if !cli_path.exists() {
+    if !crate::platform::resolved_cli_exists(&cli_path) {
         return Err(format!(
             "Codex CLI not found at {}. Please install it in Settings > General.",
             cli_path.display()
@@ -696,7 +696,7 @@ fn ensure_running_stdio(
         cli_path.display()
     );
 
-    let mut child = silent_command(cli_path)
+    let mut child = crate::platform::resolved_cli_command(cli_path, None)
         .arg("app-server")
         .arg("--listen")
         .arg("stdio://")

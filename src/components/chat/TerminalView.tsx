@@ -20,6 +20,7 @@ import {
   type TerminalGroup,
   type TerminalInstance,
 } from '@/store/terminal-store'
+import { useUIStore } from '@/store/ui-store'
 import {
   collectLeafIds,
   countLeaves,
@@ -309,18 +310,26 @@ export function TerminalView({
     [worktreeId]
   )
 
-  // Auto-create a view only on initial mount (not when tabs are closed)
-  const mountedRef = useRef(false)
+  const uiStateInitialized = useUIStore(state => state.uiStateInitialized)
+
+  // Auto-create a default shell when this worktree has no panel terminals AND
+  // UI state hydration has finished. Waiting on `uiStateInitialized` is
+  // critical: on a web refresh the persisted `terminal_instances` arrive
+  // asynchronously via `get_active_terminals`. If we auto-create before that
+  // resolves, the phantom terminal spawns a real PTY on the backend and then
+  // gets overwritten when restore completes — leaving an orphan PTY in
+  // TERMINAL_SESSIONS and a visible flash that looks like "my terminal
+  // disappeared". The effect does not re-fire for tab-close → store-empty
+  // transitions because the dependency set is stable.
   useEffect(() => {
-    if (!mountedRef.current) {
-      mountedRef.current = true
-      const existingGroups =
-        useTerminalStore.getState().groups[worktreeId] ?? []
-      if (existingGroups.length === 0) {
-        addTerminal(worktreeId)
-      }
+    if (!uiStateInitialized) return
+    const existing = (
+      useTerminalStore.getState().terminals[worktreeId] ?? []
+    ).filter(isPanelTerminal)
+    if (existing.length === 0) {
+      addTerminal(worktreeId)
     }
-  }, [worktreeId, addTerminal])
+  }, [worktreeId, addTerminal, uiStateInitialized])
 
   const handleAddTerminal = useCallback(() => {
     addTerminal(worktreeId)

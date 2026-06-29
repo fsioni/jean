@@ -1,6 +1,6 @@
 import type { ThinkingLevel, EffortLevel, ExecutionMode } from './chat'
 import { DEFAULT_KEYBINDINGS, type KeybindingsMap } from './keybindings'
-import { isMacOS, isWindows } from '../lib/platform'
+import { getServerPlatform, isServerWindows } from '../lib/platform'
 
 export type CodexGoalExecutionMode = Extract<ExecutionMode, 'build' | 'yolo'>
 
@@ -550,7 +550,7 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
 - Write detailed specs upfront to reduce ambiguity
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
-- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question.
+- For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/\`--print\` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
 - For Codex specifically, when the current execution mode is plan: after the user answers native \`request_user_input\`/open questions, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
 - Every Codex response that contains or revises a plan while the current execution mode is plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
@@ -776,21 +776,33 @@ export const CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
 
 /** OpenCode preset for all magic prompts */
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'opencode/gpt-5.3-codex',
-  investigate_pr_model: 'opencode/gpt-5.3-codex',
-  investigate_workflow_run_model: 'opencode/gpt-5.3-codex',
-  pr_content_model: 'opencode/gpt-5.3-codex',
-  commit_message_model: 'opencode/gpt-5.3-codex',
-  code_review_model: 'opencode/gpt-5.3-codex',
-  context_summary_model: 'opencode/gpt-5.3-codex',
-  resolve_conflicts_model: 'opencode/gpt-5.3-codex',
-  release_notes_model: 'opencode/gpt-5.3-codex',
-  session_naming_model: 'opencode/gpt-5.3-codex',
-  investigate_security_alert_model: 'opencode/gpt-5.3-codex',
-  investigate_advisory_model: 'opencode/gpt-5.3-codex',
-  investigate_linear_issue_model: 'opencode/gpt-5.3-codex',
-  review_comments_model: 'opencode/gpt-5.3-codex',
+  investigate_issue_model: 'opencode/gpt-5.5',
+  investigate_pr_model: 'opencode/gpt-5.5',
+  investigate_workflow_run_model: 'opencode/gpt-5.5',
+  pr_content_model: 'opencode/gpt-5.5',
+  commit_message_model: 'opencode/gpt-5.5',
+  code_review_model: 'opencode/gpt-5.5',
+  context_summary_model: 'opencode/gpt-5.5',
+  resolve_conflicts_model: 'opencode/gpt-5.5',
+  release_notes_model: 'opencode/gpt-5.5',
+  session_naming_model: 'opencode/gpt-5.5',
+  investigate_security_alert_model: 'opencode/gpt-5.5',
+  investigate_advisory_model: 'opencode/gpt-5.5',
+  investigate_linear_issue_model: 'opencode/gpt-5.5',
+  review_comments_model: 'opencode/gpt-5.5',
 }
+
+/** PI preset for all magic prompts */
+export const PI_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('pi/sonnet')
+
+/** Command Code preset for all magic prompts */
+export const COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('commandcode/default')
+
+/** Grok preset for all magic prompts */
+export const GROK_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('grok/grok-composer-2.5-fast')
 
 /** Default reasoning efforts for Claude backend (null = use model default) */
 export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
@@ -965,6 +977,10 @@ export const CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('claude')
 export const CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('codex')
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
   makeBackendsPreset('opencode')
+export const PI_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('pi')
+export const COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS =
+  makeBackendsPreset('commandcode')
+export const GROK_DEFAULT_MAGIC_PROMPT_BACKENDS = makeBackendsPreset('grok')
 
 /**
  * Resolve a magic prompt provider for a given key.
@@ -1035,6 +1051,7 @@ export interface AppPreferences {
   syntax_theme_light: SyntaxTheme // Syntax highlighting theme for light mode
   parallel_execution_prompt_enabled: boolean // Add system prompt to encourage parallel sub-agent execution
   compact_chat_view_enabled: boolean // Collapse intermediate tool calls/replies into a single ticker line, only showing the latest activity
+  auto_recaps_enabled?: boolean // Ask agents to end multi-step/tool turns with a recap
   magic_prompts: MagicPrompts // Customizable prompts for AI-powered features
   magic_prompt_models: MagicPromptModels // Per-prompt model overrides
   magic_prompt_providers: MagicPromptProviders // Per-prompt provider overrides (null = use default_provider)
@@ -1047,6 +1064,7 @@ export interface AppPreferences {
   waiting_sound: NotificationSound // Sound when session is waiting for input
   review_sound: NotificationSound // Sound when session finishes reviewing
   web_access_sounds_enabled: boolean // Play notification sounds in browser/web access views
+  desktop_notifications_enabled: boolean // Show native OS banner when a session needs input or finishes (only while backgrounded)
   http_server_enabled: boolean // Whether HTTP server is enabled
   http_server_port: number // HTTP server port (default 3456)
   http_server_token: string | null // Auth token for HTTP/WS access
@@ -1080,6 +1098,7 @@ export interface AppPreferences {
   selected_cursor_model: CursorModel // Default Cursor model
   selected_pi_model: PiModel // Default PI model
   selected_commandcode_model?: string // Default Command Code model (CLI default)
+  selected_grok_model: GrokModel // Default Grok model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
@@ -1102,6 +1121,7 @@ export interface AppPreferences {
   claude_cli_source: 'jean' | 'path' // Claude CLI source: 'jean' (managed) or 'path' (system PATH)
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
   opencode_cli_source: 'jean' | 'path' // OpenCode CLI source: 'jean' (managed) or 'path' (system PATH)
+  grok_cli_source: 'jean' | 'path' // Grok CLI source: 'jean' (managed) or 'path' (system PATH)
   gh_cli_source: 'jean' | 'path' // GitHub CLI source: 'jean' (managed) or 'path' (system PATH)
   pi_cli_source: 'jean' | 'path' // PI CLI source: 'jean' (managed) or 'path' (system PATH)
   commandcode_cli_source?: 'jean' | 'path' // Command Code CLI source: 'jean' (managed) or 'path' (system PATH)
@@ -1478,6 +1498,7 @@ export type OpenCodeModel = `opencode/${string}`
 export type CursorModel = `cursor/${string}`
 export type PiModel = `pi/${string}`
 export type CommandCodeModel = `commandcode/${string}`
+export type GrokModel = `grok/${string}`
 export type MagicPromptModel =
   | ClaudeModel
   | CodexModel
@@ -1485,6 +1506,7 @@ export type MagicPromptModel =
   | CursorModel
   | PiModel
   | CommandCodeModel
+  | GrokModel
 
 /** Check if a model string identifies an OpenCode model */
 export function isOpenCodeModel(model: string): model is OpenCodeModel {
@@ -1504,6 +1526,10 @@ export function isPiModel(model: string): model is PiModel {
 /** Check if a model string identifies a Command Code model */
 export function isCommandCodeModel(model: string): model is CommandCodeModel {
   return model.startsWith('commandcode/')
+}
+/** Check if a model string identifies a Grok model */
+export function isGrokModel(model: string): model is GrokModel {
+  return model.startsWith('grok/')
 }
 
 /** Check if a model string identifies a Codex model */
@@ -1533,6 +1559,7 @@ export type CliBackend =
   | 'cursor'
   | 'pi'
   | 'commandcode'
+  | 'grok'
 
 export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -1541,6 +1568,7 @@ export const backendOptions: { value: CliBackend; label: string }[] = [
   { value: 'cursor', label: 'Cursor' },
   { value: 'pi', label: 'Pi (Beta)' },
   { value: 'commandcode', label: 'Command Code (Beta)' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export type TerminalApp =
@@ -1554,9 +1582,7 @@ export type TerminalApp =
 type Platform = 'mac' | 'windows' | 'linux'
 
 function getCurrentPlatform(): Platform {
-  if (isMacOS) return 'mac'
-  if (isWindows) return 'windows'
-  return 'linux'
+  return getServerPlatform()
 }
 
 const allTerminalOptions: {
@@ -1576,8 +1602,14 @@ const allTerminalOptions: {
   },
 ]
 
+export function getTerminalOptions(): { value: TerminalApp; label: string }[] {
+  return allTerminalOptions.filter(opt =>
+    opt.platforms.includes(getCurrentPlatform())
+  )
+}
+
 export const terminalOptions: { value: TerminalApp; label: string }[] =
-  allTerminalOptions.filter(opt => opt.platforms.includes(getCurrentPlatform()))
+  getTerminalOptions()
 
 export type EditorApp = 'zed' | 'vscode' | 'cursor' | 'xcode' | 'intellij'
 
@@ -1605,8 +1637,14 @@ const allEditorOptions: {
   },
 ]
 
+export function getEditorOptions(): { value: EditorApp; label: string }[] {
+  return allEditorOptions.filter(opt =>
+    opt.platforms.includes(getCurrentPlatform())
+  )
+}
+
 export const editorOptions: { value: EditorApp; label: string }[] =
-  allEditorOptions.filter(opt => opt.platforms.includes(getCurrentPlatform()))
+  getEditorOptions()
 
 export type OpenInDefault = 'editor' | 'terminal' | 'finder' | 'github'
 
@@ -1629,6 +1667,7 @@ export const newSessionKindOptions: {
   { value: 'claude', label: 'Claude' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'grok', label: 'Grok (Beta)' },
 ]
 
 export function getNewSessionKindLabel(
@@ -1850,7 +1889,7 @@ export const defaultPreferences: AppPreferences = {
   selected_model: 'claude-opus-4-8[1m]',
   thinking_level: 'ultrathink',
   default_effort_level: 'high',
-  terminal: isWindows ? 'powershell' : 'terminal',
+  terminal: isServerWindows() ? 'powershell' : 'terminal',
   terminal_renderer: 'xterm',
   terminal_font: 'jetbrains-mono',
   terminal_font_size: 13,
@@ -1871,7 +1910,8 @@ export const defaultPreferences: AppPreferences = {
   syntax_theme_dark: 'vitesse-black',
   syntax_theme_light: 'github-light',
   parallel_execution_prompt_enabled: true, // Default: enabled
-  compact_chat_view_enabled: false, // Default: disabled (experimental)
+  compact_chat_view_enabled: true, // Default: enabled
+  auto_recaps_enabled: true, // Default: enabled
   magic_prompts: DEFAULT_MAGIC_PROMPTS,
   magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
   magic_prompt_providers: DEFAULT_MAGIC_PROMPT_PROVIDERS,
@@ -1884,6 +1924,7 @@ export const defaultPreferences: AppPreferences = {
   waiting_sound: 'none',
   review_sound: 'none',
   web_access_sounds_enabled: true,
+  desktop_notifications_enabled: true,
   http_server_enabled: false,
   http_server_port: 3456,
   http_server_token: null,
@@ -1912,10 +1953,11 @@ export const defaultPreferences: AppPreferences = {
   default_backend: 'claude', // Default: Claude
   default_new_session_kind: 'chat', // Default: Jean Chat for CMD+T
   selected_codex_model: 'gpt-5.5', // Default: latest Codex model
-  selected_opencode_model: 'opencode/gpt-5.3-codex', // Default OpenCode model
+  selected_opencode_model: 'opencode/gpt-5.5', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
+  selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: false, // Default: disabled
@@ -1938,6 +1980,7 @@ export const defaultPreferences: AppPreferences = {
   claude_cli_source: 'jean', // Default: Jean-managed
   codex_cli_source: 'jean', // Default: Jean-managed
   opencode_cli_source: 'jean', // Default: Jean-managed
+  grok_cli_source: 'jean', // Default: Jean-managed
   gh_cli_source: 'jean', // Default: Jean-managed
   pi_cli_source: 'jean', // Default: Jean-managed
   commandcode_cli_source: 'jean', // Default: Jean-managed

@@ -1,11 +1,16 @@
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
+use tauri::AppHandle;
+
+use super::storage::{load_metadata, with_existing_metadata_mut};
+use super::types::{Backend, SessionMetadata};
+use crate::http_server::EmitExt;
 
 const MAX_NATIVE_HISTORY_FILES: usize = 10_000;
 const MAX_NATIVE_HISTORY_CACHE_ROWS: usize = 500;
@@ -16,6 +21,7 @@ const NATIVE_HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
 static NATIVE_HISTORY_CACHE: OnceLock<
     Mutex<HashMap<NativeHistoryCacheKey, NativeHistoryCacheEntry>>,
 > = OnceLock::new();
+static NATIVE_SESSION_TRACKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +83,180 @@ pub async fn list_native_cli_sessions(
     ))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum NewNativeSession {
+    Pending,
+    Found(String),
+    Ambiguous,
+}
+
+fn find_new_native_session_id(
+    known_session_ids: &HashSet<String>,
+    current_session_ids: Vec<String>,
+) -> NewNativeSession {
+    let mut new_ids = current_session_ids
+        .into_iter()
+        .filter(|id| !known_session_ids.contains(id))
+        .collect::<Vec<_>>();
+    new_ids.sort();
+    new_ids.dedup();
+    match new_ids.as_slice() {
+        [] => NewNativeSession::Pending,
+        [id] => NewNativeSession::Found(id.clone()),
+        _ => NewNativeSession::Ambiguous,
+    }
+}
+
+fn persist_native_cli_session_id(
+    app: &AppHandle,
+    jean_session_id: &str,
+    backend: &str,
+    native_session_id: &str,
+) -> Result<(), String> {
+    with_existing_metadata_mut(app, jean_session_id, |metadata| {
+        if metadata.primary_surface.as_deref() != Some("terminal") {
+            return Err(format!(
+                "Session {jean_session_id} is not a terminal session"
+            ));
+        }
+
+        match (backend, &metadata.backend) {
+            ("claude", Backend::Claude) => {
+                metadata.claude_session_id = Some(native_session_id.to_string())
+            }
+            ("codex", Backend::Codex) => {
+                metadata.codex_thread_id = Some(native_session_id.to_string())
+            }
+            ("opencode", Backend::Opencode) => {
+                metadata.opencode_session_id = Some(native_session_id.to_string())
+            }
+            _ => {
+                return Err(format!(
+                    "Backend {backend} does not match session {jean_session_id}"
+                ));
+            }
+        }
+        Ok(())
+    })??;
+
+    if let Err(error) = app.emit_all(
+        "cache:invalidate",
+        &serde_json::json!({ "keys": ["sessions"] }),
+    ) {
+        log::error!("Failed to invalidate sessions after native CLI binding: {error}");
+    }
+    Ok(())
+}
+
+fn validate_native_cli_tracking_metadata(
+    metadata: &SessionMetadata,
+    backend: &str,
+) -> Result<(), String> {
+    if metadata.primary_surface.as_deref() != Some("terminal") {
+        return Err(format!("Session {} is not a terminal session", metadata.id));
+    }
+
+    match (backend, &metadata.backend) {
+        ("codex", Backend::Codex) | ("opencode", Backend::Opencode) => Ok(()),
+        _ => Err(format!(
+            "Backend {backend} does not match session {}",
+            metadata.id
+        )),
+    }
+}
+
+#[tauri::command]
+pub async fn bind_native_cli_session(
+    app: AppHandle,
+    session_id: String,
+    backend: String,
+    native_session_id: String,
+) -> Result<(), String> {
+    persist_native_cli_session_id(&app, &session_id, &backend, &native_session_id)
+}
+
+/// Snapshot native history before a new PTY starts, then bind the one newly
+/// created CLI conversation to its Jean terminal session. Ambiguous matches
+/// are never guessed.
+#[tauri::command]
+pub async fn track_native_cli_session(
+    app: AppHandle,
+    worktree_path: String,
+    session_id: String,
+    backend: String,
+) -> Result<(), String> {
+    if backend != "codex" && backend != "opencode" {
+        return Err(format!(
+            "Native CLI tracking is not supported for backend {backend}"
+        ));
+    }
+    let metadata = load_metadata(&app, &session_id)?
+        .ok_or_else(|| format!("Session {session_id} not found"))?;
+    validate_native_cli_tracking_metadata(&metadata, &backend)?;
+
+    let known_session_ids = load_native_session_ids_uncached(&worktree_path, &backend)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let trackers = NATIVE_SESSION_TRACKERS.get_or_init(|| Mutex::new(HashSet::new()));
+    {
+        let mut active = trackers
+            .lock()
+            .map_err(|_| "Native session tracker lock poisoned".to_string())?;
+        if !active.insert(session_id.clone()) {
+            return Ok(());
+        }
+    }
+
+    tauri::async_runtime::spawn(async move {
+        const FAST_ATTEMPTS: usize = 90;
+        const MAX_ATTEMPTS: usize = 261;
+        for attempt in 0..MAX_ATTEMPTS {
+            match load_native_session_ids_uncached(&worktree_path, &backend) {
+                Ok(current_ids) => {
+                    match find_new_native_session_id(&known_session_ids, current_ids) {
+                        NewNativeSession::Pending => {}
+                        NewNativeSession::Found(native_session_id) => {
+                            match persist_native_cli_session_id(
+                                &app,
+                                &session_id,
+                                &backend,
+                                &native_session_id,
+                            ) {
+                                Ok(()) => log::info!(
+                                    "Bound Jean terminal session {session_id} to {backend} session {native_session_id}"
+                                ),
+                                Err(error) => log::warn!(
+                                    "Failed to bind Jean terminal session {session_id}: {error}"
+                                ),
+                            }
+                            break;
+                        }
+                        NewNativeSession::Ambiguous => {
+                            log::warn!(
+                                "Refusing to guess native {backend} session for Jean session {session_id}: multiple new sessions appeared"
+                            );
+                            break;
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::debug!(
+                        "Native {backend} session tracking scan failed for {session_id}: {error}"
+                    );
+                }
+            }
+            let poll_delay = if attempt < FAST_ATTEMPTS { 1 } else { 10 };
+            tokio::time::sleep(Duration::from_secs(poll_delay)).await;
+        }
+
+        if let Ok(mut active) = trackers.lock() {
+            active.remove(&session_id);
+        }
+    });
+
+    Ok(())
+}
+
 fn get_cached_native_sessions(
     worktree_path: &str,
     backend: &str,
@@ -121,6 +301,47 @@ fn load_native_sessions_uncached(
         "commandcode" => Ok(Vec::new()),
         other => Err(format!("Unsupported native CLI history backend: {other}")),
     }
+}
+
+fn load_native_session_ids_uncached(
+    worktree_path: &str,
+    backend: &str,
+) -> Result<Vec<String>, String> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+
+    let mut ids: Vec<String> = match backend {
+        "codex" => {
+            let root = home.join(".codex").join("sessions");
+            if !root.exists() {
+                return Ok(Vec::new());
+            }
+            collect_jsonl_files(&root, Some("rollout-"))?
+                .into_iter()
+                .filter_map(|path| parse_codex_session_identity(&path, worktree_path))
+                .collect()
+        }
+        "opencode" => {
+            let root = home
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("storage")
+                .join("session");
+            if !root.exists() {
+                return Ok(Vec::new());
+            }
+            collect_files_with_extension(&root, "json")?
+                .into_iter()
+                .filter_map(|path| parse_opencode_session_identity(&path, worktree_path))
+                .collect()
+        }
+        other => return Err(format!("Unsupported native CLI tracking backend: {other}")),
+    };
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn filter_cached_native_sessions(
@@ -382,6 +603,31 @@ fn parse_codex_session_file(path: &Path, worktree_path: &str) -> Option<NativeCl
     })
 }
 
+fn parse_codex_session_identity(path: &Path, worktree_path: &str) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    for line in contents.lines().take(100) {
+        let value: Value = serde_json::from_str(line).ok()?;
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+        let payload = value.get("payload")?;
+        if payload.get("source").and_then(Value::as_str) == Some("exec")
+            || payload.get("originator").and_then(Value::as_str) == Some("codex_exec")
+        {
+            return None;
+        }
+        let cwd = payload.get("cwd").and_then(Value::as_str)?;
+        if !same_path(cwd, worktree_path) {
+            return None;
+        }
+        return payload
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+    }
+    None
+}
+
 fn codex_title_from_line(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) == Some("event_msg") {
         let payload = value.get("payload")?;
@@ -578,6 +824,23 @@ fn parse_opencode_session_file(
     })
 }
 
+fn parse_opencode_session_identity(path: &Path, worktree_path: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    let cwd = value
+        .get("directory")
+        .or_else(|| value.get("path"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| opencode_project_worktree_from_path(path))?;
+    if !same_path(&cwd, worktree_path) {
+        return None;
+    }
+    value
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
 fn opencode_project_worktree_from_path(path: &Path) -> Option<String> {
     let project_id = path.parent()?.file_name()?.to_str()?;
     let project_path = dirs::home_dir()?
@@ -760,6 +1023,52 @@ mod tests {
     }
 
     #[test]
+    fn native_session_tracking_requires_one_unambiguous_new_id() {
+        let known = HashSet::from(["existing".to_string()]);
+
+        assert_eq!(
+            find_new_native_session_id(&known, vec!["existing".to_string()]),
+            NewNativeSession::Pending
+        );
+        assert_eq!(
+            find_new_native_session_id(
+                &known,
+                vec!["existing".to_string(), "new-session".to_string()]
+            ),
+            NewNativeSession::Found("new-session".to_string())
+        );
+        assert_eq!(
+            find_new_native_session_id(
+                &known,
+                vec![
+                    "existing".to_string(),
+                    "new-a".to_string(),
+                    "new-b".to_string()
+                ]
+            ),
+            NewNativeSession::Ambiguous
+        );
+    }
+
+    #[test]
+    fn native_session_tracking_validation_requires_matching_terminal_metadata() {
+        let mut metadata = crate::chat::types::SessionMetadata::new(
+            "jean-session".to_string(),
+            "worktree-1".to_string(),
+            "Codex".to_string(),
+            0,
+        );
+        metadata.backend = Backend::Codex;
+        metadata.primary_surface = Some("terminal".to_string());
+
+        assert!(validate_native_cli_tracking_metadata(&metadata, "codex").is_ok());
+        assert!(validate_native_cli_tracking_metadata(&metadata, "opencode").is_err());
+
+        metadata.primary_surface = Some("chat".to_string());
+        assert!(validate_native_cli_tracking_metadata(&metadata, "codex").is_err());
+    }
+
+    #[test]
     fn native_history_default_returns_latest_five_from_cache() {
         let sessions = (0..10)
             .map(|index| test_session(index, index as u64, &format!("task {index}")))
@@ -854,6 +1163,10 @@ mod tests {
         assert_eq!(parsed.id, "jean-session");
         assert_eq!(parsed.title, "name a session");
         assert_eq!(parsed.resume_args, vec!["resume", "jean-session"]);
+        assert_eq!(
+            parse_codex_session_identity(&path, "/tmp/worktree").as_deref(),
+            Some("jean-session")
+        );
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(dir);
     }
@@ -1063,6 +1376,10 @@ mod tests {
         .unwrap();
 
         assert!(parse_codex_session_file(&path, "/tmp/worktree").is_none());
+        assert_eq!(
+            parse_codex_session_identity(&path, "/tmp/worktree").as_deref(),
+            Some("context-only-session")
+        );
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(dir);
     }
@@ -1112,6 +1429,33 @@ mod tests {
         let parsed = parse_codex_session_file(&path, "/tmp/worktree").unwrap();
         assert_eq!(parsed.id, "aborted-session");
         assert_eq!(parsed.title, "ps -ef");
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn opencode_identity_is_available_before_a_title_exists() {
+        let dir = std::env::temp_dir().join(format!(
+            "jean-native-history-test-opencode-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("session.json");
+        fs::write(
+            &path,
+            serde_json::json!({
+                "id": "opencode-session",
+                "directory": "/tmp/worktree"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(parse_opencode_session_file(&path, "/tmp/worktree").is_none());
+        assert_eq!(
+            parse_opencode_session_identity(&path, "/tmp/worktree").as_deref(),
+            Some("opencode-session")
+        );
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(dir);
     }

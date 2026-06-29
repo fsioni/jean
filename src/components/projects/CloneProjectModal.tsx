@@ -126,7 +126,7 @@ export function CloneProjectModal() {
   return (
     <Dialog open={cloneModalOpen} onOpenChange={handleOpenChange}>
       <>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="min-w-0 overflow-hidden sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Globe className="h-5 w-5" />
@@ -137,7 +137,7 @@ export function CloneProjectModal() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="min-w-0 space-y-4 py-4">
             {/* Git URL input */}
             <div className="space-y-1.5">
               <Label htmlFor="clone-url" className="text-xs">
@@ -162,21 +162,25 @@ export function CloneProjectModal() {
             {/* Destination picker */}
             <div className="space-y-1.5">
               <Label className="text-xs">Destination</Label>
-              <div className="flex gap-2">
+              <div className="flex min-w-0 gap-2">
                 <Button
                   variant="outline"
-                  className="flex-1 justify-start"
+                  className="min-w-0 flex-1 justify-start overflow-hidden"
                   onClick={handleBrowse}
                   disabled={cloneProject.isPending}
+                  title={destination || undefined}
                 >
                   <FolderOpen className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-sm">
+                  <span className="min-w-0 flex-1 truncate text-left text-sm">
                     {destination || 'Choose destination...'}
                   </span>
                 </Button>
               </div>
               {destination && (
-                <p className="truncate text-xs text-muted-foreground">
+                <p
+                  className="max-w-full truncate text-xs text-muted-foreground"
+                  title={destination}
+                >
                   {destination}
                 </p>
               )}

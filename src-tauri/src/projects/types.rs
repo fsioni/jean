@@ -648,6 +648,8 @@ pub struct WorktreePathExistsEvent {
     pub archived_worktree_name: Option<String>,
     /// Issue context to use when creating a new worktree with the suggested name
     pub issue_context: Option<super::github_issues::IssueContext>,
+    /// PR context to use when creating a new worktree with the suggested name
+    pub pr_context: Option<super::github_issues::PullRequestContext>,
     /// Security alert context to use when creating a new worktree with the suggested name
     pub security_context: Option<super::github_issues::SecurityAlertContext>,
     /// Advisory context to use when creating a new worktree with the suggested name
@@ -690,6 +692,49 @@ impl Worktree {
             self.label = None;
         }
         dedupe_labels_by_name(&mut self.labels);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projects::github_issues::{GitHubAuthor, GitHubComment, PullRequestContext};
+
+    #[test]
+    fn path_exists_event_preserves_pr_context_for_retry() {
+        let event = WorktreePathExistsEvent {
+            id: "pending-worktree".to_string(),
+            project_id: "project".to_string(),
+            path: "/tmp/jean/main".to_string(),
+            suggested_name: "main-2".to_string(),
+            archived_worktree_id: None,
+            archived_worktree_name: None,
+            issue_context: None,
+            pr_context: Some(PullRequestContext {
+                number: 396,
+                title: "Fix notifications".to_string(),
+                body: None,
+                head_ref_name: "main".to_string(),
+                base_ref_name: "main".to_string(),
+                comments: vec![GitHubComment {
+                    body: "Please fix this".to_string(),
+                    author: GitHubAuthor {
+                        login: "reviewer".to_string(),
+                    },
+                    created_at: "2026-06-27T00:00:00Z".to_string(),
+                }],
+                reviews: vec![],
+                diff: None,
+            }),
+            security_context: None,
+            advisory_context: None,
+            origin: None,
+        };
+
+        let value = serde_json::to_value(event).expect("serialize event");
+
+        assert_eq!(value["pr_context"]["number"], 396);
+        assert_eq!(value["pr_context"]["headRefName"], "main");
     }
 }
 
@@ -828,6 +873,7 @@ mod label_tests {
             archived_worktree_id: None,
             archived_worktree_name: None,
             issue_context: None,
+            pr_context: None,
             security_context: None,
             advisory_context: None,
             origin: Some(WorktreeOrigin::AutoFix),

@@ -427,6 +427,18 @@ describe('StreamingMessage', () => {
     expect(screen.getByText('Raptors')).toBeVisible()
   })
 
+  it('shows a visual Working row after a steered prompt until new activity arrives', () => {
+    render(
+      <StreamingMessage
+        {...baseProps}
+        contentBlocks={[{ type: 'user_input', text: 'please also test this' }]}
+      />
+    )
+
+    expect(screen.getByText('please also test this')).toBeVisible()
+    expect(screen.getByText('Working…')).toBeVisible()
+  })
+
   it('copies steered prompts while streaming', () => {
     const onCopySteeredText = vi.fn()
 

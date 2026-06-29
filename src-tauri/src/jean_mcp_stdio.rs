@@ -1,7 +1,7 @@
 //! Stdio MCP transport for Jean.
 //!
 //! This process is launched by a local CLI as an MCP server. It proxies
-//! tools/call requests over a Jean-owned local Unix socket to the already
+//! tools/call requests over Jean-owned local IPC to the already
 //! running desktop app, avoiding HTTP ports while preserving in-process app
 //! command dispatch in the parent.
 
@@ -103,9 +103,54 @@ fn proxy_to_parent(socket: &str, request: Value) -> Result<Value, String> {
     Ok(response.get("result").cloned().unwrap_or(Value::Null))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn proxy_to_parent(socket: &str, request: Value) -> Result<Value, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::windows::named_pipe::ClientOptions;
+    use tokio::runtime::Builder;
+    use tokio::time::{timeout, Duration};
+
+    let encoded = serde_json::to_string(&request)
+        .map_err(|e| format!("Failed to encode Jean MCP pipe request: {e}"))?;
+    let runtime = Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|e| format!("Failed to create Jean MCP pipe runtime: {e}"))?;
+
+    let response = runtime.block_on(async {
+        let mut pipe = ClientOptions::new()
+            .open(socket)
+            .map_err(|e| format!("Failed to connect Jean MCP named pipe {socket}: {e}"))?;
+        timeout(Duration::from_secs(30), async {
+            pipe.write_all(encoded.as_bytes()).await?;
+            pipe.write_all(b"\n").await?;
+            pipe.flush().await
+        })
+        .await
+        .map_err(|_| "Timed out writing Jean MCP pipe request".to_string())?
+        .map_err(|e| format!("Failed to write Jean MCP pipe request: {e}"))?;
+
+        let mut reader = BufReader::new(pipe);
+        let mut line = String::new();
+        timeout(Duration::from_secs(120), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "Timed out reading Jean MCP pipe response".to_string())?
+            .map_err(|e| format!("Failed to read Jean MCP pipe response: {e}"))?;
+
+        serde_json::from_str::<Value>(&line)
+            .map_err(|e| format!("Failed to parse Jean MCP pipe response: {e}"))
+    })?;
+
+    if let Some(error) = parent_error_message(&response) {
+        return Err(error);
+    }
+    Ok(response.get("result").cloned().unwrap_or(Value::Null))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn proxy_to_parent(_socket: &str, _request: Value) -> Result<Value, String> {
-    Err("Jean MCP currently requires a Unix domain socket".to_string())
+    Err("Jean MCP local IPC is not supported on this platform".to_string())
 }
 
 fn parent_error_message(response: &Value) -> Option<String> {

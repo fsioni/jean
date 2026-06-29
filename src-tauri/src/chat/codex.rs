@@ -1807,6 +1807,14 @@ fn notification_to_history_line(method: &str, params: &serde_json::Value) -> Opt
             let line = serde_json::json!({ "type": "item.completed", "item": normalized });
             return Some(serde_json::to_string(&line).ok()?);
         }
+        "item/fileChange/patchUpdated" => {
+            let line = serde_json::json!({
+                "type": "item.file_change.patch_updated",
+                "item_id": params.get("itemId").cloned().unwrap_or(serde_json::Value::Null),
+                "changes": params.get("changes").cloned().unwrap_or(serde_json::json!([])),
+            });
+            return Some(serde_json::to_string(&line).ok()?);
+        }
         "item/agentMessage/delta" => {
             // Delta events don't have a direct old-format equivalent; skip for history
             return None;
@@ -2069,6 +2077,31 @@ fn process_server_notification(
                 completed,
                 usage,
                 error_emitted,
+            );
+        }
+        "item/fileChange/patchUpdated" => {
+            let item_id = params.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+            let changes = params
+                .get("changes")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]));
+            let tool_id = upsert_file_change_tool_call(
+                tool_calls,
+                content_blocks,
+                pending_tool_ids,
+                item_id,
+                changes.clone(),
+            );
+            let _ = app.emit_all(
+                "chat:tool_use",
+                &ToolUseEvent {
+                    session_id: session_id.to_string(),
+                    worktree_id: worktree_id.to_string(),
+                    id: tool_id,
+                    name: "FileChange".to_string(),
+                    input: changes,
+                    parent_tool_use_id: None,
+                },
             );
         }
         "item/commandExecution/outputDelta" | "item/fileChange/outputDelta" => {
@@ -2629,6 +2662,41 @@ fn format_codex_user_error(error_msg: &str) -> String {
     }
 }
 
+fn upsert_file_change_tool_call(
+    tool_calls: &mut Vec<ToolCall>,
+    content_blocks: &mut Vec<ContentBlock>,
+    pending_tool_ids: &mut HashMap<String, String>,
+    item_id: &str,
+    changes: serde_json::Value,
+) -> String {
+    let tool_id = if item_id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        item_id.to_string()
+    };
+
+    if let Some(tool) = tool_calls.iter_mut().find(|tool| tool.id == tool_id) {
+        tool.input = changes;
+    } else {
+        tool_calls.push(ToolCall {
+            id: tool_id.clone(),
+            name: "FileChange".to_string(),
+            input: changes,
+            output: None,
+            parent_tool_use_id: None,
+        });
+        content_blocks.push(ContentBlock::ToolUse {
+            tool_call_id: tool_id.clone(),
+        });
+    }
+
+    if !item_id.is_empty() {
+        pending_tool_ids.insert(item_id.to_string(), tool_id.clone());
+    }
+
+    tool_id
+}
+
 /// Process a single Codex JSONL event. Shared between attached and detached tailers.
 #[allow(clippy::too_many_arguments)]
 fn process_codex_event(
@@ -2702,28 +2770,17 @@ fn process_codex_event(
                     );
                 }
                 "file_change" => {
-                    let tool_id = if item_id.is_empty() {
-                        uuid::Uuid::new_v4().to_string()
-                    } else {
-                        item_id.to_string()
-                    };
                     let changes = item
                         .get("changes")
                         .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    tool_calls.push(ToolCall {
-                        id: tool_id.clone(),
-                        name: "FileChange".to_string(),
-                        input: changes.clone(),
-                        output: None,
-                        parent_tool_use_id: None,
-                    });
-                    content_blocks.push(ContentBlock::ToolUse {
-                        tool_call_id: tool_id.clone(),
-                    });
-                    if !item_id.is_empty() {
-                        pending_tool_ids.insert(item_id.to_string(), tool_id.clone());
-                    }
+                        .unwrap_or_else(|| serde_json::json!([]));
+                    let tool_id = upsert_file_change_tool_call(
+                        tool_calls,
+                        content_blocks,
+                        pending_tool_ids,
+                        item_id,
+                        changes.clone(),
+                    );
                     let _ = app.emit_all(
                         "chat:tool_use",
                         &ToolUseEvent {
@@ -3591,26 +3648,14 @@ pub fn parse_codex_run_to_message(
                         let changes = item
                             .get("changes")
                             .cloned()
-                            .unwrap_or(serde_json::Value::Null);
-                        let tool_id = if item_id.is_empty() {
-                            Uuid::new_v4().to_string()
-                        } else {
-                            item_id.to_string()
-                        };
-
-                        tool_calls.push(ToolCall {
-                            id: tool_id.clone(),
-                            name: "FileChange".to_string(),
-                            input: changes,
-                            output: None,
-                            parent_tool_use_id: None,
-                        });
-                        content_blocks.push(ContentBlock::ToolUse {
-                            tool_call_id: tool_id.clone(),
-                        });
-                        if !item_id.is_empty() {
-                            pending_tool_ids.insert(item_id.to_string(), tool_id);
-                        }
+                            .unwrap_or_else(|| serde_json::json!([]));
+                        upsert_file_change_tool_call(
+                            &mut tool_calls,
+                            &mut content_blocks,
+                            &mut pending_tool_ids,
+                            item_id,
+                            changes,
+                        );
                     }
                     "mcp_tool_call" => {
                         let server = item
@@ -3694,6 +3739,20 @@ pub fn parse_codex_run_to_message(
                     }
                     _ => {}
                 }
+            }
+            "item.file_change.patch_updated" => {
+                let item_id = msg.get("item_id").and_then(|v| v.as_str()).unwrap_or("");
+                let changes = msg
+                    .get("changes")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                upsert_file_change_tool_call(
+                    &mut tool_calls,
+                    &mut content_blocks,
+                    &mut pending_tool_ids,
+                    item_id,
+                    changes,
+                );
             }
             "item.completed" => {
                 let item = msg.get("item").unwrap_or(&serde_json::Value::Null);
@@ -3974,7 +4033,7 @@ pub fn execute_one_shot_codex(
 ) -> Result<String, String> {
     let cli_path = crate::codex_cli::resolve_cli_binary(app)?;
 
-    if !cli_path.exists() {
+    if !crate::platform::resolved_cli_exists(&cli_path) {
         return Err("Codex CLI not installed".to_string());
     }
 
@@ -3993,19 +4052,37 @@ pub fn execute_one_shot_codex(
     std::fs::write(&schema_file, output_schema)
         .map_err(|e| format!("Failed to write schema file: {e}"))?;
 
-    let mut cmd = crate::platform::silent_command(&cli_path);
+    let wsl = crate::platform::get_wsl_config();
+    let schema_arg = if cfg!(windows) && wsl.enabled {
+        std::path::PathBuf::from(crate::platform::win_to_wsl_path(
+            &schema_file.to_string_lossy(),
+        ))
+    } else {
+        schema_file.clone()
+    };
+    let working_dir_arg = working_dir.map(|dir| {
+        if cfg!(windows) && wsl.enabled {
+            std::path::PathBuf::from(crate::platform::win_to_wsl_path(&dir.to_string_lossy()))
+        } else {
+            dir.to_path_buf()
+        }
+    });
+
+    let mut cmd = crate::platform::resolved_cli_command(&cli_path, working_dir);
     cmd.args(build_one_shot_codex_args(
         actual_model,
         is_fast,
-        &schema_file,
-        working_dir,
+        &schema_arg,
+        working_dir_arg.as_deref(),
     ));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+    if !wsl.enabled {
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
+        }
     }
 
     let mut child = cmd
@@ -4221,6 +4298,28 @@ mod tests {
             classify_codex_resume(&interrupted, Some("turn-1"), true),
             CodexResumeDisposition::Interrupted
         );
+    }
+
+    #[test]
+    fn parse_codex_run_updates_file_change_from_patch_updated() {
+        let run = test_run_entry();
+        let lines = vec![
+            r#"{"type":"item.started","item":{"id":"fc-1","type":"file_change","changes":[]}}"#.to_string(),
+            r#"{"type":"item.file_change.patch_updated","item_id":"fc-1","changes":[{"path":"src/lib.rs","kind":{"type":"update"},"diff":"@@ -1 +1 @@\n-old\n+new\n"}]}"#.to_string(),
+        ];
+
+        let msg = parse_codex_run_to_message(&lines, &run).expect("parse");
+        let file_change = msg
+            .tool_calls
+            .iter()
+            .find(|tool| tool.name == "FileChange")
+            .expect("file change tool");
+
+        assert_eq!(file_change.input[0]["path"], "src/lib.rs");
+        assert!(file_change.input[0]["diff"]
+            .as_str()
+            .expect("diff")
+            .contains("+new"));
     }
 
     #[test]
@@ -4656,6 +4755,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4711,6 +4811,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4763,6 +4864,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4818,6 +4920,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4912,6 +5015,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -4967,6 +5071,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -5027,6 +5132,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");
@@ -5068,6 +5174,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let message = parse_codex_run_to_message(&lines, &run).expect("message");

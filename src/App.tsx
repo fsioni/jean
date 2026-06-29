@@ -9,13 +9,15 @@ import {
   setWsDataReady,
   useWsAuthError,
   preloadInitialData,
-  refetchInitialData,
+  prefetchReconnectInitialData,
+  consumeReconnectInitialData,
   setAppDataDir,
   hasPreloadedData,
   listen,
   type InitialData,
 } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
+import { setServerPlatform } from '@/lib/platform'
 import { projectsQueryKeys } from '@/services/projects'
 import { chatQueryKeys } from '@/services/chat'
 import type { Session, WorktreeSessions } from '@/types/chat'
@@ -63,7 +65,10 @@ import {
 import { scheduleIdleWork } from './lib/idle'
 import { isWindows } from './lib/platform'
 import { checkWebClientVersion } from './lib/web-client-version'
-import { collectWorktreePaths } from './lib/initial-data-cache'
+import {
+  collectExecutionModes,
+  collectWorktreePaths,
+} from './lib/initial-data-cache'
 import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 
 interface AutoFixStoppedEvent {
@@ -239,6 +244,10 @@ function App() {
         message: Session['messages'][number]
       }[] = []
 
+      if (data.serverPlatform) {
+        setServerPlatform(data.serverPlatform)
+      }
+
       // Seed projects into TanStack Query cache
       if (data.projects) {
         queryClient.setQueryData(projectsQueryKeys.list(), data.projects)
@@ -263,6 +272,23 @@ function App() {
             ...worktreePaths,
           },
         })
+      }
+      const executionModeUpdates = collectExecutionModes({
+        sessionsByWorktree: data.sessionsByWorktree,
+        activeSessions: data.activeSessions,
+      })
+      if (Object.keys(executionModeUpdates).length > 0) {
+        beginSessionStateHydration()
+        try {
+          useChatStore.setState(state => ({
+            executionModes: {
+              ...state.executionModes,
+              ...executionModeUpdates,
+            },
+          }))
+        } finally {
+          endSessionStateHydration()
+        }
       }
 
       // Seed sessions for each worktree (WorktreeSessions struct)
@@ -673,19 +699,28 @@ function App() {
   const wsDataReady = useWsDataReady()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
-    if (isNativeApp() || !wsConnected) return
+    if (isNativeApp()) return
+
+    if (!wsConnected) {
+      if (hadWsConnectionRef.current) {
+        const activeSessionIds = useChatStore.getState().activeSessionIds
+        const selectedProjectId = useProjectsStore.getState().selectedProjectId
+        void prefetchReconnectInitialData(activeSessionIds, selectedProjectId)
+      }
+      return
+    }
 
     const reconnected = hadWsConnectionRef.current
     hadWsConnectionRef.current = true
 
     if (reconnected) {
-      // Try to use the prefetch that was started during the backoff wait.
+      // Use the prefetch that was started during the backoff wait.
       // Falls back to a fresh fetch with the browser's active session IDs
       // so the server loads the correct sessions even when ui_state.json
       // on disk is stale (debounced save hasn't flushed yet).
       const activeSessionIds = useChatStore.getState().activeSessionIds
       const selectedProjectId = useProjectsStore.getState().selectedProjectId
-      const dataPromise = refetchInitialData(
+      const dataPromise = consumeReconnectInitialData(
         activeSessionIds,
         selectedProjectId
       )

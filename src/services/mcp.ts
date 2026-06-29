@@ -147,6 +147,7 @@ export function useAllBackendsMcpHealth(
   const codex = useMcpHealthCheck('codex', worktreePath)
   const opencode = useMcpHealthCheck('opencode', worktreePath)
   const cursor = useMcpHealthCheck('cursor', worktreePath)
+  const grok = useMcpHealthCheck('grok', worktreePath)
 
   const has = useMemo(() => new Set(installedBackends), [installedBackends])
 
@@ -157,6 +158,7 @@ export function useAllBackendsMcpHealth(
       ['codex', codex],
       ['opencode', opencode],
       ['cursor', cursor],
+      ['grok', grok],
     ]
     for (const [backend, query] of entries) {
       if (has.has(backend) && query.data?.statuses) {
@@ -166,7 +168,7 @@ export function useAllBackendsMcpHealth(
       }
     }
     return merged
-  }, [has, claude.data, codex.data, cursor.data, opencode.data])
+  }, [has, claude.data, codex.data, cursor.data, grok.data, opencode.data])
 
   const isFetching =
     (has.has('claude') && claude.isFetching) ||
@@ -297,6 +299,7 @@ export const BACKEND_LABELS: Record<CliBackend, string> = {
   cursor: 'Cursor',
   pi: 'PI',
   commandcode: 'Command Code',
+  grok: 'Grok',
 }
 
 /** Group servers by their backend field */

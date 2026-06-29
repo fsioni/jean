@@ -149,6 +149,7 @@ describe('PreferencesDialog', () => {
       'Cursor',
       'PI',
       'Command Code',
+      'Grok (Beta)',
       'GitHub CLI',
       'CodeRabbit CLI',
       'Terminal',

@@ -71,7 +71,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.js'],
+    files: ['scripts/**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -98,6 +98,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      'src-tauri/dist/**',
       'node_modules/**',
       'src-tauri/target/**',
       'src-tauri/gen/**',

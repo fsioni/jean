@@ -5,6 +5,7 @@ use tauri::AppHandle;
 
 use super::config::{ensure_cli_dir, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 use crate::http_server::EmitExt;
+#[cfg(target_os = "macos")]
 use crate::platform::silent_command;
 
 /// GitHub owner/repo for OpenCode releases.
@@ -205,7 +206,10 @@ pub async fn check_opencode_cli_installed(app: AppHandle) -> Result<OpenCodeCliS
         });
     }
 
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let cleaned = version_str
@@ -869,7 +873,7 @@ mod tests {
 
     #[test]
     fn parses_model_lines_from_plain_output() {
-        let output = "\u{1b}[1mModels cache refreshed\u{1b}[0m\nopencode/gpt-5.3-codex\nanthropic/claude-sonnet-4-6\nopenrouter/anthropic/claude-3.5-haiku:free\n";
+        let output = "\u{1b}[1mModels cache refreshed\u{1b}[0m\nopencode/gpt-5.5\nanthropic/claude-sonnet-4-6\nopenrouter/anthropic/claude-3.5-haiku:free\n";
 
         let models = parse_opencode_models_output(output);
 
@@ -877,7 +881,7 @@ mod tests {
             models,
             vec![
                 "anthropic/claude-sonnet-4-6".to_string(),
-                "opencode/gpt-5.3-codex".to_string(),
+                "opencode/gpt-5.5".to_string(),
                 "openrouter/anthropic/claude-3.5-haiku:free".to_string(),
             ]
         );
@@ -886,7 +890,7 @@ mod tests {
     #[test]
     fn ignores_verbose_json_metadata_and_deduplicates_models() {
         let output = r#"
-opencode/gpt-5.3-codex
+opencode/gpt-5.5
 {
   "id": "gpt-5.3-codex",
   "name": "GPT-5.3 Codex",
@@ -895,7 +899,7 @@ opencode/gpt-5.3-codex
   },
   "url": "https://opencode.ai/zen/v1"
 }
-opencode/gpt-5.3-codex
+opencode/gpt-5.5
 moonshotai/kimi-k2.5
 "#;
 
@@ -905,7 +909,7 @@ moonshotai/kimi-k2.5
             models,
             vec![
                 "moonshotai/kimi-k2.5".to_string(),
-                "opencode/gpt-5.3-codex".to_string(),
+                "opencode/gpt-5.5".to_string(),
             ]
         );
     }

@@ -23,6 +23,23 @@ function isEditTool(
   )
 }
 
+interface CodexFileChange {
+  path: string
+  diff?: string
+}
+
+function getCodexFileChanges(toolCall: ToolCall): CodexFileChange[] {
+  if (toolCall.name !== 'FileChange') return []
+  const input = toolCall.input
+  if (!Array.isArray(input)) return []
+  return input.filter(
+    (change): change is CodexFileChange =>
+      typeof change === 'object' &&
+      change !== null &&
+      typeof (change as Record<string, unknown>).path === 'string'
+  )
+}
+
 function computeEditStats(
   oldStr: string | undefined,
   newStr: string | undefined
@@ -36,6 +53,29 @@ function computeEditStats(
     else if (part.removed) deletions += count
   }
   return { additions, deletions }
+}
+
+function computeUnifiedDiffStats(diff: string | undefined): {
+  additions: number
+  deletions: number
+} {
+  let additions = 0
+  let deletions = 0
+  for (const line of (diff ?? '').split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) additions += 1
+    else if (line.startsWith('-')) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+function codexDiffToPatch(
+  filePath: string,
+  diff: string | undefined
+): string | null {
+  if (!diff) return null
+  if (diff.startsWith('diff --git ') || diff.startsWith('--- ')) return diff
+  return `Index: ${filePath}\n===================================================================\n--- ${filePath}\n+++ ${filePath}\n${diff}`
 }
 
 interface EditedFilesDisplayProps {
@@ -65,29 +105,46 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
     [toolCalls]
   )
 
+  const codexChanges = useMemo(
+    () => (toolCalls ?? []).flatMap(getCodexFileChanges),
+    [toolCalls]
+  )
+
   const uniqueFilePaths = useMemo(
-    () => Array.from(new Set(editTools.map(t => t.input.file_path))),
-    [editTools]
+    () =>
+      Array.from(
+        new Set([
+          ...editTools.map(t => t.input.file_path),
+          ...codexChanges.map(change => change.path),
+        ])
+      ),
+    [editTools, codexChanges]
   )
 
   const fileStats = useMemo(() => {
     const map = new Map<string, { additions: number; deletions: number }>()
-    for (const tool of editTools) {
-      const prev = map.get(tool.input.file_path) ?? {
-        additions: 0,
-        deletions: 0,
-      }
-      const delta = computeEditStats(
-        tool.input.old_string,
-        tool.input.new_string
-      )
-      map.set(tool.input.file_path, {
+    const addStats = (
+      filePath: string,
+      delta: { additions: number; deletions: number }
+    ) => {
+      const prev = map.get(filePath) ?? { additions: 0, deletions: 0 }
+      map.set(filePath, {
         additions: prev.additions + delta.additions,
         deletions: prev.deletions + delta.deletions,
       })
     }
+
+    for (const tool of editTools) {
+      addStats(
+        tool.input.file_path,
+        computeEditStats(tool.input.old_string, tool.input.new_string)
+      )
+    }
+    for (const change of codexChanges) {
+      addStats(change.path, computeUnifiedDiffStats(change.diff))
+    }
     return map
-  }, [editTools])
+  }, [editTools, codexChanges])
 
   const selectedEdits = useMemo(
     () =>
@@ -96,6 +153,15 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
         : [],
     [editTools, selectedFilePath]
   )
+
+  const selectedCodexPatch = useMemo(() => {
+    if (!selectedFilePath) return null
+    const patches = codexChanges
+      .filter(change => change.path === selectedFilePath)
+      .map(change => codexDiffToPatch(change.path, change.diff))
+      .filter((patch): patch is string => Boolean(patch))
+    return patches.length > 0 ? patches.join('\n') : null
+  }, [codexChanges, selectedFilePath])
 
   // All Edit tool calls on selectedFilePath from messages AFTER this one.
   // Computed lazily — only once the user opens a diff — by pulling the
@@ -108,7 +174,7 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
       .filter(t => t.input.file_path === selectedFilePath)
   }, [selectedFilePath, getMessages, messageIndex])
 
-  if (editTools.length === 0) return null
+  if (uniqueFilePaths.length === 0) return null
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground/70">
@@ -153,6 +219,7 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
           edits={selectedEdits}
           subsequentEdits={subsequentEdits}
           worktreePath={worktreePath}
+          patch={selectedCodexPatch}
         />
       )}
     </div>

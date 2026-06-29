@@ -67,7 +67,7 @@ function renderUseMessageSending({
   opencodeAutoSteer?: boolean
   piAutoSteer?: boolean
   inputValue?: string
-  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi'
+  selectedBackend?: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'grok'
   selectedModel?: string
   selectedEffortLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
   createSession?: {
@@ -192,6 +192,62 @@ describe('useMessageSending Codex /goal', () => {
       expect.objectContaining({
         executionMode: 'yolo',
         message: 'Work toward the active goal:\n\nShip the feature',
+      }),
+      expect.any(Object)
+    )
+  })
+})
+
+describe('useMessageSending Grok /goal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockInvoke.mockResolvedValue(undefined)
+    useChatStore.setState({
+      inputDrafts: {},
+      pendingImages: {},
+      pendingFiles: {},
+      pendingTextFiles: {},
+      pendingSkills: {},
+      sendingSessionIds: {},
+      executionModes: {},
+      selectedModels: {},
+      executingModes: {},
+      errors: {},
+      lastSentMessages: {},
+      reviewingSessions: {},
+      waitingForInputSessionIds: {},
+      messageQueues: {},
+      approvedTools: {},
+      streamingContents: {},
+      activeToolCalls: {},
+      streamingContentBlocks: {},
+      streamingThinkingContent: {},
+    })
+  })
+
+  it('passes /goal commands through to Grok without Codex RPC wrapping', async () => {
+    const { result, sendMessage, executionModeRef } = renderUseMessageSending({
+      selectedBackend: 'grok',
+      selectedModel: 'grok/grok-composer-2.5-fast',
+      inputValue: '/goal Ship the Grok feature',
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'codex_goal_set',
+      expect.anything()
+    )
+    expect(executionModeRef.current).toBe('plan')
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: 'grok',
+        executionMode: 'plan',
+        message: '/goal Ship the Grok feature',
       }),
       expect.any(Object)
     )
@@ -381,7 +437,7 @@ describe('useMessageSending Codex auto-steer', () => {
     vi.mocked(steerOpencodeTurn).mockResolvedValue(undefined)
     const { result, sendMessage } = renderUseMessageSending({
       selectedBackend: 'opencode',
-      selectedModel: 'opencode/gpt-5.3-codex',
+      selectedModel: 'opencode/gpt-5.5',
       inputValue: 'also inspect opencode',
     })
 
@@ -479,7 +535,7 @@ describe('useMessageSending Codex auto-steer', () => {
   it('queues opencode prompts instead of steering when opencode auto-steer is disabled', async () => {
     const { result } = renderUseMessageSending({
       selectedBackend: 'opencode',
-      selectedModel: 'opencode/gpt-5.3-codex',
+      selectedModel: 'opencode/gpt-5.5',
       opencodeAutoSteer: false,
       inputValue: 'also inspect opencode',
     })

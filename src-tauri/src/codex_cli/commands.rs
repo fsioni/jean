@@ -10,6 +10,7 @@ use tauri::AppHandle;
 use super::config::{ensure_cli_dir, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 use crate::gh_cli::resolve_github_api_token;
 use crate::http_server::EmitExt;
+#[cfg(target_os = "macos")]
 use crate::platform::silent_command;
 
 /// GitHub API URL for Codex CLI releases
@@ -964,7 +965,10 @@ pub async fn check_codex_cli_installed(app: AppHandle) -> Result<CodexCliStatus,
     }
 
     // Get version
-    let version = match silent_command(&binary_path).arg("--version").output() {
+    let version = match crate::platform::cli_command(&binary_path.to_string_lossy(), None)
+        .arg("--version")
+        .output()
+    {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             log::debug!(
@@ -1756,7 +1760,7 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
     emit_progress(&app, "verifying", "Verifying installation...", 80);
 
     // Verify the binary works
-    let version_output = silent_command(&binary_path)
+    let version_output = crate::platform::cli_command(&binary_path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to verify Codex CLI: {e}"))?;

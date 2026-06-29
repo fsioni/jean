@@ -27,9 +27,8 @@ import { cn } from '@/lib/utils'
 import { getFilename } from '@/lib/path-utils'
 import { getHunkLineStats } from '@/lib/diff-stats'
 import { useTheme } from '@/hooks/use-theme'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePreferences } from '@/services/preferences'
-import { getGitDiff } from '@/services/git-status'
-import { isTauri } from '@/services/projects'
 import { invoke } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
 
@@ -86,7 +85,6 @@ function replaceLast(
 }
 
 type DiffStyle = 'split' | 'unified'
-type ViewMode = 'last' | 'all'
 
 interface MessageDiffModalProps {
   isOpen: boolean
@@ -95,6 +93,8 @@ interface MessageDiffModalProps {
   edits: EditTool[]
   subsequentEdits?: EditTool[]
   worktreePath?: string
+  /** Precomputed unified patch for backends (Codex) that report diffs directly. */
+  patch?: string | null
 }
 
 export function MessageDiffModal({
@@ -104,9 +104,12 @@ export function MessageDiffModal({
   edits,
   subsequentEdits = [],
   worktreePath,
+  patch,
 }: MessageDiffModalProps) {
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>('split')
-  const [viewMode, setViewMode] = useState<ViewMode>('last')
+  const isMobile = useIsMobile()
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() =>
+    isMobile ? 'unified' : 'split'
+  )
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
 
@@ -130,11 +133,19 @@ export function MessageDiffModal({
   const { data: fileContent, isLoading: isLoadingFile } = useQuery({
     queryKey: ['file-content', filePath],
     queryFn: () => invoke<string>('read_file_content', { path: filePath }),
-    enabled: isOpen && viewMode === 'last',
+    enabled: isOpen && !patch,
     staleTime: 10_000,
   })
 
   const currentChangeFile = useMemo(() => {
+    if (patch) {
+      try {
+        const patches = parsePatchFiles(patch)
+        return patches[0]?.files[0] ?? null
+      } catch {
+        return null
+      }
+    }
     if (!fileContent) return null
     try {
       // Step 1: undo subsequent messages' edits → get file state right after THIS message
@@ -163,56 +174,12 @@ export function MessageDiffModal({
     } catch {
       return null
     }
-  }, [fileContent, edits, subsequentEdits, relativePath])
-
-  // ── All changes: full uncommitted git diff ───────────────────────────────
-  const { data: gitDiff, isLoading: isLoadingGit } = useQuery({
-    queryKey: ['git-diff', worktreePath, 'uncommitted'],
-    queryFn: () => {
-      if (!worktreePath) {
-        throw new Error('worktreePath is required to load git diff')
-      }
-      return getGitDiff(worktreePath, 'uncommitted')
-    },
-    enabled: viewMode === 'all' && !!worktreePath && isTauri(),
-    staleTime: 30_000,
-  })
-
-  const allChangesFile = useMemo(() => {
-    if (!gitDiff?.raw_patch) return null
-    try {
-      const patches = parsePatchFiles(gitDiff.raw_patch)
-      for (const patch of patches) {
-        for (const file of patch.files) {
-          const name = file.name || file.prevName || ''
-          const relative = filePath.startsWith((worktreePath ?? '') + '/')
-            ? filePath.slice((worktreePath?.length ?? 0) + 1)
-            : filePath
-          if (
-            name === relative ||
-            name === filePath ||
-            name.endsWith(`/${relative}`) ||
-            relative.endsWith(`/${name}`)
-          ) {
-            return file
-          }
-        }
-      }
-    } catch {
-      return null
-    }
-    return null
-  }, [gitDiff?.raw_patch, filePath, worktreePath])
+  }, [fileContent, edits, subsequentEdits, relativePath, patch])
 
   const currentStats = useMemo(
     () =>
       currentChangeFile ? getHunkLineStats(currentChangeFile.hunks) : null,
     [currentChangeFile]
-  )
-
-  const allStats = useMemo(
-    () => (allChangesFile ? getHunkLineStats(allChangesFile.hunks) : null),
-    [allChangesFile]
   )
 
   const fileDiffOptions = useMemo(
@@ -258,8 +225,8 @@ export function MessageDiffModal({
     })
   }, [openFileMutation])
 
-  // "All changes" relies on the git backend, only available in the native app
-  const allChangesAvailable = isTauri() && !!worktreePath
+  const hasCurrentStats =
+    currentStats && (currentStats.additions > 0 || currentStats.deletions > 0)
 
   return (
     <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
@@ -268,171 +235,101 @@ export function MessageDiffModal({
         style={{ fontSize: 'var(--ui-font-size)' }}
         showCloseButton={false}
       >
-        <DialogTitle className="flex items-center gap-2 shrink-0 flex-wrap">
-          <FileText className="h-4 w-4 shrink-0" />
-          <span className="truncate">{getFilename(filePath)}</span>
-
-          {/* View mode toggle */}
-          <div className="flex items-center bg-muted rounded-lg p-1 ml-2">
-            <button
-              type="button"
-              onClick={() => setViewMode('last')}
-              className={cn(
-                'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                viewMode === 'last'
-                  ? 'bg-background shadow-sm text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              Current change
-              {currentStats &&
-                (currentStats.additions > 0 || currentStats.deletions > 0) && (
-                  <span className="ml-1.5 font-mono opacity-80">
-                    <span className="text-green-500">
-                      +{currentStats.additions}
-                    </span>
-                    <span className="mx-0.5">/</span>
-                    <span className="text-red-500">
-                      -{currentStats.deletions}
-                    </span>
-                  </span>
-                )}
-            </button>
-            {allChangesAvailable && (
-              <button
-                type="button"
-                onClick={() => setViewMode('all')}
-                className={cn(
-                  'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                  viewMode === 'all'
-                    ? 'bg-background shadow-sm text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                All changes
-                {allStats &&
-                  (allStats.additions > 0 || allStats.deletions > 0) && (
-                    <span className="ml-1.5 font-mono opacity-80">
-                      <span className="text-green-500">
-                        +{allStats.additions}
-                      </span>
-                      <span className="mx-0.5">/</span>
-                      <span className="text-red-500">
-                        -{allStats.deletions}
-                      </span>
-                    </span>
-                  )}
-              </button>
+        <div className="flex shrink-0 flex-col gap-2 border-b border-border/60 px-4 pb-3 pt-4 pr-12 sm:flex-row sm:items-center sm:border-0 sm:px-0 sm:pb-0 sm:pt-0 sm:pr-10">
+          <DialogTitle className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+            <FileText className="h-4 w-4 shrink-0" />
+            <span className="truncate">{getFilename(filePath)}</span>
+            {hasCurrentStats && (
+              <span className="shrink-0 font-mono text-sm font-semibold">
+                <span className="text-green-500">
+                  +{currentStats.additions}
+                </span>
+                <span className="mx-1 text-muted-foreground">/</span>
+                <span className="text-red-500">-{currentStats.deletions}</span>
+              </span>
             )}
-          </div>
+          </DialogTitle>
 
-          {/* Diff style toggle */}
-          <div className="flex items-center bg-muted rounded-lg p-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setDiffStyle('split')}
-                  className={cn(
-                    'flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                    diffStyle === 'split'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Columns2 className="h-3.5 w-3.5" />
-                  Split
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Side-by-side view</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setDiffStyle('unified')}
-                  className={cn(
-                    'flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                    diffStyle === 'unified'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Rows3 className="h-3.5 w-3.5" />
-                  Stacked
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Unified view</TooltipContent>
-            </Tooltip>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:right-5"
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </button>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap">
+            {/* Diff style toggle */}
+            <div className="flex items-center rounded-lg bg-muted p-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setDiffStyle('split')}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                      diffStyle === 'split'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Columns2 className="h-3.5 w-3.5" />
+                    Split
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Side-by-side view</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setDiffStyle('unified')}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                      diffStyle === 'unified'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Rows3 className="h-3.5 w-3.5" />
+                    Stacked
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Unified view</TooltipContent>
+              </Tooltip>
+            </div>
+
             {isNativeApp() && (
               <button
                 type="button"
                 onClick={handleOpenExternal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                className="ml-auto flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ExternalLink className="h-4 w-4" />
-                Open in Editor
+                <span className="hidden sm:inline">Open in Editor</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close</span>
-            </button>
           </div>
-        </DialogTitle>
+        </div>
 
         <DialogDescription className="sr-only">
           Changes made to {relativePath} in this message.
         </DialogDescription>
 
-        <div className="flex-1 min-h-0 mt-2 overflow-y-auto space-y-2">
-          {viewMode === 'last' ? (
-            isLoadingFile ? (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                Loading diff…
-              </div>
-            ) : currentChangeFile ? (
-              <DiffBlock fileName={relativePath}>
-                <FileDiff
-                  fileDiff={currentChangeFile}
-                  options={fileDiffOptions}
-                />
-              </DiffBlock>
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                No changes to display
-              </div>
-            )
-          ) : isLoadingGit ? (
+        <div className="min-h-0 flex-1 overflow-y-auto space-y-2 sm:mt-2">
+          {isLoadingFile ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin mr-2" />
               Loading diff…
             </div>
-          ) : allChangesFile ? (
-            <DiffBlock
-              fileName={
-                allChangesFile.name || allChangesFile.prevName || relativePath
-              }
-              prevName={
-                allChangesFile.prevName &&
-                allChangesFile.prevName !== allChangesFile.name
-                  ? allChangesFile.prevName
-                  : undefined
-              }
-            >
-              <FileDiff fileDiff={allChangesFile} options={fileDiffOptions} />
+          ) : currentChangeFile ? (
+            <DiffBlock fileName={relativePath}>
+              <FileDiff fileDiff={currentChangeFile} options={fileDiffOptions} />
             </DiffBlock>
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              No uncommitted changes for this file
+              No changes to display
             </div>
           )}
         </div>

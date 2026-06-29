@@ -5,6 +5,28 @@ export const isMacOS = navigator.platform.includes('Mac')
 export const isWindows = navigator.platform.includes('Win')
 export const isLinux = navigator.platform.includes('Linux')
 
+export type PlatformName = 'mac' | 'windows' | 'linux'
+
+function browserPlatform(): PlatformName {
+  if (isMacOS) return 'mac'
+  if (isWindows) return 'windows'
+  return 'linux'
+}
+
+let serverPlatform: PlatformName = browserPlatform()
+
+export function setServerPlatform(platform: PlatformName): void {
+  serverPlatform = platform
+}
+
+export function getServerPlatform(): PlatformName {
+  return serverPlatform
+}
+
+export function isServerWindows(): boolean {
+  return serverPlatform === 'windows'
+}
+
 /**
  * Pre-open a blank browser tab synchronously during a user gesture.
  * On mobile/web, calling window.open() after an async operation (e.g. WebSocket invoke)

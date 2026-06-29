@@ -28,4 +28,39 @@ describe('terminal primary surface modal regression', () => {
     expect(source).toContain('{currentSessionId ? (')
     expect(source).toContain('<ChatWindow')
   })
+
+  it('auto-restores terminal sessions silently without marking them opened', () => {
+    const source = readSource('src/components/chat/ChatWindow.tsx')
+
+    expect(source).toMatch(
+      /reconnectNativeCliSession\s*\(\s*session\s*,\s*activeWorktreeId/
+    )
+    expect(source).toMatch(/openModal:\s*false/)
+    expect(source).toMatch(/showToast:\s*false/)
+    expect(source).toMatch(/markOpened:\s*false/)
+    expect(source).toContain("session.primary_surface === 'terminal'")
+  })
+
+  it('guards terminal auto-restore against session switches and duplicate spawns', () => {
+    const source = readSource('src/components/chat/ChatWindow.tsx')
+
+    expect(source).toMatch(/if\s*\(\s*isSessionSwitching\s*\)\s*return/)
+    expect(source).toMatch(
+      /if\s*\(\s*autoReconnectingRef\.current\.has\s*\(\s*deferredSessionId\s*\)\s*\)\s*return/
+    )
+    expect(source).toMatch(
+      /autoReconnectingRef\.current\.add\s*\(\s*sessionId\s*\)/
+    )
+    expect(source).toMatch(
+      /autoReconnectingRef\.current\.delete\s*\(\s*sessionId\s*\)/
+    )
+  })
+
+  it('shows a safe recovery state instead of an empty chat for legacy sessions', () => {
+    const source = readSource('src/components/chat/ChatWindow.tsx')
+
+    expect(source).toContain('isTerminalAwaitingReconnect')
+    expect(source).toContain('Terminal session needs to be reconnected')
+    expect(source).toContain('Choose native session')
+  })
 })

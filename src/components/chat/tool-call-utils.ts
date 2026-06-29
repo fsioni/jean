@@ -1,9 +1,11 @@
-import type { ToolCall, ContentBlock, Todo, PlanToolInput } from '@/types/chat'
+import type { ToolCall, ContentBlock, Todo, PlanToolInput, Question } from '@/types/chat'
 import {
   isTodoWrite,
   isCollabToolCall,
   isPlanToolCall,
   isAskUserQuestion,
+  getAskUserQuestions,
+  normalizeQuestionMultipleField,
   normalizeCodexQuestions,
 } from '@/types/chat'
 
@@ -357,17 +359,18 @@ export function buildTimeline(
           }
         }
 
-        const questionToolCall =
-          toolCall.name === 'request_user_input'
-            ? {
-                ...toolCall,
-                input: {
-                  questions: normalizeCodexQuestions(
-                    (toolCall.input as { questions: unknown[] }).questions
+        const rawQuestions = getAskUserQuestions(toolCall.input) ?? []
+        const questionToolCall = {
+          ...toolCall,
+          input: {
+            questions:
+              toolCall.name === 'request_user_input'
+                ? normalizeCodexQuestions(rawQuestions)
+                : normalizeQuestionMultipleField(
+                    rawQuestions as (Question & { multiple?: boolean })[]
                   ),
-                },
-              }
-            : toolCall
+          },
+        }
 
         // Render inline in natural position (not at end)
         result.push({

@@ -1,4 +1,5 @@
 import { isNativeApp } from './environment'
+import { invoke } from './transport'
 
 /**
  * Copy text to clipboard with fallback for insecure contexts (HTTP).
@@ -16,12 +17,22 @@ export async function copyToClipboard(text: string): Promise<void> {
   }
 
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Browser clipboard can be denied in web access after async command work.
+      // Fall through to local fallbacks instead of reporting success with no copy.
+    }
   }
 
   // Fallback for insecure contexts (HTTP web access)
-  execCommandCopyFallback(text)
+  if (execCommandCopyFallback(text)) return
+
+  // Last resort for Jean web access on the same machine: ask the backend to
+  // write the OS clipboard. This fixes command-palette actions that fetch data
+  // asynchronously before copying, which can lose browser user activation.
+  await invoke('write_clipboard_text', { text })
 }
 
 /**
@@ -47,7 +58,9 @@ export async function copyHtmlToClipboard(
   await copyToClipboard(fallbackPlainText)
 }
 
-function execCommandCopyFallback(text: string): void {
+function execCommandCopyFallback(text: string): boolean {
+  if (typeof document.execCommand !== 'function') return false
+
   const textarea = document.createElement('textarea')
   textarea.value = text
   textarea.style.position = 'fixed'
@@ -58,7 +71,7 @@ function execCommandCopyFallback(text: string): void {
   textarea.focus()
   textarea.select()
   try {
-    document.execCommand('copy')
+    return document.execCommand('copy')
   } finally {
     document.body.removeChild(textarea)
   }

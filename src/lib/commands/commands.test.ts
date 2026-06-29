@@ -221,6 +221,16 @@ describe('Project Commands', () => {
     expect(useUIStore.getState().onboardingOpen).toBe(false)
     expect(useUIStore.getState().onboardingManuallyTriggered).toBe(false)
   })
+
+  it('backend setup command opens onboarding in manual install mode', async () => {
+    const result = await executeCommand('help.install-ai-backends', mockContext)
+
+    expect(result.success).toBe(true)
+    expect(useUIStore.getState().onboardingOpen).toBe(true)
+    expect(useUIStore.getState().onboardingManuallyTriggered).toBe(true)
+    expect(useUIStore.getState().onboardingDismissed).toBe(false)
+    expect(useUIStore.getState().featureTourOpen).toBe(false)
+  })
 })
 
 describe('Notification Commands', () => {

@@ -62,7 +62,7 @@ export function resolveApprovalLabel(
     resolvedBackend === 'codex'
       ? (preferences.selected_codex_model ?? 'gpt-5.5')
       : resolvedBackend === 'opencode'
-        ? (preferences.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
+        ? (preferences.selected_opencode_model ?? 'opencode/gpt-5.5')
         : resolvedBackend === 'cursor'
           ? (preferences.selected_cursor_model ?? 'cursor/auto')
           : resolvedBackend === 'commandcode'

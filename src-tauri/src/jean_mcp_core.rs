@@ -138,7 +138,7 @@ pub fn tool_registry() -> Value {
         {"name":"list_security_issues","description":"List Dependabot security alerts for a project using the same backend command as the UI. Pass projectId; the server resolves the repo path.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"state":{"type":"string","enum":["open","dismissed","fixed","auto_dismissed","all"],"default":"open"}},"required":["projectId"],"additionalProperties":false}},
         {"name":"list_security_advisories","description":"List repository security advisories for a project using the same backend command as the UI. Pass projectId; the server resolves the repo path.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"state":{"type":"string","enum":["draft","published","triage","closed","all"],"default":"all"}},"required":["projectId"],"additionalProperties":false}},
         {"name":"list_linear_issues","description":"List Linear issues for a project using the same backend command as the UI. Pass projectId; Linear API config is resolved from project/global settings.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"}},"required":["projectId"],"additionalProperties":false}},
-        {"name":"create_worktree","description":"Create a new worktree for a project. If issueNumber or prNumber is provided, Jean fetches that context and attaches it to the worktree. Pass action=\"start_autoinvestigating\" to create a session and start investigating the issue/PR with the Magic Prompts settings default backend/model. This never switches/opens Jean's UI unless the user opens the worktree separately.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"baseBranch":{"type":"string"},"customName":{"type":"string"},"issueNumber":{"type":"integer","minimum":1},"prNumber":{"type":"integer","minimum":1},"action":{"type":"string","enum":["start_autoinvestigating"]}},"required":["projectId"],"additionalProperties":false}},
+        {"name":"create_worktree","description":"Create a new worktree for a project. Provide issueNumber or prNumber for a GitHub issue/PR, or linearIssueIdentifier (e.g. \"PLA-215\") for a Linear issue; these are mutually exclusive. Jean fetches the chosen context and attaches it to the worktree, reusing the same branch naming and context-loading as the Jean UI. Pass action=\"start_autoinvestigating\" to create a session and start investigating the issue/PR/Linear issue with the Magic Prompts settings default backend/model. This never switches/opens Jean's UI unless the user opens the worktree separately.","inputSchema":{"type":"object","properties":{"projectId":{"type":"string"},"baseBranch":{"type":"string"},"customName":{"type":"string"},"issueNumber":{"type":"integer","minimum":1},"prNumber":{"type":"integer","minimum":1},"linearIssueIdentifier":{"type":"string","description":"Linear issue identifier like \"PLA-215\". Mutually exclusive with issueNumber/prNumber."},"action":{"type":"string","enum":["start_autoinvestigating"]}},"required":["projectId"],"additionalProperties":false}},
         {"name":"update_worktree_labels","description":"Update native Jean worktree labels. Use action=add/remove/set/clear. Returns the updated worktree.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"action":{"type":"string","enum":["add","remove","set","clear"]},"label":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string","description":"Hex color like #eab308. Optional for add; ignored by remove."},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name"],"additionalProperties":false},"labels":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string"},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name","color"],"additionalProperties":false}}},"required":["worktreeId","action"],"additionalProperties":false}},
         {"name":"list_sessions","description":"List chat sessions in a worktree without loading full message history. Use before creating a session to avoid duplicates.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"includeArchived":{"type":"boolean","default":false}},"required":["worktreeId"],"additionalProperties":false}},
         {"name":"create_session","description":"Create a new chat session in an existing worktree. Returns the session id needed for send_chat_message.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"name":{"type":"string"},"backend":{"type":"string","enum":["claude","codex","cursor","opencode"]}},"required":["worktreeId"],"additionalProperties":false}},
@@ -300,19 +300,19 @@ async fn run_tool(
 
             let issue_number = args.get("issueNumber").and_then(|v| v.as_u64());
             let pr_number = args.get("prNumber").and_then(|v| v.as_u64());
-            if issue_number.is_some() && pr_number.is_some() {
-                return Err(ToolError::invalid_params(
-                    "Pass either issueNumber or prNumber, not both",
-                ));
-            }
-            if action == Some("start_autoinvestigating")
-                && issue_number.is_none()
-                && pr_number.is_none()
-            {
-                return Err(ToolError::invalid_params(
-                    "action=start_autoinvestigating requires issueNumber or prNumber",
-                ));
-            }
+            let linear_identifier = args
+                .get("linearIssueIdentifier")
+                .or_else(|| args.get("linear_issue_identifier"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            validate_create_worktree_inputs(
+                issue_number.is_some(),
+                pr_number.is_some(),
+                linear_identifier.is_some(),
+                action,
+            )?;
 
             let mut payload = serde_json::Map::new();
             payload.insert("projectId".to_string(), Value::String(project_id.clone()));
@@ -391,12 +391,85 @@ async fn run_tool(
                     }),
                 );
             }
+            if let Some(ref identifier) = linear_identifier {
+                let number = parse_linear_issue_number(identifier).ok_or_else(|| {
+                    ToolError::invalid_params(format!(
+                        "Invalid Linear issue identifier: {identifier}"
+                    ))
+                })?;
+                let resolved = dispatch_command(
+                    app,
+                    "get_linear_issue_by_number",
+                    json!({ "projectId": project_id.as_str(), "issueNumber": number }),
+                )
+                .await
+                .map_err(ToolError::internal)?;
+                // get_linear_issue_by_number returns Option<LinearIssue> → null when missing.
+                if resolved.is_null() {
+                    return Err(ToolError::internal(format!(
+                        "Linear issue {identifier} not found"
+                    )));
+                }
+                // A bare number lookup can resolve to a different team's issue (e.g. input
+                // ABC-215 resolving to PLA-215). Verify the resolved identifier matches.
+                let resolved_identifier = resolved
+                    .get("identifier")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !resolved_identifier.eq_ignore_ascii_case(identifier) {
+                    return Err(ToolError::invalid_params(format!(
+                        "Linear issue {identifier} not found (resolved to {resolved_identifier})"
+                    )));
+                }
+                let issue_id = resolved
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolError::internal("Linear issue missing id"))?
+                    .to_string();
+                let detail = dispatch_command(
+                    app,
+                    "get_linear_issue",
+                    json!({ "projectId": project_id.as_str(), "issueId": issue_id.as_str() }),
+                )
+                .await
+                .map_err(ToolError::internal)?;
+                if !has_custom_name {
+                    let title = detail.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                    let linear_branch = crate::projects::generate_branch_name_from_linear_issue(
+                        resolved_identifier,
+                        title,
+                    );
+                    let resolved_name =
+                        resolve_non_conflicting_worktree_name(app, &project_id, &linear_branch)?;
+                    if resolved_name != linear_branch {
+                        payload.insert(
+                            "customName".to_string(),
+                            Value::String(resolved_name.clone()),
+                        );
+                    }
+                }
+                payload.insert(
+                    "linearContext".to_string(),
+                    json!({
+                        "id": detail.get("id").cloned().unwrap_or(Value::Null),
+                        "identifier": detail
+                            .get("identifier")
+                            .cloned()
+                            .unwrap_or(json!(resolved_identifier)),
+                        "title": detail.get("title").cloned().unwrap_or(Value::Null),
+                        "description": detail.get("description").cloned().unwrap_or(Value::Null),
+                        "comments": detail.get("comments").cloned().unwrap_or(json!([])),
+                    }),
+                );
+            }
             let worktree = dispatch_command(app, "create_worktree", Value::Object(payload))
                 .await
                 .map_err(ToolError::internal)?;
             if action == Some("start_autoinvestigating") {
                 let kind = if issue_number.is_some() {
                     InvestigationKind::Issue
+                } else if linear_identifier.is_some() {
+                    InvestigationKind::Linear
                 } else {
                     InvestigationKind::Pr
                 };
@@ -816,10 +889,49 @@ fn resolve_non_conflicting_worktree_name(
     }
 }
 
+/// Validate the mutually-exclusive context inputs for create_worktree.
+/// GitHub `issueNumber`/`prNumber` and Linear `linearIssueIdentifier` are mutually
+/// exclusive, and `action=start_autoinvestigating` needs one of them.
+fn validate_create_worktree_inputs(
+    has_issue: bool,
+    has_pr: bool,
+    has_linear: bool,
+    action: Option<&str>,
+) -> Result<(), ToolError> {
+    if has_issue && has_pr {
+        return Err(ToolError::invalid_params(
+            "Pass either issueNumber or prNumber, not both",
+        ));
+    }
+    if has_linear && (has_issue || has_pr) {
+        return Err(ToolError::invalid_params(
+            "Pass a GitHub issueNumber/prNumber or a linearIssueIdentifier, not both",
+        ));
+    }
+    if action == Some("start_autoinvestigating") && !has_issue && !has_pr && !has_linear {
+        return Err(ToolError::invalid_params(
+            "action=start_autoinvestigating requires issueNumber, prNumber, or linearIssueIdentifier",
+        ));
+    }
+    Ok(())
+}
+
+/// Parse the numeric part of a Linear issue identifier (e.g. "PLA-215" → 215).
+/// Linear's `issueByNumber`-style lookup keys off the number; the caller verifies
+/// the resolved issue's identifier matches the requested one.
+fn parse_linear_issue_number(identifier: &str) -> Option<i64> {
+    let digits = identifier.trim().rsplit('-').next()?.trim();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok().filter(|n| *n > 0)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InvestigationKind {
     Issue,
     Pr,
+    Linear,
 }
 
 #[derive(Debug)]
@@ -1070,6 +1182,10 @@ fn resolve_investigation_selection(
     let model = match kind {
         InvestigationKind::Issue => prefs.magic_prompt_models.investigate_issue_model.clone(),
         InvestigationKind::Pr => prefs.magic_prompt_models.investigate_pr_model.clone(),
+        InvestigationKind::Linear => prefs
+            .magic_prompt_models
+            .investigate_linear_issue_model
+            .clone(),
     };
     let magic_backend = match kind {
         InvestigationKind::Issue => prefs
@@ -1079,6 +1195,10 @@ fn resolve_investigation_selection(
         InvestigationKind::Pr => prefs
             .magic_prompt_backends
             .investigate_pr_backend
+            .as_deref(),
+        InvestigationKind::Linear => prefs
+            .magic_prompt_backends
+            .investigate_linear_issue_backend
             .as_deref(),
     };
     let provider = match kind {
@@ -1092,15 +1212,28 @@ fn resolve_investigation_selection(
             .investigate_pr_provider
             .clone()
             .or_else(|| prefs.default_provider.clone()),
+        InvestigationKind::Linear => prefs
+            .magic_prompt_providers
+            .investigate_linear_issue_provider
+            .clone()
+            .or_else(|| prefs.default_provider.clone()),
     };
     let effort = match kind {
         InvestigationKind::Issue => prefs.magic_prompt_efforts.investigate_issue_effort.clone(),
         InvestigationKind::Pr => prefs.magic_prompt_efforts.investigate_pr_effort.clone(),
+        InvestigationKind::Linear => prefs
+            .magic_prompt_efforts
+            .investigate_linear_issue_effort
+            .clone(),
     }
     .or_else(|| Some(prefs.default_codex_reasoning_effort.clone()));
     let execution_mode = match kind {
         InvestigationKind::Issue => prefs.magic_prompt_modes.investigate_issue_mode.clone(),
         InvestigationKind::Pr => prefs.magic_prompt_modes.investigate_pr_mode.clone(),
+        InvestigationKind::Linear => prefs
+            .magic_prompt_modes
+            .investigate_linear_issue_mode
+            .clone(),
     };
 
     let worktree_id = worktree.get("id").and_then(|v| v.as_str());
@@ -1164,6 +1297,28 @@ pub(crate) fn build_investigation_prompt(
             template
                 .replace("{prWord}", "PR")
                 .replace("{prRefs}", &number)
+        }
+        InvestigationKind::Linear => {
+            let identifier = worktree
+                .get("linear_issue_identifier")
+                .or_else(|| worktree.get("linearIssueIdentifier"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "the loaded Linear issue".to_string());
+            let template = prefs
+                .magic_prompts
+                .investigate_linear_issue
+                .clone()
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(crate::default_investigate_linear_issue_prompt);
+            // The full Linear issue context is loaded into the session via the
+            // context file written during worktree creation, so {linearContext}
+            // is cleared here to avoid a dangling placeholder (mirrors how the
+            // GitHub MCP path references only the issue/PR number).
+            template
+                .replace("{linearWord}", "issue")
+                .replace("{linearRefs}", &identifier)
+                .replace("{linearContext}", "")
         }
     }
 }
@@ -1316,6 +1471,77 @@ mod tests {
             create_worktree["inputSchema"]["properties"]["prNumber"]["type"],
             "integer"
         );
+    }
+
+    #[test]
+    fn create_worktree_schema_exposes_linear_identifier() {
+        let tools = tool_registry();
+        let create_worktree = find_tool(&tools, "create_worktree");
+        assert_eq!(
+            create_worktree["inputSchema"]["properties"]["linearIssueIdentifier"]["type"], "string",
+            "create_worktree must expose a linearIssueIdentifier input"
+        );
+    }
+
+    #[test]
+    fn parse_linear_issue_number_extracts_trailing_number() {
+        assert_eq!(parse_linear_issue_number("PLA-215"), Some(215));
+        assert_eq!(parse_linear_issue_number("eng-12"), Some(12));
+        assert_eq!(parse_linear_issue_number("  ABC-7  "), Some(7));
+        assert_eq!(parse_linear_issue_number("215"), Some(215));
+    }
+
+    #[test]
+    fn parse_linear_issue_number_rejects_invalid() {
+        assert_eq!(parse_linear_issue_number("PLA-"), None);
+        assert_eq!(parse_linear_issue_number("PLA-abc"), None);
+        assert_eq!(parse_linear_issue_number(""), None);
+        assert_eq!(parse_linear_issue_number("PLA-0"), None);
+    }
+
+    #[test]
+    fn validate_inputs_rejects_github_and_linear_together() {
+        // issueNumber + linearIssueIdentifier
+        let err = validate_create_worktree_inputs(true, false, true, None).unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("linearIssueIdentifier"));
+        // prNumber + linearIssueIdentifier
+        let err = validate_create_worktree_inputs(false, true, true, None).unwrap_err();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn validate_inputs_rejects_issue_and_pr_together() {
+        let err = validate_create_worktree_inputs(true, true, false, None).unwrap_err();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn validate_inputs_allows_linear_only_autoinvestigate() {
+        // Linear identifier alone satisfies the autoinvestigate guard.
+        assert!(validate_create_worktree_inputs(
+            false,
+            false,
+            true,
+            Some("start_autoinvestigating")
+        )
+        .is_ok());
+        // No context at all fails the autoinvestigate guard.
+        assert!(validate_create_worktree_inputs(
+            false,
+            false,
+            false,
+            Some("start_autoinvestigating")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn validate_inputs_allows_single_context() {
+        assert!(validate_create_worktree_inputs(true, false, false, None).is_ok());
+        assert!(validate_create_worktree_inputs(false, true, false, None).is_ok());
+        assert!(validate_create_worktree_inputs(false, false, true, None).is_ok());
+        assert!(validate_create_worktree_inputs(false, false, false, None).is_ok());
     }
 
     #[test]

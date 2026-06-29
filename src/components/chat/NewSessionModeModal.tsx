@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquarePlus, Loader2, Terminal, Zap } from 'lucide-react'
+import {
+  ArrowLeft,
+  MessageSquarePlus,
+  Loader2,
+  Terminal,
+  Zap,
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -9,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
+import { invoke } from '@/lib/transport'
 import { useCreateSession } from '@/services/chat'
 import { useClaudeCliStatus } from '@/services/claude-cli'
 import { useCodexCliStatus } from '@/services/codex-cli'
@@ -16,6 +23,7 @@ import { useOpencodeCliStatus } from '@/services/opencode-cli'
 import { useCursorCliStatus } from '@/services/cursor-cli'
 import { usePiCliStatus } from '@/services/pi-cli'
 import { useCommandCodeCliStatus } from '@/services/commandcode-cli'
+import { useGrokCliStatus } from '@/services/grok-cli'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import {
@@ -24,6 +32,7 @@ import {
 } from '@/components/ui/backend-label'
 import type { CliBackend } from '@/types/preferences'
 import { usePreferences } from '@/services/preferences'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
   NativeCliSessionsModal,
   type NativeCliSessionKind,
@@ -36,6 +45,7 @@ const BACKEND_ORDER: CliBackend[] = [
   'cursor',
   'pi',
   'commandcode',
+  'grok',
 ]
 
 const backendCommands: Record<CliBackend, string> = {
@@ -45,12 +55,14 @@ const backendCommands: Record<CliBackend, string> = {
   cursor: 'cursor-agent',
   pi: 'pi',
   commandcode: 'commandcode',
+  grok: 'grok',
 }
 
 const YOLO_ARGS_BY_BACKEND: Partial<Record<CliBackend, string[]>> = {
   claude: ['--permission-mode', 'bypassPermissions'],
   codex: ['--dangerously-bypass-approvals-and-sandbox'],
   cursor: ['--yolo', '--sandbox', 'disabled'],
+  grok: ['--always-approve', '--sandbox', 'off'],
 }
 
 export function NewSessionModeModal() {
@@ -65,13 +77,17 @@ export function NewSessionModeModal() {
   const commandcodeStatus = useCommandCodeCliStatus({
     enabled: target !== null,
   })
+  const grokStatus = useGrokCliStatus({ enabled: target !== null })
   const { data: preferences } = usePreferences()
   const [nativePickerKind, setNativePickerKind] =
     useState<NativeCliSessionKind | null>(null)
   const [nativePickerInitialCommandArgs, setNativePickerInitialCommandArgs] =
     useState<string[]>([])
+  const [mobileBackendActions, setMobileBackendActions] =
+    useState<CliBackend | null>(null)
   const autoHandledTargetRef = useRef<string | null>(null)
   const open = target !== null
+  const isMobile = useIsMobile()
 
   const installedBackendChoices = useMemo(
     () =>
@@ -87,7 +103,9 @@ export function NewSessionModeModal() {
                   ? cursorStatus
                   : backend === 'pi'
                     ? piStatus
-                    : commandcodeStatus
+                    : backend === 'commandcode'
+                      ? commandcodeStatus
+                      : grokStatus
         return {
           backend,
           shortcut: String(index + 2),
@@ -106,6 +124,8 @@ export function NewSessionModeModal() {
       piStatus.data?.path,
       commandcodeStatus.data?.installed,
       commandcodeStatus.data?.path,
+      grokStatus.data?.installed,
+      grokStatus.data?.path,
       opencodeStatus.data?.installed,
       opencodeStatus.data?.path,
     ]
@@ -158,13 +178,24 @@ export function NewSessionModeModal() {
       { worktreeId, worktreePath },
       {
         onSuccess: session => {
+          const defaultExecutionMode =
+            preferences?.default_execution_mode ?? 'plan'
+          useChatStore
+            .getState()
+            .setExecutionMode(session.id, defaultExecutionMode)
+          invoke('update_session_state', {
+            worktreeId,
+            worktreePath,
+            sessionId: session.id,
+            selectedExecutionMode: defaultExecutionMode,
+          }).catch(() => undefined)
           useChatStore.getState().setActiveSession(worktreeId, session.id)
           useUIStore.getState().setSessionPrimarySurface(session.id, 'chat')
           openSessionModal(session.id, worktreeId, worktreePath)
         },
       }
     )
-  }, [close, createSession, openSessionModal, target])
+  }, [close, createSession, openSessionModal, preferences, target])
 
   const choosePlainTerminal = useCallback(() => {
     setNativePickerInitialCommandArgs([])
@@ -174,6 +205,7 @@ export function NewSessionModeModal() {
   const chooseBackendTerminal = useCallback((backend: CliBackend) => {
     setNativePickerInitialCommandArgs([])
     setNativePickerKind(backend)
+    setMobileBackendActions(null)
   }, [])
 
   const chooseBackendTerminalYolo = useCallback((backend: CliBackend) => {
@@ -181,12 +213,14 @@ export function NewSessionModeModal() {
     if (!yoloArgs) return
     setNativePickerInitialCommandArgs(yoloArgs)
     setNativePickerKind(backend)
+    setMobileBackendActions(null)
   }, [])
 
   const closeAll = useCallback(() => {
     autoHandledTargetRef.current = null
     setNativePickerKind(null)
     setNativePickerInitialCommandArgs([])
+    setMobileBackendActions(null)
     close()
   }, [close])
 
@@ -268,79 +302,122 @@ export function NewSessionModeModal() {
         onOpenChange={nextOpen => !nextOpen && closeAll()}
       >
         <DialogContent className="w-[min(420px,calc(100vw-32px))] gap-3 p-4 sm:max-w-[420px]">
-          <DialogHeader className="space-y-1 pr-6">
-            <DialogTitle className="text-base font-semibold">
-              New session
-            </DialogTitle>
-            <DialogDescription className="text-xs leading-5">
-              Choose what to open for this worktree.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid min-w-0 gap-2">
-            <NewSessionChoice
-              icon={
-                createSession.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <MessageSquarePlus className="size-4" />
-                )
-              }
-              title="Jean Chat"
-              subtitle="Normal ChatWindow session with Jean features"
-              badge="Default"
-              shortcut="↵"
+          {mobileBackendActions ? (
+            <MobileBackendActions
+              backend={mobileBackendActions}
               disabled={createSession.isPending}
-              onClick={chooseChat}
+              onBack={() => setMobileBackendActions(null)}
+              onNormal={() => chooseBackendTerminal(mobileBackendActions)}
+              onYolo={() => chooseBackendTerminalYolo(mobileBackendActions)}
             />
+          ) : (
+            <>
+              <DialogHeader className="space-y-1 pr-6">
+                <DialogTitle className="text-base font-semibold">
+                  New session
+                </DialogTitle>
+                <DialogDescription className="text-xs leading-5">
+                  Choose what to open for this worktree.
+                </DialogDescription>
+              </DialogHeader>
 
-            <NewSessionChoice
-              icon={<Terminal className="size-4" />}
-              title="Terminal"
-              subtitle="Open a plain terminal on this worktree"
-              shortcut="1"
-              disabled={createSession.isPending}
-              onClick={choosePlainTerminal}
-            />
-
-            <div
-              aria-hidden="true"
-              data-testid="new-session-backend-separator"
-              className="my-1 h-px bg-border/70"
-            />
-
-            {installedBackendChoices.map(choice => {
-              const Icon = getBackendIcon(choice.backend)
-              const label = getBackendPlainLabel(choice.backend)
-              const yoloArgs = YOLO_ARGS_BY_BACKEND[choice.backend]
-              return (
-                <NativeBackendChoice
-                  key={choice.backend}
-                  icon={<Icon className="size-4" />}
-                  title={label}
-                  subtitle={`Open native ${label} in a terminal session`}
-                  shortcut={choice.shortcut}
-                  yoloAvailable={Boolean(yoloArgs)}
+              <div className="grid min-w-0 gap-2">
+                <NewSessionChoice
+                  icon={
+                    createSession.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <MessageSquarePlus className="size-4" />
+                    )
+                  }
+                  title="Jean Chat"
+                  subtitle="Normal ChatWindow session with Jean features"
+                  badge="Default"
+                  shortcut="↵"
+                  showShortcut={!isMobile}
                   disabled={createSession.isPending}
-                  onClick={() => chooseBackendTerminal(choice.backend)}
-                  onYoloClick={() => chooseBackendTerminalYolo(choice.backend)}
+                  onClick={chooseChat}
                 />
-              )
-            })}
 
-            {isCheckingBackends && installedBackendChoices.length === 0 && (
-              <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Checking installed backends…
-              </div>
-            )}
+                <NewSessionChoice
+                  icon={<Terminal className="size-4" />}
+                  title="Terminal"
+                  subtitle="Open a plain terminal on this worktree"
+                  shortcut="1"
+                  showShortcut={!isMobile}
+                  disabled={createSession.isPending}
+                  onClick={choosePlainTerminal}
+                />
 
-            {!isCheckingBackends && installedBackendChoices.length === 0 && (
-              <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
-                No installed backend CLIs found.
+                <div
+                  aria-hidden="true"
+                  data-testid="new-session-backend-separator"
+                  className="my-1 h-px bg-border/70"
+                />
+
+                {isMobile && installedBackendChoices.length > 0 && (
+                  <div className="grid gap-2">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      AI backends
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {installedBackendChoices.map(choice => {
+                        const Icon = getBackendIcon(choice.backend)
+                        const label = getBackendPlainLabel(choice.backend)
+                        return (
+                          <MobileBackendChoice
+                            key={choice.backend}
+                            icon={<Icon className="size-4" />}
+                            title={label}
+                            disabled={createSession.isPending}
+                            onClick={() =>
+                              setMobileBackendActions(choice.backend)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {!isMobile &&
+                  installedBackendChoices.map(choice => {
+                    const Icon = getBackendIcon(choice.backend)
+                    const label = getBackendPlainLabel(choice.backend)
+                    const yoloArgs = YOLO_ARGS_BY_BACKEND[choice.backend]
+                    return (
+                      <NativeBackendChoice
+                        key={choice.backend}
+                        icon={<Icon className="size-4" />}
+                        title={label}
+                        subtitle={`Open native ${label} in a terminal session`}
+                        shortcut={choice.shortcut}
+                        yoloAvailable={Boolean(yoloArgs)}
+                        disabled={createSession.isPending}
+                        onClick={() => chooseBackendTerminal(choice.backend)}
+                        onYoloClick={() =>
+                          chooseBackendTerminalYolo(choice.backend)
+                        }
+                      />
+                    )
+                  })}
+
+                {isCheckingBackends && installedBackendChoices.length === 0 && (
+                  <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Checking installed backends…
+                  </div>
+                )}
+
+                {!isCheckingBackends &&
+                  installedBackendChoices.length === 0 && (
+                    <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+                      No installed backend CLIs found.
+                    </div>
+                  )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
       {target && (
@@ -361,6 +438,102 @@ export function NewSessionModeModal() {
         />
       )}
     </>
+  )
+}
+
+function MobileBackendActions({
+  backend,
+  disabled,
+  onBack,
+  onNormal,
+  onYolo,
+}: {
+  backend: CliBackend
+  disabled?: boolean
+  onBack: () => void
+  onNormal: () => void
+  onYolo: () => void
+}) {
+  const label = getBackendPlainLabel(backend)
+  const yoloAvailable = Boolean(YOLO_ARGS_BY_BACKEND[backend])
+
+  return (
+    <>
+      <DialogHeader className="space-y-1 pr-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="mb-1 inline-flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" />
+          Back
+        </button>
+        <DialogTitle className="text-base font-semibold">{label}</DialogTitle>
+        <DialogDescription className="text-xs leading-5">
+          Choose how to start {label} for this worktree.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onNormal}
+          className={cn(
+            'rounded-lg border border-border/70 bg-muted/25 px-3 py-3 text-left text-sm font-medium transition-colors',
+            'hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            disabled && 'cursor-not-allowed opacity-50 hover:bg-muted/25'
+          )}
+        >
+          Start normal
+        </button>
+        {yoloAvailable && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onYolo}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-3 text-left text-sm font-medium transition-colors',
+              'hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              disabled && 'cursor-not-allowed opacity-50 hover:bg-muted/25'
+            )}
+          >
+            <Zap className="size-4 text-destructive" />
+            Start yolo
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+function MobileBackendChoice({
+  icon,
+  title,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode
+  title: string
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-3 text-left transition-colors',
+        'hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        disabled && 'cursor-not-allowed opacity-50 hover:bg-muted/25'
+      )}
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+        {icon}
+      </span>
+      <span className="min-w-0 truncate text-sm font-medium">{title}</span>
+    </button>
   )
 }
 
@@ -404,7 +577,7 @@ function NativeBackendChoice({
         <span className="flex items-center gap-2 text-sm font-medium leading-none">
           {title}
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">
+        <span className="mt-1 block text-xs leading-snug text-muted-foreground">
           {subtitle}
         </span>
       </button>
@@ -438,6 +611,7 @@ function NewSessionChoice({
   subtitle,
   badge,
   shortcut,
+  showShortcut = true,
   disabled,
   onClick,
 }: {
@@ -446,6 +620,7 @@ function NewSessionChoice({
   subtitle: string
   badge?: string
   shortcut: string
+  showShortcut?: boolean
   disabled?: boolean
   onClick: () => void
 }) {
@@ -472,11 +647,11 @@ function NewSessionChoice({
             </span>
           )}
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">
+        <span className="mt-1 block text-xs leading-snug text-muted-foreground">
           {subtitle}
         </span>
       </span>
-      <Kbd className="shrink-0 text-[10px]">{shortcut}</Kbd>
+      {showShortcut && <Kbd className="shrink-0 text-[10px]">{shortcut}</Kbd>}
     </button>
   )
 }

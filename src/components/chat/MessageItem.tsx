@@ -51,7 +51,11 @@ import {
   extractSkillPaths,
   stripAllMarkers,
 } from './message-content-utils'
-import { hasQuestionAnswerOutput } from '@/types/chat'
+import {
+  getAskUserQuestions,
+  hasQuestionAnswerOutput,
+  normalizeQuestionMultipleField,
+} from '@/types/chat'
 import { MessageSettingsBadges } from '@/components/chat/MessageSettingsBadges'
 import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 
@@ -546,6 +550,7 @@ export const MessageItem = memo(function MessageItem({
                             return (
                               <SteeredPromptGroup
                                 texts={item.texts}
+                                worktreePath={worktreePath}
                                 onCopyText={
                                   onCopyToInput
                                     ? handleCopySteeredText
@@ -590,16 +595,11 @@ export const MessageItem = memo(function MessageItem({
                                 item.tool.id
                               ) ||
                               hasQuestionAnswerOutput(item.tool.output)
-                            const rawInput = item.tool.input as {
-                              questions: (Question & { multiple?: boolean })[]
-                            }
-                            const normalizedQuestions = rawInput.questions.map(
-                              q => ({
-                                ...q,
-                                multiSelect:
-                                  q.multiSelect ?? q.multiple === true,
-                              })
-                            )
+                            const normalizedQuestions =
+                              normalizeQuestionMultipleField(
+                                (getAskUserQuestions(item.tool.input) ??
+                                  []) as (Question & { multiple?: boolean })[]
+                              )
                             return (
                               <AskUserQuestion
                                 toolCallId={item.tool.id}
@@ -857,6 +857,7 @@ export const MessageItem = memo(function MessageItem({
               <TooltipTrigger asChild>
                 <button
                   type="button"
+                  aria-label="Copy message to input"
                   onClick={handleCopyToInput}
                   className="shrink-0 mt-2 p-1 rounded cursor-pointer text-muted-foreground/0 [@media(pointer:coarse)]:text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50 group-hover:text-muted-foreground/50 transition-colors"
                 >

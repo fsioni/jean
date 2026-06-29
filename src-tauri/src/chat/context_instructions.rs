@@ -139,7 +139,9 @@ fn build_system_prompt_parts(
         }
     }
 
-    parts.push(super::RECAP_INSTRUCTION.to_string());
+    if super::should_add_recap_instruction(app) {
+        parts.push(super::RECAP_INSTRUCTION.to_string());
+    }
 
     log::debug!(
         "Prepared {} system prompt parts for backend terminal session {session_id}",

@@ -459,6 +459,12 @@ export function ChatWindow({
   // the conversation reappears in its terminal surface. The ref guards against
   // a duplicate spawn while the async relaunch is in flight.
   const autoReconnectingRef = useRef<Set<string>>(new Set())
+  const [terminalReconnectError, setTerminalReconnectError] = useState<
+    string | null
+  >(null)
+  useEffect(() => {
+    setTerminalReconnectError(null)
+  }, [deferredSessionId])
   useEffect(() => {
     if (!deferredSessionId || !session || !activeWorktreeId) return
     // `primarySurface`/`sessionTerminalId` are keyed on `activeSessionId`, while
@@ -466,18 +472,25 @@ export function ChatWindow({
     // mismatch could relaunch the previous session's terminal (and yank the user
     // back to it). Wait until the deferred value has caught up to the active one.
     if (isSessionSwitching) return
-    if (primarySurface !== 'terminal' || sessionTerminalId) return
+    const shouldRestoreTerminal =
+      session.primary_surface === 'terminal' || primarySurface === 'terminal'
+    if (!shouldRestoreTerminal || sessionTerminalId) return
     if (!canReconnectSession(session)) return
     if (autoReconnectingRef.current.has(deferredSessionId)) return
 
     const sessionId = deferredSessionId
     autoReconnectingRef.current.add(sessionId)
+    setTerminalReconnectError(null)
     void reconnectNativeCliSession(session, activeWorktreeId, {
       openModal: false,
       showToast: false,
+      markOpened: false,
     })
       .catch(error => {
         logger.error('Auto-reconnect of terminal session failed', { error })
+        setTerminalReconnectError(
+          error instanceof Error ? error.message : String(error)
+        )
       })
       .finally(() => {
         autoReconnectingRef.current.delete(sessionId)
@@ -1210,7 +1223,7 @@ export function ChatWindow({
         (yoloBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : yoloBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : yoloBackend === 'pi'
@@ -1242,6 +1255,7 @@ export function ChatWindow({
             | 'cursor'
             | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, yoloBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
       queryClient.setQueryData<Session>(
@@ -1395,7 +1409,7 @@ export function ChatWindow({
         (buildBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : buildBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : buildBackend === 'pi'
@@ -1427,6 +1441,7 @@ export function ChatWindow({
             | 'cursor'
             | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, buildBackend as CliBackend)
       }
       // Optimistically update TanStack Query cache so UI shows correct backend/model immediately.
       queryClient.setQueryData<Session>(
@@ -1663,7 +1678,7 @@ export function ChatWindow({
         (modeBackend === 'codex'
           ? (preferences?.selected_codex_model ?? 'gpt-5.5')
           : modeBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.3-codex')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : modeBackend === 'pi'
@@ -1695,6 +1710,7 @@ export function ChatWindow({
             | 'cursor'
             | 'commandcode'
         )
+        store.setSelectedBackend(newSession.id, modeBackend as CliBackend)
       }
       queryClient.setQueryData<Session>(
         chatQueryKeys.session(newSession.id),
@@ -2447,7 +2463,24 @@ export function ChatWindow({
   }
 
   const isTerminalPrimarySurface =
-    primarySurface === 'terminal' && !!activeSessionId && !!sessionTerminalId
+    (primarySurface === 'terminal' ||
+      session?.primary_surface === 'terminal') &&
+    !!activeSessionId &&
+    !!sessionTerminalId
+  const isPersistedTerminalSurface =
+    !isSessionSwitching &&
+    session?.id === activeSessionId &&
+    session?.primary_surface === 'terminal'
+  const isTerminalAwaitingReconnect =
+    isPersistedTerminalSurface && !sessionTerminalId
+  const canReconnectTerminal = session ? canReconnectSession(session) : false
+  const handleChooseNativeSession = () => {
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: activeWorktreeId,
+      worktreePath: activeWorktreePath,
+      origin: sessionModalOpen ? 'modal' : 'chat',
+    })
+  }
 
   return (
     <ErrorBoundary
@@ -2495,6 +2528,37 @@ export function ChatWindow({
             sessionId={activeSessionId}
             terminalId={sessionTerminalId}
           />
+        ) : isTerminalAwaitingReconnect ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+            <div className="flex max-w-md flex-col items-center gap-3 text-center">
+              {canReconnectTerminal && !terminalReconnectError ? (
+                <>
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                  <div className="text-sm font-medium">
+                    Reconnecting terminal session…
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm font-medium">
+                    Terminal session needs to be reconnected
+                  </div>
+                  <div className="text-xs leading-5 text-muted-foreground">
+                    {terminalReconnectError ??
+                      'This older session has no saved native CLI resume ID. Choose the matching native session to continue it safely.'}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleChooseNativeSession}
+                  >
+                    Choose native session
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
         ) : showReviewFullWidth && activeSessionId ? (
           <div className="flex-1 min-h-0">
             <ReviewResultsPanel
@@ -2759,6 +2823,7 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
+                                      worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}
@@ -2775,6 +2840,7 @@ export function ChatWindow({
                                       onQuestionAnswer={handleQuestionAnswer}
                                       onQuestionSkip={handleSkipQuestion}
                                       onFileClick={setViewingFilePath}
+                                      worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
                                       getSubmittedAnswers={getSubmittedAnswers}
                                       areQuestionsSkipped={areQuestionsSkipped}

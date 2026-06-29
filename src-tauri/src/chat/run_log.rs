@@ -388,6 +388,7 @@ pub fn start_run(
         codex_thread_id: None,
         codex_turn_id: None,
         cursor_chat_id: None,
+        grok_session_id: None,
     };
 
     with_metadata_mut(
@@ -530,6 +531,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
     // Used to filter out denied blocking tools (AskUserQuestion/ExitPlanMode)
     // that Claude retried multiple times.
     let mut errored_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut errored_tool_outputs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     // OpenCode echoes the user prompt as the first text block in assistant messages.
     // Skip it during replay so the prompt doesn't appear twice.
     let mut skipped_prompt_echo = false;
@@ -798,6 +801,8 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                 // Track errored tool results for filtering
                                 if is_error && !tool_id.is_empty() {
                                     errored_tool_ids.insert(tool_id.to_string());
+                                    errored_tool_outputs
+                                        .insert(tool_id.to_string(), output.to_string());
                                 }
 
                                 // For armed Monitors, capture the tool_result text
@@ -925,10 +930,21 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
     // Filter out blocking tool calls (AskUserQuestion/plan approval) that received
     // error responses. When Jean denies a blocking tool, it sends back an error
     // tool_result. Claude may retry the same tool multiple times, producing duplicate
-    // question/plan UIs on recovery. Only filter errored blocking tools when
+    // question/plan UIs on recovery. Only filter generic errored blocking tools when
     // non-errored blocking tools of the same type remain — never remove ALL blocking
-    // tools, as the last one is the legitimate pending one.
+    // tools, as the last one may be the legitimate pending one.
+    //
+    // Exception: if Claude CLI says the tool is unavailable/not enabled, there is
+    // no pending UI to answer. Drop it unconditionally so Jean does not park the
+    // session on an impossible AskUserQuestion/ExitPlanMode approval.
     if !errored_tool_ids.is_empty() {
+        let is_unavailable_error = |id: &str| {
+            errored_tool_outputs.get(id).is_some_and(|output| {
+                output.contains("No such tool available")
+                    || output.contains("not enabled in this context")
+            })
+        };
+
         let errored_blocking: std::collections::HashSet<String> = tool_calls
             .iter()
             .filter(|tc| {
@@ -939,6 +955,28 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                     && errored_tool_ids.contains(&tc.id)
             })
             .map(|tc| tc.id.clone())
+            .collect();
+
+        let unavailable_blocking: std::collections::HashSet<String> = errored_blocking
+            .iter()
+            .filter(|id| is_unavailable_error(id))
+            .cloned()
+            .collect();
+
+        if !unavailable_blocking.is_empty() {
+            tool_calls.retain(|tc| !unavailable_blocking.contains(&tc.id));
+            content_blocks.retain(|cb| {
+                if let ContentBlock::ToolUse { tool_call_id } = cb {
+                    !unavailable_blocking.contains(tool_call_id)
+                } else {
+                    true
+                }
+            });
+        }
+
+        let errored_blocking: std::collections::HashSet<String> = errored_blocking
+            .difference(&unavailable_blocking)
+            .cloned()
             .collect();
 
         if !errored_blocking.is_empty() {
@@ -1324,6 +1362,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         }
     }
 
@@ -1570,6 +1609,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_run_drops_unavailable_ask_user_question_errors() {
+        let run = sample_run();
+        let tool_id = "toolu_unavailable_question";
+        let lines = vec![
+            serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": "AskUserQuestion",
+                        "input": {
+                            "questions": "[{\"question\":\"Pick one\",\"options\":[{\"label\":\"A\"}]}]"
+                        }
+                    }]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "is_error": true,
+                        "content": "<tool_use_error>Error: No such tool available: AskUserQuestion. AskUserQuestion exists but is not enabled in this context. Use one of the available tools instead.</tool_use_error>"
+                    }]
+                }
+            })
+            .to_string(),
+        ];
+
+        let msg = parse_run_to_message(&lines, &run).unwrap();
+
+        assert!(msg.tool_calls.is_empty());
+        assert!(msg.content_blocks.is_empty());
+    }
+
+    #[test]
     fn parse_run_skips_claude_compaction_summary_text() {
         let run = RunEntry {
             run_id: "run-compact".to_string(),
@@ -1593,6 +1671,7 @@ mod tests {
             codex_thread_id: None,
             codex_turn_id: None,
             cursor_chat_id: None,
+            grok_session_id: None,
         };
 
         let lines = vec![

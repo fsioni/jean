@@ -10,8 +10,21 @@ const mutate = vi.fn()
 const invoke = vi.fn()
 let sessionsData: { sessions: unknown[] }
 let nativeSessionsData: unknown[]
+let opencodeInstalled: boolean
 let cursorInstalled: boolean
 let commandCodeInstalled: boolean
+let grokInstalled: boolean
+let isMobile: boolean
+let defaultExecutionMode: 'plan' | 'build' | 'yolo'
+
+vi.mock('@/services/preferences', () => ({
+  usePreferences: () => ({
+    data: {
+      default_new_session_kind: 'chat',
+      default_execution_mode: defaultExecutionMode,
+    },
+  }),
+}))
 
 vi.mock('@/services/chat', () => ({
   useCreateSession: () => ({
@@ -32,6 +45,10 @@ vi.mock('@/lib/transport', () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }))
 
+vi.mock('@/hooks/use-mobile', () => ({
+  useIsMobile: () => isMobile,
+}))
+
 vi.mock('@/services/claude-cli', () => ({
   useClaudeCliStatus: () => ({
     data: { installed: true, path: '/usr/local/bin/claude' },
@@ -48,7 +65,10 @@ vi.mock('@/services/codex-cli', () => ({
 
 vi.mock('@/services/opencode-cli', () => ({
   useOpencodeCliStatus: () => ({
-    data: { installed: false, path: null },
+    data: {
+      installed: opencodeInstalled,
+      path: opencodeInstalled ? '/usr/local/bin/opencode' : null,
+    },
     isLoading: false,
   }),
 }))
@@ -73,6 +93,16 @@ vi.mock('@/services/commandcode-cli', () => ({
   }),
 }))
 
+vi.mock('@/services/grok-cli', () => ({
+  useGrokCliStatus: () => ({
+    data: {
+      installed: grokInstalled,
+      path: grokInstalled ? '/usr/local/bin/grok' : null,
+    },
+    isLoading: false,
+  }),
+}))
+
 describe('NewSessionModeModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -80,8 +110,12 @@ describe('NewSessionModeModal', () => {
     invoke.mockReset()
     sessionsData = { sessions: [] }
     nativeSessionsData = []
+    opencodeInstalled = false
     cursorInstalled = false
     commandCodeInstalled = false
+    grokInstalled = false
+    isMobile = false
+    defaultExecutionMode = 'plan'
     invoke.mockResolvedValue({
       commandArgs: ['--context-arg', 'context-value'],
     })
@@ -163,9 +197,10 @@ describe('NewSessionModeModal', () => {
     )
   })
 
-  it('marks Command Code, not Cursor, as beta in backend choices', () => {
+  it('marks Command Code and Grok, not Cursor, as beta in backend choices', () => {
     cursorInstalled = true
     commandCodeInstalled = true
+    grokInstalled = true
     useUIStore.getState().openNewSessionModeModal({
       worktreeId: 'worktree-1',
       worktreePath: '/tmp/worktree-1',
@@ -177,9 +212,53 @@ describe('NewSessionModeModal', () => {
     expect(screen.getByText('Cursor')).toBeInTheDocument()
     expect(screen.queryByText('Cursor (Beta)')).toBeNull()
     expect(screen.getByText('Command Code (Beta)')).toBeInTheDocument()
+    expect(screen.getByText('Grok (Beta)')).toBeInTheDocument()
     expect(
       screen.getByText('Open native Command Code (Beta) in a terminal session')
     ).toBeInTheDocument()
+    expect(
+      screen.getByText('Open native Grok (Beta) in a terminal session')
+    ).toBeInTheDocument()
+  })
+
+  it('uses compact backend choices and a normal/yolo step on mobile', () => {
+    cursorInstalled = true
+    commandCodeInstalled = true
+    grokInstalled = true
+    isMobile = true
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    expect(screen.getByText('AI backends')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Claude' })).toBeInTheDocument()
+    expect(
+      screen.queryByText('Open native Claude in a terminal session')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Start Claude in yolo mode' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude' }))
+
+    expect(screen.getByText('Claude')).toBeInTheDocument()
+    expect(
+      screen.getByText('Choose how to start Claude for this worktree.')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Start normal' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Start yolo' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start yolo' }))
+
+    expect(screen.getByText('Claude sessions')).toBeInTheDocument()
   })
 
   it('opens an installed backend picker and starts a new terminal session', async () => {
@@ -249,6 +328,11 @@ describe('NewSessionModeModal', () => {
       expect.any(Object)
     )
     await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('track_native_cli_session', {
+        worktreePath: '/tmp/worktree-1',
+        sessionId: 'session-terminal-1',
+        backend: 'codex',
+      })
       expect(invoke).toHaveBeenCalledWith('prepare_backend_terminal_context', {
         sessionId: 'session-terminal-1',
         worktreeId: 'worktree-1',
@@ -320,18 +404,31 @@ describe('NewSessionModeModal', () => {
 
     fireEvent.click(screen.getByText('New Claude session'))
 
+    const claudeCreateArgs = mutate.mock.calls[0]?.[0] as {
+      nativeSessionId: string
+      terminalCommandArgs: string[]
+    }
     expect(mutate).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         worktreeId: 'worktree-1',
         worktreePath: '/tmp/worktree-1',
         name: 'Claude',
         backend: 'claude',
         primarySurface: 'terminal',
         terminalCommand: '/usr/local/bin/claude',
-        terminalCommandArgs: ['--permission-mode', 'bypassPermissions'],
         terminalLabel: 'Claude',
-      },
+        nativeSessionId: expect.any(String),
+        terminalCommandArgs: [
+          '--permission-mode',
+          'bypassPermissions',
+          '--session-id',
+          expect.any(String),
+        ],
+      }),
       expect.any(Object)
+    )
+    expect(claudeCreateArgs.terminalCommandArgs.at(-1)).toBe(
+      claudeCreateArgs.nativeSessionId
     )
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('prepare_backend_terminal_context', {
@@ -347,6 +444,8 @@ describe('NewSessionModeModal', () => {
       commandArgs: [
         '--permission-mode',
         'bypassPermissions',
+        '--session-id',
+        claudeCreateArgs.nativeSessionId,
         '--context-arg',
         'context-value',
       ],
@@ -410,6 +509,112 @@ describe('NewSessionModeModal', () => {
         ],
       })
     })
+  })
+
+  it('tracks a new OpenCode terminal session before launching it', async () => {
+    opencodeInstalled = true
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: {
+          onSuccess?: (session: {
+            id: string
+            name: string
+            backend?: string
+          }) => void
+        }
+      ) => {
+        opts?.onSuccess?.({
+          id: 'session-opencode',
+          name: 'OpenCode',
+          backend: 'opencode',
+        })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+    fireEvent.click(screen.getByText('OpenCode'))
+    fireEvent.click(screen.getByText('New OpenCode session'))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('track_native_cli_session', {
+        worktreePath: '/tmp/worktree-1',
+        sessionId: 'session-opencode',
+        backend: 'opencode',
+      })
+    })
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: 'opencode',
+        terminalCommand: '/usr/local/bin/opencode',
+      }),
+      expect.any(Object)
+    )
+  })
+
+  it('starts native CLI tracking only after terminal context preparation', async () => {
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: {
+          onSuccess?: (session: {
+            id: string
+            name: string
+            backend?: string
+          }) => void
+        }
+      ) => {
+        opts?.onSuccess?.({
+          id: 'session-codex-prepare-order',
+          name: 'Codex',
+          backend: 'codex',
+        })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+    fireEvent.click(screen.getByText('Codex'))
+    fireEvent.click(screen.getByText('New Codex session'))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('prepare_backend_terminal_context', {
+        sessionId: 'session-codex-prepare-order',
+        worktreeId: 'worktree-1',
+        backend: 'codex',
+      })
+    })
+    expect(invoke).toHaveBeenCalledWith('track_native_cli_session', {
+      worktreePath: '/tmp/worktree-1',
+      sessionId: 'session-codex-prepare-order',
+      backend: 'codex',
+    })
+    const prepareCallOrder =
+      invoke.mock.invocationCallOrder[
+        invoke.mock.calls.findIndex(
+          ([command]) => command === 'prepare_backend_terminal_context'
+        )
+      ]
+    const trackCallOrder =
+      invoke.mock.invocationCallOrder[
+        invoke.mock.calls.findIndex(
+          ([command]) => command === 'track_native_cli_session'
+        )
+      ]
+    if (prepareCallOrder === undefined || trackCallOrder === undefined) {
+      throw new Error('expected prepare and track commands to have been invoked')
+    }
+    expect(prepareCallOrder).toBeLessThan(trackCallOrder)
+    expect(useTerminalStore.getState().terminals['worktree-1']).toHaveLength(1)
   })
 
   it('opens a plain terminal session with shortcut 1', async () => {
@@ -491,7 +696,7 @@ describe('NewSessionModeModal', () => {
     )
   })
 
-  it('continues an existing native CLI terminal session without creating a new one', async () => {
+  it('does not relaunch a legacy native CLI session without a resume ID', async () => {
     const expectedUpdatedAt = new Date(1710000000 * 1000).toLocaleString(
       undefined,
       {
@@ -533,19 +738,14 @@ describe('NewSessionModeModal', () => {
 
     expect(mutate).not.toHaveBeenCalled()
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('prepare_backend_terminal_context', {
-        sessionId: 'existing-codex-session',
-        worktreeId: 'worktree-1',
-        backend: 'codex',
-      })
+      expect(
+        useTerminalStore.getState().terminals['worktree-1'] ?? []
+      ).toHaveLength(0)
     })
-    expect(useTerminalStore.getState().terminals['worktree-1']).toHaveLength(1)
-    expect(useChatStore.getState().activeSessionIds['worktree-1']).toBe(
-      'existing-codex-session'
+    expect(invoke).not.toHaveBeenCalledWith(
+      'prepare_backend_terminal_context',
+      expect.any(Object)
     )
-    expect(
-      useChatStore.getState().selectedBackends['existing-codex-session']
-    ).toBe('codex')
   })
 
   it('imports native Codex history into a Jean terminal session', async () => {
@@ -604,6 +804,7 @@ describe('NewSessionModeModal', () => {
         terminalCommand: '/usr/local/bin/codex',
         terminalCommandArgs: ['resume', 'native-codex-thread'],
         terminalLabel: 'Native Codex task',
+        nativeSessionId: 'native-codex-thread',
       },
       expect.any(Object)
     )
@@ -766,5 +967,54 @@ describe('NewSessionModeModal', () => {
     expect(useUIStore.getState().sessionPrimarySurface['session-chat-1']).toBe(
       'chat'
     )
+  })
+
+  it('applies the default execution mode to new Jean chat sessions', () => {
+    defaultExecutionMode = 'yolo'
+    mutate.mockImplementation(
+      (
+        _args: unknown,
+        opts?: { onSuccess?: (session: { id: string }) => void }
+      ) => {
+        opts?.onSuccess?.({ id: 'session-yolo' })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(useChatStore.getState().executionModes['session-yolo']).toBe('yolo')
+    expect(invoke).toHaveBeenCalledWith('update_session_state', {
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      sessionId: 'session-yolo',
+      selectedExecutionMode: 'yolo',
+    })
+  })
+
+  it('shows fixed option descriptions without truncation', () => {
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+
+    const jeanDescription = screen.getByText(
+      'Normal ChatWindow session with Jean features'
+    )
+    const terminalDescription = screen.getByText(
+      'Open a plain terminal on this worktree'
+    )
+
+    expect(jeanDescription).not.toHaveClass('truncate')
+    expect(terminalDescription).not.toHaveClass('truncate')
   })
 })

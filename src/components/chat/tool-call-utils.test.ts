@@ -272,6 +272,44 @@ describe('buildTimeline with fragmented text deltas', () => {
     })
   })
 
+
+  it('renders Claude AskUserQuestion when questions are encoded as JSON string', () => {
+    const tools: ToolCall[] = [
+      {
+        id: 'claude-question-1',
+        name: 'AskUserQuestion',
+        input: {
+          questions:
+            '[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A"}]}]',
+        },
+      },
+    ]
+    const blocks: ContentBlock[] = [
+      { type: 'text', text: 'Need one decision.' },
+      { type: 'tool_use', tool_call_id: 'claude-question-1' },
+    ]
+
+    const timeline = buildTimeline(blocks, tools)
+
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0]).toMatchObject({
+      type: 'askUserQuestion',
+      introText: 'Need one decision.',
+      tool: {
+        input: {
+          questions: [
+            {
+              question: 'Pick one',
+              header: 'Choice',
+              multiSelect: false,
+              options: [{ label: 'A' }],
+            },
+          ],
+        },
+      },
+    })
+  })
+
   it('renders fragmented text as one paragraph item', () => {
     const blocks: ContentBlock[] = [
       { type: 'text', text: 'para1' },

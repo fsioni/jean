@@ -13,6 +13,9 @@ import { Kbd } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { invoke } from '@/lib/transport'
+import { generateId } from '@/lib/uuid'
+import { logger } from '@/lib/logger'
+import { toast } from 'sonner'
 import {
   useCreateSession,
   useNativeCliSessions,
@@ -28,6 +31,10 @@ import {
 } from '@/components/ui/backend-label'
 import type { Session } from '@/types/chat'
 import type { CliBackend } from '@/types/preferences'
+import {
+  getNativeTerminalResumeLaunch,
+  isNativeTerminalBackend,
+} from '@/lib/native-cli-session'
 
 interface PreparedBackendTerminalContext {
   commandArgs: string[]
@@ -287,8 +294,15 @@ export function NativeCliSessionsModal({
   )
 
   const resolveTerminalCommandArgs = useCallback(
-    async (session: Session): Promise<string[]> => {
+    async (
+      session: Session,
+      forcePreparedContext = false
+    ): Promise<string[]> => {
       const savedArgs = session.terminal_command_args ?? []
+      if (forcePreparedContext) {
+        const preparedArgs = await prepareCommandArgs(session.id)
+        return [...savedArgs, ...preparedArgs]
+      }
       if (savedArgs.length === 0) {
         return prepareCommandArgs(session.id)
       }
@@ -302,7 +316,10 @@ export function NativeCliSessionsModal({
   )
 
   const openTerminalSession = useCallback(
-    async (session: Session) => {
+    async (
+      session: Session,
+      options?: { launchMode?: 'new' | 'resume'; trackNativeId?: boolean }
+    ) => {
       setOpeningSessionId(session.id)
       try {
         const terminalStore = useTerminalStore.getState()
@@ -316,10 +333,47 @@ export function NativeCliSessionsModal({
 
         let terminalId = existingTerminal?.id
         if (!terminalId) {
-          const commandArgs = await resolveTerminalCommandArgs(session)
+          const launchMode = options?.launchMode ?? 'resume'
+          const resumeLaunch =
+            launchMode === 'resume'
+              ? getNativeTerminalResumeLaunch(session)
+              : null
+          if (
+            launchMode === 'resume' &&
+            isNativeTerminalBackend(session.backend) &&
+            !!session.terminal_command &&
+            !resumeLaunch
+          ) {
+            toast.error('This legacy terminal session has no saved resume ID', {
+              description:
+                'Choose the matching native session from this list instead.',
+            })
+            return
+          }
+
+          const commandArgs =
+            resumeLaunch?.args ??
+            (await resolveTerminalCommandArgs(session, launchMode === 'new'))
+          if (options?.trackNativeId && backend) {
+            try {
+              await invoke('track_native_cli_session', {
+                worktreePath,
+                sessionId: session.id,
+                backend,
+              })
+            } catch (error) {
+              logger.error('Failed to start native CLI session tracking', {
+                backend,
+                sessionId: session.id,
+                error,
+              })
+              toast.error('Session opened, but its resume ID may not be saved')
+            }
+          }
+
           terminalId = terminalStore.addTerminal(
             worktreeId,
-            session.terminal_command ?? command,
+            resumeLaunch?.command ?? session.terminal_command ?? command,
             session.terminal_label ?? session.name,
             {
               kind: 'session',
@@ -354,7 +408,10 @@ export function NativeCliSessionsModal({
   )
 
   const createNewSession = useCallback(() => {
-    const commandArgs = initialCommandArgs
+    const nativeSessionId = backend === 'claude' ? generateId() : undefined
+    const commandArgs = nativeSessionId
+      ? [...initialCommandArgs, '--session-id', nativeSessionId]
+      : initialCommandArgs
     createSession.mutate(
       {
         worktreeId,
@@ -365,16 +422,27 @@ export function NativeCliSessionsModal({
         terminalCommand: command,
         terminalCommandArgs: commandArgs,
         terminalLabel: label,
+        nativeSessionId,
       },
       {
         onSuccess: session => {
-          void openTerminalSession({
-            ...session,
-            primary_surface: 'terminal',
-            terminal_command: command,
-            terminal_command_args: commandArgs,
-            terminal_label: label,
-          })
+          void openTerminalSession(
+            {
+              ...session,
+              primary_surface: 'terminal',
+              terminal_command: command,
+              terminal_command_args: commandArgs,
+              terminal_label: label,
+              claude_session_id:
+                backend === 'claude'
+                  ? nativeSessionId
+                  : session.claude_session_id,
+            },
+            {
+              launchMode: 'new',
+              trackNativeId: backend === 'codex' || backend === 'opencode',
+            }
+          )
         },
       }
     )
@@ -421,16 +489,32 @@ export function NativeCliSessionsModal({
           terminalCommand: command,
           terminalCommandArgs: resumeArgs,
           terminalLabel: nativeSession.title,
+          nativeSessionId: nativeSession.id,
         },
         {
           onSuccess: session => {
-            void openTerminalSession({
-              ...session,
-              primary_surface: 'terminal',
-              terminal_command: command,
-              terminal_command_args: resumeArgs,
-              terminal_label: nativeSession.title,
-            })
+            void openTerminalSession(
+              {
+                ...session,
+                primary_surface: 'terminal',
+                terminal_command: command,
+                terminal_command_args: resumeArgs,
+                terminal_label: nativeSession.title,
+                claude_session_id:
+                  backend === 'claude'
+                    ? nativeSession.id
+                    : session.claude_session_id,
+                codex_thread_id:
+                  backend === 'codex'
+                    ? nativeSession.id
+                    : session.codex_thread_id,
+                opencode_session_id:
+                  backend === 'opencode'
+                    ? nativeSession.id
+                    : session.opencode_session_id,
+              },
+              { launchMode: 'resume' }
+            )
           },
         }
       )
@@ -546,7 +630,11 @@ export function NativeCliSessionsModal({
                     disabled={
                       openingSessionId !== null || createSession.isPending
                     }
-                    onClick={() => void openTerminalSession(session)}
+                    onClick={() =>
+                      void openTerminalSession(session, {
+                        launchMode: 'resume',
+                      })
+                    }
                     className={cn(
                       'flex w-full min-w-0 items-start gap-3 rounded-lg border border-border/70 bg-muted/25 px-3.5 py-3 text-left transition-colors',
                       'hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

@@ -5,6 +5,7 @@ import { defaultPreferences } from '@/types/preferences'
 import { MagicPromptsPane } from './MagicPromptsPane'
 
 const mutateMock = vi.fn()
+let installedBackendsMock = ['claude', 'codex']
 
 vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({
@@ -26,7 +27,7 @@ vi.mock('@/services/preferences', () => ({
 }))
 
 vi.mock('@/hooks/useInstalledBackends', () => ({
-  useInstalledBackends: () => ({ installedBackends: ['claude', 'codex'] }),
+  useInstalledBackends: () => ({ installedBackends: installedBackendsMock }),
 }))
 
 vi.mock('@/services/opencode-cli', () => ({
@@ -39,6 +40,14 @@ vi.mock('@/services/cursor-cli', () => ({
 
 vi.mock('@/services/commandcode-cli', () => ({
   useAvailableCommandCodeModels: () => ({ data: undefined }),
+}))
+
+vi.mock('@/services/pi-cli', () => ({
+  useAvailablePiModels: () => ({ data: undefined }),
+}))
+
+vi.mock('@/services/grok-cli', () => ({
+  useAvailableGrokModels: () => ({ data: undefined }),
 }))
 
 class ResizeObserverMock {
@@ -55,7 +64,8 @@ class ResizeObserverMock {
 
 beforeEach(() => {
   mutateMock.mockReset()
-  vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+  installedBackendsMock = ['claude', 'codex']
+  globalThis.ResizeObserver = ResizeObserverMock as never
   HTMLElement.prototype.scrollIntoView = vi.fn()
   HTMLElement.prototype.hasPointerCapture = vi.fn()
   HTMLElement.prototype.releasePointerCapture = vi.fn()
@@ -86,5 +96,39 @@ describe('MagicPromptsPane', () => {
     ).toBeInTheDocument()
     expect(screen.getByTestId('magic-prompts-sidebar')).toHaveClass('hidden')
     expect(screen.getByTestId('magic-prompts-sidebar')).toHaveClass('md:block')
+  })
+
+  it('does not include release post as an editable magic prompt', () => {
+    render(<MagicPromptsPane />)
+
+    expect(screen.queryByText('Release Post')).toBeNull()
+  })
+
+  it('lets magic prompts choose Pi, Command Code, and Grok backends', async () => {
+    installedBackendsMock = ['claude', 'pi', 'commandcode', 'grok']
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Backend' }))
+
+    expect(screen.getByRole('option', { name: /Pi/ })).toBeInTheDocument()
+    expect(
+      screen.getByRole('option', { name: /Command Code/ })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Grok/ })).toBeInTheDocument()
+  })
+
+  it('keeps magic prompt control labels paired with dropdowns on mobile', () => {
+    render(<MagicPromptsPane />)
+
+    expect(screen.getByTestId('magic-prompt-backend-control')).toHaveClass(
+      'max-md:w-full'
+    )
+    expect(screen.getByTestId('magic-prompt-model-control')).toHaveClass(
+      'max-md:w-full'
+    )
+    expect(screen.getByTestId('magic-prompt-mode-control')).toHaveClass(
+      'max-md:w-full'
+    )
   })
 })

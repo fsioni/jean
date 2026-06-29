@@ -37,6 +37,7 @@ import type { AppPreferences } from '@/types/preferences'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
+import { isNativeTerminalBackend } from '@/lib/native-cli-session'
 import { getResumeArgs } from '@/components/chat/session-card-utils'
 import type { ReviewResponse, Worktree } from '@/types/projects'
 
@@ -98,10 +99,9 @@ export function removeSessionFromAllSessionsCache(
  * terminal command). Used to gate the "Reconnect" menu item.
  */
 export function canReconnectSession(session: Session): boolean {
-  return (
-    session.primary_surface === 'terminal' &&
-    (!!getResumeArgs(session) || !!session.terminal_command)
-  )
+  if (session.primary_surface !== 'terminal') return false
+  if (getResumeArgs(session)) return true
+  return !isNativeTerminalBackend(session.backend) && !!session.terminal_command
 }
 
 /**
@@ -122,19 +122,30 @@ export function canReconnectSession(session: Session): boolean {
  * because the full-screen `FullScreenTerminalSurface` renders inline.
  * `options.showToast` controls the "Reconnecting…" toast (default true); the
  * auto-restore silences it to avoid noise on every relaunch.
+ * `options.markOpened` controls whether reconnecting refreshes the session's
+ * last-opened timestamp (default true for manual reconnect; false for silent
+ * startup restore).
  */
 export async function reconnectNativeCliSession(
   session: Session,
   worktreeId: string,
-  options?: { openModal?: boolean; showToast?: boolean }
+  options?: { openModal?: boolean; showToast?: boolean; markOpened?: boolean }
 ): Promise<void> {
-  const { openModal = true, showToast = true } = options ?? {}
+  const {
+    openModal = true,
+    showToast = true,
+    markOpened = true,
+  } = options ?? {}
   const resume = getResumeArgs(session)
-  const launch = resume ?? {
-    command: session.terminal_command ?? '',
-    args: session.terminal_command_args ?? [],
-  }
-  if (!launch.command) {
+  const launch =
+    resume ??
+    (!isNativeTerminalBackend(session.backend)
+      ? {
+          command: session.terminal_command ?? '',
+          args: session.terminal_command_args ?? [],
+        }
+      : null)
+  if (!launch?.command) {
     if (showToast) toast.error('No command available to reconnect this session')
     return
   }
@@ -147,7 +158,9 @@ export async function reconnectNativeCliSession(
     await invoke('stop_terminal', { terminalId: oldTerminalId }).catch(() => {
       // Terminal may already be stopped.
     })
-    await disposeTerminal(oldTerminalId)
+    await disposeTerminal(oldTerminalId).catch(() => {
+      // Terminal UI may already be disposed.
+    })
     terminalStore.removeTerminal(worktreeId, oldTerminalId)
   }
 
@@ -167,7 +180,9 @@ export async function reconnectNativeCliSession(
   uiStore.setSessionPrimarySurface(session.id, 'terminal')
   uiStore.setSessionTerminalId(session.id, newTerminalId)
   if (openModal) terminalStore.setModalTerminalOpen(worktreeId, true)
-  useChatStore.getState().setActiveSession(worktreeId, session.id)
+  useChatStore.getState().setActiveSession(worktreeId, session.id, {
+    markOpened,
+  })
 
   if (showToast) toast.success('Reconnecting session…')
 }
@@ -726,6 +741,7 @@ export function useCreateSession() {
       terminalCommand,
       terminalCommandArgs,
       terminalLabel,
+      nativeSessionId,
     }: {
       worktreeId: string
       worktreePath: string
@@ -735,6 +751,7 @@ export function useCreateSession() {
       terminalCommand?: string | null
       terminalCommandArgs?: string[]
       terminalLabel?: string
+      nativeSessionId?: string
     }): Promise<Session> => {
       if (!isTauri()) {
         throw new Error('Not in Tauri context')
@@ -750,6 +767,7 @@ export function useCreateSession() {
         terminalCommand,
         terminalCommandArgs,
         terminalLabel,
+        nativeSessionId,
       })
       logger.info('Session created', { sessionId: session.id })
       return session
@@ -1703,7 +1721,7 @@ export function useSendMessage() {
         model,
         execution_mode: executionMode,
         thinking_level:
-          backend === 'cursor'
+          backend === 'cursor' || backend === 'grok'
             ? undefined
             : effortLevel
               ? undefined

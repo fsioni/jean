@@ -126,6 +126,23 @@ describe('MessageSettingsBadges', () => {
     expect(screen.getByText('Claude 3.5 Haiku (Anthropic)')).toBeVisible()
   })
 
+  it('formats Grok prompt model labels with backend prefix', () => {
+    render(
+      <MessageSettingsBadges
+        model="grok/grok-composer-2.5-fast"
+        executionMode="yolo"
+        thinkingLevel={undefined}
+        effortLevel="medium"
+        isCursor={false}
+      />
+    )
+
+    expect(screen.getByText('Grok · Composer 2.5 Fast')).toBeVisible()
+    expect(screen.getByText('· Yolo')).toBeVisible()
+    expect(screen.getByText('· Medium')).toBeVisible()
+    expect(screen.queryByText('Grok Composer 2.5 Fast')).toBeNull()
+  })
+
   it('treats PI models with codex provider names as PI models', () => {
     render(
       <MessageSettingsBadges

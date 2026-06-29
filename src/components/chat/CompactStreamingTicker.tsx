@@ -140,8 +140,13 @@ function hasVisibleActivity(
 export const CompactStreamingTicker = memo(function CompactStreamingTicker(
   props: StreamingMessageProps
 ) {
-  const { contentBlocks, toolCalls, streamingContent, onCopySteeredText } =
-    props
+  const {
+    contentBlocks,
+    toolCalls,
+    streamingContent,
+    onCopySteeredText,
+    worktreePath,
+  } = props
   const [isOpen, setIsOpen] = useState(false)
 
   const {
@@ -184,6 +189,7 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
       <div className="space-y-3">
         <SteeredPromptGroup
           texts={steeredTexts}
+          worktreePath={worktreePath}
           onCopyText={onCopySteeredText}
         />
         <StreamingMessage
@@ -207,6 +213,7 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
     <div className="space-y-3">
       <SteeredPromptGroup
         texts={steeredTexts}
+        worktreePath={worktreePath}
         onCopyText={onCopySteeredText}
       />
       <Collapsible open={isOpen} onOpenChange={setIsOpen} className="min-w-0">

@@ -29,6 +29,22 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
+// jsdom has no ResizeObserver — xterm + panel terminal layout depend on it.
+// Provide a no-op shim so components that observe container size don't crash.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {
+      /* noop shim */
+    }
+    unobserve(): void {
+      /* noop shim */
+    }
+    disconnect(): void {
+      /* noop shim */
+    }
+  } as unknown as typeof ResizeObserver
+}
+
 // Mock Tauri APIs for tests
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue({ theme: 'system' }),

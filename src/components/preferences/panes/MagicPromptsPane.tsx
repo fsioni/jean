@@ -27,6 +27,8 @@ import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import { useAvailablePiModels } from '@/services/pi-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
 import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
@@ -35,6 +37,8 @@ import {
   COMMANDCODE_MODEL_OPTIONS as COMMANDCODE_FALLBACK_OPTIONS,
   CURSOR_MODEL_OPTIONS as CURSOR_FALLBACK_OPTIONS,
   OPENCODE_MODEL_OPTIONS as OPENCODE_FALLBACK_OPTIONS,
+  PI_MODEL_OPTIONS as PI_FALLBACK_OPTIONS,
+  GROK_MODEL_OPTIONS as GROK_FALLBACK_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import {
   DEFAULT_INVESTIGATE_ISSUE_PROMPT,
@@ -62,13 +66,21 @@ import {
   CLAUDE_DEFAULT_MAGIC_PROMPT_BACKENDS,
   CODEX_DEFAULT_MAGIC_PROMPT_BACKENDS,
   OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+  GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
   CODEX_DEFAULT_MAGIC_PROMPT_MODELS,
   CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS,
   OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  PI_DEFAULT_MAGIC_PROMPT_MODELS,
+  COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  GROK_DEFAULT_MAGIC_PROMPT_MODELS,
   codexModelOptions,
   isCommandCodeModel,
   isCodexModel,
   isCursorModel,
+  isGrokModel,
+  isPiModel,
   type MagicPrompts,
   type MagicPromptModels,
   type MagicPromptProviders,
@@ -553,6 +565,8 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   const { data: availableOpencodeModels } = useAvailableOpencodeModels()
   const { data: availableCursorModels } = useAvailableCursorModels()
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels()
+  const { data: availablePiModels } = useAvailablePiModels()
+  const { data: availableGrokModels } = useAvailableGrokModels()
   const { installedBackends } = useInstalledBackends()
 
   const formatOpenCodeLabel = (value: string) => {
@@ -599,6 +613,32 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     }))
   }, [availableCommandCodeModels])
 
+  const piModelOptions = useMemo(() => {
+    const models = availablePiModels?.length
+      ? availablePiModels.map(model => ({
+          value: `pi/${model.id}`,
+          label: model.label || model.id,
+        }))
+      : PI_FALLBACK_OPTIONS
+    return models.map(option => ({
+      value: option.value as MagicPromptModel,
+      label: option.label,
+    }))
+  }, [availablePiModels])
+
+  const grokModelOptions = useMemo(() => {
+    const models = availableGrokModels?.length
+      ? availableGrokModels.map(model => ({
+          value: `grok/${model.id}`,
+          label: model.label || model.id,
+        }))
+      : GROK_FALLBACK_OPTIONS
+    return models.map(option => ({
+      value: option.value as MagicPromptModel,
+      label: option.label,
+    }))
+  }, [availableGrokModels])
+
   const currentPrompts = preferences?.magic_prompts ?? DEFAULT_MAGIC_PROMPTS
   const currentModels =
     preferences?.magic_prompt_models ?? DEFAULT_MAGIC_PROMPT_MODELS
@@ -642,13 +682,17 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   const currentModelIsCommandCode = currentModel
     ? isCommandCodeModel(currentModel)
     : false
+  const currentModelIsPi = currentModel ? isPiModel(currentModel) : false
+  const currentModelIsGrok = currentModel ? isGrokModel(currentModel) : false
   const filteredClaudeOptions = useMemo(() => {
     if (
       !currentProvider ||
       currentModelIsCodex ||
       currentModelIsOpenCode ||
       currentModelIsCursor ||
-      currentModelIsCommandCode
+      currentModelIsCommandCode ||
+      currentModelIsPi ||
+      currentModelIsGrok
     ) {
       return CLAUDE_MODEL_OPTIONS
     }
@@ -682,6 +726,8 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     currentModelIsCursor,
     currentModelIsCommandCode,
     currentModelIsOpenCode,
+    currentModelIsPi,
+    currentModelIsGrok,
     profiles,
   ])
 
@@ -845,8 +891,12 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           defaultModel = opencodeModelOptions[0]?.value
         } else if (backend === 'cursor') {
           defaultModel = cursorModelOptions[0]?.value
+        } else if (backend === 'pi') {
+          defaultModel = piModelOptions[0]?.value
         } else if (backend === 'commandcode') {
           defaultModel = commandCodeModelOptions[0]?.value
+        } else if (backend === 'grok') {
+          defaultModel = grokModelOptions[0]?.value
         }
       }
       patchPreferences.mutate({
@@ -873,7 +923,9 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
       selectedConfig.modelKey,
       selectedConfig.defaultModel,
       cursorModelOptions,
+      piModelOptions,
       commandCodeModelOptions,
+      grokModelOptions,
       opencodeModelOptions,
     ]
   )
@@ -921,6 +973,30 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     patchPreferences.mutate({
       magic_prompt_models: OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS,
       magic_prompt_backends: OPENCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    })
+  }, [preferences, patchPreferences])
+
+  const handleApplyPiDefaults = useCallback(() => {
+    if (!preferences) return
+    patchPreferences.mutate({
+      magic_prompt_models: PI_DEFAULT_MAGIC_PROMPT_MODELS,
+      magic_prompt_backends: PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    })
+  }, [preferences, patchPreferences])
+
+  const handleApplyCommandCodeDefaults = useCallback(() => {
+    if (!preferences) return
+    patchPreferences.mutate({
+      magic_prompt_models: COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+      magic_prompt_backends: COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
+    })
+  }, [preferences, patchPreferences])
+
+  const handleApplyGrokDefaults = useCallback(() => {
+    if (!preferences) return
+    patchPreferences.mutate({
+      magic_prompt_models: GROK_DEFAULT_MAGIC_PROMPT_MODELS,
+      magic_prompt_backends: GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
     })
   }, [preferences, patchPreferences])
 
@@ -992,6 +1068,33 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           className="h-7 text-xs"
         >
           OpenCode Defaults
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleApplyPiDefaults}
+          disabled={!installedBackends.includes('pi')}
+          className="h-7 text-xs"
+        >
+          Pi Defaults
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleApplyCommandCodeDefaults}
+          disabled={!installedBackends.includes('commandcode')}
+          className="h-7 text-xs"
+        >
+          Command Code Defaults
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleApplyGrokDefaults}
+          disabled={!installedBackends.includes('grok')}
+          className="h-7 text-xs"
+        >
+          Grok Defaults
         </Button>
       </div>
 
@@ -1071,7 +1174,10 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
           {/* Backend / Model / Provider / Reset row */}
           <div className="flex flex-wrap items-center gap-2 mb-2 shrink-0">
             {currentBackend !== undefined && (
-              <>
+              <div
+                data-testid="magic-prompt-backend-control"
+                className="flex items-center gap-2 max-md:w-full md:contents"
+              >
                 <span className="text-xs text-muted-foreground">Backend</span>
                 <Select
                   value={effectiveBackend}
@@ -1080,7 +1186,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                   <SelectTrigger
                     aria-label="Backend"
                     size="sm"
-                    className="w-[120px] text-xs"
+                    className="flex-1 text-xs md:w-[120px] md:flex-none"
                     hideIcon={installedBackends.length <= 1}
                   >
                     <SelectValue />
@@ -1097,6 +1203,11 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                         <BackendLabel backend="cursor" />
                       </SelectItem>
                     )}
+                    {installedBackends.includes('pi') && (
+                      <SelectItem value="pi">
+                        <BackendLabel backend="pi" />
+                      </SelectItem>
+                    )}
                     {installedBackends.includes('commandcode') && (
                       <SelectItem value="commandcode">
                         <BackendLabel backend="commandcode" />
@@ -1105,9 +1216,12 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     {installedBackends.includes('codex') && (
                       <SelectItem value="codex">Codex</SelectItem>
                     )}
+                    {installedBackends.includes('grok') && (
+                      <SelectItem value="grok">Grok (Beta)</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
-              </>
+              </div>
             )}
             {currentProvider !== undefined &&
               profiles.length > 0 &&
@@ -1115,11 +1229,15 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
               !currentModelIsCursor &&
               !currentModelIsCommandCode &&
               !currentModelIsOpenCode &&
+              !currentModelIsPi &&
+              !currentModelIsGrok &&
               effectiveBackend !== 'opencode' &&
               effectiveBackend !== 'cursor' &&
               effectiveBackend !== 'commandcode' &&
-              effectiveBackend !== 'codex' && (
-                <>
+              effectiveBackend !== 'pi' &&
+              effectiveBackend !== 'codex' &&
+              effectiveBackend !== 'grok' && (
+                <div className="flex items-center gap-2 max-md:w-full md:contents">
                   <span className="text-xs text-muted-foreground">
                     Provider
                   </span>
@@ -1130,7 +1248,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     <SelectTrigger
                       aria-label="Provider"
                       size="sm"
-                      className="w-[130px] text-xs"
+                      className="flex-1 text-xs md:w-[130px] md:flex-none"
                     >
                       <SelectValue />
                     </SelectTrigger>
@@ -1143,10 +1261,13 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                       ))}
                     </SelectContent>
                   </Select>
-                </>
+                </div>
               )}
             {currentModel && (
-              <>
+              <div
+                data-testid="magic-prompt-model-control"
+                className="flex items-center gap-2 max-md:w-full md:contents"
+              >
                 <span className="text-xs text-muted-foreground">Model</span>
                 <Popover
                   open={modelPopoverOpen}
@@ -1158,7 +1279,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                       role="combobox"
                       aria-label="Model"
                       aria-expanded={modelPopoverOpen}
-                      className="w-[160px] h-8 text-xs justify-between font-normal"
+                      className="h-8 flex-1 justify-between text-xs font-normal md:w-[160px] md:flex-none"
                     >
                       <span className="truncate">
                         {(() => {
@@ -1168,6 +1289,8 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ...opencodeModelOptions,
                             ...cursorModelOptions,
                             ...commandCodeModelOptions,
+                            ...piModelOptions,
+                            ...grokModelOptions,
                           ]
                           return (
                             allOptions.find(o => o.value === currentModel)
@@ -1178,7 +1301,11 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                                 ? formatCursorModelLabel(currentModel)
                                 : currentModel === 'commandcode/default'
                                   ? 'CLI default (no --model)'
-                                  : currentModel)
+                                  : isPiModel(currentModel)
+                                    ? currentModel.replace(/^pi\//, '')
+                                    : isGrokModel(currentModel)
+                                      ? currentModel.replace(/^grok\//, '')
+                                      : currentModel)
                           )
                         })()}
                       </span>
@@ -1190,7 +1317,11 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ? cursorModelOptions
                             : effectiveBackend === 'commandcode'
                               ? commandCodeModelOptions
-                              : opencodeModelOptions
+                              : effectiveBackend === 'pi'
+                                ? piModelOptions
+                                : effectiveBackend === 'grok'
+                                  ? grokModelOptions
+                                  : opencodeModelOptions
                       ).length > 1 && (
                         <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
                       )}
@@ -1305,6 +1436,30 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ))}
                           </CommandGroup>
                         )}
+                        {effectiveBackend === 'pi' && (
+                          <CommandGroup heading={<BackendLabel backend="pi" />}>
+                            {piModelOptions.map(opt => (
+                              <CommandItem
+                                key={opt.value}
+                                value={`${opt.label} ${opt.value}`}
+                                onSelect={() => {
+                                  handleModelChange(opt.value)
+                                  setModelPopoverOpen(false)
+                                }}
+                              >
+                                <span className="text-xs">{opt.label}</span>
+                                <Check
+                                  className={cn(
+                                    'ml-auto h-3 w-3',
+                                    currentModel === opt.value
+                                      ? 'opacity-100'
+                                      : 'opacity-0'
+                                  )}
+                                />
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        )}
                         {effectiveBackend === 'commandcode' && (
                           <CommandGroup
                             heading={<BackendLabel backend="commandcode" />}
@@ -1335,16 +1490,19 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     </Command>
                   </PopoverContent>
                 </Popover>
-              </>
+              </div>
             )}
             {currentMode && (
-              <>
+              <div
+                data-testid="magic-prompt-mode-control"
+                className="flex items-center gap-2 max-md:w-full md:contents"
+              >
                 <span className="text-xs text-muted-foreground">Mode</span>
                 <Select value={currentMode} onValueChange={handleModeChange}>
                   <SelectTrigger
                     aria-label="Default mode"
                     size="sm"
-                    className="w-[110px] text-xs"
+                    className="flex-1 text-xs md:w-[110px] md:flex-none"
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -1353,7 +1511,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                     <SelectItem value="yolo">Yolo</SelectItem>
                   </SelectContent>
                 </Select>
-              </>
+              </div>
             )}
             <Button
               variant="outline"

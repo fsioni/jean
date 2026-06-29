@@ -41,19 +41,13 @@ interface SlashPopoverProps {
   worktreePath?: string | null
   handleRef?: React.RefObject<SlashPopoverHandle | null>
   installedBackends?: CliBackend[]
-  /** Active session backend — gates codex-only built-ins (/goal). */
-  sessionBackend?:
-    | 'claude'
-    | 'codex'
-    | 'opencode'
-    | 'cursor'
-    | 'pi'
-    | 'commandcode'
+  /** Active session backend — gates backend-native built-ins (/goal). */
+  sessionBackend?: CliBackend
 }
 
-const CODEX_GOAL_BUILTIN: ClaudeCommand = {
+const GOAL_BUILTIN: ClaudeCommand = {
   name: 'goal',
-  path: '<built-in:codex-goal>',
+  path: '<built-in:goal>',
   description: 'Set, view, or clear long-horizon objective',
 }
 
@@ -98,9 +92,12 @@ export function SlashPopover({
   const filteredItems = useMemo(() => {
     const items: ListItem[] = []
 
-    if (isAtPromptStart && sessionBackend === 'codex') {
-      fuzzySearchItems([CODEX_GOAL_BUILTIN], searchQuery, 1).forEach(cmd => {
-        items.push({ type: 'command', backend: 'codex', data: cmd })
+    if (
+      isAtPromptStart &&
+      (sessionBackend === 'codex' || sessionBackend === 'grok')
+    ) {
+      fuzzySearchItems([GOAL_BUILTIN], searchQuery, 1).forEach(cmd => {
+        items.push({ type: 'command', backend: sessionBackend, data: cmd })
       })
     }
 

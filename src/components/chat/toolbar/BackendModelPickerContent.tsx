@@ -20,6 +20,7 @@ import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
+import { useAvailableGrokModels } from '@/services/grok-cli'
 import {
   getCatalogModelFastInfo,
   useModelCatalog,
@@ -147,6 +148,9 @@ export function BackendModelPickerContent({
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels({
     enabled: installedBackends.includes('commandcode'),
   })
+  const { data: availableGrokModels } = useAvailableGrokModels({
+    enabled: installedBackends.includes('grok'),
+  })
 
   const opencodeModelOptions = useMemo(() => {
     if (opencodeModelsError) return []
@@ -180,6 +184,14 @@ export function BackendModelPickerContent({
       })),
     [availableCommandCodeModels]
   )
+  const grokModelOptions = useMemo(
+    () =>
+      availableGrokModels?.map(model => ({
+        value: `grok/${model.id}`,
+        label: model.label,
+      })),
+    [availableGrokModels]
+  )
 
   const { backendModelSections: baseBackendModelSections } =
     useToolbarDerivedState({
@@ -190,6 +202,7 @@ export function BackendModelPickerContent({
       cursorModelOptions,
       piModelOptions,
       commandcodeModelOptions,
+      grokModelOptions,
       customCliProfiles,
       installedBackends,
     })
@@ -462,6 +475,7 @@ export function BackendModelPickerContent({
             <Input
               ref={searchInputRef}
               value={search}
+              spellCheck={false}
               onChange={event => setSearch(event.target.value)}
               onKeyDown={event => {
                 if (event.key === 'Escape') {

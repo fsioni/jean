@@ -203,7 +203,7 @@ pub async fn check_pi_cli_installed(app: AppHandle) -> Result<PiCliStatus, Strin
             path: None,
         });
     }
-    let version = silent_command(&path)
+    let version = crate::platform::cli_command(&path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .ok()
@@ -226,7 +226,7 @@ pub async fn detect_pi_in_path(_app: AppHandle) -> Result<PiPathDetection, Strin
             package_manager: None,
         });
     };
-    let version = silent_command(&path)
+    let version = crate::platform::cli_command(&path.to_string_lossy(), None)
         .arg("--version")
         .output()
         .ok()
@@ -263,7 +263,9 @@ pub async fn list_pi_models(app: AppHandle) -> Result<Vec<PiModelInfo>, String> 
     if !path.exists() {
         return Ok(default_pi_models());
     }
-    let output = silent_command(&path).arg("--list-models").output();
+    let output = crate::platform::cli_command(&path.to_string_lossy(), None)
+        .arg("--list-models")
+        .output();
     let Ok(output) = output else {
         return Ok(default_pi_models());
     };

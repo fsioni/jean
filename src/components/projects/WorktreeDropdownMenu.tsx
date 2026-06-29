@@ -216,13 +216,13 @@ export function WorktreeDropdownMenu({
             New Session
           </DropdownMenuItem>
 
-          {isNativeApp() && runScripts.length === 1 && (
+          {runScripts.length === 1 && (
             <DropdownMenuItem onClick={handleRun}>
               <Play className="mr-2 h-4 w-4" />
               Run
             </DropdownMenuItem>
           )}
-          {isNativeApp() && runScripts.length > 1 && (
+          {runScripts.length > 1 && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Play className="mr-4 h-4 w-4" />
