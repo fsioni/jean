@@ -6765,6 +6765,7 @@ fn execute_summarization_claude(
 
     let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args([
         "--print",
         "--input-format",

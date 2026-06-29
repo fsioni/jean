@@ -317,6 +317,64 @@ pub fn apply_custom_profile_settings(cmd: &mut std::process::Command, profile_na
     }
 }
 
+fn custom_profile_env_vars_from_settings(settings: &str) -> Result<Vec<(String, String)>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(settings).map_err(|e| format!("Invalid CLI profile JSON: {e}"))?;
+
+    let Some(env) = value.get("env").and_then(|env| env.as_object()) else {
+        return Ok(Vec::new());
+    };
+
+    Ok(env
+        .iter()
+        .filter_map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.to_string(), value.to_string()))
+        })
+        .collect())
+}
+
+fn load_custom_profile_env_vars(profile_name: Option<&str>) -> Vec<(String, String)> {
+    let Some(name) = profile_name.filter(|name| !name.is_empty()) else {
+        return Vec::new();
+    };
+
+    let Ok(path) = crate::get_cli_profile_path(name) else {
+        return Vec::new();
+    };
+
+    if !path.exists() {
+        return Vec::new();
+    }
+
+    match std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read CLI profile '{}': {e}", path.display()))
+        .and_then(|settings| custom_profile_env_vars_from_settings(&settings))
+    {
+        Ok(env_vars) => env_vars,
+        Err(error) => {
+            log::warn!("{error}");
+            Vec::new()
+        }
+    }
+}
+
+/// Apply custom CLI profile env vars to a Command.
+///
+/// Newer Claude CLI versions may check authentication before fully applying
+/// `--settings` env, so API-compatible providers need their ANTHROPIC_* vars
+/// present in the child process environment too.
+pub fn apply_custom_profile_env(cmd: &mut std::process::Command, profile_name: Option<&str>) {
+    for (key, value) in load_custom_profile_env_vars(profile_name) {
+        cmd.env(key, value);
+    }
+}
+
+fn should_mirror_custom_profile_env_for_detached() -> bool {
+    cfg!(windows) && !crate::platform::get_wsl_config().enabled
+}
+
 /// Strip a `-fast` suffix from the model string.
 /// Returns `(actual_model, is_fast)`.
 /// E.g. `"opus-fast"` → `("opus", true)`, `"opus"` → `("opus", false)`.
@@ -461,6 +519,9 @@ fn build_claude_args(
                 }
             }
         }
+    }
+    if should_mirror_custom_profile_env_for_detached() {
+        env_vars.extend(load_custom_profile_env_vars(custom_profile_name));
     }
 
     // Thinking/effort settings: passed as separate --settings JSON (no secrets here)
@@ -2368,6 +2429,26 @@ mod tests {
             split_fast_model("claude-fable-5"),
             ("claude-fable-5", false)
         );
+    }
+
+    #[test]
+    fn custom_profile_env_vars_reads_string_env_entries() {
+        let settings = r#"{
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "secret",
+                "IGNORED_NON_STRING": 123
+            }
+        }"#;
+
+        let env_vars = custom_profile_env_vars_from_settings(settings).unwrap();
+
+        assert!(env_vars.contains(&(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://api.minimax.io/anthropic".to_string()
+        )));
+        assert!(env_vars.contains(&("ANTHROPIC_AUTH_TOKEN".to_string(), "secret".to_string())));
+        assert!(!env_vars.iter().any(|(key, _)| key == "IGNORED_NON_STRING"));
     }
 
     #[test]
