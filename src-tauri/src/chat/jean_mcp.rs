@@ -4,7 +4,7 @@
 //! for callers that explicitly opt into runtime config assembly. Normal Jean
 //! CLI sessions use the persistent config writers in `jean_mcp_config` so the
 //! server is visible to users. The stdio helper proxies over a Jean-owned local
-//! Unix socket; no HTTP listener/port is required.
+//! local IPC; no HTTP listener/port is required.
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
