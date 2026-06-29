@@ -346,25 +346,39 @@ fn select_wsl_which_candidate(output: &str, jean_managed: Option<&str>) -> Optio
         .map(ToString::to_string)
 }
 
+#[cfg(any(windows, test))]
+fn build_wsl_which_script(tool: &str, jean_managed: Option<&str>) -> String {
+    let jean_init = if let Some(jean_path) = jean_managed.map(str::trim).filter(|p| !p.is_empty()) {
+        format!(
+            "jean={}; jean_real=$(readlink -f -- \"$jean\" 2>/dev/null || printf '%s' \"$jean\");",
+            shell_single_quote(jean_path)
+        )
+    } else {
+        "jean=''; jean_real='';".to_string()
+    };
+
+    format!(
+        "{jean_init} \
+         tool={tool}; \
+         emit_candidate() {{ \
+           candidate=\"$1\"; \
+           [ -n \"$candidate\" ] || return 0; \
+           [ -x \"$candidate\" ] || return 0; \
+           candidate_real=$(readlink -f -- \"$candidate\" 2>/dev/null || printf '%s' \"$candidate\"); \
+           if [ -z \"$jean_real\" ] || [ \"$candidate_real\" != \"$jean_real\" ]; then printf '%s\\n' \"$candidate\"; exit 0; fi; \
+         }}; \
+         while IFS= read -r candidate; do emit_candidate \"$candidate\"; done < <(type -P -a \"$tool\" 2>/dev/null); \
+         for dir in \"$HOME/.local/bin\" \"$HOME/.npm-global/bin\" \"$HOME/.bun/bin\"; do emit_candidate \"$dir/$tool\"; done; \
+         exit 1",
+        tool = shell_single_quote(tool),
+    )
+}
+
 /// Resolve the Unix path of a tool inside a WSL distro via `type -P -a`
 /// in a login shell, optionally excluding Jean's managed binary.
 #[cfg(windows)]
 pub fn wsl_which(distro: &str, tool: &str, jean_managed: Option<&str>) -> Option<String> {
-    let script = if let Some(jean_path) = jean_managed.map(str::trim).filter(|p| !p.is_empty()) {
-        format!(
-            "jean={jean}; \
-             jean_real=$(readlink -f -- \"$jean\" 2>/dev/null || printf '%s' \"$jean\"); \
-             while IFS= read -r candidate; do \
-               candidate_real=$(readlink -f -- \"$candidate\" 2>/dev/null || printf '%s' \"$candidate\"); \
-               if [ \"$candidate_real\" != \"$jean_real\" ]; then printf '%s\\n' \"$candidate\"; exit 0; fi; \
-             done < <(type -P -a {tool} 2>/dev/null); \
-             exit 1",
-            jean = shell_single_quote(jean_path),
-            tool = shell_single_quote(tool),
-        )
-    } else {
-        format!("type -P -a {}", shell_single_quote(tool))
-    };
+    let script = build_wsl_which_script(tool, jean_managed);
     let output = silent_command("wsl.exe")
         .args(["-d", distro, "--", "bash", "-lc", &script])
         .output()
@@ -819,6 +833,14 @@ mod tests {
             select_wsl_which_candidate(candidates, Some("/home/u/.local/share/jean/gh-cli/gh")),
             None
         );
+    }
+
+    #[test]
+    fn build_wsl_which_script_falls_back_to_home_local_bin() {
+        let script = build_wsl_which_script("claude", None);
+
+        assert!(script.contains("$HOME/.local/bin"));
+        assert!(script.contains("[ -x \"$candidate\" ]"));
     }
 
     #[test]
