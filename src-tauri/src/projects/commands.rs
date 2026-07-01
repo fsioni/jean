@@ -13002,6 +13002,8 @@ Body
         let fork = temp.path().join("fork");
         std::fs::create_dir(&repo).expect("repo dir");
         run_test_git(&repo, &["init", "-b", "main"]);
+        run_test_git(&repo, &["config", "core.autocrlf", "false"]);
+        run_test_git(&repo, &["config", "core.eol", "lf"]);
         run_test_git(&repo, &["config", "user.email", "test@example.com"]);
         run_test_git(&repo, &["config", "user.name", "Test User"]);
         std::fs::write(repo.join("tracked.txt"), "before\n").expect("write tracked");
