@@ -5656,7 +5656,11 @@ const MAX_TEXT_SIZE: usize = 10 * 1024 * 1024;
 /// Large text pastes (500+ chars) are saved as files instead of being inlined.
 /// Returns the saved file path for referencing in messages.
 #[tauri::command]
-pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTextResponse, String> {
+pub async fn save_pasted_text(
+    app: AppHandle,
+    content: String,
+    filename: Option<String>,
+) -> Result<SaveTextResponse, String> {
     let size = content.len();
     log::trace!("Saving pasted text, size: {size} bytes");
 
@@ -5670,10 +5674,7 @@ pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTex
     // Get the pastes directory (now in app data dir)
     let pastes_dir = get_pastes_dir(&app)?;
 
-    // Generate unique filename
-    let timestamp = now();
-    let short_uuid = &Uuid::new_v4().to_string()[..8];
-    let filename = format!("paste-{timestamp}-{short_uuid}.txt");
+    let filename = pasted_text_filename(filename.as_deref());
     let file_path = pastes_dir.join(&filename);
 
     // Write file atomically (temp file + rename)
@@ -5696,6 +5697,55 @@ pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTex
         path: path_str,
         size,
     })
+}
+
+fn pasted_text_filename(preferred_name: Option<&str>) -> String {
+    let timestamp = now();
+    let short_uuid = &Uuid::new_v4().to_string()[..8];
+    let base = preferred_name
+        .and_then(|name| name.rsplit(['/', '\\']).next())
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches(".txt")
+        .to_lowercase();
+
+    let mut sanitized = String::new();
+    let mut last_was_dash = false;
+    for ch in base.chars() {
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            sanitized.push('-');
+            last_was_dash = true;
+        }
+        if sanitized.len() >= 80 {
+            break;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches('-');
+    let prefix = if sanitized.is_empty() {
+        "paste"
+    } else {
+        sanitized
+    };
+    format!("{prefix}-{timestamp}-{short_uuid}.txt")
+}
+
+#[cfg(test)]
+mod pasted_text_filename_tests {
+    use super::*;
+
+    #[test]
+    fn save_pasted_text_uses_sanitized_custom_filename() {
+        let filename = pasted_text_filename(Some("DOM: Button Save!"));
+
+        assert!(filename.starts_with("dom-button-save-"));
+        assert!(filename.ends_with(".txt"));
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains(':'));
+    }
 }
 
 /// Update the content of a pasted text file

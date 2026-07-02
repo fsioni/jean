@@ -2133,7 +2133,8 @@ pub async fn dispatch_command(
         }
         "save_pasted_text" => {
             let content: String = from_field(&args, "content")?;
-            let result = crate::chat::save_pasted_text(app.clone(), content).await?;
+            let filename: Option<String> = from_field_opt(&args, "filename")?;
+            let result = crate::chat::save_pasted_text(app.clone(), content, filename).await?;
             to_value(result)
         }
         "update_pasted_text" => {

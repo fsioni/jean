@@ -4654,6 +4654,8 @@ pub fn run() {
             browser::browser_get_url,
             browser::browser_close,
             browser::browser_report_title,
+            browser::browser_enable_grab,
+            browser::browser_report_grab_context,
             browser::get_active_browser_tabs,
             browser::has_active_browser_tab,
             // Chat commands - Session management

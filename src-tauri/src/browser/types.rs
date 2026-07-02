@@ -30,3 +30,25 @@ pub struct BrowserTitleEvent {
 pub struct BrowserClosedEvent {
     pub tab_id: String,
 }
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserGrabContext {
+    pub url: String,
+    pub title: String,
+    pub tag_name: String,
+    pub component_name: Option<String>,
+    pub file_path: Option<String>,
+    pub line_number: Option<u32>,
+    pub selector: Option<String>,
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub stack_context: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserGrabContextEvent {
+    pub tab_id: String,
+    pub context: BrowserGrabContext,
+}

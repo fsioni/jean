@@ -391,6 +391,60 @@ export function useChatWindowEvents({
       window.removeEventListener('set-chat-input', handler as EventListener)
   }, [activeSessionId, inputRef])
 
+  // Append text to chat input from external context providers (browser Grab).
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ text: string }>) => {
+      const { text } = e.detail
+      const sessionId = activeSessionId
+      const textarea = inputRef.current
+      if (!sessionId || !text || !textarea) return
+
+      const start = textarea.selectionStart ?? textarea.value.length
+      const end = textarea.selectionEnd ?? textarea.value.length
+      const current = textarea.value
+      const nextValue = current.slice(0, start) + text + current.slice(end)
+      textarea.value = nextValue
+      textarea.selectionStart = textarea.selectionEnd = start + text.length
+      useChatStore.getState().setInputDraft(sessionId, nextValue)
+      textarea.focus()
+    }
+    window.addEventListener('append-chat-input', handler as EventListener)
+    return () =>
+      window.removeEventListener('append-chat-input', handler as EventListener)
+  }, [activeSessionId, inputRef])
+
+  // Save external context as a pending pasted-text attachment (browser Grab).
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ content: string; filename?: string }>) => {
+      const { content, filename } = e.detail
+      const sessionId = activeSessionId
+      if (!sessionId || !content) return
+
+      void invoke<{ id: string; path: string; filename: string; size: number }>(
+        'save_pasted_text',
+        { content, filename }
+      )
+        .then(result => {
+          useChatStore.getState().addPendingTextFile(sessionId, {
+            id: result.id,
+            path: result.path,
+            filename: result.filename,
+            size: result.size,
+            content,
+          })
+          inputRef.current?.focus()
+        })
+        .catch(error => {
+          toast.error('Failed to attach DOM context', {
+            description: String(error),
+          })
+        })
+    }
+    window.addEventListener('attach-pasted-text', handler as EventListener)
+    return () =>
+      window.removeEventListener('attach-pasted-text', handler as EventListener)
+  }, [activeSessionId, inputRef])
+
   // Approve plan keyboard shortcut
   useEffect(() => {
     const handler = () => {
