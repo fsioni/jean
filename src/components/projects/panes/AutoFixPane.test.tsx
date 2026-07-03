@@ -360,7 +360,7 @@ describe('AutoFixPane', () => {
       'Codex',
       'OpenCode',
       'Cursor',
-      'Pi (Beta)',
+      'PI (Beta)',
       'Command Code (Beta)',
     ]
 

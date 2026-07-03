@@ -1205,12 +1205,15 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                       </SelectItem>
                     )}
                     {installedBackends.includes('pi') && (
-                      <SelectItem value="pi">
+                      <SelectItem value="pi" aria-label="PI (Beta)">
                         <BackendLabel backend="pi" />
                       </SelectItem>
                     )}
                     {installedBackends.includes('commandcode') && (
-                      <SelectItem value="commandcode">
+                      <SelectItem
+                        value="commandcode"
+                        aria-label="Command Code (Beta)"
+                      >
                         <BackendLabel backend="commandcode" />
                       </SelectItem>
                     )}
@@ -1218,7 +1221,7 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                       <SelectItem value="codex">Codex</SelectItem>
                     )}
                     {installedBackends.includes('grok') && (
-                      <SelectItem value="grok">
+                      <SelectItem value="grok" aria-label="Grok (Beta)">
                         <BackendLabel backend="grok" />
                       </SelectItem>
                     )}

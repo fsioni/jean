@@ -80,6 +80,7 @@ export function BackendLabel({
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span>{label}</span>
       <Badge
+        aria-hidden="true"
         variant="outline"
         className={cn(
           'rounded-sm px-1.5 py-0 text-[10px] leading-4 uppercase tracking-wide bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/40',
