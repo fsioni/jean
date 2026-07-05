@@ -102,11 +102,14 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CODEX_MODEL_OPTIONS,
-  MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
   GROK_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
 import { BackendLabel } from '@/components/ui/backend-label'
 import { ReviewMethodModal } from '@/components/chat/ReviewMethodModal'
 
@@ -453,6 +456,7 @@ export function MagicModal() {
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
   })
+  const { data: modelCatalog } = useModelCatalog()
 
   // Build columns dynamically based on PR state
   const magicColumns = useMemo(() => buildMagicColumns(hasOpenPr), [hasOpenPr])
@@ -509,6 +513,15 @@ export function MagicModal() {
       : GROK_MODEL_OPTIONS
     return models
   }, [availableGrokModels])
+
+  const claudeModelOptions = useMemo(
+    () =>
+      getCatalogModelOptions(modelCatalog, 'claude').map(option => ({
+        ...option,
+        label: option.label.replace(/^Claude\s+/, ''),
+      })),
+    [modelCatalog]
+  )
 
   const investigateDefaults = useMemo(() => {
     if (!investigateType) return null
@@ -611,9 +624,9 @@ export function MagicModal() {
             { value: 'sonnet', label: `Sonnet${suffix(sonnetModel)}` },
             { value: 'haiku', label: `Haiku${suffix(haikuModel)}` },
           ]
-        : MODEL_OPTIONS
+        : claudeModelOptions
     },
-    [preferences?.custom_cli_profiles]
+    [claudeModelOptions, preferences?.custom_cli_profiles]
   )
 
   const investigateClaudeProvider =

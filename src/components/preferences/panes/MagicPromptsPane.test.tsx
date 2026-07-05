@@ -50,6 +50,17 @@ vi.mock('@/services/grok-cli', () => ({
   useAvailableGrokModels: () => ({ data: undefined }),
 }))
 
+vi.mock('@/services/model-catalog', () => ({
+  getCatalogModelOptions: (_catalog: unknown, backend: 'claude' | 'codex') =>
+    backend === 'claude'
+      ? [
+          { value: 'claude-fable-5', label: 'Claude Fable 5' },
+          { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+        ]
+      : [],
+  useModelCatalog: () => ({ data: undefined }),
+}))
+
 class ResizeObserverMock {
   observe() {
     return undefined
@@ -102,6 +113,15 @@ describe('MagicPromptsPane', () => {
     render(<MagicPromptsPane />)
 
     expect(screen.queryByText('Release Post')).toBeNull()
+  })
+
+  it('uses the catalog Claude models for magic prompt model choices', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Model' }))
+
+    expect(screen.getByText('Fable 5')).toBeInTheDocument()
   })
 
   it('lets magic prompts choose Pi, Command Code, and Grok backends', async () => {

@@ -32,12 +32,15 @@ import {
 } from '@/types/preferences'
 import {
   CODEX_MODEL_OPTIONS,
-  MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
   GROK_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
 import { BackendLabel } from '@/components/ui/backend-label'
+import {
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
 
 const RESOLVE_CONFLICTS_MODEL_KEY = 'resolve_conflicts_model'
 const RESOLVE_CONFLICTS_PROVIDER_KEY = 'resolve_conflicts_provider'
@@ -92,6 +95,7 @@ export function ResolveConflictsDialog({
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
   })
+  const { data: modelCatalog } = useModelCatalog()
 
   const [resolveSelectionMode, setResolveSelectionMode] =
     useState<ResolveSelectionMode>('settings-default')
@@ -118,6 +122,15 @@ export function ResolveConflictsDialog({
       : GROK_MODEL_OPTIONS
     return models
   }, [availableGrokModels])
+
+  const claudeModelOptions = useMemo(
+    () =>
+      getCatalogModelOptions(modelCatalog, 'claude').map(option => ({
+        ...option,
+        label: option.label.replace(/^Claude\s+/, ''),
+      })),
+    [modelCatalog]
+  )
 
   const resolveDefaults = useMemo(() => {
     const defaultBackend =
@@ -183,9 +196,9 @@ export function ResolveConflictsDialog({
             { value: 'sonnet', label: `Sonnet${suffix(sonnetModel)}` },
             { value: 'haiku', label: `Haiku${suffix(haikuModel)}` },
           ]
-        : MODEL_OPTIONS
+        : claudeModelOptions
     },
-    [preferences?.custom_cli_profiles]
+    [claudeModelOptions, preferences?.custom_cli_profiles]
   )
 
   const resolveClaudeProvider =

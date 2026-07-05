@@ -30,6 +30,10 @@ import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
 import {
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
+import {
   formatCursorModelLabel,
   formatOpencodeModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
@@ -516,20 +520,6 @@ export function getMagicPromptItemId(key: keyof MagicPrompts): string {
   return `settings-magic-prompt-${key}`
 }
 
-const CLAUDE_MODEL_OPTIONS: { value: MagicPromptModel; label: string }[] = [
-  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { value: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
-  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-  { value: 'claude-opus-4-7[1m]', label: 'Opus 4.7 (1M)' },
-  { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-  { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
-  { value: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 (1M)' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { value: 'sonnet', label: 'Sonnet (provider alias)' },
-  { value: 'haiku', label: 'Haiku' },
-]
-
 const CODEX_MODEL_OPTIONS: { value: MagicPromptModel; label: string }[] = [
   { value: 'gpt-5.5', label: 'GPT 5.5' },
   { value: 'gpt-5.5-fast', label: 'GPT 5.5 Fast' },
@@ -568,7 +558,17 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
   const { data: availableCommandCodeModels } = useAvailableCommandCodeModels()
   const { data: availablePiModels } = useAvailablePiModels()
   const { data: availableGrokModels } = useAvailableGrokModels()
+  const { data: modelCatalog } = useModelCatalog()
   const { installedBackends } = useInstalledBackends()
+
+  const claudeModelOptions = useMemo(
+    () =>
+      getCatalogModelOptions(modelCatalog, 'claude').map(option => ({
+        value: option.value as MagicPromptModel,
+        label: option.label.replace(/^Claude\s+/, ''),
+      })),
+    [modelCatalog]
+  )
 
   const formatOpenCodeLabel = (value: string) => {
     const formatted = formatOpencodeModelLabel(value)
@@ -695,14 +695,14 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
       currentModelIsPi ||
       currentModelIsGrok
     ) {
-      return CLAUDE_MODEL_OPTIONS
+      return claudeModelOptions
     }
     const profile = profiles.find(p => p.name === currentProvider)
-    if (!profile?.settings_json) return CLAUDE_MODEL_OPTIONS
+    if (!profile?.settings_json) return claudeModelOptions
     try {
       const settings = JSON.parse(profile.settings_json)
       const env = settings?.env
-      if (!env) return CLAUDE_MODEL_OPTIONS
+      if (!env) return claudeModelOptions
       const suffix = (m?: string) => (m ? ` (${m})` : '')
       return [
         {
@@ -719,9 +719,10 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
         },
       ] as { value: MagicPromptModel; label: string }[]
     } catch {
-      return CLAUDE_MODEL_OPTIONS
+      return claudeModelOptions
     }
   }, [
+    claudeModelOptions,
     currentProvider,
     currentModelIsCodex,
     currentModelIsCursor,
