@@ -187,6 +187,27 @@ fn push_text_block(content_blocks: &mut Vec<ContentBlock>, text: &str) {
     });
 }
 
+fn merge_assistant_text(response: &mut PiResponse, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(ContentBlock::Text { text: existing }) = response.content_blocks.last_mut() {
+        if text == existing {
+            return;
+        }
+
+        if let Some(suffix) = text.strip_prefix(existing.as_str()) {
+            response.content.push_str(suffix);
+            existing.push_str(suffix);
+            return;
+        }
+    }
+
+    response.content.push_str(text);
+    push_text_block(&mut response.content_blocks, text);
+}
+
 fn message_usage_from_value(value: &Value) -> Option<UsageData> {
     value.get("message").and_then(usage_from_value)
 }
@@ -196,8 +217,7 @@ fn merge_assistant_message(response: &mut PiResponse, message: &Value) {
         match block.get("type").and_then(Value::as_str) {
             Some("text") => {
                 if let Some(text) = block.get("text").and_then(Value::as_str) {
-                    response.content.push_str(text);
-                    push_text_block(&mut response.content_blocks, text);
+                    merge_assistant_text(response, text);
                 }
             }
             Some("thinking") => {
@@ -1528,6 +1548,25 @@ mod tests {
         assert_eq!(usage.output_tokens, 11);
         assert_eq!(usage.cache_read_input_tokens, 1);
         assert_eq!(usage.cache_creation_input_tokens, 2);
+    }
+
+    #[test]
+    fn does_not_duplicate_pi_final_assistant_snapshot_after_deltas() {
+        let stream = r#"
+{"type":"session","version":3,"id":"pi-final-snapshot-session","timestamp":"2026-06-08T08:43:06.173Z","cwd":"/tmp/project"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hey! "}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"What can I help with?"}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Hey! What can I help with?"}],"usage":{"input":10,"output":6,"cacheRead":0,"cacheWrite":0}}}
+"#;
+
+        let response = parse_pi_json_stream_inner(stream);
+
+        assert_eq!(response.content, "Hey! What can I help with?");
+        assert_eq!(response.content_blocks.len(), 1);
+        assert!(matches!(
+            &response.content_blocks[0],
+            ContentBlock::Text { text } if text == "Hey! What can I help with?"
+        ));
     }
 
     #[test]
