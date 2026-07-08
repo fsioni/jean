@@ -631,8 +631,7 @@ export function useGitOperations({
     setWorktreeLoading(activeWorktreeId, 'pr')
     const branch = worktree?.branch ?? ''
     let cancellationRequested = false
-    let toastId: string | number
-    toastId = toast.loading(`Creating PR for ${branch}...`, {
+    const toastId = toast.loading(`Creating PR for ${branch}...`, {
       cancel: {
         label: 'Cancel',
         onClick: async () => {

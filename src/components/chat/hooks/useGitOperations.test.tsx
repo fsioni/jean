@@ -191,7 +191,7 @@ describe('useGitOperations conflict resolution', () => {
   })
 
   it('shows a cancel button while creating a PR and cancels the backend action', async () => {
-    let resolveCreatePr: (value: unknown) => void = () => {}
+    let resolveCreatePr: ((value: unknown) => void) | undefined
     mocks.invoke.mockImplementation((command: string) => {
       if (command === 'create_pr_with_ai_content') {
         return new Promise(resolve => {
@@ -228,8 +228,12 @@ describe('useGitOperations conflict resolution', () => {
       })
     )
 
+    if (!loadingOptions) {
+      throw new Error('Expected loading toast options')
+    }
+
     await act(async () => {
-      await loadingOptions!.cancel.onClick()
+      await loadingOptions.cancel.onClick()
     })
 
     expect(mocks.invoke).toHaveBeenCalledWith(
@@ -239,6 +243,10 @@ describe('useGitOperations conflict resolution', () => {
     expect(mocks.toastInfo).toHaveBeenCalledWith('Cancelling PR creation...', {
       id: 'toast-1',
     })
+
+    if (!resolveCreatePr) {
+      throw new Error('Expected create_pr_with_ai_content to be invoked')
+    }
 
     await act(async () => {
       resolveCreatePr({
