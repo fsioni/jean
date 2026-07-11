@@ -287,6 +287,9 @@ export function prefetchReconnectInitialData(
   activeSessionIds?: Record<string, string>,
   selectedProjectId?: string | null
 ): Promise<InitialData | null> {
+  if (typeof document !== 'undefined' && document.hidden) {
+    return Promise.resolve(null)
+  }
   if (!reconnectInitialDataPromise) {
     reconnectInitialDataPromise = refetchInitialData(
       activeSessionIds,
@@ -701,9 +704,6 @@ class WsTransport {
    *  ping/pong alone is not visible to browser JavaScript. */
   private static readonly INBOUND_TIMEOUT = 50_000
   private static readonly LIVENESS_CHECK_INTERVAL = 10_000
-  /** After a resume, wait this long for queued inbound frames to flush before
-   *  judging an OPEN socket stale (avoids false reconnects on a healthy socket). */
-  private static readonly WAKE_RECHECK_DELAY = 3_000
 
   /** Call a backend command over WebSocket. */
   async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -971,23 +971,16 @@ class WsTransport {
 
     if (state === WebSocket.OPEN) {
       // Socket claims to be open. After a suspend it may be a zombie, but a
-      // healthy socket also looks stale until queued heartbeats are delivered.
-      // Re-check shortly, once any buffered inbound traffic has landed.
-      setTimeout(() => {
-        if (
-          this.ws?.readyState === WebSocket.OPEN &&
-          Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT
-        ) {
-          console.warn(
-            '[WsTransport] Stale socket after resume, forcing reconnect'
-          )
-          try {
-            this.ws.close()
-          } catch {
-            // Ignore close errors; onclose schedules the reconnect.
-          }
+      // recent socket may simply have queued frames. Replace one already past
+      // the liveness timeout immediately so iOS resume adds no extra delay.
+      if (Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT) {
+        console.warn('[WsTransport] Stale socket after resume, reconnecting')
+        try {
+          this.ws?.close()
+        } catch {
+          // Ignore close errors; onclose schedules the reconnect.
         }
-      }, WsTransport.WAKE_RECHECK_DELAY)
+      }
       return
     }
 

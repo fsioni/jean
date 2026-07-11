@@ -61,6 +61,32 @@ const baseProps = {
 }
 
 describe('MobileSettingsMenu', () => {
+  it('aligns the mobile Effort label with the other setting labels', async () => {
+    const user = userEvent.setup()
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390,
+    })
+
+    try {
+      render(<MobileSettingsMenu {...baseProps} useAdaptiveThinking />)
+
+      await user.click(screen.getByRole('button', { name: /settings/i }))
+
+      const effortItem = screen
+        .getByText('Effort')
+        .closest('[role="menuitem"]')
+      const effortIcon = effortItem?.querySelector('svg.lucide-brain')
+      expect(effortIcon).not.toHaveClass('mr-2')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+    }
+  })
+
   it('hides model row chevron when there is only one backend/model choice', async () => {
     const user = userEvent.setup()
 
@@ -88,6 +114,54 @@ describe('MobileSettingsMenu', () => {
     expect(mcpItem).toHaveAttribute('aria-disabled', 'true')
     expect(mcpItem?.querySelector('svg.lucide-chevron-right')).toBeNull()
     expect(screen.getByText('None')).toBeInTheDocument()
+  })
+
+  it('opens mobile MCP servers in a screen-contained bottom sheet', async () => {
+    const user = userEvent.setup()
+    const onToggleMcpServer = vi.fn()
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390,
+    })
+
+    try {
+      render(
+        <MobileSettingsMenu
+          {...baseProps}
+          availableMcpServers={[
+            {
+              name: 'chrome_devtools',
+              config: {},
+              scope: 'user',
+              disabled: false,
+              backend: 'codex',
+            },
+            {
+              name: 'jean',
+              config: {},
+              scope: 'project',
+              disabled: false,
+              backend: 'codex',
+            },
+          ]}
+          onToggleMcpServer={onToggleMcpServer}
+        />
+      )
+
+      await user.click(screen.getByRole('button', { name: /settings/i }))
+      await user.click(screen.getByText('MCP'))
+
+      const sheet = screen.getByRole('dialog', { name: 'Manage MCP servers' })
+      expect(sheet).toHaveClass('max-h-[75svh]')
+      await user.click(within(sheet).getByRole('button', { name: /jean/i }))
+      expect(onToggleMcpServer).toHaveBeenCalledWith('codex:jean')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+    }
   })
 
   it('opens backend/model picker via gear menu', async () => {
@@ -330,6 +404,29 @@ describe('MobileSettingsMenu', () => {
     fireEvent.click(xHighItem)
 
     expect(handleEffortLevelChange).toHaveBeenCalledWith('xhigh')
+  })
+
+  it('opens mobile effort options in a screen-contained bottom sheet', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('innerWidth', 390)
+
+    render(
+      <MobileSettingsMenu
+        {...baseProps}
+        useAdaptiveThinking
+        selectedEffortLevel="xhigh"
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByText('Effort'))
+
+    const sheet = screen.getByRole('dialog', { name: 'Select effort' })
+    expect(sheet).toHaveClass('max-h-[75svh]')
+    expect(within(sheet).getByRole('button', { name: /Max/i })).toBeVisible()
+    expect(
+      within(sheet).getByRole('button', { name: /Ultracode/i })
+    ).toBeVisible()
   })
 
   it('keeps Max effort available for Claude adaptive thinking', async () => {

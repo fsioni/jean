@@ -5,7 +5,6 @@ import {
   ingestBootstrapEvents,
   invoke,
   useWsConnectionStatus,
-  useWsDataReady,
   setWsDataReady,
   useWsAuthError,
   preloadInitialData,
@@ -86,18 +85,6 @@ function WebLoadingScreen() {
       <div className="flex flex-col items-center gap-3">
         <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
         <span className="text-sm text-muted-foreground">Loading...</span>
-      </div>
-    </div>
-  )
-}
-
-/** Full-screen overlay shown while the WebSocket reconnects so stale cached data isn't visible. */
-function WsReconnectOverlay() {
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/95">
-      <div className="flex flex-col items-center gap-3">
-        <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
-        <span className="text-sm text-muted-foreground">Reconnecting…</span>
       </div>
     </div>
   )
@@ -704,7 +691,6 @@ function App() {
   // On first connect: invalidate non-preloaded queries.
   // On reconnect: re-fetch bulk data via HTTP to restore everything fast.
   const wsConnected = useWsConnectionStatus()
-  const wsDataReady = useWsDataReady()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
     if (isNativeApp()) return
@@ -1284,9 +1270,6 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <MainWindow />
-        {!isNativeApp() && !isPreloading && !wsDataReady && (
-          <WsReconnectOverlay />
-        )}
         {!isNativeApp() && <WsAuthErrorOverlay />}
       </ThemeProvider>
     </ErrorBoundary>

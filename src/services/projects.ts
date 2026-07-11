@@ -34,6 +34,7 @@ import type { AdvisoryContext } from '@/types/github'
 import { hasBackend } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
 import { shouldSuppressAutoFixConflictNotification } from './worktree-conflict-events'
+import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
 
 // Check if a backend is available (Tauri IPC or WebSocket)
 // Kept as `isTauri` for backward compatibility across the codebase
@@ -71,7 +72,7 @@ export function useProjects() {
         return projects
       } catch (error) {
         logger.error('Failed to load projects', { error })
-        return []
+        return fallbackUnlessWsDisconnected(error, [])
       }
     },
     staleTime: 1000 * 60 * 5, // 5 minutes
@@ -101,7 +102,7 @@ export function useWorktrees(projectId: string | null) {
         return worktrees
       } catch (error) {
         logger.error('Failed to load worktrees', { error, projectId })
-        return []
+        return fallbackUnlessWsDisconnected(error, [])
       }
     },
     enabled: !!projectId,

@@ -6,6 +6,16 @@ const readSource = (path: string) =>
   readFileSync(join(process.cwd(), path), 'utf8')
 
 describe('terminal primary surface modal regression', () => {
+  it('preserves model-catalog effort levels selected for Codex', () => {
+    const source = readSource('src/components/chat/ChatWindow.tsx')
+
+    expect(source).toContain(
+      'const selectedEffortLevel: EffortLevel = rawSelectedEffortLevel'
+    )
+    expect(source).not.toContain("rawSelectedEffortLevel === 'max'")
+    expect(source).not.toContain("rawSelectedEffortLevel === 'ultracode'")
+  })
+
   it('keeps ChatWindow global modals mounted when terminal is primary surface', () => {
     const source = readSource('src/components/chat/ChatWindow.tsx')
 

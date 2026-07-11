@@ -137,6 +137,20 @@ describe('transport bootstrap', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('does not prefetch reconnect data while the page is hidden', async () => {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: true,
+    })
+    const transport = await loadTransportModule()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    await transport.prefetchReconnectInitialData()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 
@@ -245,6 +259,24 @@ describe('transport bootstrap', () => {
     expect(ws.close).toHaveBeenCalledTimes(1)
 
     vi.useRealTimers()
+  })
+
+  it('replaces a stale websocket immediately when the page returns', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false,
+    })
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+    const ws = getWs(0)
+
+    vi.advanceTimersByTime(51_000)
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(ws.close).toHaveBeenCalledTimes(1)
   })
 
   it('uses extended timeout for terminal lifecycle commands', async () => {

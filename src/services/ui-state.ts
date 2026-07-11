@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 import { defaultUIState, type UIState } from '@/types/ui-state'
 
 import { hasBackend } from '@/lib/environment'
+import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
 
 const isTauri = hasBackend
 
@@ -32,7 +33,7 @@ export function useUIState() {
       } catch (error) {
         // Return defaults if UI state file doesn't exist yet
         logger.warn('Failed to load UI state, using defaults', { error })
-        return defaultUIState
+        return fallbackUnlessWsDisconnected(error, defaultUIState)
       }
     },
     staleTime: Infinity, // UI state doesn't need refetching - only updates via setQueryData

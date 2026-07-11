@@ -38,6 +38,7 @@ import { UnreadBell } from '@/components/unread/UnreadBell'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FALLBACK_APP_VERSION } from '@/lib/app-version'
 import { LinuxWindowControls } from './LinuxWindowControls'
+import { useWsConnectionStatus } from '@/lib/transport'
 
 interface TitleBarProps {
   className?: string
@@ -60,6 +61,7 @@ export function TitleBar({
       DEFAULT_KEYBINDINGS.toggle_left_sidebar) as string
   )
   const native = isNativeApp()
+  const wsConnected = useWsConnectionStatus()
 
   const [appVersion, setAppVersion] = useState<string>(FALLBACK_APP_VERSION)
   useEffect(() => {
@@ -174,7 +176,14 @@ export function TitleBar({
         className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-w-[50%] px-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <UnreadBell title={title} hideTitle={hideTitle} />
+        {!native && !wsConnected ? (
+          <div className="flex items-center gap-1.5 whitespace-nowrap text-[0.6875rem] font-medium text-amber-500">
+            <span className="size-2 animate-pulse rounded-full bg-amber-500" />
+            <span>Reconnecting…</span>
+          </div>
+        ) : (
+          <UnreadBell title={title} hideTitle={hideTitle} />
+        )}
       </div>
 
       {/* Right side - Version + Windows/Linux window controls */}

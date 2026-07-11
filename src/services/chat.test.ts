@@ -22,6 +22,7 @@ import {
   prefetchSessions,
   reconnectNativeCliSession,
 } from './chat'
+import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
@@ -33,6 +34,22 @@ const toastMock = toast as unknown as {
   success: ReturnType<typeof vi.fn>
   error: ReturnType<typeof vi.fn>
 }
+
+describe('transient WebSocket query failures', () => {
+  it('rethrows disconnects so TanStack Query preserves cached session data', () => {
+    const error = new Error('WebSocket disconnected')
+
+    expect(() => fallbackUnlessWsDisconnected(error, null)).toThrow(error)
+  })
+
+  it('keeps existing empty fallbacks for non-transport failures', () => {
+    const fallback = { sessions: [] }
+
+    expect(
+      fallbackUnlessWsDisconnected(new Error('session file is invalid'), fallback)
+    ).toBe(fallback)
+  })
+})
 
 describe('prefetchSessions', () => {
   beforeEach(() => {

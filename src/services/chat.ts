@@ -40,6 +40,7 @@ import { useTerminalStore } from '@/store/terminal-store'
 import { isNativeTerminalBackend } from '@/lib/native-cli-session'
 import { getResumeArgs } from '@/components/chat/session-card-utils'
 import type { ReviewResponse, Worktree } from '@/types/projects'
+import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
 
 /** Default number of recent runs loaded on initial session fetch. */
 export const INITIAL_RUN_LIMIT = 10
@@ -336,12 +337,12 @@ export function useSessions(
         return sessions
       } catch (error) {
         logger.error('Failed to load sessions', { error, worktreeId })
-        return {
+        return fallbackUnlessWsDisconnected(error, {
           worktree_id: worktreeId,
           sessions: [],
           active_session_id: null,
           version: 2,
-        }
+        })
       }
     },
     enabled: !!worktreeId && !!worktreePath,
@@ -672,7 +673,7 @@ export function useSession(
         return session
       } catch (error) {
         logger.warn('[useSession] FAILED to load session', { error, sessionId })
-        return null
+        return fallbackUnlessWsDisconnected(error, null)
       }
     },
     enabled: !!sessionId && !!worktreeId && !!worktreePath,

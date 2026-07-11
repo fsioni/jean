@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from 'react'
 import {
   Brain,
+  Check,
   ChevronRight,
   CircleDot,
   ClipboardCopy,
@@ -70,6 +71,13 @@ import {
 import type { PrDisplayStatus } from '@/types/pr-status'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { BackendLabel } from '@/components/ui/backend-label'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
@@ -232,6 +240,8 @@ export function MobileSettingsMenu({
   const isMobile = useIsMobile()
   const queryClient = useQueryClient()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [effortSheetOpen, setEffortSheetOpen] = useState(false)
+  const [mcpSheetOpen, setMcpSheetOpen] = useState(false)
   const [resumeCommand, setResumeCommand] = useState<string | null>(null)
   const providerDisplayName = getProviderDisplayName(selectedProvider)
   const { data: worktree } = useWorktree(worktreeId ?? null)
@@ -250,6 +260,16 @@ export function MobileSettingsMenu({
   const openBackendModelPicker = () => {
     setMenuOpen(false)
     requestAnimationFrame(() => onOpenBackendModelPicker())
+  }
+
+  const openEffortPicker = () => {
+    setMenuOpen(false)
+    requestAnimationFrame(() => setEffortSheetOpen(true))
+  }
+
+  const openMcpPicker = () => {
+    setMenuOpen(false)
+    requestAnimationFrame(() => setMcpSheetOpen(true))
   }
 
   const getActiveResumeCommand = useCallback(() => {
@@ -377,7 +397,8 @@ export function MobileSettingsMenu({
   )
 
   return (
-    <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
+    <>
+      <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -441,7 +462,16 @@ export function MobileSettingsMenu({
           )}
         </DropdownMenuItem>
 
-        {hideReasoningControl ? null : usesEffortControl ? (
+        {hideReasoningControl ? null : usesEffortControl && isMobile ? (
+          <DropdownMenuItem onSelect={openEffortPicker}>
+            <Brain className="h-4 w-4 text-muted-foreground" />
+            <span>Effort</span>
+            <span className="ml-auto w-16 text-right text-xs text-muted-foreground">
+              {displayedEffortLabel}
+            </span>
+            <ChevronRight className="ml-2 h-4 w-4 shrink-0 text-foreground" />
+          </DropdownMenuItem>
+        ) : usesEffortControl ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
               <Brain className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -499,7 +529,23 @@ export function MobileSettingsMenu({
           </DropdownMenuSub>
         )}
 
-        {hasToggleableMcpServers ? (
+        {hasToggleableMcpServers && isMobile ? (
+          <DropdownMenuItem onSelect={openMcpPicker}>
+            <Plug
+              className={cn(
+                'h-4 w-4',
+                activeMcpCount > 0
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-muted-foreground'
+              )}
+            />
+            <span>MCP</span>
+            <span className="ml-auto w-16 text-right text-xs text-muted-foreground">
+              {activeMcpCount > 0 ? `${activeMcpCount} on` : 'Off'}
+            </span>
+            <ChevronRight className="ml-2 h-4 w-4 shrink-0 text-foreground" />
+          </DropdownMenuItem>
+        ) : hasToggleableMcpServers ? (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="[&>svg:last-child]:!ml-2">
               <Plug
@@ -886,7 +932,110 @@ export function MobileSettingsMenu({
             )}
           </>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Sheet open={effortSheetOpen} onOpenChange={setEffortSheetOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[75svh] overflow-hidden rounded-t-xl p-0"
+          showCloseButton={false}
+        >
+          <SheetHeader className="shrink-0 border-b px-4 py-3 text-left">
+            <SheetTitle>Select effort</SheetTitle>
+            <SheetDescription>
+              Choose how much reasoning effort the model should use.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="overflow-y-auto px-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+            {effortLevelOptions.map(option => {
+              const selected = option.value === displayedEffortLevel
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left active:bg-accent',
+                    selected && 'bg-accent'
+                  )}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    handleEffortLevelChange(option.value)
+                    setEffortSheetOpen(false)
+                  }}
+                >
+                  <span className="flex-1">
+                    <span className="block font-medium">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {option.description}
+                    </span>
+                  </span>
+                  {selected && <Check className="h-4 w-4 shrink-0" />}
+                </button>
+              )
+            })}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={mcpSheetOpen} onOpenChange={setMcpSheetOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[75svh] overflow-hidden rounded-t-xl p-0"
+          showCloseButton={false}
+        >
+          <SheetHeader className="shrink-0 border-b px-4 py-3 text-left">
+            <SheetTitle>Manage MCP servers</SheetTitle>
+            <SheetDescription>
+              Choose which MCP servers are enabled for this session.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="overflow-y-auto px-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+            {(() => {
+              const grouped = groupServersByBackend(availableMcpServers)
+              const backends = Object.keys(grouped) as CliBackend[]
+              const showHeaders = backends.length > 1
+              return backends.map(backend => (
+                <div key={backend}>
+                  {showHeaders && (
+                    <div className="px-3 pt-3 pb-1 text-xs text-muted-foreground">
+                      <BackendLabel backend={backend} />
+                    </div>
+                  )}
+                  {(grouped[backend] ?? []).map(server => {
+                    const key = mcpKey(backend, server.name)
+                    const enabled =
+                      !server.disabled && enabledMcpServers.includes(key)
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={server.disabled}
+                        aria-pressed={enabled}
+                        className={cn(
+                          'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left active:bg-accent disabled:opacity-50',
+                          enabled && 'bg-accent'
+                        )}
+                        onClick={() => onToggleMcpServer(key)}
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className="block truncate font-medium">
+                            {server.name}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {server.disabled ? 'Disabled' : server.scope}
+                          </span>
+                        </span>
+                        {enabled && <Check className="h-4 w-4 shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              ))
+            })()}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   )
 }
