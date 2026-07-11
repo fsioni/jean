@@ -440,6 +440,22 @@ export interface CreateCommitResponse {
   push_permission_denied: boolean
 }
 
+export type CommitJobStatus = 'running' | 'completed' | 'failed'
+
+export interface CommitJob {
+  id: string
+  worktreePath: string
+  status: CommitJobStatus
+  response?: CreateCommitResponse
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface StartCommitJobResponse {
+  job: CommitJob
+}
+
 /** Response from reverting the last local commit */
 export interface RevertCommitResponse {
   /** Hash of the reverted commit */

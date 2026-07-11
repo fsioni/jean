@@ -58,7 +58,7 @@ export interface UIState {
   modal_terminal_width?: number
   /** Modal terminal height in pixels for bottom dock */
   modal_terminal_height?: number
-  /** Terminal instances persisted per worktree for web refresh reconnect */
+  /** Terminal instances persisted per worktree for restoration after web refresh */
   terminal_instances?: Record<string, PersistedTerminalInstance[]>
   /** Active terminal id per worktree */
   terminal_active_ids?: Record<string, string>

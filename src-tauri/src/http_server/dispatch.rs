@@ -460,7 +460,7 @@ pub async fn dispatch_command(
         }
         "create_commit_with_ai" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
-            let custom_prompt: Option<String> = field_opt(&args, "magicPrompt", "magic_prompt")?;
+            let custom_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
             let push: bool = from_field_opt(&args, "push")?.unwrap_or(false);
             let remote: Option<String> = from_field_opt(&args, "remote")?;
             let pr_number: Option<u32> = from_field_opt(&args, "prNumber")?;
@@ -485,6 +485,40 @@ pub async fn dispatch_command(
             )
             .await?;
             to_value(result)
+        }
+        "start_commit_job" => {
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let custom_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
+            let push: bool = from_field_opt(&args, "push")?.unwrap_or(false);
+            let remote: Option<String> = from_field_opt(&args, "remote")?;
+            let pr_number: Option<u32> = field_opt(&args, "prNumber", "pr_number")?;
+            let model: Option<String> = from_field_opt(&args, "model")?;
+            let custom_profile_name: Option<String> =
+                field_opt(&args, "customProfileName", "custom_profile_name")?;
+            let reasoning_effort: Option<String> =
+                field_opt(&args, "reasoningEffort", "reasoning_effort")?;
+            let specific_files: Option<Vec<String>> =
+                field_opt(&args, "specificFiles", "specific_files")?;
+            let job_id: Option<String> = field_opt(&args, "jobId", "job_id")?;
+            let result = crate::projects::start_commit_job(
+                app.clone(),
+                worktree_path,
+                custom_prompt,
+                push,
+                remote,
+                pr_number,
+                model,
+                custom_profile_name,
+                reasoning_effort,
+                specific_files,
+                job_id,
+            )
+            .await?;
+            to_value(result)
+        }
+        "get_commit_job" => {
+            let job_id: String = field(&args, "jobId", "job_id")?;
+            to_value(crate::projects::get_commit_job(job_id).await?)
         }
 
         "run_coderabbit_review" => {

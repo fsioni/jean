@@ -7927,6 +7927,104 @@ pub struct CreateCommitResponse {
     pub push_permission_denied: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitJobStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitJob {
+    pub id: String,
+    pub worktree_path: String,
+    pub status: CommitJobStatus,
+    pub response: Option<CreateCommitResponse>,
+    pub error: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Default)]
+pub struct CommitJobRegistry {
+    jobs: Mutex<HashMap<String, CommitJob>>,
+}
+
+impl CommitJobRegistry {
+    pub fn try_insert_running(
+        &self,
+        id: String,
+        worktree_path: String,
+    ) -> Result<(CommitJob, bool), String> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get(&id) {
+            if job.worktree_path == worktree_path {
+                return Ok((job.clone(), false));
+            }
+            return Err("Commit job id is already used by another worktree".to_string());
+        }
+        if let Some(job) = jobs.values().find(|job| {
+            job.worktree_path == worktree_path && job.status == CommitJobStatus::Running
+        }) {
+            return Ok((job.clone(), false));
+        }
+
+        let timestamp = now();
+        let job = CommitJob {
+            id,
+            worktree_path,
+            status: CommitJobStatus::Running,
+            response: None,
+            error: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        jobs.insert(job.id.clone(), job.clone());
+        Ok((job, true))
+    }
+
+    pub fn get(&self, job_id: &str) -> Option<CommitJob> {
+        self.jobs.lock().unwrap().get(job_id).cloned()
+    }
+
+    pub fn mark_completed(
+        &self,
+        job_id: &str,
+        response: CreateCommitResponse,
+    ) -> Option<CommitJob> {
+        self.update(job_id, |job| {
+            job.status = CommitJobStatus::Completed;
+            job.response = Some(response);
+            job.error = None;
+        })
+    }
+
+    pub fn mark_failed(&self, job_id: &str, error: String) -> Option<CommitJob> {
+        self.update(job_id, |job| {
+            job.status = CommitJobStatus::Failed;
+            job.error = Some(error);
+        })
+    }
+
+    fn update(&self, job_id: &str, update: impl FnOnce(&mut CommitJob)) -> Option<CommitJob> {
+        let mut jobs = self.jobs.lock().unwrap();
+        let job = jobs.get_mut(job_id)?;
+        update(job);
+        job.updated_at = now();
+        Some(job.clone())
+    }
+}
+
+static COMMIT_JOB_REGISTRY: Lazy<CommitJobRegistry> = Lazy::new(CommitJobRegistry::default);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartCommitJobResponse {
+    pub job: CommitJob,
+}
+
 /// Check if there are unpushed commits (commits ahead of upstream).
 /// Returns true if there are unpushed commits OR if there's no upstream (safe fallback).
 fn has_unpushed_commits(repo_path: &str) -> Result<bool, String> {
@@ -8510,6 +8608,83 @@ pub async fn create_commit_with_ai(
         push_fell_back,
         push_permission_denied,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn start_commit_job(
+    app: AppHandle,
+    worktree_path: String,
+    custom_prompt: Option<String>,
+    push: bool,
+    remote: Option<String>,
+    pr_number: Option<u32>,
+    model: Option<String>,
+    custom_profile_name: Option<String>,
+    reasoning_effort: Option<String>,
+    specific_files: Option<Vec<String>>,
+    job_id: Option<String>,
+) -> Result<StartCommitJobResponse, String> {
+    let job_id = job_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let (job, is_new) =
+        COMMIT_JOB_REGISTRY.try_insert_running(job_id.clone(), worktree_path.clone())?;
+    if !is_new {
+        log::info!(
+            "Commit job {} is already running for {}",
+            job.id,
+            job.worktree_path
+        );
+        return Ok(StartCommitJobResponse { job });
+    }
+    log::info!("Commit job {job_id} started for {worktree_path}");
+    emit_commit_job_update(&app, &job);
+
+    let task_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let commit_app = task_app.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            tauri::async_runtime::block_on(create_commit_with_ai(
+                commit_app,
+                worktree_path,
+                custom_prompt,
+                push,
+                remote,
+                pr_number,
+                model,
+                custom_profile_name,
+                reasoning_effort,
+                specific_files,
+            ))
+        })
+        .await
+        .map_err(|error| format!("Commit task failed: {error}"))
+        .and_then(|result| result);
+
+        let updated = match result {
+            Ok(response) => {
+                log::info!("Commit job {job_id} completed");
+                COMMIT_JOB_REGISTRY.mark_completed(&job_id, response)
+            }
+            Err(error) => {
+                log::warn!("Commit job {job_id} failed: {error}");
+                COMMIT_JOB_REGISTRY.mark_failed(&job_id, error)
+            }
+        };
+        if let Some(job) = updated {
+            emit_commit_job_update(&task_app, &job);
+        }
+    });
+
+    Ok(StartCommitJobResponse { job })
+}
+
+#[tauri::command]
+pub async fn get_commit_job(job_id: String) -> Result<Option<CommitJob>, String> {
+    Ok(COMMIT_JOB_REGISTRY.get(&job_id))
+}
+
+fn emit_commit_job_update(app: &AppHandle, job: &CommitJob) {
+    let _ = app.emit("commit-job:updated", job);
 }
 
 // =============================================================================
@@ -12712,6 +12887,49 @@ mod tests {
     }
 
     #[test]
+    fn commit_job_registry_reserves_worktree_and_records_completion() {
+        let registry = CommitJobRegistry::default();
+        let (job, _) = registry
+            .try_insert_running("job-1".to_string(), "/tmp/wt".to_string())
+            .unwrap();
+
+        assert_eq!(job.status, CommitJobStatus::Running);
+        let (same_running_job, is_new) = registry
+            .try_insert_running("job-2".to_string(), "/tmp/wt".to_string())
+            .unwrap();
+        assert_eq!(same_running_job.id, "job-1");
+        assert!(!is_new);
+
+        let response = CreateCommitResponse {
+            commit_hash: "abc123".to_string(),
+            message: "fix: background commit".to_string(),
+            pushed: false,
+            push_fell_back: false,
+            push_permission_denied: false,
+        };
+        let completed = registry.mark_completed("job-1", response).unwrap();
+
+        assert_eq!(completed.status, CommitJobStatus::Completed);
+        assert_eq!(completed.response.unwrap().commit_hash, "abc123");
+        assert!(completed.error.is_none());
+    }
+
+    #[test]
+    fn commit_job_registry_treats_repeated_job_id_as_the_same_start() {
+        let registry = CommitJobRegistry::default();
+        let (_, first_is_new) = registry
+            .try_insert_running("job-1".to_string(), "/tmp/wt".to_string())
+            .unwrap();
+        let (same_job, second_is_new) = registry
+            .try_insert_running("job-1".to_string(), "/tmp/wt".to_string())
+            .unwrap();
+
+        assert!(first_is_new);
+        assert!(!second_is_new);
+        assert_eq!(same_job.id, "job-1");
+    }
+
+    #[test]
     fn test_sanitize_folder_name() {
         assert_eq!(sanitize_folder_name("simple"), "simple");
         assert_eq!(sanitize_folder_name("feat/worktree-1"), "feat_worktree-1");
@@ -12994,8 +13212,8 @@ Body
 
     #[test]
     fn format_claude_cli_failure_does_not_report_max_turns_summary_as_error() {
-        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}]}}
-{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — WebSocket reconnect sends minimal payload."}"#;
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the diff: two main features — web reload restores fresh state."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Looking at the diff: two main features — web reload restores fresh state."}"#;
 
         let result = format_claude_cli_failure("", stdout);
 

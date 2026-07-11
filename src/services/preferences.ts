@@ -40,7 +40,8 @@ function migrateKeybindings(
   return migrated
 }
 
-import { hasBackend } from '@/lib/environment'
+import { hasBackend, hasBackendTransport } from '@/lib/environment'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 
 const isTauri = hasBackend
 
@@ -56,7 +57,7 @@ export function usePreferences() {
     queryKey: preferencesQueryKeys.preferences(),
     queryFn: async (): Promise<AppPreferences> => {
       // Return defaults when running outside Tauri (e.g., bun run dev in browser)
-      if (!isTauri()) {
+      if (!hasBackendTransport()) {
         logger.debug('Not in Tauri context, using default preferences')
         return defaultPreferences
       }
@@ -85,7 +86,7 @@ export function usePreferences() {
       } catch (error) {
         // Return defaults if preferences file doesn't exist yet
         logger.warn('Failed to load preferences, using defaults', { error })
-        return defaultPreferences
+        return preserveQueryCacheOnError(error)
       }
     },
     staleTime: 1000 * 60 * 5, // 5 minutes

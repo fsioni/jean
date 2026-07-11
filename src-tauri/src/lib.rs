@@ -209,7 +209,7 @@ pub struct AppPreferences {
     #[serde(default)]
     pub magic_prompt_models: MagicPromptModels, // Per-prompt model overrides
     #[serde(default)]
-    pub magic_code_review_configs: Vec<MagicCodeReviewConfig>, // Up to five unique backend/model review runners
+    pub magic_code_review_configs: Vec<MagicCodeReviewConfig>, // Up to five backend/model/reasoning review runners
     #[serde(default)]
     pub magic_prompt_providers: MagicPromptProviders, // Per-prompt provider overrides (None = use default_provider)
     #[serde(default)]
@@ -1061,6 +1061,14 @@ mod tests {
             }),
         );
         object.insert(
+            "magic_code_review_configs".to_string(),
+            json!([{
+                "backend": "codex",
+                "model": "gpt-5.4",
+                "reasoning_effort": "xhigh"
+            }]),
+        );
+        object.insert(
             "magic_prompt_modes".to_string(),
             json!({
                 "investigate_issue_mode": "yolo",
@@ -1088,6 +1096,12 @@ mod tests {
         assert_eq!(
             prefs.magic_prompt_efforts.review_comments_effort.as_deref(),
             Some("medium")
+        );
+        assert_eq!(
+            prefs.magic_code_review_configs[0]
+                .reasoning_effort
+                .as_deref(),
+            Some("xhigh")
         );
         assert_eq!(prefs.magic_prompt_modes.investigate_issue_mode, "yolo");
         assert_eq!(prefs.magic_prompt_modes.review_comments_mode, "plan");
@@ -1804,6 +1818,8 @@ pub struct MagicPromptModels {
 pub struct MagicCodeReviewConfig {
     pub backend: String,
     pub model: String,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 fn default_sonnet_model() -> String {
@@ -2295,7 +2311,7 @@ pub struct UIState {
     #[serde(default)]
     pub modal_terminal_height: Option<f64>,
 
-    /// Terminal instances persisted per worktree for web refresh reconnect
+    /// Terminal instances persisted per worktree for restoration after web refresh
     #[serde(default)]
     pub terminal_instances: std::collections::HashMap<String, Vec<TerminalInstancePersisted>>,
 
@@ -4614,6 +4630,8 @@ pub fn run() {
             projects::cancel_create_pr_with_ai_content,
             projects::merge_github_pr,
             projects::create_commit_with_ai,
+            projects::start_commit_job,
+            projects::get_commit_job,
             projects::revert_last_local_commit,
             projects::run_review_with_ai,
             projects::run_coderabbit_review,

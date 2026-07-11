@@ -29,6 +29,7 @@ export type ThinkingLevel =
  * - high: Deep reasoning (default), almost always thinks
  * - xhigh: Extra high effort (Opus 4.8 recommended default for coding/agentic)
  * - max: No constraints on thinking depth
+ * - ultra: Codex native maximum reasoning with automatic task delegation
  * - ultracode: Claude Code ultracode mode (xhigh + Dynamic Workflows)
  */
 export type EffortLevel =
@@ -39,6 +40,7 @@ export type EffortLevel =
   | 'high'
   | 'xhigh'
   | 'max'
+  | 'ultra'
   | 'ultracode'
   | (string & {})
 

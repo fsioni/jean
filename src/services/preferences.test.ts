@@ -391,7 +391,7 @@ describe('preferences service', () => {
       expect(result.current.data?.jean_mcp_enabled).toBe(true)
     })
 
-    it('returns defaults on backend error', async () => {
+    it('reports backend errors instead of overwriting cached preferences', async () => {
       const { invoke } = await import('@/lib/transport')
       vi.mocked(invoke).mockRejectedValueOnce(new Error('File not found'))
 
@@ -399,10 +399,9 @@ describe('preferences service', () => {
         wrapper: createWrapper(queryClient),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => expect(result.current.isError).toBe(true))
 
-      expect(result.current.data?.theme).toBe('system')
-      expect(result.current.data?.jean_mcp_enabled).toBe(true)
+      expect(result.current.data).toBeUndefined()
     })
 
     it('migrates old keybindings to new defaults', async () => {

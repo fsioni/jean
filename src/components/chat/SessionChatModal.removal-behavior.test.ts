@@ -39,6 +39,17 @@ describe('SessionChatModal removal behavior', () => {
     )
   })
 
+  it('keeps the modal and session bar open when replacing the last session', () => {
+    const source = readSource('src/components/chat/SessionChatModal.tsx')
+    const start = source.indexOf('const removeSessionTab = useCallback(')
+    const end = source.indexOf('\n  const handleTabAuxClick', start)
+    const removeSessionTab =
+      start === -1 || end === -1 ? '' : source.slice(start, end)
+
+    expect(removeSessionTab).toContain('handleDeleteSession(session.id)')
+    expect(removeSessionTab).not.toContain('onClose()')
+  })
+
   it('uses terminal-like square tab styling for session header tabs', () => {
     const source = readSource('src/components/chat/SessionChatModal.tsx')
 
@@ -47,6 +58,15 @@ describe('SessionChatModal removal behavior', () => {
       'group/tab flex shrink-0 items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs transition-colors whitespace-nowrap'
     )
     expect(source).not.toContain('group/tab flex rounded items-center')
+  })
+
+  it('falls back to a real session when restored active session state is stale', () => {
+    const source = readSource('src/components/chat/SessionChatModal.tsx')
+
+    expect(source).toMatch(
+      /sessions\.some\(\s*session => session\.id === activeSessionId\s*\)/
+    )
+    expect(source).toContain('sessions[0]?.id ?? null')
   })
 
   it('keeps a yellow background on waiting session tabs', () => {

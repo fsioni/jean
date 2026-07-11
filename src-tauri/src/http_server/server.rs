@@ -3,7 +3,7 @@ use axum::{
     extract::{ws::WebSocketUpgrade, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use if_addrs::get_if_addrs;
@@ -58,23 +58,25 @@ pub struct ServerStatus {
 #[derive(Deserialize)]
 struct WsAuth {
     token: Option<String>,
-    /// `reconnect` returns the smallest payload needed after a WebSocket drop.
-    /// Full page loads omit this and receive the broader bootstrap payload.
-    mode: Option<String>,
-    /// Comma-separated worktreeId:sessionId pairs from the browser's current state.
-    /// Used by /api/init to load the correct active sessions even when
-    /// ui_state.json on disk is stale (debounced save hasn't flushed yet).
-    active_sessions: Option<String>,
     /// Browser-provided selected project id. Overrides `ui_state.selected_project_id`
     /// when the disk copy is stale. Used to scope the init payload to only the
     /// worktrees/sessions the user is currently viewing.
     selected_project: Option<String>,
 }
 
-impl WsAuth {
-    fn is_reconnect(&self) -> bool {
-        self.mode.as_deref() == Some("reconnect")
-    }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartCommitJobRequest {
+    job_id: String,
+    worktree_path: String,
+    custom_prompt: Option<String>,
+    push: bool,
+    remote: Option<String>,
+    pr_number: Option<u32>,
+    model: Option<String>,
+    custom_profile_name: Option<String>,
+    reasoning_effort: Option<String>,
+    specific_files: Option<Vec<String>>,
 }
 
 fn selected_project_id_for_init(
@@ -223,6 +225,7 @@ pub async fn start_server(
         .route("/readyz", get(ready_handler))
         .route("/ws", get(ws_handler))
         .route("/api/auth", get(auth_handler))
+        .route("/api/commit-jobs", post(start_commit_job_handler))
         .route("/api/init", get(init_handler))
         .route("/api/version", get(version_handler))
         .route("/api/files/{*filepath}", get(file_handler))
@@ -392,6 +395,38 @@ async fn auth_handler(
     }
 }
 
+async fn start_commit_job_handler(
+    headers: HeaderMap,
+    Query(params): Query<WsAuth>,
+    State(state): State<AppState>,
+    Json(request): Json<StartCommitJobRequest>,
+) -> Response {
+    if state.token_required
+        && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
+    {
+        return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+    }
+
+    match crate::projects::start_commit_job(
+        state.app,
+        request.worktree_path,
+        request.custom_prompt,
+        request.push,
+        request.remote,
+        request.pr_number,
+        request.model,
+        request.custom_profile_name,
+        request.reasoning_effort,
+        request.specific_files,
+        Some(request.job_id),
+    )
+    .await
+    {
+        Ok(result) => (StatusCode::ACCEPTED, Json(result)).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
 async fn version_handler(
     headers: HeaderMap,
     Query(params): Query<WsAuth>,
@@ -458,184 +493,6 @@ async fn load_selected_project_bootstrap(
     (worktrees_by_project, sessions_by_worktree)
 }
 
-fn parse_active_sessions_param(value: Option<&str>) -> std::collections::HashMap<String, String> {
-    value
-        .unwrap_or("")
-        .split(',')
-        .filter_map(|pair| {
-            let pair = pair.trim();
-            let (wt, sess) = pair.split_once(':')?;
-            if wt.is_empty() || sess.is_empty() {
-                return None;
-            }
-            Some((wt.to_string(), sess.to_string()))
-        })
-        .collect()
-}
-
-async fn reconnect_init_response(params: WsAuth, state: AppState) -> Response {
-    let mut response = serde_json::json!({});
-    let build_info = read_web_build_info(&state.dist_path).await;
-    response["webBuildId"] = Value::String(build_info.web_build_id);
-    response["appVersion"] = Value::String(build_info.app_version);
-    response["serverPlatform"] = Value::String(crate::server_platform_name().to_string());
-
-    if let Ok(app_data_dir) = state.app.path().app_data_dir() {
-        response["appDataDir"] = Value::String(app_data_dir.to_string_lossy().to_string());
-    }
-
-    let (projects_result, preferences_result, ui_state_result) = tokio::join!(
-        crate::projects::list_projects(state.app.clone()),
-        crate::load_preferences(state.app.clone()),
-        crate::load_ui_state(state.app.clone()),
-    );
-
-    let projects = match projects_result {
-        Ok(projects) => projects,
-        Err(e) => {
-            log::error!("Failed to load projects for reconnect /api/init: {e}");
-            vec![]
-        }
-    };
-    let ui_state = match ui_state_result {
-        Ok(ui_state) => Some(ui_state),
-        Err(e) => {
-            log::error!("Failed to load ui_state for reconnect /api/init: {e}");
-            None
-        }
-    };
-
-    if let Ok(val) = serde_json::to_value(&projects) {
-        response["projects"] = val;
-    }
-    if let Some(ref ui) = ui_state {
-        if let Ok(val) = serde_json::to_value(ui) {
-            response["uiState"] = val;
-        }
-    }
-    match preferences_result {
-        Ok(preferences) => {
-            if let Ok(val) = serde_json::to_value(&preferences) {
-                response["preferences"] = val;
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to load preferences for reconnect /api/init: {e}");
-            response["preferences"] = Value::Null;
-        }
-    }
-
-    let selected_project_id =
-        selected_project_id_for_init(params.selected_project.as_deref(), ui_state.as_ref());
-    let selected_project = selected_project_id
-        .as_deref()
-        .and_then(|id| projects.iter().find(|p| p.id == id && !p.is_folder));
-    if let Some(project) = selected_project {
-        let (worktrees_by_project, sessions_by_worktree) =
-            load_selected_project_bootstrap(state.app.clone(), project.id.clone()).await;
-        if let Ok(val) = serde_json::to_value(&worktrees_by_project) {
-            response["worktreesByProject"] = val;
-        }
-        if let Ok(val) = serde_json::to_value(&sessions_by_worktree) {
-            response["sessionsByWorktree"] = val;
-        }
-    }
-
-    let browser_active_sessions = parse_active_sessions_param(params.active_sessions.as_deref());
-
-    if !browser_active_sessions.is_empty() {
-        let session_futures: Vec<_> = browser_active_sessions
-            .iter()
-            .map(|(worktree_id, session_id)| {
-                let app = state.app.clone();
-                let wt_id = worktree_id.clone();
-                let sess_id = session_id.clone();
-                async move {
-                    let worktree =
-                        crate::projects::get_worktree(app.clone(), wt_id.clone()).await?;
-                    let session = crate::chat::get_session(
-                        app,
-                        wt_id.clone(),
-                        worktree.path,
-                        sess_id.clone(),
-                        Some(INIT_MESSAGE_WINDOW),
-                    )
-                    .await?;
-                    Ok::<_, String>((sess_id, wt_id, session))
-                }
-            })
-            .collect();
-
-        let mut active_sessions = serde_json::Map::new();
-        let mut active_session_worktree_ids = serde_json::Map::new();
-
-        for result in futures_util::future::join_all(session_futures).await {
-            match result {
-                Ok((session_id, worktree_id, session)) => {
-                    if let Ok(value) = serde_json::to_value(session) {
-                        active_sessions.insert(session_id.clone(), value);
-                        active_session_worktree_ids.insert(session_id, Value::String(worktree_id));
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to load reconnect active session: {e}");
-                }
-            }
-        }
-
-        if !active_sessions.is_empty() {
-            response["activeSessions"] = Value::Object(active_sessions);
-            response["activeSessionWorktreeIds"] = Value::Object(active_session_worktree_ids);
-        }
-    }
-
-    let running_sessions = crate::chat::registry::get_running_sessions();
-    response["runningSessions"] = serde_json::to_value(&running_sessions).unwrap_or_default();
-
-    if !running_sessions.is_empty() && !browser_active_sessions.is_empty() {
-        let focused: HashSet<&String> = browser_active_sessions
-            .values()
-            .filter(|session_id| running_sessions.contains(session_id))
-            .collect();
-
-        if !focused.is_empty() {
-            let mut replay_events: Vec<Value> = state
-                .app
-                .try_state::<WsBroadcaster>()
-                .map(|broadcaster| {
-                    let mut events: Vec<Value> = focused
-                        .iter()
-                        .flat_map(|session_id| {
-                            let buffered = broadcaster.replay_events(session_id, 0);
-                            let start = buffered.len().saturating_sub(INIT_REPLAY_EVENT_CAP);
-                            buffered[start..].to_vec()
-                        })
-                        .filter_map(|(_, json)| serde_json::from_str::<Value>(&json).ok())
-                        .collect();
-                    events.sort_by_key(|event| {
-                        event
-                            .get("seq")
-                            .and_then(|seq| seq.as_u64())
-                            .unwrap_or_default()
-                    });
-                    events
-                })
-                .unwrap_or_default();
-
-            replay_events.dedup_by(|a, b| {
-                a.get("seq").and_then(|seq| seq.as_u64())
-                    == b.get("seq").and_then(|seq| seq.as_u64())
-            });
-
-            if !replay_events.is_empty() {
-                response["replayEvents"] = Value::Array(replay_events);
-            }
-        }
-    }
-
-    Json(response).into_response()
-}
-
 /// Initial data endpoint. Returns only the data needed to render the view the
 /// user lands on (project list + currently-selected project's worktrees +
 /// windowed messages for the focused session). Additional data is lazy-loaded
@@ -650,10 +507,6 @@ async fn init_handler(
         && !request_is_authorized(params.token.as_deref(), &headers, &state.token)
     {
         return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
-    }
-
-    if params.is_reconnect() {
-        return reconnect_init_response(params, state).await;
     }
 
     // Fetch base (always-included) data in parallel
@@ -720,32 +573,6 @@ async fn init_handler(
             .unwrap_or(false)
     };
     let is_worktree_in_scope = |worktree_id: &str| sessions_by_worktree.contains_key(worktree_id);
-
-    // Parse browser-provided active session IDs (worktreeId:sessionId pairs).
-    // These override ui_state.json which may be stale due to debounced save.
-    let browser_active_sessions = parse_active_sessions_param(params.active_sessions.as_deref());
-
-    // Merge browser's active sessions into ui_state (browser is more recent
-    // than disk when ui_state.json save is debounced). Only merge entries we
-    // can validate (inside scope); unknown worktrees pass through untouched
-    // since the frontend is the source of truth for them.
-    if !browser_active_sessions.is_empty() {
-        if let Some(ref mut ui) = ui_state {
-            for (worktree_id, session_id) in &browser_active_sessions {
-                if is_active_session_valid(worktree_id, session_id) {
-                    log::debug!(
-                        "Using browser active session {session_id} for worktree {worktree_id}"
-                    );
-                    ui.active_session_ids
-                        .insert(worktree_id.clone(), session_id.clone());
-                } else if !is_worktree_in_scope(worktree_id) {
-                    // Out-of-scope worktree — trust browser.
-                    ui.active_session_ids
-                        .insert(worktree_id.clone(), session_id.clone());
-                }
-            }
-        }
-    }
 
     let mut cleaned_active_sessions: Vec<(String, Option<String>)> = Vec::new();
 
@@ -933,7 +760,7 @@ async fn init_handler(
 
     // Replay events: only for running sessions that are also focused (in
     // active_sessions), capped at the last N events per session. The WebSocket
-    // reconnect path continues to stream the full event flow.
+    // fresh WebSocket continues to stream the live event flow.
     if !running_sessions.is_empty() && !active_sessions.is_empty() {
         let focused: std::collections::HashSet<&String> = running_sessions
             .iter()
@@ -1556,38 +1383,6 @@ mod tests {
 
         let empty_error = parse_bind_ip("").unwrap_err();
         assert!(empty_error.contains("cannot be empty"));
-    }
-
-    #[test]
-    fn reconnect_init_response_includes_preferences() {
-        let source = include_str!("server.rs");
-        let start = source
-            .find("async fn reconnect_init_response")
-            .expect("reconnect_init_response should exist");
-        let rest = &source[start..];
-        let end = rest
-            .find("async fn init_handler")
-            .expect("init_handler should follow reconnect_init_response");
-        let body = &rest[..end];
-
-        assert!(body.contains("crate::load_preferences"));
-        assert!(body.contains("response[\"preferences\"]"));
-    }
-
-    #[test]
-    fn reconnect_init_response_includes_server_platform() {
-        let source = include_str!("server.rs");
-        let start = source
-            .find("async fn reconnect_init_response")
-            .expect("reconnect_init_response should exist");
-        let rest = &source[start..];
-        let end = rest
-            .find("async fn init_handler")
-            .expect("init_handler should follow reconnect_init_response");
-        let body = &rest[..end];
-
-        assert!(body.contains("response[\"serverPlatform\"]"));
-        assert!(body.contains("server_platform_name()"));
     }
 
     #[test]

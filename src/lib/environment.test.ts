@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { hasBackend, isNativeApp, setWsConnected } from './environment'
+import {
+  hasBackend,
+  hasBackendTransport,
+  isNativeApp,
+  setWebAccessEnabled,
+  setWsConnected,
+} from './environment'
 
 const clearInternals = () => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown })
@@ -10,6 +16,7 @@ describe('environment detection', () => {
   afterEach(() => {
     clearInternals()
     setWsConnected(false)
+    setWebAccessEnabled(false)
   })
 
   it('does not treat partial Tauri internals as native', () => {
@@ -37,5 +44,13 @@ describe('environment detection', () => {
 
     expect(isNativeApp()).toBe(false)
     expect(hasBackend()).toBe(true)
+  })
+
+  it('keeps the web transport queryable while its socket connects', () => {
+    setWebAccessEnabled(true)
+    setWsConnected(false)
+
+    expect(hasBackend()).toBe(false)
+    expect(hasBackendTransport()).toBe(true)
   })
 })

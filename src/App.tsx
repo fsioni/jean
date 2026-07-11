@@ -5,11 +5,8 @@ import {
   ingestBootstrapEvents,
   invoke,
   useWsConnectionStatus,
-  setWsDataReady,
   useWsAuthError,
   preloadInitialData,
-  prefetchReconnectInitialData,
-  consumeReconnectInitialData,
   setAppDataDir,
   hasPreloadedData,
   listen,
@@ -70,6 +67,7 @@ import {
 } from './lib/initial-data-cache'
 import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 import { WebAccessAuthScreen } from './components/web/WebAccessAuthScreen'
+import { peekWebReloadState, saveWebReloadState } from './lib/web-reload-state'
 
 interface AutoFixStoppedEvent {
   projectId: string
@@ -81,11 +79,12 @@ interface AutoFixStoppedEvent {
 /** Loading screen shown while preloading initial data (browser mode only). */
 function WebLoadingScreen() {
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-3">
-        <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
-        <span className="text-sm text-muted-foreground">Loading...</span>
-      </div>
+    <div
+      className="flex h-screen w-full flex-col items-center justify-center gap-3 bg-background"
+      role="status"
+    >
+      <div className="size-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+      <p className="text-sm text-muted-foreground">Jean is loading...</p>
     </div>
   )
 }
@@ -121,6 +120,25 @@ function App() {
   const featureTourOpen = useUIStore(state => state.featureTourOpen)
   const jeanMcpIntroOpen = useUIStore(state => state.jeanMcpIntroOpen)
   const hasStartedTransportRef = useRef(false)
+
+  const captureWebReloadState = useCallback(() => {
+    const { sessionChatModalOpen, sessionChatModalWorktreeId } =
+      useUIStore.getState()
+    if (!sessionChatModalOpen || !sessionChatModalWorktreeId) return
+
+    const { selectedProjectId } = useProjectsStore.getState()
+    const { activeSessionIds, worktreePaths } = useChatStore.getState()
+    const activeSessionId = activeSessionIds[sessionChatModalWorktreeId]
+    const modalWorktreePath = worktreePaths[sessionChatModalWorktreeId]
+    if (!selectedProjectId || !activeSessionId || !modalWorktreePath) return
+
+    saveWebReloadState({
+      projectId: selectedProjectId,
+      modalWorktreeId: sessionChatModalWorktreeId,
+      modalWorktreePath,
+      activeSessionId,
+    })
+  }, [])
 
   // Prevent a stray file drop from navigating the webview to file:// (which
   // would lock the whole window). Always-on catch-all for views without their
@@ -230,7 +248,6 @@ function App() {
   )
 
   // Seed TanStack Query cache and Zustand state from bulk initial data.
-  // Used on both initial preload and WebSocket reconnect.
   const seedCache = useCallback(
     (data: InitialData) => {
       const runningSnapshotMessages: {
@@ -368,22 +385,16 @@ function App() {
         }
       }
       // Seed active sessions (with full chat history/messages).
-      // Use function updater to avoid overwriting cache that has MORE messages
-      // (e.g., from chat:done upsert that arrived before this reconnect seed).
+      // Use a function updater to avoid overwriting cache that already has
+      // more messages from an event or query response racing the bootstrap.
       if (data.activeSessions) {
-        const activeSessionWorktreeIds = data.activeSessionWorktreeIds ?? {}
         const activeReviewingUpdates: Record<string, boolean> = {}
         const activeWaitingUpdates: Record<string, boolean> = {}
-        const activeSessionMappings: Record<string, string> = {}
 
         for (const [sessionId, initSession] of Object.entries(
           data.activeSessions
         )) {
           const session = initSession as Session
-          const worktreeId = activeSessionWorktreeIds[sessionId]
-          if (worktreeId) {
-            activeSessionMappings[sessionId] = worktreeId
-          }
           if (session.is_reviewing) {
             activeReviewingUpdates[sessionId] = true
           }
@@ -421,20 +432,12 @@ function App() {
         }
 
         if (
-          Object.keys(activeSessionMappings).length > 0 ||
           Object.keys(activeReviewingUpdates).length > 0 ||
           Object.keys(activeWaitingUpdates).length > 0
         ) {
           beginSessionStateHydration()
           try {
             useChatStore.setState(state => ({
-              sessionWorktreeMap:
-                Object.keys(activeSessionMappings).length > 0
-                  ? {
-                      ...state.sessionWorktreeMap,
-                      ...activeSessionMappings,
-                    }
-                  : state.sessionWorktreeMap,
               reviewingSessions:
                 data.sessionsByWorktree === undefined
                   ? activeReviewingUpdates
@@ -450,7 +453,7 @@ function App() {
         }
       }
       // Replace sendingSessionIds with exactly the server's running sessions.
-      // This clears sessions that finished while disconnected and restores
+      // This clears sessions that finished while the page was closed and restores
       // sessions that are still running — server is source of truth.
       const runningSendingIds: Record<string, boolean> = {}
       const runningSendStartedAt: Record<string, number> = {}
@@ -522,7 +525,8 @@ function App() {
       if (data.uiState) {
         queryClient.setQueryData(['ui-state'], data.uiState)
         const uiState = data.uiState as { active_project_id?: string | null }
-        const activeProjectId = uiState.active_project_id
+        const activeProjectId =
+          peekWebReloadState()?.projectId ?? uiState.active_project_id
         if (activeProjectId) {
           const { selectedProjectId, expandProject, selectProject } =
             useProjectsStore.getState()
@@ -537,7 +541,7 @@ function App() {
               (!('is_folder' in project) || !project.is_folder)
           )
           if (!selectedProjectId && !activeWorktreePath && projectExists) {
-            logger.info('Restoring active project from reconnect UI state', {
+            logger.info('Restoring active project from initial UI state', {
               activeProjectId,
             })
             selectProject(activeProjectId)
@@ -558,6 +562,7 @@ function App() {
     if (isNativeApp()) return
 
     const initialSelectedProjectId =
+      peekWebReloadState()?.projectId ??
       useProjectsStore.getState().selectedProjectId
     preloadInitialData(initialSelectedProjectId)
       .then(data => {
@@ -568,7 +573,6 @@ function App() {
           checkWebClientVersion(data)
           seedCache(data)
           ingestBootstrapEvents(data.replayEvents ?? [])
-          setWsDataReady(true)
         }
       })
       .catch(err => {
@@ -687,9 +691,10 @@ function App() {
   // One-time: detect installed backends and set magic prompt defaults accordingly
   useMagicPromptAutoDefaults()
 
-  // When WebSocket connects (browser mode), reload state.
-  // On first connect: invalidate non-preloaded queries.
-  // On reconnect: re-fetch bulk data via HTTP to restore everything fast.
+  // A fresh page bootstrap is faster and more reliable than repairing stale
+  // in-memory state. The backend keeps long-running jobs and
+  // terminals alive, so reloading behaves like reopening Jean without losing
+  // backend work.
   const wsConnected = useWsConnectionStatus()
   const hadWsConnectionRef = useRef(false)
   useEffect(() => {
@@ -697,74 +702,18 @@ function App() {
 
     if (!wsConnected) {
       if (hadWsConnectionRef.current) {
-        const activeSessionIds = useChatStore.getState().activeSessionIds
-        const selectedProjectId = useProjectsStore.getState().selectedProjectId
-        void prefetchReconnectInitialData(activeSessionIds, selectedProjectId)
+        logger.info('WebSocket disconnected, reloading web app')
+        captureWebReloadState()
+        window.location.reload()
       }
       return
     }
 
-    const reconnected = hadWsConnectionRef.current
     hadWsConnectionRef.current = true
 
-    if (reconnected) {
-      // Use the prefetch that was started during the backoff wait.
-      // Falls back to a fresh fetch with the browser's active session IDs
-      // so the server loads the correct sessions even when ui_state.json
-      // on disk is stale (debounced save hasn't flushed yet).
-      const activeSessionIds = useChatStore.getState().activeSessionIds
-      const selectedProjectId = useProjectsStore.getState().selectedProjectId
-      const dataPromise = consumeReconnectInitialData(
-        activeSessionIds,
-        selectedProjectId
-      )
-      logger.info('WebSocket reconnected, re-fetching initial data via HTTP')
-      dataPromise
-        .then(data => {
-          if (data) {
-            checkWebClientVersion(data)
-            seedCache(data)
-            ingestBootstrapEvents(data.replayEvents ?? [])
-            logger.info('Reconnect: re-seeded cache from HTTP')
-            setWsDataReady(true)
-            // Invalidate non-preloaded queries after a frame so the seeded
-            // cache renders first (prevents flash of stale → fresh data).
-            requestAnimationFrame(() => {
-              queryClient.invalidateQueries({
-                predicate: query => {
-                  const key = query.queryKey[0]
-                  return (
-                    key !== 'projects' &&
-                    key !== 'preferences' &&
-                    key !== 'ui-state' &&
-                    key !== 'chat'
-                  )
-                },
-              })
-            })
-          } else {
-            // HTTP fetch returned null (server not ready yet) — invalidate
-            // everything so TanStack Query refetches via WebSocket.
-            logger.warn(
-              'Reconnect: HTTP re-fetch returned no data, invalidating all queries'
-            )
-            setWsDataReady(true)
-            queryClient.invalidateQueries()
-          }
-        })
-        .catch(err => {
-          logger.warn(
-            'Reconnect: HTTP re-fetch failed, falling back to query invalidation',
-            { error: err }
-          )
-          setWsDataReady(true)
-          // Fallback: invalidate everything so TanStack Query refetches via WebSocket
-          queryClient.invalidateQueries()
-        })
-    } else {
-      // First connect: mark data ready (preload already seeded the cache)
-      // and invalidate non-preloaded queries only.
-      setWsDataReady(true)
+    // First connect: invalidate non-preloaded queries. If the HTTP preload
+    // failed, invalidate everything so it fetches over the open WebSocket.
+    if (hasPreloadedData()) {
       logger.info('WebSocket connected, invalidating dynamic queries')
       queryClient.invalidateQueries({
         predicate: query => {
@@ -777,8 +726,13 @@ function App() {
           )
         },
       })
+    } else {
+      logger.warn(
+        'WebSocket connected without preloaded data, invalidating all queries'
+      )
+      queryClient.invalidateQueries()
     }
-  }, [wsConnected, queryClient, seedCache])
+  }, [wsConnected, queryClient, captureWebReloadState])
 
   // Add native-app class to body for desktop-only CSS (cursor, user-select, etc.)
   useEffect(() => {
@@ -1270,6 +1224,14 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <MainWindow />
+        {!isNativeApp() && !wsConnected && (
+          <div
+            className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-background/20 backdrop-blur-md"
+            aria-hidden="true"
+          >
+            <div className="size-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+          </div>
+        )}
         {!isNativeApp() && <WsAuthErrorOverlay />}
       </ThemeProvider>
     </ErrorBoundary>

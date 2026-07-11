@@ -246,7 +246,11 @@ export function SessionChatModal({
   const activeSessionId = useChatStore(
     state => state.activeSessionIds[worktreeId]
   )
-  const currentSessionId = activeSessionId ?? sessions[0]?.id ?? null
+  const currentSessionId =
+    activeSessionId &&
+    sessions.some(session => session.id === activeSessionId)
+      ? activeSessionId
+      : (sessions[0]?.id ?? null)
   const currentSession = sessions.find(s => s.id === currentSessionId) ?? null
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
@@ -346,8 +350,6 @@ export function SessionChatModal({
   const currentLabel = useChatStore(state =>
     labelSessionId ? (state.sessionLabels[labelSessionId] ?? null) : null
   )
-
-
 
   // Rename session state
   const renameSession = useRenameSession()
@@ -475,7 +477,6 @@ export function SessionChatModal({
       if (activeSessions.length <= 1) {
         const action = () => {
           handleDeleteSession(session.id)
-          onClose()
         }
         const sessionIsEmpty = !session.message_count
         if (preferences?.confirm_session_close !== false && !sessionIsEmpty) {
@@ -492,10 +493,8 @@ export function SessionChatModal({
     [
       sessions,
       handleDeleteSession,
-      onClose,
       preferences?.confirm_session_close,
       selectVisualNeighbor,
-      handleArchiveSession,
     ]
   )
 

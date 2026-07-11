@@ -1,16 +1,17 @@
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@/test/test-utils'
+import { render, screen, within } from '@/test/test-utils'
 import { defaultPreferences } from '@/types/preferences'
 import { MagicPromptsPane } from './MagicPromptsPane'
 
 const mutateMock = vi.fn()
 let installedBackendsMock = ['claude', 'codex']
+let preferencesMock = { ...defaultPreferences }
 
 vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({
     data: {
-      ...defaultPreferences,
+      ...preferencesMock,
       magic_prompt_modes: {
         investigate_issue_mode: 'plan',
         investigate_pr_mode: 'plan',
@@ -58,6 +59,21 @@ vi.mock('@/services/model-catalog', () => ({
           { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
         ]
       : [],
+  getCatalogModelReasoning: (
+    _catalog: unknown,
+    backend: string,
+    model: string
+  ) =>
+    (backend === 'claude' && model !== 'haiku') || backend === 'codex'
+      ? {
+          type: 'effort',
+          default: backend === 'codex' ? 'low' : 'high',
+          levels: [
+            { value: 'low', label: 'Low', description: 'Light' },
+            { value: 'high', label: 'High', description: 'Deep' },
+          ],
+        }
+      : undefined,
   useModelCatalog: () => ({ data: undefined }),
 }))
 
@@ -76,6 +92,7 @@ class ResizeObserverMock {
 beforeEach(() => {
   mutateMock.mockReset()
   installedBackendsMock = ['claude', 'codex']
+  preferencesMock = { ...defaultPreferences }
   globalThis.ResizeObserver = ResizeObserverMock as never
   HTMLElement.prototype.scrollIntoView = vi.fn()
   HTMLElement.prototype.hasPointerCapture = vi.fn()
@@ -150,6 +167,86 @@ describe('MagicPromptsPane', () => {
     expect(screen.getByTestId('magic-prompt-mode-control')).toHaveClass(
       'max-md:w-full'
     )
+    expect(screen.getByTestId('magic-prompt-reasoning-control')).toHaveClass(
+      'max-md:w-full'
+    )
+  })
+
+  it('uses the selected model capability for an explicit reasoning level', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    const reasoning = screen.getByRole('combobox', { name: 'Reasoning level' })
+    expect(reasoning).toHaveTextContent('High')
+
+    await user.click(reasoning)
+    expect(screen.getByRole('option', { name: /Low/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Model default/ })).toBeNull()
+    await user.click(screen.getByRole('option', { name: /Low/ }))
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        magic_prompt_efforts: expect.objectContaining({
+          investigate_issue_effort: 'low',
+        }),
+      })
+    )
+  })
+
+  it('resets reasoning to the new model default when the backend changes', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Backend' }))
+    await user.click(screen.getByRole('option', { name: 'Codex' }))
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        magic_prompt_efforts: expect.objectContaining({
+          investigate_issue_effort: 'low',
+        }),
+      })
+    )
+  })
+
+  it('disables reasoning for a custom provider without thinking support', () => {
+    preferencesMock = {
+      ...defaultPreferences,
+      custom_cli_profiles: [
+        {
+          name: 'No Thinking',
+          settings_json: '{}',
+          supports_thinking: false,
+        },
+      ],
+      magic_prompt_providers: {
+        ...defaultPreferences.magic_prompt_providers,
+        investigate_issue_provider: 'No Thinking',
+      },
+    }
+
+    render(<MagicPromptsPane />)
+
+    expect(
+      screen.getByRole('combobox', { name: 'Reasoning level' })
+    ).toBeDisabled()
+  })
+
+  it('offers backend-native effort levels when discovered models lack catalog metadata', async () => {
+    installedBackendsMock = ['claude', 'pi']
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Backend' }))
+    await user.click(screen.getByRole('option', { name: 'PI' }))
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        magic_prompt_efforts: expect.objectContaining({
+          investigate_issue_effort: 'high',
+        }),
+      })
+    )
   })
 
   it('shows presets in a dropdown with every GPT 5.6 variant', async () => {
@@ -192,8 +289,16 @@ describe('MagicPromptsPane', () => {
           investigate_issue_backend: 'codex',
           review_comments_backend: 'codex',
         }),
+        magic_prompt_efforts: expect.objectContaining({
+          investigate_issue_effort: 'low',
+          review_comments_effort: 'low',
+        }),
         magic_code_review_configs: [
-          { backend: 'codex', model: 'gpt-5.6-luna-fast' },
+          {
+            backend: 'codex',
+            model: 'gpt-5.6-luna-fast',
+            reasoning_effort: 'low',
+          },
         ],
       })
     )
@@ -214,5 +319,114 @@ describe('MagicPromptsPane', () => {
         ],
       })
     )
+  })
+
+  it('configures reasoning separately for each code review model', async () => {
+    preferencesMock = {
+      ...defaultPreferences,
+      magic_code_review_configs: [
+        {
+          backend: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoning_effort: 'low',
+        },
+        {
+          backend: 'claude',
+          model: 'claude-fable-5',
+          reasoning_effort: 'high',
+        },
+      ],
+    }
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('button', { name: 'Code Review' }))
+
+    expect(
+      screen.getByRole('combobox', { name: 'Review 1 reasoning' })
+    ).toHaveTextContent('Low')
+    expect(
+      screen.getByRole('combobox', { name: 'Review 2 reasoning' })
+    ).toHaveTextContent('High')
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Review 2 reasoning' })
+    )
+    await user.click(screen.getByRole('option', { name: /Low/ }))
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        magic_code_review_configs: [
+          expect.objectContaining({ reasoning_effort: 'low' }),
+          expect.objectContaining({ reasoning_effort: 'low' }),
+        ],
+      })
+    )
+  })
+
+  it('applies the selected provider capability only to Claude review rows', async () => {
+    preferencesMock = {
+      ...defaultPreferences,
+      custom_cli_profiles: [
+        {
+          name: 'Custom Provider',
+          settings_json: '{}',
+          supports_thinking: false,
+        },
+      ],
+      magic_prompt_models: {
+        ...defaultPreferences.magic_prompt_models,
+        code_review_model: 'gpt-5.6-sol',
+      },
+      magic_code_review_configs: [
+        {
+          backend: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoning_effort: 'low',
+        },
+        {
+          backend: 'claude',
+          model: 'claude-fable-5',
+          reasoning_effort: 'high',
+        },
+      ],
+    }
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('button', { name: 'Code Review' }))
+    await user.click(screen.getByRole('combobox', { name: 'Provider' }))
+    await user.click(screen.getByRole('option', { name: 'Custom Provider' }))
+
+    expect(mutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        magic_code_review_configs: [
+          expect.objectContaining({ reasoning_effort: 'low' }),
+          expect.objectContaining({ reasoning_effort: null }),
+        ],
+      })
+    )
+  })
+
+  it('lays out each mobile review setting as one labeled full-width row', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('button', { name: 'Code Review' }))
+
+    const review = screen.getByTestId('magic-code-review-config-0')
+    expect(review).toHaveClass('flex-col')
+    expect(within(review).getByText('Backend')).toBeInTheDocument()
+    expect(within(review).getByText('Model')).toBeInTheDocument()
+    expect(within(review).getByText('Reasoning')).toBeInTheDocument()
+    expect(
+      within(review).getByRole('combobox', { name: 'Review 1 backend' })
+    ).toHaveClass('w-full')
+    expect(
+      within(review).getByRole('combobox', { name: 'Review 1 model' })
+    ).toHaveClass('w-full')
+    expect(
+      within(review).getByRole('combobox', { name: 'Review 1 reasoning' })
+    ).toHaveClass('w-full')
   })
 })

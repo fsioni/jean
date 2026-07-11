@@ -183,6 +183,39 @@ describe('model catalog', () => {
     })
   })
 
+  it('uses Codex native Ultra effort for bundled GPT 5.6 Sol and Terra', () => {
+    for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra']) {
+      const reasoning = getCatalogModelReasoning(null, 'codex', model)
+
+      expect(reasoning?.default).toBe('medium')
+      expect(reasoning?.levels.map(level => level.value)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultra',
+      ])
+    }
+  })
+
+  it('does not expose Ultra effort for bundled GPT 5.6 Luna', () => {
+    const reasoning = getCatalogModelReasoning(
+      null,
+      'codex',
+      'gpt-5.6-luna'
+    )
+
+    expect(reasoning?.default).toBe('medium')
+    expect(reasoning?.levels.map(level => level.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ])
+  })
+
   it('loads model reasoning capabilities and arbitrary levels from the CDN', async () => {
     const catalog = await fetchModelCatalog({
       storage: createStorage(),
@@ -202,11 +235,12 @@ describe('model catalog', () => {
                       fast_id: 'gpt-5.6-sol-fast',
                       reasoning: {
                         type: 'effort',
-                        default: 'low',
+                        default: 'medium',
                         levels: [
                           { value: 'low', label: 'Low' },
+                          { value: 'medium', label: 'Medium' },
                           {
-                            value: 'ultracode',
+                            value: 'ultra',
                             label: 'Ultra',
                             description: 'Automatic delegation',
                           },
@@ -226,11 +260,12 @@ describe('model catalog', () => {
       getCatalogModelReasoning(catalog, 'codex', 'gpt-5.6-sol-fast')
     ).toEqual({
       type: 'effort',
-      default: 'low',
+      default: 'medium',
       levels: [
         { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
         {
-          value: 'ultracode',
+          value: 'ultra',
           label: 'Ultra',
           description: 'Automatic delegation',
         },

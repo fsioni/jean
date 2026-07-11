@@ -10,6 +10,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
 import { chatQueryKeys, refreshWorktreeSessionsCaches } from '@/services/chat'
+import { startCommitJob } from '@/services/commit-jobs'
 import { buildMcpConfigJson } from '@/services/mcp'
 import { saveWorktreePr, projectsQueryKeys } from '@/services/projects'
 import {
@@ -24,7 +25,6 @@ import type { PrStatusEvent } from '@/types/pr-status'
 import { isBaseSession } from '@/types/projects'
 import type {
   CreatePrResponse,
-  CreateCommitResponse,
   DetectPrResponse,
   RevertCommitResponse,
   ReviewJob,
@@ -390,8 +390,7 @@ export function useGitOperations({
     const opToast = dismissibleToast.loading(`Creating commit on ${prefix}...`)
 
     try {
-      const result = await invoke<CreateCommitResponse>(
-        'create_commit_with_ai',
+      await startCommitJob(
         {
           worktreePath: activeWorktreePath,
           customPrompt: preferences?.magic_prompts?.commit_message,
@@ -405,19 +404,23 @@ export function useGitOperations({
           reasoningEffort:
             preferences?.magic_prompt_efforts?.commit_message_effort ?? null,
           specificFiles,
+        },
+        job => {
+          clearWorktreeLoading(activeWorktreeId)
+          if (job.status === 'failed' || !job.response) {
+            opToast.error(`${prefix}: Failed to commit: ${job.error}`)
+            return
+          }
+
+          clearGitDiffSelectedFiles()
+          triggerImmediateGitPoll()
+          window.dispatchEvent(new CustomEvent('git-commit-completed'))
+          opToast.success(`${prefix}: ${job.response.message.split('\n')[0]}`)
         }
       )
-
-      // Clear selected files and trigger refresh
-      clearGitDiffSelectedFiles()
-      triggerImmediateGitPoll()
-      window.dispatchEvent(new CustomEvent('git-commit-completed'))
-
-      opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
     } catch (error) {
-      opToast.error(`${prefix}: Failed to commit: ${error}`)
-    } finally {
       clearWorktreeLoading(activeWorktreeId)
+      opToast.error(`${prefix}: Failed to commit: ${error}`)
     }
   }, [
     activeWorktreeId,
@@ -453,8 +456,7 @@ export function useGitOperations({
       )
 
       try {
-        const result = await invoke<CreateCommitResponse>(
-          'create_commit_with_ai',
+        await startCommitJob(
           {
             worktreePath: activeWorktreePath,
             customPrompt: preferences?.magic_prompts?.commit_message,
@@ -470,42 +472,48 @@ export function useGitOperations({
             reasoningEffort:
               preferences?.magic_prompt_efforts?.commit_message_effort ?? null,
             specificFiles,
+          },
+          job => {
+            clearWorktreeLoading(activeWorktreeId)
+            if (job.status === 'failed' || !job.response) {
+              opToast.error(`${prefix}: Failed: ${job.error}`)
+              return
+            }
+
+            clearGitDiffSelectedFiles()
+            triggerImmediateGitPoll()
+            window.dispatchEvent(new CustomEvent('git-commit-completed'))
+
+            const result = job.response
+            if (result.push_permission_denied) {
+              opToast.error(
+                `${prefix}: No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
+                {
+                  action: {
+                    label: toastActionLabel('Open PR'),
+                    onClick: () =>
+                      window.dispatchEvent(
+                        new CustomEvent('magic-command', {
+                          detail: { command: 'open-pr' },
+                        })
+                      ),
+                  },
+                }
+              )
+            } else if (result.push_fell_back) {
+              opToast.warning(
+                `${prefix}: Could not push to PR branch, pushed to new branch instead`
+              )
+            } else if (result.commit_hash) {
+              opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
+            } else {
+              opToast.success(`${prefix}: Pushed to remote`)
+            }
           }
         )
-
-        // Clear selected files and trigger refresh
-        clearGitDiffSelectedFiles()
-        triggerImmediateGitPoll()
-        window.dispatchEvent(new CustomEvent('git-commit-completed'))
-
-        if (result.push_permission_denied) {
-          opToast.error(
-            `${prefix}: No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
-            {
-              action: {
-                label: toastActionLabel('Open PR'),
-                onClick: () =>
-                  window.dispatchEvent(
-                    new CustomEvent('magic-command', {
-                      detail: { command: 'open-pr' },
-                    })
-                  ),
-              },
-            }
-          )
-        } else if (result.push_fell_back) {
-          opToast.warning(
-            `${prefix}: Could not push to PR branch, pushed to new branch instead`
-          )
-        } else if (result.commit_hash) {
-          opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
-        } else {
-          opToast.success(`${prefix}: Pushed to remote`)
-        }
       } catch (error) {
-        opToast.error(`${prefix}: Failed: ${error}`)
-      } finally {
         clearWorktreeLoading(activeWorktreeId)
+        opToast.error(`${prefix}: Failed: ${error}`)
       }
     },
     [
@@ -839,7 +847,9 @@ export function useGitOperations({
               preferences?.default_provider
             ),
             reasoningEffort:
-              preferences?.magic_prompt_efforts?.code_review_effort ?? null,
+              reviewConfig?.reasoning_effort ??
+              preferences?.magic_prompt_efforts?.code_review_effort ??
+              null,
             reviewRunId,
             reviewType: source === 'coderabbit-cli' ? 'all' : null,
           }

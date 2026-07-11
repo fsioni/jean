@@ -161,6 +161,8 @@ import { usePreferences } from '@/services/preferences'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { hasBackendTransport } from '@/lib/environment'
+import { consumeWebReloadState } from '@/lib/web-reload-state'
 import {
   shouldDisableWorktreeTextSelection,
   shouldShowWorktreeLabelContextMenu,
@@ -993,7 +995,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     queries: readyWorktrees.map(wt => ({
       queryKey: [...chatQueryKeys.sessions(wt.id), 'with-counts'],
       queryFn: async (): Promise<WorktreeSessions> => {
-        if (!isTauri() || !wt.id || !wt.path) {
+        if (!hasBackendTransport() || !wt.id || !wt.path) {
           return {
             worktree_id: wt.id,
             sessions: [],
@@ -1508,6 +1510,22 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
     worktreeId: string
     worktreePath: string
   } | null>(null)
+
+  useEffect(() => {
+    const reloadState = consumeWebReloadState(projectId)
+    if (!reloadState) return
+
+    useChatStore
+      .getState()
+      .setActiveSession(
+        reloadState.modalWorktreeId,
+        reloadState.activeSessionId
+      )
+    setSelectedWorktreeModal({
+      worktreeId: reloadState.modalWorktreeId,
+      worktreePath: reloadState.modalWorktreePath,
+    })
+  }, [projectId])
   const searchInputRef = useRef<HTMLInputElement>(null)
   // Track highlighted card to survive reordering
   const highlightedCardRef = useRef<{
@@ -2907,17 +2925,14 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-64">
                     <DropdownMenuItem
-                      onSelect={() =>
-                        useProjectsStore
-                          .getState()
-                          .openProjectSettings(projectId)
-                      }
+                      onSelect={() => {
+                        useProjectsStore.getState().selectProject(projectId)
+                        useUIStore.getState().setNewWorktreeModalOpen(true)
+                      }}
                     >
-                      <Settings className="h-4 w-4" />
-                      Project Settings
+                      <Plus className="h-4 w-4" />
+                      New Worktree
                     </DropdownMenuItem>
-
-                    <DropdownMenuSeparator />
 
                     <DropdownMenuItem
                       onSelect={() => createBaseSession.mutate(projectId)}
@@ -2926,16 +2941,6 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                       {worktrees.find(isBaseSession)
                         ? 'Open Base Session'
                         : 'New Base Session'}
-                    </DropdownMenuItem>
-
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        useProjectsStore.getState().selectProject(projectId)
-                        useUIStore.getState().setNewWorktreeModalOpen(true)
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                      New Worktree
                     </DropdownMenuItem>
 
                     {mobileGitHubEnabled && (
@@ -3060,6 +3065,17 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                     </DropdownMenuItem>
 
                     <DropdownMenuSeparator />
+
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        useProjectsStore
+                          .getState()
+                          .openProjectSettings(projectId)
+                      }
+                    >
+                      <Settings className="h-4 w-4" />
+                      Project Settings
+                    </DropdownMenuItem>
 
                     <DropdownMenuItem
                       variant="destructive"

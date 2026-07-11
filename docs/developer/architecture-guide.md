@@ -62,15 +62,17 @@ Long-running operations that must survive web/mobile WebSocket disconnects
 should be owned by Rust, not by a pending frontend `invoke()` response. The
 frontend should start the job and receive an immediate job id; Rust
 should run the process, persist the final state, and emit best-effort progress
-events. On reconnect, the frontend recovers from persisted session/project data
-or job query commands instead of relying on the original WebSocket response.
+events. After a disconnect-triggered reload, the frontend recovers from
+persisted session/project data or job query commands instead of relying on the
+original WebSocket response.
 
 Current example: review magic uses `start_review_job`, which creates a Code
 Review session with a running indicator and starts the AI/CodeRabbit review in a
 Rust background task. AI review supports up to five distinct backend/model pairs
-per worktree; each pair gets its own named session and duplicate pairs are
-rejected while running. Results persist into each session's `review_results`,
-and job progress emits `review-job:updated`.
+per worktree; each pair has its own model-compatible reasoning level and gets
+its own named session. Duplicate pairs are rejected while running. Results
+persist into each session's `review_results`, and job progress emits
+`review-job:updated`.
 
 ### Command-Centric Design
 
@@ -128,6 +130,14 @@ Additional systems (no dedicated docs yet):
   **Web-mode persistence.** In web access (Axum HTTP server + WebSocket),
   panel/side/drawer and modal terminals survive a full browser refresh. Three
   pieces cooperate:
+
+  When an established WebSocket disconnects, the frontend reloads the page
+  instead of repairing stale in-memory state. The normal
+  HTTP bootstrap then restores current persisted state, while backend-owned
+  jobs and terminals keep running. Before reload, the current canvas session
+  modal and active session are copied to short-lived `sessionStorage` so the
+  same session header is restored even if the debounced UI-state save has not
+  completed yet.
   1. **Backend PTY registry** (`src-tauri/src/terminal/registry.rs`) keeps the
      real `portable_pty` process alive in `TERMINAL_SESSIONS` keyed by
      `terminal_id`. The frontend is a viewer; refresh never kills the PTY.
@@ -136,9 +146,9 @@ Additional systems (no dedicated docs yet):
      `TERMINAL_BUFFER_MAX_EVENTS = 12000` events/terminal and
      `TERMINAL_BUFFER_MAX_BYTES = 3MB` per terminal) holds the most
      recent `terminal:output` and `terminal:started` envelopes with monotonic
-     sequence numbers. On WebSocket reconnect — and on full-page refresh via
-     `requestTerminalReplay` — the frontend asks for events after a given
-     `last_seq` and the backend streams the buffered slice.
+     sequence numbers. After a full-page refresh, `requestTerminalReplay` asks
+     for events after a given `last_seq` and the backend streams the buffered
+     slice.
 
   3. **UI state hydration** (`src/hooks/useUIStatePersistence.ts`,
      `restoreTerminalRuntimeState`) is web-only. On load it reads

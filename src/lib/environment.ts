@@ -2,9 +2,12 @@
  * Environment detection utilities.
  *
  * - isNativeApp(): true only when running inside the Tauri desktop shell
- * - hasBackend(): true when a backend is available (Tauri IPC or HTTP/WS)
+ * - hasBackend(): true while Tauri IPC or the browser WebSocket is connected
+ * - hasBackendTransport(): true when a backend transport is configured, even
+ *   while the browser WebSocket is still opening
  *
- * Services should guard with hasBackend(), not isTauri().
+ * Service queries should guard with hasBackendTransport(); mutations that
+ * must run immediately should guard with hasBackend().
  * UI should use isNativeApp() to hide native-only features (Finder, external editors, etc.).
  */
 
@@ -29,6 +32,21 @@ export const hasBackend = (): boolean => {
 
 // Internal flag set by WsTransport when connected
 let _wsConnected = false
+let _webAccessEnabled = false
 export const setWsConnected = (connected: boolean): void => {
   _wsConnected = connected
 }
+
+export const setWebAccessEnabled = (enabled: boolean): void => {
+  _webAccessEnabled = enabled
+}
+
+/** Whether queries can use a configured backend transport.
+ * Unlike hasBackend(), this stays true while web access is connecting so query
+ * functions wait/fail instead of returning authoritative empty data. */
+export const hasBackendTransport = (): boolean =>
+  isNativeApp() ||
+  _webAccessEnabled ||
+  (typeof window !== 'undefined' &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    !!(window as any).__JEAN_E2E_MOCK__)

@@ -60,6 +60,8 @@ function mapCodexReasoningToEffort(
       return 'xhigh'
     case 'max':
       return 'max'
+    case 'ultra':
+      return 'ultra'
     default:
       return undefined
   }

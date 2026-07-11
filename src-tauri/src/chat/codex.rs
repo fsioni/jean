@@ -4258,41 +4258,23 @@ pub fn execute_one_shot_codex(
         // stdin is dropped here, closing the pipe
     }
 
-    log::debug!("Codex CLI one-shot spawned, waiting for output (timeout: 120s)...");
+    log::debug!("Codex CLI one-shot spawned, waiting for output (timeout: 300s)...");
 
-    // Wait with timeout to avoid hanging indefinitely (e.g. MCP server connection issues)
-    let timeout = std::time::Duration::from_secs(120);
+    // Drain stdout/stderr while waiting. Codex emits JSONL lifecycle events
+    // before its final structured result; waiting for exit before reading can
+    // fill the OS pipe buffer and deadlock the child.
+    let timeout = std::time::Duration::from_secs(300);
     let start = std::time::Instant::now();
-    let output = loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                // Process exited — collect output
-                break child
-                    .wait_with_output()
-                    .map_err(|e| format!("Failed to collect Codex CLI output: {e}"))?;
-            }
-            Ok(None) => {
-                // Still running
-                if start.elapsed() > timeout {
-                    // Kill the whole process group, not just the direct child —
-                    // otherwise codex's MCP children leak as orphaned processes.
-                    let _ = crate::platform::kill_process_tree(child.id());
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = std::fs::remove_file(&schema_file);
-                    return Err(
-                        "Codex CLI timed out after 120s. This often happens when an MCP server \
-                         is stuck connecting. Check your Codex MCP server configuration."
-                            .to_string(),
-                    );
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(e) => {
-                return Err(format!("Failed to check Codex CLI status: {e}"));
-            }
+    let output = wait_for_child_output(&mut child, timeout).map_err(|error| {
+        let _ = std::fs::remove_file(&schema_file);
+        if error == "Process timed out" {
+            "Codex CLI timed out after 300s. This often happens when an MCP server is stuck \
+             connecting. Check your Codex MCP server configuration."
+                .to_string()
+        } else {
+            error
         }
-    };
+    })?;
 
     log::debug!(
         "Codex CLI one-shot completed in {:.1}s, exit: {}",
@@ -4349,6 +4331,72 @@ pub fn execute_one_shot_codex(
     extract_codex_structured_output(&stdout)
 }
 
+fn wait_for_child_output(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+
+    let stdout = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            pipe.read_to_end(&mut output)
+                .map(|_| output)
+                .map_err(|error| format!("Failed to read process stdout: {error}"))
+        })
+    });
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            pipe.read_to_end(&mut output)
+                .map(|_| output)
+                .map_err(|error| format!("Failed to read process stderr: {error}"))
+        })
+    });
+
+    let started_at = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started_at.elapsed() <= timeout => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = crate::platform::kill_process_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                join_output_reader(stdout)?;
+                join_output_reader(stderr)?;
+                return Err("Process timed out".to_string());
+            }
+            Err(error) => {
+                let _ = crate::platform::kill_process_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Failed to check process status: {error}"));
+            }
+        }
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: join_output_reader(stdout)?,
+        stderr: join_output_reader(stderr)?,
+    })
+}
+
+fn join_output_reader(
+    reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+) -> Result<Vec<u8>, String> {
+    reader
+        .map(|handle| {
+            handle
+                .join()
+                .map_err(|_| "Process output reader panicked".to_string())?
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
+}
+
 fn build_one_shot_codex_args(
     actual_model: &str,
     is_fast: bool,
@@ -4384,6 +4432,22 @@ fn build_one_shot_codex_args(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn one_shot_output_reader_does_not_deadlock_on_a_full_pipe() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "head -c 262144 /dev/zero"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let output = wait_for_child_output(&mut child, std::time::Duration::from_secs(2)).unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 262_144);
+    }
     use crate::chat::types::{RunEntry, RunStatus};
 
     #[test]

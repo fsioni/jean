@@ -22,7 +22,6 @@ import { LocalTerminalLinkProvider } from '@/lib/terminal-local-links'
 import {
   invoke,
   isTransportConnected,
-  subscribeTransportStatus,
   requestTerminalReplay,
 } from '@/lib/transport'
 import { listen } from '@/lib/transport'
@@ -433,34 +432,6 @@ function ensureWakeHandler(): void {
   window.addEventListener('focus', wake)
 }
 
-/** Register one transport status subscriber that writes a [Reconnecting...]/
- *  [Reconnected] banner into every live xterm instance on connection-state
- *  transitions. Web access mode only — native always reports connected.
- *  Helps users understand why their input is being dropped during outages. */
-let transportStatusSubscribed = false
-let lastTransportConnected: boolean | null = null
-function ensureTransportStatusBanner(): void {
-  if (transportStatusSubscribed) return
-  transportStatusSubscribed = true
-  lastTransportConnected = isTransportConnected()
-  subscribeTransportStatus(() => {
-    const connected = isTransportConnected()
-    if (connected === lastTransportConnected) return
-    const message = connected
-      ? '\r\n\x1b[32m[Reconnected]\x1b[0m\r\n'
-      : '\r\n\x1b[33m[Reconnecting...]\x1b[0m\r\n'
-    for (const inst of instances.values()) {
-      if (!inst.terminal) continue
-      try {
-        inst.terminal.write(message)
-      } catch {
-        // ignore — terminal may be in mid-dispose
-      }
-    }
-    lastTransportConnected = connected
-  })
-}
-
 const FALLBACK_TERMINAL_BACKGROUND = '#101010'
 const FALLBACK_TERMINAL_FOREGROUND = '#fafafa'
 
@@ -731,7 +702,7 @@ function registerTerminalInputHandlers(
 ): void {
   // Handle user input - forward to PTY.
   // Drop input while transport is disconnected: queueing 30s+ of keystrokes
-  // and dumping them into the shell on reconnect = footgun (e.g. dangerous
+  // and dumping them into the shell on reattach = footgun (e.g. dangerous
   // partial commands executed). Banner makes the dropped state visible.
   terminal.onData(data => {
     queueTerminalInput(terminalId, data)
@@ -904,8 +875,6 @@ export function getOrCreateTerminal(
 
   // Ensure the visibility/focus wake handler is running.
   ensureWakeHandler()
-  // Ensure transport status banner subscription is active (web access mode).
-  ensureTransportStatusBanner()
   // Keep existing terminal renderers in sync when font settings change.
   ensurePreferencesSubscription()
   // One backend listener per terminal event type, not per terminal instance.
@@ -1027,7 +996,7 @@ export async function attachToContainer(
     instance.opened = true
   }
 
-  // Fit terminal to container and start/reconnect PTY
+  // Fit terminal to container and start/reattach PTY
   scheduleAnimationFrame(async () => {
     if (!isCurrentInstance(terminalId, instance)) return
 
@@ -1044,7 +1013,7 @@ export async function attachToContainer(
     if (!(await waitForTerminalReady(terminalId, instance))) return
 
     if (!instance.initialized) {
-      // First time - check if PTY already exists (reconnecting after app restart)
+      // First time - check if PTY already exists (reattaching after app restart)
       const ptyExists = await invoke<boolean>('has_active_terminal', {
         terminalId,
       })
@@ -1052,7 +1021,7 @@ export async function attachToContainer(
 
       if (ptyExists) {
         // PTY exists - replay buffered output, then resize and mark as running.
-        // This is the web-refresh reconnect path: the Rust PTY survived, but
+        // This is the web-refresh reattach path: the Rust PTY survived, but
         // the browser lost its in-memory xterm instance and seq tracking.
         if (!instance.replayRequested) {
           instance.replayRequested = true
@@ -1094,7 +1063,7 @@ export async function attachToContainer(
  * Start a terminal PTY without attaching to DOM.
  * Creates the embedded terminal instance (for event listeners + output
  * buffering) and spawns the PTY immediately. When the user later opens the
- * session, attachToContainer detects the running PTY and reconnects.
+ * session, attachToContainer detects and reattaches to the running PTY.
  */
 export function startHeadless(
   terminalId: string,

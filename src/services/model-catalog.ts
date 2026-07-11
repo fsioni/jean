@@ -91,11 +91,15 @@ const GPT_5_6_EFFORT_LEVELS: ModelReasoningLevel[] = [
   { value: 'xhigh', label: 'Extra high', description: 'Complex problems' },
   { value: 'max', label: 'Max', description: 'Maximum depth' },
   {
-    value: 'ultracode',
+    value: 'ultra',
     label: 'Ultra',
     description: 'Automatic delegation',
   },
 ]
+
+const GPT_5_6_LUNA_EFFORT_LEVELS = GPT_5_6_EFFORT_LEVELS.filter(
+  level => level.value !== 'ultra'
+)
 
 const CLAUDE_EFFORT_LEVELS: ModelReasoningLevel[] = [
   ...STANDARD_EFFORT_LEVELS,
@@ -112,12 +116,15 @@ function getBundledReasoning(
   model: string
 ): ModelReasoningCapability | undefined {
   if (backend === 'codex') {
-    const levels = model.startsWith('gpt-5.6')
-      ? GPT_5_6_EFFORT_LEVELS
+    const isGpt56 = model.startsWith('gpt-5.6')
+    const levels = isGpt56
+      ? model.includes('luna')
+        ? GPT_5_6_LUNA_EFFORT_LEVELS
+        : GPT_5_6_EFFORT_LEVELS
       : STANDARD_EFFORT_LEVELS
     return {
       type: 'effort',
-      default: model.startsWith('gpt-5.6') ? 'low' : 'high',
+      default: isGpt56 ? 'medium' : 'high',
       levels,
     }
   }

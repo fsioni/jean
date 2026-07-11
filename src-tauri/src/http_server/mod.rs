@@ -17,17 +17,17 @@ static EVENT_SEQ: AtomicU64 = AtomicU64::new(1);
 /// Maximum events buffered per session for replay.
 const SESSION_BUFFER_CAP: usize = 2000;
 
-/// Maximum events buffered per terminal for replay on reconnect.
+/// Maximum events buffered per terminal for replay after a page refresh.
 /// Keeps tiny output bursts bounded by count even when byte usage is low.
 const TERMINAL_BUFFER_MAX_EVENTS: usize = 12000;
 
-/// Maximum serialized JSON bytes buffered per terminal for replay on reconnect.
+/// Maximum serialized JSON bytes buffered per terminal for replay after refresh.
 /// Terminal output chunks can be several KiB each, so this byte budget is the
 /// real per-terminal memory guard; the event cap above is only a secondary
 /// small-event guard.
 const TERMINAL_BUFFER_MAX_BYTES: usize = 3 * 1024 * 1024;
 
-/// Events that are worth buffering for replay on reconnect.
+/// Events that are worth buffering for bootstrap replay after a page refresh.
 const REPLAYABLE_EVENTS: &[&str] = &[
     "chat:sending",
     "chat:chunk",
@@ -46,7 +46,7 @@ const REPLAYABLE_EVENTS: &[&str] = &[
     "chat:error",
 ];
 
-/// Terminal events buffered for replay on reconnect.
+/// Terminal events buffered for replay after a page refresh.
 /// Keyed by `terminal_id` field in payload.
 const TERMINAL_REPLAYABLE_EVENTS: &[&str] = &["terminal:output", "terminal:started"];
 
@@ -58,10 +58,10 @@ pub struct WsBroadcaster {
     /// no-op so native-only usage pays zero serialization/buffering cost on
     /// every emitted event.
     active: AtomicBool,
-    /// Per-session ring buffer for event replay on WebSocket reconnect.
+    /// Per-session ring buffer for event replay during page bootstrap.
     /// Key: session_id extracted from the event payload.
     session_buffers: Mutex<HashMap<String, VecDeque<(u64, Arc<str>)>>>,
-    /// Per-terminal ring buffer for terminal event replay on reconnect.
+    /// Per-terminal ring buffer for event replay after a page refresh.
     /// Key: terminal_id extracted from the event payload.
     terminal_buffers: Mutex<HashMap<String, TerminalReplayBuffer>>,
 }

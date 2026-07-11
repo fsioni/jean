@@ -267,10 +267,27 @@ fn infer_backend_from_model(model: &str, fallback: Backend) -> Backend {
     }
 }
 
-fn codex_reasoning_effort(effort: &EffortLevel) -> Option<&str> {
+fn codex_reasoning_effort<'a>(effort: &'a EffortLevel, model: Option<&str>) -> Option<&'a str> {
+    let supports_ultra = matches!(
+        model,
+        Some(
+            "gpt-5.6"
+                | "gpt-5.6-sol"
+                | "gpt-5.6-sol-fast"
+                | "gpt-5-6-sol"
+                | "gpt-5-6-sol-fast"
+                | "gpt-5.6-terra"
+                | "gpt-5.6-terra-fast"
+                | "gpt-5-6-terra"
+                | "gpt-5-6-terra-fast"
+        )
+    );
     match effort {
         EffortLevel::Off => None,
         EffortLevel::Minimal => Some("low"),
+        // Migrate GPT 5.6 sessions persisted before the Codex-native value was fixed.
+        EffortLevel::Ultracode if supports_ultra => Some("ultra"),
+        EffortLevel::Ultracode => Some("xhigh"),
         _ => effort.effort_value(),
     }
 }
@@ -2540,7 +2557,7 @@ pub async fn send_chat_message(
     }
 
     // Clear stale completion flags from previous turn — prevents approve
-    // buttons from appearing on WS reconnect during this turn.
+    // buttons from appearing after a web reload during this turn.
     with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
         if let Some(session) = sessions.find_session_mut(&session_id) {
             session.waiting_for_input = false;
@@ -2982,7 +2999,7 @@ pub async fn send_chat_message(
 
                 let codex_reasoning_effort = thread_effort_level
                     .as_ref()
-                    .and_then(codex_reasoning_effort)
+                    .and_then(|effort| codex_reasoning_effort(effort, thread_model.as_deref()))
                     .map(str::to_string);
 
                 // Build add_dirs for Codex
@@ -8861,10 +8878,24 @@ mod tests {
 
     #[test]
     fn codex_reasoning_effort_preserves_new_model_levels() {
-        assert_eq!(codex_reasoning_effort(&EffortLevel::Max), Some("max"));
         assert_eq!(
-            codex_reasoning_effort(&EffortLevel::Ultracode),
-            Some("ultracode")
+            codex_reasoning_effort(&EffortLevel::Max, Some("gpt-5.6-sol")),
+            Some("max")
+        );
+        assert_eq!(
+            codex_reasoning_effort(&EffortLevel::Ultracode, Some("gpt-5.6-sol")),
+            Some("ultra")
+        );
+        assert_eq!(
+            codex_reasoning_effort(
+                &EffortLevel::Other("ultra".to_string()),
+                Some("gpt-5.6-sol")
+            ),
+            Some("ultra")
+        );
+        assert_eq!(
+            codex_reasoning_effort(&EffortLevel::Ultracode, Some("gpt-5.6-luna")),
+            Some("xhigh")
         );
     }
     use crate::chat::types::ToolCall;

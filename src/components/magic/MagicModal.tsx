@@ -59,6 +59,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
+import { startCommitJob } from '@/services/commit-jobs'
 import { invoke, listen } from '@/lib/transport'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
@@ -74,7 +75,6 @@ import {
   performGitPull,
 } from '@/services/git-status'
 import type {
-  CreateCommitResponse,
   RevertCommitResponse,
   CreatePrResponse,
   DetectPrResponse,
@@ -905,8 +905,7 @@ export function MagicModal() {
             : `Creating commit on ${branch}...`
         )
         try {
-          const result = await invoke<CreateCommitResponse>(
-            'create_commit_with_ai',
+          await startCommitJob(
             {
               worktreePath: worktree.path,
               customPrompt: preferences?.magic_prompts?.commit_message,
@@ -923,26 +922,36 @@ export function MagicModal() {
                 preferences?.magic_prompt_efforts?.commit_message_effort ??
                 null,
               specificFiles,
+            },
+            job => {
+              clearWorktreeLoading(selectedWorktreeId)
+              if (job.status === 'failed' || !job.response) {
+                opToast.error(`Failed: ${job.error}`)
+                return
+              }
+
+              clearGitDiffSelectedFiles()
+              triggerImmediateGitPoll()
+              window.dispatchEvent(new CustomEvent('git-commit-completed'))
+              if (worktree.project_id) {
+                fetchWorktreesStatus(worktree.project_id)
+              }
+              const result = job.response
+              if (result.push_fell_back) {
+                opToast.warning(
+                  'Could not push to PR branch, pushed to new branch instead'
+                )
+              } else if (result.commit_hash) {
+                const prefix = isPush ? 'Committed and pushed' : 'Committed'
+                opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
+              } else {
+                opToast.success('Pushed to remote')
+              }
             }
           )
-          clearGitDiffSelectedFiles()
-          triggerImmediateGitPoll()
-          window.dispatchEvent(new CustomEvent('git-commit-completed'))
-          if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
-          if (result.push_fell_back) {
-            opToast.warning(
-              'Could not push to PR branch, pushed to new branch instead'
-            )
-          } else if (result.commit_hash) {
-            const prefix = isPush ? 'Committed and pushed' : 'Committed'
-            opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
-          } else {
-            opToast.success('Pushed to remote')
-          }
         } catch (error) {
-          opToast.error(`Failed: ${error}`)
-        } finally {
           clearWorktreeLoading(selectedWorktreeId)
+          opToast.error(`Failed: ${error}`)
         }
       }
 
@@ -1629,6 +1638,7 @@ ${resolveInstructions}`
                       preferences?.default_provider
                     ),
                     reasoningEffort:
+                      reviewConfig?.reasoning_effort ??
                       preferences?.magic_prompt_efforts?.code_review_effort ??
                       null,
                     reviewRunId,

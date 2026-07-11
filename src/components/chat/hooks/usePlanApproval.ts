@@ -40,6 +40,7 @@ const EFFORT_LEVEL_VALUES = new Set<EffortLevel>([
   'high',
   'xhigh',
   'max',
+  'ultra',
   'ultracode',
 ])
 

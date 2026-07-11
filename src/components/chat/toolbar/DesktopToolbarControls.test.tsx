@@ -219,15 +219,15 @@ describe('DesktopToolbarControls', () => {
     renderDesktopToolbarControls({
       selectedBackend: 'codex',
       selectedModel: 'gpt-5.6-sol',
-      selectedEffortLevel: 'ultracode',
+      selectedEffortLevel: 'ultra',
       thinkingDropdownOpen: true,
       modelReasoning: {
         type: 'effort',
-        default: 'low',
+        default: 'medium',
         levels: [
-          { value: 'low', label: 'Low', description: 'Fast responses' },
+          { value: 'medium', label: 'Medium', description: 'Balanced' },
           {
-            value: 'ultracode',
+            value: 'ultra',
             label: 'Ultra',
             description: 'Automatic delegation',
           },

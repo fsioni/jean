@@ -32,9 +32,22 @@ Each model can declare at most one reasoning control:
 - `type` is `effort` or `thinking`.
 - `default` must match one level's `value`.
 - `levels` controls ordering, labels, descriptions, and available values in
-  desktop, mobile, and Settings UI.
+  desktop, mobile, and Settings UI, including each configurable Magic Prompt.
+- Magic Prompts present an explicit supported level. The catalog default is
+  selected when no valid override exists and is persisted when the prompt's
+  backend or model changes; no separate "model default" option is shown.
+- Each configured Code Review runner persists its own reasoning level. Its
+  options are resolved from that row's backend/model and the selected Claude
+  provider, and that value is sent only to the matching review job.
+- Custom Claude providers hide the control unless provider-specific model
+  metadata is available, because aliases such as `opus` may map to models with
+  different reasoning capabilities.
 - Effort values are passed through to the selected backend, so the CDN can add
   backend-native values without a Jean release.
+- Codex effort values must match the values advertised by app-server
+  `model/list`. GPT-5.6 Sol and Terra advertise native `max` and `ultra`
+  (`ultra` includes automatic task delegation); GPT-5.6 Luna advertises `max`
+  but not `ultra`. Claude's separate workflow value remains `ultracode`.
 - Traditional Claude thinking uses `off`, `think`, `megathink`, and
   `ultrathink`. A numeric value such as `16000` defines a custom
   `MAX_THINKING_TOKENS` budget.

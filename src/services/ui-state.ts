@@ -3,8 +3,8 @@ import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import { defaultUIState, type UIState } from '@/types/ui-state'
 
-import { hasBackend } from '@/lib/environment'
-import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
+import { hasBackend, hasBackendTransport } from '@/lib/environment'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 
 const isTauri = hasBackend
 
@@ -20,7 +20,7 @@ export function useUIState() {
     queryKey: uiStateQueryKeys.state(),
     queryFn: async (): Promise<UIState> => {
       // Return defaults when running outside Tauri (e.g., bun run dev in browser)
-      if (!isTauri()) {
+      if (!hasBackendTransport()) {
         logger.debug('Not in Tauri context, using default UI state')
         return defaultUIState
       }
@@ -33,7 +33,7 @@ export function useUIState() {
       } catch (error) {
         // Return defaults if UI state file doesn't exist yet
         logger.warn('Failed to load UI state, using defaults', { error })
-        return fallbackUnlessWsDisconnected(error, defaultUIState)
+        return preserveQueryCacheOnError(error)
       }
     },
     staleTime: Infinity, // UI state doesn't need refetching - only updates via setQueryData

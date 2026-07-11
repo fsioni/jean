@@ -606,7 +606,9 @@ export function useCommandContext(
               preferences?.default_provider
             ),
             reasoningEffort:
-              preferences?.magic_prompt_efforts?.code_review_effort ?? null,
+              config.reasoning_effort ??
+              preferences?.magic_prompt_efforts?.code_review_effort ??
+              null,
             reviewRunId: generateId(),
             reviewType: null,
           })

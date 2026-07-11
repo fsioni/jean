@@ -121,10 +121,7 @@ enum WsClientMessage {
         #[serde(default)]
         args: Value,
     },
-    /// Request replay of missed events after reconnection.
-    #[serde(rename = "replay")]
-    Replay { session_id: String, last_seq: u64 },
-    /// Request replay of missed terminal events after reconnection.
+    /// Request buffered terminal events after a full page refresh.
     #[serde(rename = "terminal_replay")]
     TerminalReplay { terminal_id: String, last_seq: u64 },
 }
@@ -178,13 +175,12 @@ pub async fn handle_ws_connection(
 
     // Heartbeat: server-driven protocol ping every PING_INTERVAL. If no
     // inbound traffic (pong, text, ping) for PONG_TIMEOUT, treat connection as
-    // dead and break — onclose path on the client triggers reconnect + replay.
+    // dead and break — the client reloads and performs a fresh bootstrap.
     //
     // Also send an app-level heartbeat text frame. Browser JS does not expose
     // protocol ping/pong frames to `WebSocket.onmessage`, so the frontend
     // liveness watchdog needs a normal message during otherwise-idle terminal
-    // sessions. Without this, web access reconnects every ~50s of no app
-    // events, which makes embedded xterm sessions appear to time out.
+    // sessions. Without this, web access reloads every ~50s of no app events.
     const PING_INTERVAL: Duration = Duration::from_secs(20);
     const PONG_TIMEOUT: Duration = Duration::from_secs(45);
     const APP_HEARTBEAT_JSON: &str = r#"{"type":"heartbeat"}"#;
@@ -230,19 +226,8 @@ pub async fn handle_ws_connection(
                                     resp_tx.clone(),
                                 );
                             }
-                            Ok(WsClientMessage::Replay { session_id, last_seq }) => {
-                                // Replay missed events for this session
-                                if let Some(broadcaster) = app.try_state::<WsBroadcaster>() {
-                                    let events = broadcaster.replay_events(&session_id, last_seq);
-                                    for (_seq, json) in events {
-                                        if ws_tx.send(Message::Text(json.to_string().into())).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
                             Ok(WsClientMessage::TerminalReplay { terminal_id, last_seq }) => {
-                                // Replay missed terminal events after reconnect
+                                // Restore terminal output after a full page refresh.
                                 if let Some(broadcaster) = app.try_state::<WsBroadcaster>() {
                                     let events = broadcaster.replay_terminal_events(&terminal_id, last_seq);
                                     for (_seq, json) in events {

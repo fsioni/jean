@@ -7,6 +7,8 @@ export type CodexGoalExecutionMode = Extract<ExecutionMode, 'build' | 'yolo'>
 export interface MagicCodeReviewConfig {
   backend: string
   model: MagicPromptModel
+  /** Explicit reasoning level for this backend/model pair. */
+  reasoning_effort?: string | null
 }
 
 // =============================================================================
@@ -1073,7 +1075,7 @@ export interface AppPreferences {
   auto_recaps_enabled?: boolean // Ask agents to end multi-step/tool turns with a recap
   magic_prompts: MagicPrompts // Customizable prompts for AI-powered features
   magic_prompt_models: MagicPromptModels // Per-prompt model overrides
-  magic_code_review_configs?: MagicCodeReviewConfig[] // Up to five unique backend/model review runners
+  magic_code_review_configs?: MagicCodeReviewConfig[] // Up to five backend/model/reasoning review runners
   magic_prompt_providers: MagicPromptProviders // Per-prompt provider overrides (null = use default_provider)
   magic_prompt_backends: MagicPromptBackends // Per-prompt backend overrides (null = use project/global default_backend)
   magic_prompt_efforts: MagicPromptReasoningEfforts // Per-prompt reasoning effort overrides (null = model default)

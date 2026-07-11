@@ -56,7 +56,7 @@ describe('hydrateRunningSnapshot', () => {
     ).toBeUndefined()
   })
 
-  it('hydrates running snapshots during reconnect when explicitly allowed', () => {
+  it('hydrates running snapshots during bootstrap when explicitly allowed', () => {
     useChatStore.setState({
       sendingSessionIds: { 'session-1': true },
     })

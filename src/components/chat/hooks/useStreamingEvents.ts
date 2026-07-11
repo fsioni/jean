@@ -441,7 +441,7 @@ export default function useStreamingEvents({
           .getState()
           .consumeStreamingReplayText(session_id, content) ?? ''
       if (!replayFilteredContent) return
-      // Ensure session is marked as sending (recovers state after reconnect/refresh)
+      // Ensure session is marked as sending (recovers state after refresh)
       addSendingSession(session_id)
       // Accumulate into buffer
       chunkBuffer[session_id] =
@@ -2073,7 +2073,7 @@ export default function useStreamingEvents({
         case 'effortLevel':
           store.setEffortLevel(
             session_id,
-            value as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+            value as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'ultracode'
           )
           break
         case 'executionMode':

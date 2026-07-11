@@ -15,6 +15,7 @@ import {
   Download,
   Github,
   Heart,
+  Loader2,
   PanelLeft,
   PanelLeftClose,
   Settings,
@@ -26,10 +27,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import {
-  CLI_DISPLAY_NAMES,
-  resolveCliPathUpdateAction,
-} from '@/lib/cli-update'
+import { CLI_DISPLAY_NAMES, resolveCliPathUpdateAction } from '@/lib/cli-update'
 import type { PendingCliUpdate } from '@/store/ui-store'
 import { toast } from 'sonner'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
@@ -177,8 +175,8 @@ export function TitleBar({
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         {!native && !wsConnected ? (
-          <div className="flex items-center gap-1.5 whitespace-nowrap text-[0.6875rem] font-medium text-amber-500">
-            <span className="size-2 animate-pulse rounded-full bg-amber-500" />
+          <div className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-background px-1.5 text-sm font-medium text-yellow-400">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span>Reconnecting…</span>
           </div>
         ) : (
@@ -230,32 +228,37 @@ export function TitleBar({
 
 function CliUpdatesIndicator() {
   const updates = useUIStore(state => state.availableCliUpdates)
-  const dismissCliUpdateNotice = useUIStore(state => state.dismissCliUpdateNotice)
+  const dismissCliUpdateNotice = useUIStore(
+    state => state.dismissCliUpdateNotice
+  )
   const openCliUpdateModal = useUIStore(state => state.openCliUpdateModal)
   const openCliLoginModal = useUIStore(state => state.openCliLoginModal)
   const [open, setOpen] = useState(false)
 
-  const triggerUpdate = useCallback((update: PendingCliUpdate) => {
-    if (update.cliSource === 'path') {
-      const action = resolveCliPathUpdateAction(
-        update.type,
-        update.cliPath,
-        update.packageManager,
-        update.latestVersion
-      )
-      if (action) {
-        openCliLoginModal(update.type, action[0], action[1], 'update')
-      } else {
-        toast.error(
-          `Can't auto-update ${CLI_DISPLAY_NAMES[update.type]}. Update it manually via your package manager.`
+  const triggerUpdate = useCallback(
+    (update: PendingCliUpdate) => {
+      if (update.cliSource === 'path') {
+        const action = resolveCliPathUpdateAction(
+          update.type,
+          update.cliPath,
+          update.packageManager,
+          update.latestVersion
         )
-        return
+        if (action) {
+          openCliLoginModal(update.type, action[0], action[1], 'update')
+        } else {
+          toast.error(
+            `Can't auto-update ${CLI_DISPLAY_NAMES[update.type]}. Update it manually via your package manager.`
+          )
+          return
+        }
+      } else {
+        openCliUpdateModal(update.type)
       }
-    } else {
-      openCliUpdateModal(update.type)
-    }
-    dismissCliUpdateNotice(update.type)
-  }, [dismissCliUpdateNotice, openCliUpdateModal, openCliLoginModal])
+      dismissCliUpdateNotice(update.type)
+    },
+    [dismissCliUpdateNotice, openCliUpdateModal, openCliLoginModal]
+  )
 
   // Auto-close popover when all updates have been acted on / dismissed
   useEffect(() => {

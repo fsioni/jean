@@ -49,6 +49,7 @@ async function loadTransportModule() {
   vi.doMock('./environment', () => ({
     isNativeApp: () => false,
     setWsConnected: setWsConnectedMock,
+    setWebAccessEnabled: vi.fn(),
   }))
   return import('./transport')
 }
@@ -73,84 +74,6 @@ describe('transport bootstrap', () => {
     vi.unstubAllGlobals()
     vi.doUnmock('./environment')
   })
-
-
-  it('uses reconnect mode when refetching initial data after reconnect', async () => {
-    const transport = await loadTransportModule()
-
-    await transport.refetchInitialData({ 'worktree-1': 'session-1' }, 'project-1')
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
-    )
-  })
-
-  it('starts reconnect init fetch before websocket comes back and reuses it', async () => {
-    const transport = await loadTransportModule()
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockClear()
-
-    const prefetch = transport.prefetchReconnectInitialData(
-      { 'worktree-1': 'session-1' },
-      'project-1'
-    )
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
-    )
-
-    await expect(
-      transport.consumeReconnectInitialData(
-        { 'worktree-1': 'session-1' },
-        'project-1'
-      )
-    ).resolves.toEqual({})
-    await prefetch
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('retries reconnect init fetch on consume when the prefetch failed', async () => {
-    const transport = await loadTransportModule()
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockReset()
-    fetchMock
-      .mockResolvedValueOnce({ ok: false } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ projects: [] }),
-      } as Response)
-
-    await transport.prefetchReconnectInitialData(
-      { 'worktree-1': 'session-1' },
-      'project-1'
-    )
-
-    await expect(
-      transport.consumeReconnectInitialData(
-        { 'worktree-1': 'session-1' },
-        'project-1'
-      )
-    ).resolves.toEqual({ projects: [] })
-
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not prefetch reconnect data while the page is hidden', async () => {
-    Object.defineProperty(document, 'hidden', {
-      configurable: true,
-      value: true,
-    })
-    const transport = await loadTransportModule()
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockClear()
-
-    await transport.prefetchReconnectInitialData()
-
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 
@@ -161,6 +84,24 @@ describe('transport bootstrap', () => {
     await flushAsync()
 
     expect(fetch).toHaveBeenCalledTimes(1)
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(setWsConnectedMock).toHaveBeenCalledWith(true)
+  })
+
+  it('retries while establishing the initial connection', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock
+      .mockRejectedValueOnce(new Error('server starting'))
+      .mockResolvedValueOnce({ ok: true } as Response)
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+    expect(MockWebSocket.instances).toHaveLength(0)
+
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await flushAsync()
+
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(setWsConnectedMock).toHaveBeenCalledWith(true)
   })
@@ -346,73 +287,17 @@ describe('transport bootstrap', () => {
     )
   })
 
-  it('requests terminal_replay for active terminals after websocket reconnect', async () => {
+  it('does not open a second socket after an established connection closes', async () => {
     const transport = await loadTransportModule()
 
     transport.connectTransport()
     await flushAsync()
 
     const firstWs = getWs(0)
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:started',
-      payload: { terminal_id: 'term-1', cols: 120, rows: 40 },
-      seq: 20,
-    })
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:output',
-      payload: { terminal_id: 'term-1', data: 'running' },
-      seq: 21,
-    })
-
     firstWs.close()
     await new Promise(resolve => setTimeout(resolve, 150))
     await flushAsync()
 
-    const secondWs = getWs(1)
-    expect(secondWs).toBeDefined()
-    expect(secondWs.send).toHaveBeenCalledWith(
-      JSON.stringify({
-        type: 'terminal_replay',
-        terminal_id: 'term-1',
-        last_seq: 21,
-      })
-    )
-  })
-
-  it('does not request terminal_replay after terminal stopped event', async () => {
-    const transport = await loadTransportModule()
-
-    transport.connectTransport()
-    await flushAsync()
-
-    const firstWs = getWs(0)
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:started',
-      payload: { terminal_id: 'term-1', cols: 120, rows: 40 },
-      seq: 20,
-    })
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:stopped',
-      payload: { terminal_id: 'term-1', exit_code: 0, signal: null },
-      seq: 21,
-    })
-
-    firstWs.close()
-    await new Promise(resolve => setTimeout(resolve, 150))
-    await flushAsync()
-
-    const secondWs = getWs(1)
-    expect(secondWs).toBeDefined()
-    expect(secondWs.send).not.toHaveBeenCalledWith(
-      JSON.stringify({
-        type: 'terminal_replay',
-        terminal_id: 'term-1',
-        last_seq: 21,
-      })
-    )
+    expect(MockWebSocket.instances).toHaveLength(1)
   })
 })

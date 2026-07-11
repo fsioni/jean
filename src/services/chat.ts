@@ -32,6 +32,7 @@ import type {
 } from '@/types/chat'
 
 import { isTauri, projectsQueryKeys } from '@/services/projects'
+import { hasBackendTransport } from '@/lib/environment'
 import { preferencesQueryKeys } from '@/services/preferences'
 import type { AppPreferences } from '@/types/preferences'
 import { useChatStore } from '@/store/chat-store'
@@ -40,14 +41,14 @@ import { useTerminalStore } from '@/store/terminal-store'
 import { isNativeTerminalBackend } from '@/lib/native-cli-session'
 import { getResumeArgs } from '@/components/chat/session-card-utils'
 import type { ReviewResponse, Worktree } from '@/types/projects'
-import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 
 /** Default number of recent runs loaded on initial session fetch. */
 export const INITIAL_RUN_LIMIT = 10
 /** Number of older runs to load per scroll-up batch. */
 export const OLDER_RUN_BATCH = 10
 
-/** Check if an error is from a WebSocket disconnect (suppress toasts during reconnect). */
+/** Check if an error is from a WebSocket disconnect (suppress toasts before reload). */
 function isWsDisconnectError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error)
   return msg.includes('WebSocket disconnected')
@@ -317,7 +318,7 @@ export function useSessions(
       ? [...chatQueryKeys.sessions(worktreeId ?? ''), 'with-counts']
       : chatQueryKeys.sessions(worktreeId ?? ''),
     queryFn: async (): Promise<WorktreeSessions> => {
-      if (!isTauri() || !worktreeId || !worktreePath) {
+      if (!hasBackendTransport() || !worktreeId || !worktreePath) {
         return {
           worktree_id: '',
           sessions: [],
@@ -337,12 +338,7 @@ export function useSessions(
         return sessions
       } catch (error) {
         logger.error('Failed to load sessions', { error, worktreeId })
-        return fallbackUnlessWsDisconnected(error, {
-          worktree_id: worktreeId,
-          sessions: [],
-          active_session_id: null,
-          version: 2,
-        })
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!worktreeId && !!worktreePath,
@@ -608,7 +604,12 @@ export function useSession(
   return useQuery({
     queryKey: chatQueryKeys.session(sessionId ?? ''),
     queryFn: async (): Promise<Session | null> => {
-      if (!isTauri() || !sessionId || !worktreeId || !worktreePath) {
+      if (
+        !hasBackendTransport() ||
+        !sessionId ||
+        !worktreeId ||
+        !worktreePath
+      ) {
         return null
       }
 
@@ -673,7 +674,7 @@ export function useSession(
         return session
       } catch (error) {
         logger.warn('[useSession] FAILED to load session', { error, sessionId })
-        return fallbackUnlessWsDisconnected(error, null)
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!sessionId && !!worktreeId && !!worktreePath,

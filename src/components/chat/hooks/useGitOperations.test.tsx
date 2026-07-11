@@ -260,6 +260,54 @@ describe('useGitOperations conflict resolution', () => {
     })
   })
 
+  it('starts magic commit as a backend-owned job', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          job: {
+            id: 'commit-job-1',
+            worktreePath: '/repo/worktree',
+            status: 'running',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        }),
+        { status: 202, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === 'get_commit_job') {
+        return Promise.resolve({
+          id: 'commit-job-1',
+          worktreePath: '/repo/worktree',
+          status: 'running',
+          createdAt: 1,
+          updatedAt: 1,
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const { result } = renderGitOperations()
+
+    await act(async () => {
+      await result.current.handleCommit()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/commit-jobs',
+      expect.objectContaining({
+        method: 'POST',
+        keepalive: true,
+      })
+    )
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      'create_commit_with_ai',
+      expect.anything()
+    )
+    fetchMock.mockRestore()
+  })
+
   it('uses the PR conflict flow when no local conflicts exist yet', async () => {
     mocks.invoke.mockImplementation((command: string) => {
       if (command === 'get_merge_conflicts') {
@@ -508,8 +556,16 @@ describe('useGitOperations conflict resolution', () => {
 
     const { result } = renderGitOperations({
       magic_code_review_configs: [
-        { backend: 'codex', model: 'gpt-5.6-sol' },
-        { backend: 'claude', model: 'claude-opus-4-8[1m]' },
+        {
+          backend: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoning_effort: 'low',
+        },
+        {
+          backend: 'claude',
+          model: 'claude-opus-4-8[1m]',
+          reasoning_effort: 'high',
+        },
       ],
     })
 
@@ -519,13 +575,18 @@ describe('useGitOperations conflict resolution', () => {
 
     expect(mocks.invoke).toHaveBeenCalledWith(
       'start_review_job',
-      expect.objectContaining({ backend: 'codex', model: 'gpt-5.6-sol' })
+      expect.objectContaining({
+        backend: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'low',
+      })
     )
     expect(mocks.invoke).toHaveBeenCalledWith(
       'start_review_job',
       expect.objectContaining({
         backend: 'claude',
         model: 'claude-opus-4-8[1m]',
+        reasoningEffort: 'high',
       })
     )
   })

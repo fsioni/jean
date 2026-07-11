@@ -7,6 +7,7 @@ vi.mock('@/lib/transport', () => ({
 
 vi.mock('@/lib/environment', () => ({
   hasBackend: () => true,
+  hasBackendTransport: () => true,
 }))
 
 vi.mock('@/lib/terminal-instances', () => ({
@@ -22,7 +23,7 @@ import {
   prefetchSessions,
   reconnectNativeCliSession,
 } from './chat'
-import { fallbackUnlessWsDisconnected } from '@/lib/query-fallback'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
@@ -39,15 +40,13 @@ describe('transient WebSocket query failures', () => {
   it('rethrows disconnects so TanStack Query preserves cached session data', () => {
     const error = new Error('WebSocket disconnected')
 
-    expect(() => fallbackUnlessWsDisconnected(error, null)).toThrow(error)
+    expect(() => preserveQueryCacheOnError(error)).toThrow(error)
   })
 
-  it('keeps existing empty fallbacks for non-transport failures', () => {
-    const fallback = { sessions: [] }
+  it('does not convert other load failures into empty session data', () => {
+    const error = new Error('session file is invalid')
 
-    expect(
-      fallbackUnlessWsDisconnected(new Error('session file is invalid'), fallback)
-    ).toBe(fallback)
+    expect(() => preserveQueryCacheOnError(error)).toThrow(error)
   })
 })
 
