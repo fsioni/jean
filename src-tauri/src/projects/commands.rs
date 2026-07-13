@@ -25,9 +25,9 @@ use super::github_issues::{
     format_advisory_context_markdown, format_issue_context_markdown, format_pr_context_markdown,
     format_security_context_markdown, generate_branch_name_from_advisory,
     generate_branch_name_from_issue, generate_branch_name_from_security_alert,
-    get_github_contexts_dir, get_github_pr, get_pr_diff, get_session_context_content,
-    get_session_context_numbers, AdvisoryContext, IssueContext, PullRequestContext,
-    SecurityAlertContext,
+    get_github_contexts_dir, get_github_pr, get_github_pr_by_number, get_pr_diff,
+    get_session_context_content, get_session_context_numbers, AdvisoryContext, IssueContext,
+    PullRequestContext, SecurityAlertContext,
 };
 use super::linear_issues::{
     add_linear_reference, format_linear_issue_context_markdown,
@@ -9161,6 +9161,18 @@ fn generate_review(
         .map_err(|e| format!("Failed to parse review response: {e}"))
 }
 
+fn select_review_target_branch(
+    linked_pr_base: Option<&str>,
+    worktree_base: Option<&str>,
+    project_default: &str,
+) -> String {
+    linked_pr_base
+        .filter(|branch| !branch.trim().is_empty())
+        .or_else(|| worktree_base.filter(|branch| !branch.trim().is_empty()))
+        .unwrap_or(project_default)
+        .to_string()
+}
+
 /// Run AI code review on the current branch
 #[tauri::command]
 pub async fn run_review_with_ai(
@@ -9178,26 +9190,49 @@ pub async fn run_review_with_ai(
     // Load projects data to find the target branch
     let data = load_projects_data(&app)?;
 
-    // Find the worktree by path
-    let worktree = data
-        .worktrees
-        .iter()
-        .find(|w| w.path == worktree_path)
-        .ok_or_else(|| format!("Worktree not found: {worktree_path}"))?;
+    let (worktree_id, pr_number, worktree_base, project_default) = {
+        let worktree = data
+            .worktrees
+            .iter()
+            .find(|w| w.path == worktree_path)
+            .ok_or_else(|| format!("Worktree not found: {worktree_path}"))?;
+        let project = data
+            .find_project(&worktree.project_id)
+            .ok_or_else(|| format!("Project not found: {}", worktree.project_id))?;
 
-    // Find the project to get default_branch
-    let project = data
-        .find_project(&worktree.project_id)
-        .ok_or_else(|| format!("Project not found: {}", worktree.project_id))?;
+        (
+            worktree.id.clone(),
+            worktree.pr_number,
+            worktree.base_branch.clone(),
+            project.default_branch.clone(),
+        )
+    };
 
-    let target_branch = &project.default_branch;
     let current_branch = git::get_current_branch(&worktree_path)?;
+    let linked_pr_base = if let Some(pr_number) = pr_number {
+        match get_github_pr_by_number(app.clone(), worktree_path.clone(), pr_number).await {
+            Ok(pr) => Some(pr.base_ref_name),
+            Err(error) => {
+                log::warn!(
+                    "Failed to load linked PR #{pr_number} for review target selection: {error}"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let target_branch = select_review_target_branch(
+        linked_pr_base.as_deref(),
+        worktree_base.as_deref(),
+        &project_default,
+    );
 
     // Get branch diff (non-fatal — may fail if origin ref doesn't exist)
-    let diff = get_branch_diff(&worktree_path, target_branch, "HEAD").unwrap_or_default();
+    let diff = get_branch_diff(&worktree_path, &target_branch, "HEAD").unwrap_or_default();
 
     // Get commit history (non-fatal — same reason)
-    let commits = get_branch_commits(&worktree_path, target_branch, "HEAD").unwrap_or_default();
+    let commits = get_branch_commits(&worktree_path, &target_branch, "HEAD").unwrap_or_default();
 
     // Get uncommitted changes (staged + unstaged for tracked files)
     let uncommitted_output = wsl_aware_command("git", Some(Path::new(&worktree_path)))
@@ -9317,7 +9352,7 @@ pub async fn run_review_with_ai(
         custom_profile_name.as_deref(),
         Some(std::path::Path::new(&worktree_path)),
         review_run_id.as_deref(),
-        Some(&worktree.id),
+        Some(&worktree_id),
         review_magic_backend.as_deref(),
         reasoning_effort.as_deref(),
     )?;
@@ -12829,6 +12864,27 @@ mod tests {
         assert!(extract_json_object_from_text("").is_err());
         // Unbalanced — never closes the top-level object.
         assert!(extract_json_object_from_text(r#"{"a":1"#).is_err());
+    }
+
+    #[test]
+    fn review_target_branch_prefers_linked_pr_base() {
+        assert_eq!(
+            select_review_target_branch(Some("v4.x"), Some("develop"), "next"),
+            "v4.x"
+        );
+    }
+
+    #[test]
+    fn review_target_branch_falls_back_to_worktree_base() {
+        assert_eq!(
+            select_review_target_branch(None, Some("develop"), "next"),
+            "develop"
+        );
+    }
+
+    #[test]
+    fn review_target_branch_falls_back_to_project_default() {
+        assert_eq!(select_review_target_branch(None, None, "next"), "next");
     }
 
     #[test]
