@@ -11,6 +11,7 @@ use crate::projects::github_issues::{
     get_session_pr_refs, get_session_security_refs,
 };
 use crate::projects::linear_issues::get_session_linear_refs;
+use crate::projects::sentry_issues::get_session_sentry_refs;
 use crate::projects::storage::load_projects_data;
 
 // =============================================================================
@@ -854,6 +855,27 @@ fn build_claude_args(
                         log::trace!("Adding Linear issue context file: {:?}", file_path);
                         all_context_paths.push(file_path);
                     }
+                }
+            }
+        }
+    }
+
+    // Check for Sentry issue context files (shared storage)
+    let mut sentry_keys = get_session_sentry_refs(app, session_id).unwrap_or_default();
+    if let Ok(worktree_keys) = get_session_sentry_refs(app, worktree_id) {
+        for key in worktree_keys {
+            if !sentry_keys.contains(&key) {
+                sentry_keys.push(key);
+            }
+        }
+    }
+    if let Ok(contexts_dir) = get_github_contexts_dir(app) {
+        for key in sentry_keys {
+            if let Some((project_name, issue_id)) = key.split_once("::") {
+                let path = contexts_dir.join(format!("{project_name}-sentry-{issue_id}.md"));
+                if path.exists() {
+                    log::trace!("Adding Sentry issue context file: {:?}", path);
+                    all_context_paths.push(path);
                 }
             }
         }

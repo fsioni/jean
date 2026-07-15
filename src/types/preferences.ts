@@ -77,6 +77,8 @@ export interface MagicPrompts {
   investigate_advisory: string | null
   /** Prompt for investigating Linear issues (context embedded in prompt since Claude CLI cannot access Linear API) */
   investigate_linear_issue: string | null
+  /** Prompt for investigating Sentry issues with embedded event context */
+  investigate_sentry_issue: string | null
   /** Prompt for addressing inline PR review comments */
   review_comments: string | null
 }
@@ -492,6 +494,48 @@ Investigate the loaded Linear {linearWord} ({linearRefs})
 
 </guidelines>`
 
+/** Default prompt for investigating Sentry issues */
+export const DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT = `<task>
+
+Investigate the loaded Sentry {sentryWord} ({sentryRefs})
+
+</task>
+
+
+<sentry_issue_context>
+
+{sentryContext}
+
+</sentry_issue_context>
+
+
+<instructions>
+
+1. Read the Sentry issue context above carefully, including the latest event, exception, stack trace, tags, frequency, and affected users
+2. Analyze the failure:
+   - What operation failed and under which conditions?
+   - Which stack frames belong to this codebase?
+   - Do the event details reveal malformed input, environment differences, or a dependency failure?
+3. Explore the codebase and trace the failing code path from the relevant application frame
+4. Identify the root cause, contributing conditions, and whether this is a regression
+5. Propose a focused solution:
+   - Specific files and code paths to change
+   - Error handling or observability improvements where relevant
+   - Risks, edge cases, and tests needed to verify the fix
+
+</instructions>
+
+
+<guidelines>
+
+- Treat the embedded Sentry context as the primary evidence; do not assume every frame is application code
+- Distinguish the root cause from symptoms and repeated downstream failures
+- Be thorough but focused - investigate deeply without getting sidetracked
+- If multiple solutions exist, explain the trade-offs
+- Reference specific file paths and line numbers
+
+</guidelines>`
+
 /** Default prompt for generating release notes */
 export const DEFAULT_RELEASE_NOTES_PROMPT = `Generate release notes for changes since the \`{tag}\` release ({previous_release_name}).
 
@@ -609,7 +653,7 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
 ## Core Principles
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.
-- **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, or other external resources, include clickable links when available so users can open them directly.
+- **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, Sentry issues, or other external resources, include clickable links when available so users can open them directly.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
@@ -690,6 +734,7 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   investigate_security_alert: null,
   investigate_advisory: null,
   investigate_linear_issue: null,
+  investigate_sentry_issue: null,
   review_comments: null,
 }
 
@@ -710,6 +755,7 @@ export interface MagicPromptModels {
   investigate_security_alert_model: MagicPromptModel
   investigate_advisory_model: MagicPromptModel
   investigate_linear_issue_model: MagicPromptModel
+  investigate_sentry_issue_model: MagicPromptModel
   review_comments_model: MagicPromptModel
 }
 
@@ -731,6 +777,7 @@ export interface MagicPromptReasoningEfforts {
   investigate_security_alert_effort: MagicPromptReasoningEffort
   investigate_advisory_effort: MagicPromptReasoningEffort
   investigate_linear_issue_effort: MagicPromptReasoningEffort
+  investigate_sentry_issue_effort: MagicPromptReasoningEffort
   review_comments_effort: MagicPromptReasoningEffort
 }
 
@@ -749,6 +796,7 @@ export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   investigate_security_alert_model: 'claude-opus-4-8[1m]',
   investigate_advisory_model: 'claude-opus-4-8[1m]',
   investigate_linear_issue_model: 'claude-opus-4-8[1m]',
+  investigate_sentry_issue_model: 'claude-opus-4-8[1m]',
   review_comments_model: 'claude-opus-4-8[1m]',
 }
 
@@ -769,6 +817,7 @@ function makeMagicPromptModelsPreset(
     investigate_security_alert_model: model,
     investigate_advisory_model: model,
     investigate_linear_issue_model: model,
+    investigate_sentry_issue_model: model,
     review_comments_model: model,
   }
 }
@@ -810,6 +859,7 @@ export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
   investigate_security_alert_model: 'opencode/gpt-5.5',
   investigate_advisory_model: 'opencode/gpt-5.5',
   investigate_linear_issue_model: 'opencode/gpt-5.5',
+  investigate_sentry_issue_model: 'opencode/gpt-5.5',
   review_comments_model: 'opencode/gpt-5.5',
 }
 
@@ -840,6 +890,7 @@ export const DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_security_alert_effort: null,
   investigate_advisory_effort: null,
   investigate_linear_issue_effort: null,
+  investigate_sentry_issue_effort: null,
   review_comments_effort: null,
 }
 
@@ -856,6 +907,7 @@ export interface MagicPromptModes {
   investigate_security_alert_mode: MagicPromptExecutionMode
   investigate_advisory_mode: MagicPromptExecutionMode
   investigate_linear_issue_mode: MagicPromptExecutionMode
+  investigate_sentry_issue_mode: MagicPromptExecutionMode
   review_comments_mode: MagicPromptExecutionMode
   resolve_conflicts_mode: MagicPromptExecutionMode
 }
@@ -868,6 +920,7 @@ export const DEFAULT_MAGIC_PROMPT_MODES: MagicPromptModes = {
   investigate_security_alert_mode: 'plan',
   investigate_advisory_mode: 'plan',
   investigate_linear_issue_mode: 'plan',
+  investigate_sentry_issue_mode: 'plan',
   review_comments_mode: 'plan',
   resolve_conflicts_mode: 'yolo',
 }
@@ -887,6 +940,7 @@ export const CODEX_DEFAULT_MAGIC_PROMPT_EFFORTS: MagicPromptReasoningEfforts = {
   investigate_security_alert_effort: 'medium',
   investigate_advisory_effort: 'medium',
   investigate_linear_issue_effort: 'medium',
+  investigate_sentry_issue_effort: 'medium',
   review_comments_effort: 'medium',
 }
 
@@ -914,6 +968,7 @@ export interface MagicPromptProviders {
   investigate_security_alert_provider: string | null
   investigate_advisory_provider: string | null
   investigate_linear_issue_provider: string | null
+  investigate_sentry_issue_provider: string | null
   review_comments_provider: string | null
 }
 
@@ -932,6 +987,7 @@ export const DEFAULT_MAGIC_PROMPT_PROVIDERS: MagicPromptProviders = {
   investigate_security_alert_provider: null,
   investigate_advisory_provider: null,
   investigate_linear_issue_provider: null,
+  investigate_sentry_issue_provider: null,
   review_comments_provider: null,
 }
 
@@ -954,6 +1010,7 @@ export interface MagicPromptBackends {
   investigate_security_alert_backend: string | null
   investigate_advisory_backend: string | null
   investigate_linear_issue_backend: string | null
+  investigate_sentry_issue_backend: string | null
   review_comments_backend: string | null
 }
 
@@ -972,6 +1029,7 @@ export const DEFAULT_MAGIC_PROMPT_BACKENDS: MagicPromptBackends = {
   investigate_security_alert_backend: null,
   investigate_advisory_backend: null,
   investigate_linear_issue_backend: null,
+  investigate_sentry_issue_backend: null,
   review_comments_backend: null,
 }
 
@@ -990,6 +1048,7 @@ function makeBackendsPreset(backend: string): MagicPromptBackends {
     investigate_security_alert_backend: backend,
     investigate_advisory_backend: backend,
     investigate_linear_issue_backend: backend,
+    investigate_sentry_issue_backend: backend,
     review_comments_backend: backend,
   }
 }
@@ -1142,6 +1201,7 @@ export interface AppPreferences {
   build_effort_level: string | null // Effort level override for build mode (Claude adaptive / Codex), null = use session effort
   yolo_effort_level: string | null // Effort level override for yolo mode (Claude adaptive / Codex), null = use session effort
   linear_api_key: string | null // Global Linear personal API key (inherited by all projects)
+  sentry_auth_token?: string | null // Global Sentry auth token (inherited by all projects)
   magic_models_auto_initialized: boolean // Whether magic prompt models were auto-set based on installed backends
   claude_cli_source: 'jean' | 'path' // Claude CLI source: 'jean' (managed) or 'path' (system PATH)
   codex_cli_source: 'jean' | 'path' // Codex CLI source: 'jean' (managed) or 'path' (system PATH)
@@ -2037,6 +2097,7 @@ export const defaultPreferences: AppPreferences = {
   build_effort_level: null, // Default: use session effort level
   yolo_effort_level: null, // Default: use session effort level
   linear_api_key: null, // Default: no global Linear API key
+  sentry_auth_token: null, // Default: no global Sentry auth token
   magic_models_auto_initialized: false, // Default: not yet auto-set
   claude_cli_source: 'jean', // Default: Jean-managed
   codex_cli_source: 'jean', // Default: Jean-managed

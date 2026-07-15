@@ -1,12 +1,54 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildNativeClientSessionInput,
   computeSessionCardData,
   getEffectiveSessionWaiting,
+  getResumeArgs,
   shouldShowCodeReviewLoadingPanel,
   statusConfig,
   type ChatStoreState,
 } from './session-card-utils'
 import type { ContentBlock, Session } from '@/types/chat'
+
+describe('native client resume sessions', () => {
+  const session: Session = {
+    id: 'session-1',
+    name: 'Fix dashboard bug',
+    order: 0,
+    created_at: 1,
+    updated_at: 1,
+    messages: [],
+    backend: 'codex',
+    codex_thread_id: 'thread-123',
+  }
+
+  it('builds a Codex resume launch without requiring a prior terminal command', () => {
+    expect(getResumeArgs(session)).toEqual({
+      command: 'codex',
+      args: ['resume', 'thread-123'],
+    })
+  })
+
+  it('builds a separate Jean terminal session for the native client', () => {
+    expect(
+      buildNativeClientSessionInput(
+        session,
+        'worktree-1',
+        '/tmp/worktree-1'
+      )
+    ).toEqual({
+      worktreeId: 'worktree-1',
+      worktreePath: '/tmp/worktree-1',
+      name: 'Fix dashboard bug (Native)',
+      backend: 'codex',
+      primarySurface: 'terminal',
+      terminalCommand: 'codex',
+      terminalCommandArgs: ['resume', 'thread-123'],
+      terminalLabel: 'Fix dashboard bug (Native)',
+      nativeSessionId: 'thread-123',
+    })
+  })
+})
 
 describe('computeSessionCardData', () => {
   function createBaseSession(overrides: Partial<Session> = {}): Session {

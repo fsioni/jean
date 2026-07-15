@@ -15,6 +15,7 @@ import {
   DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
   DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
   DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
+  DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptBackend,
@@ -153,7 +154,13 @@ export function useInvestigateHandlers({
 
   const handleInvestigate = useCallback(
     async (
-      type: 'issue' | 'pr' | 'security-alert' | 'advisory' | 'linear-issue',
+      type:
+        | 'issue'
+        | 'pr'
+        | 'security-alert'
+        | 'advisory'
+        | 'linear-issue'
+        | 'sentry-issue',
       override?: InvestigateOverride
     ) => {
       if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
@@ -167,7 +174,9 @@ export function useInvestigateHandlers({
               ? 'investigate_security_alert_model'
               : type === 'linear-issue'
                 ? 'investigate_linear_issue_model'
-                : ('investigate_advisory_model' as const)
+                : type === 'sentry-issue'
+                  ? 'investigate_sentry_issue_model'
+                  : ('investigate_advisory_model' as const)
       const providerKey =
         type === 'issue'
           ? 'investigate_issue_provider'
@@ -177,7 +186,9 @@ export function useInvestigateHandlers({
               ? 'investigate_security_alert_provider'
               : type === 'linear-issue'
                 ? 'investigate_linear_issue_provider'
-                : ('investigate_advisory_provider' as const)
+                : type === 'sentry-issue'
+                  ? 'investigate_sentry_issue_provider'
+                  : ('investigate_advisory_provider' as const)
       const backendKey =
         type === 'issue'
           ? 'investigate_issue_backend'
@@ -187,7 +198,9 @@ export function useInvestigateHandlers({
               ? 'investigate_security_alert_backend'
               : type === 'linear-issue'
                 ? 'investigate_linear_issue_backend'
-                : ('investigate_advisory_backend' as const)
+                : type === 'sentry-issue'
+                  ? 'investigate_sentry_issue_backend'
+                  : ('investigate_advisory_backend' as const)
       const modeKey =
         type === 'issue'
           ? 'investigate_issue_mode'
@@ -197,7 +210,9 @@ export function useInvestigateHandlers({
               ? 'investigate_security_alert_mode'
               : type === 'linear-issue'
                 ? 'investigate_linear_issue_mode'
-                : ('investigate_advisory_mode' as const)
+                : type === 'sentry-issue'
+                  ? 'investigate_sentry_issue_mode'
+                  : ('investigate_advisory_mode' as const)
       const investigateMode =
         preferences?.magic_prompt_modes?.[modeKey] ??
         DEFAULT_MAGIC_PROMPT_MODES[modeKey]
@@ -340,6 +355,39 @@ export function useInvestigateHandlers({
           .replace(/\{linearWord\}/g, word)
           .replace(/\{linearRefs\}/g, refs)
           .replace(/\{linearContext\}/g, linearContext)
+      } else if (type === 'sentry-issue') {
+        const contexts = await invoke<
+          {
+            id: string
+            shortId: string
+            title: string
+            permalink: string
+            content: string
+          }[]
+        >('get_sentry_issue_context_contents', {
+          sessionId: activeWorktreeId,
+          worktreeId: activeWorktreeId,
+          projectId: worktreeProjectId ?? '',
+        })
+        if (contexts.length === 0) {
+          toast.error('No Sentry issue context loaded for this worktree')
+          return
+        }
+        const refs = contexts.map(context => context.shortId).join(', ')
+        const word = contexts.length === 1 ? 'issue' : 'issues'
+        const content = contexts
+          .map(context => context.content)
+          .join('\n\n---\n\n')
+        const customPrompt =
+          preferences?.magic_prompts?.investigate_sentry_issue
+        const template =
+          customPrompt && customPrompt.trim()
+            ? customPrompt
+            : DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT
+        prompt = template
+          .replace(/\{sentryWord\}/g, word)
+          .replace(/\{sentryRefs\}/g, refs)
+          .replace(/\{sentryContext\}/g, content)
       } else {
         const contexts = await queryClient.fetchQuery({
           queryKey: ['investigate-contexts', 'advisory', activeWorktreeId],
@@ -472,6 +520,7 @@ export function useInvestigateHandlers({
       preferences?.magic_prompts?.investigate_security_alert,
       preferences?.magic_prompts?.investigate_advisory,
       preferences?.magic_prompts?.investigate_linear_issue,
+      preferences?.magic_prompts?.investigate_sentry_issue,
       preferences?.default_provider,
       preferences?.parallel_execution_prompt_enabled,
       preferences?.magic_prompts?.parallel_execution,

@@ -71,6 +71,7 @@ import {
   DEFAULT_INVESTIGATE_SECURITY_ALERT_PROMPT,
   DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
   DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
+  DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
   DEFAULT_RELEASE_NOTES_PROMPT,
   DEFAULT_REVIEW_COMMENTS_PROMPT,
   DEFAULT_SESSION_NAMING_PROMPT,
@@ -300,6 +301,33 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
+        defaultModel: 'claude-opus-4-8[1m]',
+      },
+      {
+        key: 'investigate_sentry_issue',
+        modelKey: 'investigate_sentry_issue_model',
+        effortKey: 'investigate_sentry_issue_effort',
+        providerKey: 'investigate_sentry_issue_provider',
+        backendKey: 'investigate_sentry_issue_backend',
+        modeKey: 'investigate_sentry_issue_mode',
+        label: 'Investigate Sentry Issue',
+        description:
+          'Prompt for analyzing Sentry issues. Event details and stack traces are embedded directly in the prompt.',
+        variables: [
+          {
+            name: '{sentryRefs}',
+            description: 'Sentry issue identifiers (e.g., COOLIFY-BXB)',
+          },
+          {
+            name: '{sentryWord}',
+            description: '"issue" or "issues" based on count',
+          },
+          {
+            name: '{sentryContext}',
+            description: 'Full markdown context of the loaded Sentry issues',
+          },
+        ],
+        defaultValue: DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
         defaultModel: 'claude-opus-4-8[1m]',
       },
     ],

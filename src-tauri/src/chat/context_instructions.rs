@@ -6,6 +6,7 @@ use crate::projects::github_issues::{
     get_session_pr_refs, get_session_security_refs,
 };
 use crate::projects::linear_issues::get_session_linear_refs;
+use crate::projects::sentry_issues::get_session_sentry_refs;
 use crate::projects::storage::load_projects_data;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,6 +267,25 @@ fn collect_context_paths(
                     if file_path.exists() {
                         paths.push(file_path);
                     }
+                }
+            }
+        }
+    }
+
+    let mut sentry_keys = get_session_sentry_refs(app, session_id).unwrap_or_default();
+    if let Ok(worktree_keys) = get_session_sentry_refs(app, worktree_id) {
+        for key in worktree_keys {
+            if !sentry_keys.contains(&key) {
+                sentry_keys.push(key);
+            }
+        }
+    }
+    if let Ok(contexts_dir) = get_github_contexts_dir(app) {
+        for key in sentry_keys {
+            if let Some((project_name, issue_id)) = key.split_once("::") {
+                let path = contexts_dir.join(format!("{project_name}-sentry-{issue_id}.md"));
+                if path.exists() {
+                    paths.push(path);
                 }
             }
         }

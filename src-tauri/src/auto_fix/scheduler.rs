@@ -444,6 +444,7 @@ async fn start_issue_auto_fix(
         None,
         None,
         None,
+        None,
         Some(false),
         Some("auto_fix".to_string()),
     )
@@ -653,6 +654,9 @@ fn project_from_pending_auto_yolo(entry: &PendingAutoYolo) -> Project {
         worktrees_dir: None,
         linear_api_key: None,
         linear_team_id: None,
+        sentry_auth_token: None,
+        sentry_organization_slug: None,
+        sentry_project_slug: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
     }
@@ -864,6 +868,9 @@ mod tests {
             worktrees_dir: None,
             linear_api_key: None,
             linear_team_id: None,
+            sentry_auth_token: None,
+            sentry_organization_slug: None,
+            sentry_project_slug: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings,
         }

@@ -19,6 +19,7 @@ vi.mock('@/services/preferences', () => ({
         investigate_security_alert_mode: 'plan',
         investigate_advisory_mode: 'plan',
         investigate_linear_issue_mode: 'plan',
+        investigate_sentry_issue_mode: 'plan',
         review_comments_mode: 'plan',
         resolve_conflicts_mode: 'yolo',
       },
@@ -130,6 +131,18 @@ describe('MagicPromptsPane', () => {
     render(<MagicPromptsPane />)
 
     expect(screen.queryByText('Release Post')).toBeNull()
+  })
+
+  it('provides a dedicated Sentry investigation prompt', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(
+      screen.getByRole('button', { name: 'Investigate Sentry Issue' })
+    )
+
+    expect(screen.getByText('{sentryRefs}')).toBeInTheDocument()
+    expect(screen.getByText('{sentryContext}')).toBeInTheDocument()
   })
 
   it('uses the catalog Claude models for magic prompt model choices', async () => {

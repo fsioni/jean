@@ -1,4 +1,10 @@
-import type { ToolCall, ContentBlock, Todo, PlanToolInput, Question } from '@/types/chat'
+import type {
+  ToolCall,
+  ContentBlock,
+  Todo,
+  PlanToolInput,
+  Question,
+} from '@/types/chat'
 import {
   isTodoWrite,
   isCollabToolCall,
@@ -132,7 +138,13 @@ export type TimelineItem =
 
 export interface ResolvedPlanContent {
   content: string | null
-  source: 'plan' | 'plan_preview' | 'message_text' | 'explanation' | null
+  source:
+    | 'plan'
+    | 'plan_preview'
+    | 'message_text'
+    | 'steps'
+    | 'explanation'
+    | null
 }
 
 export interface SplitTextAroundPlanResult {
@@ -495,6 +507,24 @@ function getPlanPreviewField(input: PlanToolInput | undefined): string | null {
   return isNonEmptyString(input?.plan_preview) ? input.plan_preview : null
 }
 
+function formatPlanSteps(input: PlanToolInput | undefined): string | null {
+  const steps = input?.steps?.filter(step => isNonEmptyString(step.step)) ?? []
+  if (steps.length === 0) return null
+
+  const formattedSteps = steps.map(step => {
+    if (step.status === 'completed') return `- [x] ${step.step}`
+    if (step.status === 'in_progress') {
+      return `- [ ] **In progress:** ${step.step}`
+    }
+    return `- [ ] ${step.step}`
+  })
+
+  const explanation = isNonEmptyString(input?.explanation)
+    ? input.explanation.trim()
+    : null
+  return [explanation, formattedSteps.join('\n')].filter(Boolean).join('\n\n')
+}
+
 export function splitTextAroundPlan(text: string): SplitTextAroundPlanResult {
   const normalized = normalizePlanText(text)
   if (!normalized) {
@@ -588,6 +618,11 @@ export function resolvePlanContent(params: {
   )
   if (extractedFromText) {
     return { content: extractedFromText, source: 'message_text' }
+  }
+
+  const formattedSteps = formatPlanSteps(input)
+  if (formattedSteps) {
+    return { content: formattedSteps, source: 'steps' }
   }
 
   if (isNonEmptyString(input?.explanation)) {

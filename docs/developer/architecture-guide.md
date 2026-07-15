@@ -128,7 +128,10 @@ Additional systems (no dedicated docs yet):
   silently launching an unrelated conversation. The native CLI picker also merges
   backend-owned history from local stores where stable (`~/.codex/sessions/**`
   and `~/.claude/projects/<escaped-cwd>/**`) and imports a chosen history row as
-  a Jean terminal session running the backend's native resume command.
+  a Jean terminal session running the backend's native resume command. Resumable
+  Jean chat sessions can likewise be duplicated into a separate native-client
+  terminal session from the session-tab context menu; the original chat session
+  remains unchanged.
 
   **Web-mode persistence.** In web access (Axum HTTP server + WebSocket),
   panel/side/drawer and modal terminals survive a full browser refresh. Three

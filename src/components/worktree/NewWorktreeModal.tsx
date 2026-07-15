@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { getModifierSymbol } from '@/lib/platform'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { Zap, CircleDot, GitPullRequest, Shield, GitBranch } from 'lucide-react'
+import {
+  Zap,
+  CircleDot,
+  GitPullRequest,
+  Shield,
+  GitBranch,
+  Bug,
+} from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { LucideIcon } from 'lucide-react'
 import { useGhLogin } from '@/hooks/useGhLogin'
@@ -22,6 +29,7 @@ import { GitHubPRsTab } from './GitHubPRsTab'
 import { SecurityAlertsTab } from './SecurityAlertsTab'
 import { BranchesTab } from './BranchesTab'
 import { LinearIssuesTab } from './LinearIssuesTab'
+import { SentryIssuesTab } from './SentryIssuesTab'
 import { IssuePreviewModal } from './IssuePreviewModal'
 
 export type TabId =
@@ -31,6 +39,7 @@ export type TabId =
   | 'security'
   | 'branches'
   | 'linear'
+  | 'sentry'
 
 export interface Tab {
   id: TabId
@@ -47,6 +56,7 @@ export const TABS: Tab[] = [
   { id: 'security', label: 'Security', key: '4', icon: Shield },
   { id: 'branches', label: 'Branches', key: '5', icon: GitBranch },
   { id: 'linear', label: 'Linear', key: '6', icon: LinearIcon },
+  { id: 'sentry', label: 'Sentry', key: '7', icon: Bug },
 ]
 
 export function NewWorktreeModal() {
@@ -130,6 +140,10 @@ export function NewWorktreeModal() {
     handleSelectLinearIssue: handlers.handleSelectLinearIssue,
     handleSelectLinearIssueAndInvestigate:
       handlers.handleSelectLinearIssueAndInvestigate,
+    filteredSentryIssues: data.filteredSentryIssues,
+    handleSelectSentryIssue: handlers.handleSelectSentryIssue,
+    handleSelectSentryIssueAndInvestigate:
+      handlers.handleSelectSentryIssueAndInvestigate,
   })
 
   // Apply store-provided default tab when modal opens
@@ -152,7 +166,8 @@ export function NewWorktreeModal() {
         activeTab === 'prs' ||
         activeTab === 'security' ||
         activeTab === 'branches' ||
-        activeTab === 'linear') &&
+        activeTab === 'linear' ||
+        activeTab === 'sentry') &&
       newWorktreeModalOpen
     ) {
       const timer = setTimeout(() => {
@@ -350,6 +365,27 @@ export function NewWorktreeModal() {
                   handlers.handleSelectLinearIssueAndInvestigate
                 }
                 creatingFromId={handlers.creatingFromLinearId}
+                searchInputRef={searchInputRef}
+              />
+            )}
+
+            {activeTab === 'sentry' && (
+              <SentryIssuesTab
+                projectId={data.selectedProjectId ?? ''}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                issues={data.filteredSentryIssues}
+                isLoading={data.isLoadingSentryIssues}
+                isRefetching={data.isRefetchingSentryIssues}
+                error={data.sentryIssuesError}
+                onRefresh={() => data.refetchSentryIssues()}
+                selectedIndex={selectedItemIndex}
+                setSelectedIndex={setSelectedItemIndex}
+                onSelectIssue={handlers.handleSelectSentryIssue}
+                onInvestigateIssue={
+                  handlers.handleSelectSentryIssueAndInvestigate
+                }
+                creatingFromId={handlers.creatingFromSentryId}
                 searchInputRef={searchInputRef}
               />
             )}

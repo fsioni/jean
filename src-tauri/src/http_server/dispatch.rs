@@ -186,6 +186,7 @@ pub async fn dispatch_command(
             let security_context = field_opt(&args, "securityContext", "security_context")?;
             let advisory_context = field_opt(&args, "advisoryContext", "advisory_context")?;
             let linear_context = field_opt(&args, "linearContext", "linear_context")?;
+            let sentry_context = field_opt(&args, "sentryContext", "sentry_context")?;
             let custom_name = field_opt(&args, "customName", "custom_name")?;
             let auto_open_in_jean = field_opt(&args, "autoOpenInJean", "auto_open_in_jean")?;
             let origin = field_opt(&args, "origin", "origin")?;
@@ -198,6 +199,7 @@ pub async fn dispatch_command(
                 security_context,
                 advisory_context,
                 linear_context,
+                sentry_context,
                 custom_name,
                 auto_open_in_jean,
                 origin,
@@ -253,6 +255,12 @@ pub async fn dispatch_command(
                 field_opt(&args, "linearApiKey", "linear_api_key")?;
             let linear_team_id: Option<String> =
                 field_opt(&args, "linearTeamId", "linear_team_id")?;
+            let sentry_auth_token: Option<String> =
+                field_opt(&args, "sentryAuthToken", "sentry_auth_token")?;
+            let sentry_organization_slug: Option<String> =
+                field_opt(&args, "sentryOrganizationSlug", "sentry_organization_slug")?;
+            let sentry_project_slug: Option<String> =
+                field_opt(&args, "sentryProjectSlug", "sentry_project_slug")?;
             let linked_project_ids: Option<Vec<String>> =
                 field_opt(&args, "linkedProjectIds", "linked_project_ids")?;
             let auto_fix_settings: Option<Option<crate::projects::types::ProjectAutoFixSettings>> =
@@ -270,6 +278,9 @@ pub async fn dispatch_command(
                 worktrees_dir,
                 linear_api_key,
                 linear_team_id,
+                sentry_auth_token,
+                sentry_organization_slug,
+                sentry_project_slug,
                 linked_project_ids,
                 auto_fix_settings,
             )
@@ -3177,6 +3188,44 @@ pub async fn dispatch_command(
             let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let project_id: String = field(&args, "projectId", "project_id")?;
             let result = crate::projects::get_linear_issue_context_contents(
+                app.clone(),
+                session_id,
+                worktree_id,
+                project_id,
+            )
+            .await?;
+            to_value(result)
+        }
+        // Sentry Issues
+        "test_sentry_auth_token" => {
+            let auth_token: String = field(&args, "authToken", "auth_token")?;
+            let result = crate::projects::test_sentry_auth_token(auth_token).await?;
+            to_value(result)
+        }
+        "list_sentry_projects" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let result = crate::projects::list_sentry_projects(app.clone(), project_id).await?;
+            to_value(result)
+        }
+        "list_sentry_issues" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let query: Option<String> = from_field_opt(&args, "query")?;
+            let result =
+                crate::projects::list_sentry_issues(app.clone(), project_id, query).await?;
+            to_value(result)
+        }
+        "get_sentry_issue" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let issue_id: String = field(&args, "issueId", "issue_id")?;
+            let result =
+                crate::projects::get_sentry_issue(app.clone(), project_id, issue_id).await?;
+            to_value(result)
+        }
+        "get_sentry_issue_context_contents" => {
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let result = crate::projects::get_sentry_issue_context_contents(
                 app.clone(),
                 session_id,
                 worktree_id,

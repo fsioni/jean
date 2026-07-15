@@ -104,6 +104,7 @@ struct ErrorEvent {
 }
 
 const CODEX_PLAN_TOOL_NAME: &str = "CodexPlan";
+pub(crate) const DEFAULT_MODEL_VERBOSITY: &str = "low";
 
 fn normalize_plan_status(status: &str) -> &str {
     match status {
@@ -329,8 +330,8 @@ fn merge_codex_plan_input(
     } else if let Some(plan_preview) = plan_preview.filter(|s| !s.is_empty()) {
         obj.insert("plan_preview".to_string(), serde_json::json!(plan_preview));
     }
-    // Steps and explanation are stored separately — frontend reads them directly.
-    // Don't format steps into the plan field; they belong in the TodoWidget sidebar.
+    // Keep structured steps separate from authoritative plan text. The frontend
+    // can render them in both PlanDisplay and the TodoWidget sidebar.
 
     serde_json::Value::Object(obj.clone())
 }
@@ -497,6 +498,11 @@ pub fn build_thread_start_params(
 
     // Config overrides
     let mut config = serde_json::Map::new();
+
+    config.insert(
+        "model_verbosity".to_string(),
+        serde_json::json!(DEFAULT_MODEL_VERBOSITY),
+    );
 
     // Web search
     config.insert(
@@ -2064,7 +2070,7 @@ fn process_server_notification(
                 .iter()
                 .find(|tc| tc.id == tool_id)
                 .map(|tc| &tc.input);
-            // Don't format steps as plan_text — steps belong in TodoWidget, not PlanDisplay
+            // Keep structured steps separate from authoritative plan text.
             let input = merge_codex_plan_input(existing, None, None, explanation, steps);
             upsert_codex_plan_tool_call(tool_calls, content_blocks, &tool_id, input.clone());
             emit_codex_plan_tool_call(app, session_id, worktree_id, &tool_id, &input);
@@ -3795,7 +3801,7 @@ pub fn parse_codex_run_to_message(
                     .iter()
                     .find(|tc| tc.id == tool_id)
                     .map(|tc| &tc.input);
-                // Don't format steps as plan_text — steps belong in TodoWidget
+                // Keep structured steps separate from authoritative plan text.
                 let input = merge_codex_plan_input(existing, None, None, explanation, steps);
                 upsert_codex_plan_tool_call(&mut tool_calls, &mut content_blocks, &tool_id, input);
             }
@@ -4512,6 +4518,8 @@ fn build_one_shot_codex_args(
         "workspace-write".into(),
         "--output-schema".into(),
         schema_file.as_os_str().to_os_string(),
+        "-c".into(),
+        format!("model_verbosity=\"{DEFAULT_MODEL_VERBOSITY}\"").into(),
     ];
     if is_fast {
         args.push("-c".into());
@@ -4977,6 +4985,39 @@ mod tests {
             Some(&schema_file.as_os_str().to_os_string()),
             "schema path must immediately follow --output-schema"
         );
+    }
+
+    #[test]
+    fn codex_thread_params_default_to_low_model_verbosity() {
+        let params = build_thread_start_params(
+            std::path::Path::new("/tmp"),
+            Some("gpt-5.6-sol"),
+            Some("build"),
+            false,
+            None,
+            false,
+            None,
+        );
+
+        assert_eq!(params["config"]["model_verbosity"], "low");
+    }
+
+    #[test]
+    fn one_shot_codex_args_default_to_low_model_verbosity() {
+        let args = build_one_shot_codex_args(
+            "gpt-5.6-sol",
+            false,
+            std::path::Path::new("/tmp/jean-codex-schema.json"),
+            Some(std::path::Path::new("/tmp/project")),
+        );
+
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    std::ffi::OsString::from("-c"),
+                    std::ffi::OsString::from("model_verbosity=\"low\""),
+                ]
+        }));
     }
 
     #[test]

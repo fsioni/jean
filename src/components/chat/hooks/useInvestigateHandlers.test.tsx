@@ -3,7 +3,8 @@ import { act, renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from '@/store/chat-store'
-import { defaultPreferences } from '@/types/preferences'
+import { invoke } from '@/lib/transport'
+import { defaultPreferences, type AppPreferences } from '@/types/preferences'
 import type {
   EffortLevel,
   ExecutionMode,
@@ -39,8 +40,10 @@ function makeSession(id: string): Session {
 
 function renderHandlers({
   executionMode = 'yolo',
+  preferences,
 }: {
   executionMode?: ExecutionMode
+  preferences?: AppPreferences
 } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -68,11 +71,12 @@ function renderHandlers({
         activeWorktreeId: 'worktree-1',
         activeWorktreePath: '/tmp/worktree',
         inputRef: ref({ focus: vi.fn() } as unknown as HTMLTextAreaElement),
-        preferences: {
+        preferences: preferences ?? {
           ...defaultPreferences,
           magic_prompt_modes: {
             ...defaultPreferences.magic_prompt_modes,
-            review_comments_mode: executionMode === 'build' ? 'plan' : executionMode,
+            review_comments_mode:
+              executionMode === 'build' ? 'plan' : executionMode,
           },
         },
         defaultBackend: 'claude',
@@ -102,9 +106,10 @@ function renderHandlers({
   return { ...hook, sendMessage, createSession }
 }
 
-describe('useInvestigateHandlers review comments', () => {
+describe('useInvestigateHandlers', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(invoke).mockResolvedValue(undefined as never)
     useChatStore.setState({
       activeSessionIds: { 'worktree-1': 'base-session' },
       executionModes: { 'base-session': 'plan' },
@@ -116,6 +121,59 @@ describe('useInvestigateHandlers review comments', () => {
       errors: {},
       lastSentMessages: {},
     })
+  })
+
+  it('uses the dedicated Sentry prompt and execution settings', async () => {
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (command === 'get_sentry_issue_context_contents') {
+        return [
+          {
+            id: '123',
+            shortId: 'COOLIFY-BXB',
+            title: 'Connection timeout',
+            permalink: 'https://sentry.io/issues/123',
+            content: '# Sentry context\n\nStack trace',
+          },
+        ] as never
+      }
+      return undefined as never
+    })
+    const preferences: AppPreferences = {
+      ...defaultPreferences,
+      magic_prompts: {
+        ...defaultPreferences.magic_prompts,
+        investigate_sentry_issue:
+          'Investigate {sentryWord} {sentryRefs}\n\n{sentryContext}',
+      },
+      magic_prompt_models: {
+        ...defaultPreferences.magic_prompt_models,
+        investigate_sentry_issue_model: 'gpt-5.5',
+      },
+      magic_prompt_backends: {
+        ...defaultPreferences.magic_prompt_backends,
+        investigate_sentry_issue_backend: 'codex',
+      },
+      magic_prompt_modes: {
+        ...defaultPreferences.magic_prompt_modes,
+        investigate_sentry_issue_mode: 'yolo',
+      },
+    }
+    const { result, sendMessage } = renderHandlers({ preferences })
+
+    await act(async () => {
+      await result.current.handleInvestigate('sentry-issue')
+    })
+
+    expect(sendMessage.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          'Investigate issue COOLIFY-BXB\n\n# Sentry context\n\nStack trace',
+        model: 'gpt-5.5',
+        backend: 'codex',
+        executionMode: 'yolo',
+      }),
+      expect.any(Object)
+    )
   })
 
   it('keeps the session UI execution mode in sync with separate review comment send mode', async () => {

@@ -6,7 +6,6 @@ import {
   GitBranch,
   ImageIcon,
   Loader2,
-  RefreshCw,
   RotateCcw,
   X,
 } from 'lucide-react'
@@ -39,8 +38,6 @@ import {
   useRemoveProjectAvatar,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
-import { useLinearTeams, linearQueryKeys } from '@/services/linear'
-import { useQueryClient } from '@tanstack/react-query'
 import {
   Select,
   SelectContent,
@@ -108,27 +105,6 @@ export function GeneralPane({
   const [localWorktreesDir, setLocalWorktreesDir] = useState<string | null>(
     null
   )
-  const [localLinearApiKey, setLocalLinearApiKey] = useState<string | null>(
-    null
-  )
-  const [showLinearApiKey, setShowLinearApiKey] = useState(false)
-
-  // Linear has access if either project key or global key is set
-  const hasLinearAccess =
-    !!project?.linear_api_key || !!preferences?.linear_api_key
-
-  const queryClient = useQueryClient()
-  const { data: linearTeams = [], isLoading: teamsLoading } = useLinearTeams(
-    projectId,
-    { enabled: hasLinearAccess }
-  )
-
-  const handleRefreshTeams = useCallback(() => {
-    queryClient.invalidateQueries({
-      queryKey: linearQueryKeys.teams(projectId),
-    })
-  }, [projectId, queryClient])
-
   // Track image load errors
   const avatarKey = project?.avatar_path ?? project?.default_avatar_path ?? null
   const [imgErrorKey, setImgErrorKey] = useState<string | null>(null)
@@ -220,47 +196,6 @@ export function GeneralPane({
       { onSuccess: () => setLocalWorktreesDir(null) }
     )
   }, [projectId, updateSettings])
-
-  const displayedLinearApiKey =
-    localLinearApiKey ?? project?.linear_api_key ?? ''
-
-  const linearApiKeyChanged =
-    localLinearApiKey !== null &&
-    localLinearApiKey !== (project?.linear_api_key ?? '')
-
-  const handleSaveLinearApiKey = useCallback(() => {
-    if (localLinearApiKey === null) return
-    updateSettings.mutate(
-      { projectId, linearApiKey: localLinearApiKey.trim() },
-      { onSuccess: () => setLocalLinearApiKey(null) }
-    )
-  }, [localLinearApiKey, projectId, updateSettings])
-
-  const handleClearLinearApiKey = useCallback(() => {
-    updateSettings.mutate(
-      { projectId, linearApiKey: '' },
-      { onSuccess: () => setLocalLinearApiKey(null) }
-    )
-  }, [projectId, updateSettings])
-
-  const handleTeamChange = useCallback(
-    (value: string) => {
-      updateSettings.mutate(
-        { projectId, linearTeamId: value === 'all' ? '' : value },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({
-              queryKey: linearQueryKeys.issues(projectId),
-            })
-            queryClient.invalidateQueries({
-              queryKey: ['linear', 'issue-search', projectId],
-            })
-          },
-        }
-      )
-    },
-    [projectId, updateSettings, queryClient]
-  )
 
   const handleBrowseWorktreesDir = useCallback(async () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
@@ -534,94 +469,6 @@ export function GeneralPane({
             )}
           </div>
         </InlineField>
-      </SettingsSection>
-
-      <SettingsSection title="Linear Integration">
-        <InlineField
-          label="Project API Key Override"
-          description="Overrides the global key from Settings → Integrations for this project only. Leave empty to use the global key."
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type={showLinearApiKey ? 'text' : 'password'}
-              placeholder="lin_api_..."
-              value={displayedLinearApiKey}
-              onChange={e => setLocalLinearApiKey(e.target.value)}
-              className="flex-1 text-base md:text-sm font-mono"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowLinearApiKey(!showLinearApiKey)}
-            >
-              {showLinearApiKey ? 'Hide' : 'Show'}
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleSaveLinearApiKey}
-              disabled={!linearApiKeyChanged || updateSettings.isPending}
-            >
-              {updateSettings.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Save
-            </Button>
-            {project?.linear_api_key && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleClearLinearApiKey}
-                disabled={updateSettings.isPending}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Remove
-              </Button>
-            )}
-          </div>
-        </InlineField>
-
-        {hasLinearAccess && (
-          <InlineField
-            label="Team Filter"
-            description="Restrict Linear issues to a specific team. Leave as 'All teams' to see everything."
-          >
-            <div className="flex items-center gap-2">
-              <Select
-                value={project?.linear_team_id ?? 'all'}
-                onValueChange={handleTeamChange}
-                disabled={teamsLoading}
-              >
-                <SelectTrigger className="flex-1">
-                  <SelectValue
-                    placeholder={
-                      teamsLoading ? 'Loading teams...' : 'All teams'
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All teams</SelectItem>
-                  {linearTeams.map(team => (
-                    <SelectItem key={team.id} value={team.id}>
-                      {team.key} — {team.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRefreshTeams}
-                disabled={teamsLoading}
-              >
-                <RefreshCw
-                  className={cn('h-4 w-4', teamsLoading && 'animate-spin')}
-                />
-              </Button>
-            </div>
-          </InlineField>
-        )}
       </SettingsSection>
 
       <SettingsSection title="System Prompt">

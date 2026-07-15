@@ -9,6 +9,7 @@ mod names;
 pub mod pr_status;
 mod release_notes;
 pub mod saved_contexts;
+pub mod sentry_issues;
 pub mod storage;
 pub mod types;
 
@@ -18,3 +19,4 @@ pub use github_actions::*;
 pub use github_issues::*;
 pub use linear_issues::*;
 pub use saved_contexts::*;
+pub use sentry_issues::*;

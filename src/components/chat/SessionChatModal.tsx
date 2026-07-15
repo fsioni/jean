@@ -47,6 +47,7 @@ import { useBrowserStore } from '@/store/browser-store'
 import { useUIStore } from '@/store/ui-store'
 import {
   useSessions,
+  useCreateSession,
   useRenameSession,
   useReorderSessions,
   reconnectNativeCliSession,
@@ -87,6 +88,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import {
+  buildNativeClientSessionInput,
   computeSessionCardData,
   getResumeCommand,
   statusConfig,
@@ -358,6 +360,7 @@ export function SessionChatModal({
 
   // Rename session state
   const renameSession = useRenameSession()
+  const createSession = useCreateSession()
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(
     null
   )
@@ -590,6 +593,33 @@ export function SessionChatModal({
       intent: 'picker',
     })
   }, [worktreeId, worktreePath])
+
+  const handleOpenInNativeClient = useCallback(
+    (session: Session) => {
+      const input = buildNativeClientSessionInput(
+        session,
+        worktreeId,
+        worktreePath
+      )
+      if (!input) {
+        toast.error('No native resume command is available for this session')
+        return
+      }
+
+      createSession.mutate(input, {
+        onSuccess: nativeSession => {
+          useChatStore
+            .getState()
+            .setSelectedBackend(nativeSession.id, input.backend)
+          void reconnectNativeCliSession(nativeSession, worktreeId, {
+            openModal: false,
+            showToast: false,
+          }).then(() => toast.success('Opened in native client'))
+        },
+      })
+    },
+    [createSession, worktreeId, worktreePath]
+  )
 
   useEffect(() => {
     if (!isOpen) return
@@ -1317,20 +1347,33 @@ export function SessionChatModal({
                             )}
                           </ContextMenuItem>
                           {resumeCommand && (
-                            <ContextMenuItem
-                              onSelect={() => {
-                                void copyToClipboard(resumeCommand)
-                                  .then(() =>
-                                    toast.success('Resume command copied')
-                                  )
-                                  .catch(() =>
-                                    toast.error('Failed to copy resume command')
-                                  )
-                              }}
-                            >
-                              <Terminal className="mr-2 h-4 w-4" />
-                              Copy Resume Command
-                            </ContextMenuItem>
+                            <>
+                              <ContextMenuItem
+                                disabled={createSession.isPending}
+                                onSelect={() =>
+                                  handleOpenInNativeClient(session)
+                                }
+                              >
+                                <Play className="mr-2 h-4 w-4" />
+                                Open in Native Client
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onSelect={() => {
+                                  void copyToClipboard(resumeCommand)
+                                    .then(() =>
+                                      toast.success('Resume command copied')
+                                    )
+                                    .catch(() =>
+                                      toast.error(
+                                        'Failed to copy resume command'
+                                      )
+                                    )
+                                }}
+                              >
+                                <Terminal className="mr-2 h-4 w-4" />
+                                Copy Resume Command
+                              </ContextMenuItem>
+                            </>
                           )}
                           {canReconnectSession(session) && (
                             <ContextMenuItem

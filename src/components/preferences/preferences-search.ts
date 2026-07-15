@@ -731,6 +731,12 @@ const magicPromptDefinitions: {
     keywords: ['linear issue prompt', 'linear prompt'],
   },
   {
+    key: 'investigate_sentry_issue',
+    title: 'Investigate Sentry Issue Prompt',
+    description: 'Analyze Sentry issues embedded into prompt context.',
+    keywords: ['sentry issue prompt', 'sentry prompt', 'error investigation'],
+  },
+  {
     key: 'code_review',
     title: 'Code Review Prompt',
     description: 'Review code changes with structured findings.',

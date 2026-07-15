@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
   COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
   defaultPreferences,
   GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
   PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
@@ -45,6 +46,17 @@ describe('magic prompt preference resolvers', () => {
     expect(GROK_DEFAULT_MAGIC_PROMPT_BACKENDS.investigate_issue_backend).toBe(
       'grok'
     )
+  })
+
+  it('provides dedicated defaults for Sentry investigations', () => {
+    expect(
+      defaultPreferences.magic_prompt_models.investigate_sentry_issue_model
+    ).toBe('claude-opus-4-8[1m]')
+    expect(
+      defaultPreferences.magic_prompt_modes.investigate_sentry_issue_mode
+    ).toBe('plan')
+    expect(DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT).toContain('{sentryRefs}')
+    expect(DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT).toContain('{sentryContext}')
   })
 
   it('keeps automatic recaps on by default', () => {
