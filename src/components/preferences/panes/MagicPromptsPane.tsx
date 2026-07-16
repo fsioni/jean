@@ -2231,6 +2231,32 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
                             ))}
                           </CommandGroup>
                         )}
+                        {effectiveBackend === 'grok' && (
+                          <CommandGroup
+                            heading={<BackendLabel backend="grok" />}
+                          >
+                            {grokModelOptions.map(opt => (
+                              <CommandItem
+                                key={opt.value}
+                                value={`${opt.label} ${opt.value}`}
+                                onSelect={() => {
+                                  handleModelChange(opt.value)
+                                  setModelPopoverOpen(false)
+                                }}
+                              >
+                                <span className="text-xs">{opt.label}</span>
+                                <Check
+                                  className={cn(
+                                    'ml-auto h-3 w-3',
+                                    currentModel === opt.value
+                                      ? 'opacity-100'
+                                      : 'opacity-0'
+                                  )}
+                                />
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        )}
                       </CommandList>
                     </Command>
                   </PopoverContent>
