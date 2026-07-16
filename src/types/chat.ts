@@ -700,6 +700,41 @@ export interface CodexUserInputRequestEvent {
   request: CodexUserInputRequest
 }
 
+export function getCodexUserInputRequestId(
+  request: Pick<CodexUserInputRequest, 'item_id' | 'rpc_id'>
+): string {
+  return request.item_id || `codex-user-input-${request.rpc_id}`
+}
+
+export function findCodexUserInputRequest(
+  requests: CodexUserInputRequest[],
+  toolCallId: string
+): CodexUserInputRequest | undefined {
+  return requests.find(
+    request => getCodexUserInputRequestId(request) === toolCallId
+  )
+}
+
+export function upsertCodexUserInputRequest(
+  requests: CodexUserInputRequest[],
+  request: CodexUserInputRequest
+): CodexUserInputRequest[] {
+  const existingIndex = requests.findIndex(existing =>
+    request.item_id && existing.item_id
+      ? existing.item_id === request.item_id
+      : existing.rpc_id === request.rpc_id
+  )
+
+  if (existingIndex === -1) return [...requests, request]
+  if (JSON.stringify(requests[existingIndex]) === JSON.stringify(request)) {
+    return requests
+  }
+
+  const next = [...requests]
+  next[existingIndex] = request
+  return next
+}
+
 export interface CodexMcpElicitationRequest {
   rpc_id: number
   server_name: string

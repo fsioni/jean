@@ -2814,6 +2814,7 @@ export const useChatStore = create<ChatUIState>()(
           state => {
             const current = state.pendingCodexUserInputRequests[sessionId]
             if (!current && requests.length === 0) return state
+            if (current === requests) return state
             return {
               pendingCodexUserInputRequests: {
                 ...state.pendingCodexUserInputRequests,

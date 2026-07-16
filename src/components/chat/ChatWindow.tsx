@@ -89,8 +89,12 @@ import type {
   CodexDynamicToolCallRequest,
   PermissionDenial,
   PendingFile,
+  Question,
+  QuestionAnswer,
 } from '@/types/chat'
 import {
+  findCodexUserInputRequest,
+  getCodexUserInputRequestId,
   isAskUserQuestion,
   isPlanToolCall,
   normalizeCodexQuestions,
@@ -1051,6 +1055,18 @@ export function ChatWindow({
     }
     return undefined
   }, [session?.messages])
+
+  const activeCodexUserInputToolCallId = activeCodexUserInputRequest
+    ? getCodexUserInputRequestId(activeCodexUserInputRequest)
+    : null
+  const hasInlineCodexUserInput = Boolean(
+    activeCodexUserInputToolCallId &&
+    (isSending ? currentToolCalls : lastAssistantMessage?.tool_calls)?.some(
+      toolCall =>
+        toolCall.id === activeCodexUserInputToolCallId &&
+        isAskUserQuestion(toolCall)
+    )
+  )
 
   // Check if there are pending (unanswered) questions
   // Look at the last assistant message's tool_calls since streaming tool calls
@@ -2378,6 +2394,58 @@ export function ChatWindow({
     projectIdRef,
   })
 
+  const handleResolvedQuestionAnswer = useCallback(
+    (toolCallId: string, answers: QuestionAnswer[], questions: Question[]) => {
+      const sessionId = activeSessionIdRef.current
+      if (
+        sessionId &&
+        useChatStore.getState().isQuestionAnswered(sessionId, toolCallId)
+      ) {
+        return
+      }
+      const pendingRequest = sessionId
+        ? findCodexUserInputRequest(
+            useChatStore.getState().pendingCodexUserInputRequests[sessionId] ??
+              [],
+            toolCallId
+          )
+        : undefined
+
+      if (pendingRequest) {
+        handleCodexUserInputAnswer(pendingRequest, answers)
+        return
+      }
+      handleQuestionAnswer(toolCallId, answers, questions)
+    },
+    [handleCodexUserInputAnswer, handleQuestionAnswer]
+  )
+
+  const handleResolvedQuestionSkip = useCallback(
+    (toolCallId: string) => {
+      const sessionId = activeSessionIdRef.current
+      if (
+        sessionId &&
+        useChatStore.getState().isQuestionAnswered(sessionId, toolCallId)
+      ) {
+        return
+      }
+      const pendingRequest = sessionId
+        ? findCodexUserInputRequest(
+            useChatStore.getState().pendingCodexUserInputRequests[sessionId] ??
+              [],
+            toolCallId
+          )
+        : undefined
+
+      if (pendingRequest) {
+        handleCodexUserInputAnswer(pendingRequest, [])
+        return
+      }
+      handleSkipQuestion(toolCallId)
+    },
+    [handleCodexUserInputAnswer, handleSkipQuestion]
+  )
+
   // Copy a sent user message to the clipboard with attachment metadata
   // When pasted back, ChatInput detects the custom format and restores attachments
   const handleCopyToInput = useCallback(async (message: ChatMessage) => {
@@ -2895,8 +2963,10 @@ export function ChatWindow({
                                         ? handleWorktreeYoloApproval
                                         : undefined
                                     }
-                                    onQuestionAnswer={handleQuestionAnswer}
-                                    onQuestionSkip={handleSkipQuestion}
+                                    onQuestionAnswer={
+                                      handleResolvedQuestionAnswer
+                                    }
+                                    onQuestionSkip={handleResolvedQuestionSkip}
                                     onFileClick={setViewingFilePath}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
@@ -2968,8 +3038,10 @@ export function ChatWindow({
                                         ? handleWorktreeYoloApproval
                                         : undefined
                                     }
-                                    onQuestionAnswer={handleQuestionAnswer}
-                                    onQuestionSkip={handleSkipQuestion}
+                                    onQuestionAnswer={
+                                      handleResolvedQuestionAnswer
+                                    }
+                                    onQuestionSkip={handleResolvedQuestionSkip}
                                     onFileClick={setViewingFilePath}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
@@ -3005,8 +3077,12 @@ export function ChatWindow({
                                       }
                                       toolCalls={currentToolCalls}
                                       streamingContent={streamingContent}
-                                      onQuestionAnswer={handleQuestionAnswer}
-                                      onQuestionSkip={handleSkipQuestion}
+                                      onQuestionAnswer={
+                                        handleResolvedQuestionAnswer
+                                      }
+                                      onQuestionSkip={
+                                        handleResolvedQuestionSkip
+                                      }
                                       onFileClick={setViewingFilePath}
                                       worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
@@ -3022,8 +3098,12 @@ export function ChatWindow({
                                       }
                                       toolCalls={currentToolCalls}
                                       streamingContent={streamingContent}
-                                      onQuestionAnswer={handleQuestionAnswer}
-                                      onQuestionSkip={handleSkipQuestion}
+                                      onQuestionAnswer={
+                                        handleResolvedQuestionAnswer
+                                      }
+                                      onQuestionSkip={
+                                        handleResolvedQuestionSkip
+                                      }
                                       onFileClick={setViewingFilePath}
                                       worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
@@ -3112,17 +3192,23 @@ export function ChatWindow({
                             )}
 
                             {activeCodexUserInputRequest &&
+                              !hasInlineCodexUserInput &&
                               activeCodexUserInputQuestions.length > 0 && (
                                 <AskUserQuestion
                                   toolCallId={
-                                    activeCodexUserInputRequest.item_id ||
-                                    `codex-user-input-${activeCodexUserInputRequest.rpc_id}`
+                                    activeCodexUserInputToolCallId as string
                                   }
                                   questions={activeCodexUserInputQuestions}
                                   onSubmit={(_toolCallId, answers) =>
                                     handleCodexUserInputAnswer(
                                       activeCodexUserInputRequest,
                                       answers
+                                    )
+                                  }
+                                  onSkip={() =>
+                                    handleCodexUserInputAnswer(
+                                      activeCodexUserInputRequest,
+                                      []
                                     )
                                   }
                                   isSkipped={false}

@@ -178,4 +178,34 @@ describe('CompactStreamingTicker', () => {
       })
     ).toBeVisible()
   })
+
+  it('renders a blocking user-input question without requiring ticker expansion', () => {
+    const { rerender } = render(<CompactStreamingTicker {...baseProps} />)
+
+    rerender(
+      <CompactStreamingTicker
+        {...baseProps}
+        contentBlocks={[{ type: 'tool_use', tool_call_id: 'codex-question-1' }]}
+        toolCalls={[
+          {
+            id: 'codex-question-1',
+            name: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  header: 'Agent model',
+                  question: 'How should I continue?',
+                  multiSelect: false,
+                  options: [{ label: 'Wait' }, { label: 'Use Codex' }],
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('How should I continue?')).toBeVisible()
+    expect(screen.getAllByRole('button', { name: /Answer/ })).toHaveLength(1)
+  })
 })

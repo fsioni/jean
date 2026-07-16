@@ -9,7 +9,10 @@ import {
   persistEnqueue,
 } from '@/services/chat'
 import { useChatStore } from '@/store/chat-store'
-import { buildCodexUserInputAnswerMap } from '@/types/chat'
+import {
+  buildCodexUserInputAnswerMap,
+  getCodexUserInputRequestId,
+} from '@/types/chat'
 import type {
   ChatMessage,
   CodexCommandApprovalRequest,
@@ -44,6 +47,8 @@ import type {
 } from '@/types/projects'
 import { clearPlanApprovalTransientState } from './plan-approval-state'
 import type { ApprovalModelOverride } from '../ApprovalModelSubmenu'
+
+const respondingCodexUserInputRequests = new Set<string>()
 
 /** Git commands to auto-approve for magic prompts (no permission prompts needed) */
 export const GIT_ALLOWED_TOOLS = [
@@ -2923,20 +2928,25 @@ export function useMessageHandlers({
       if (!sessionId || !worktreeId || !worktreePath) return
 
       const store = useChatStore.getState()
-      const toolCallId = request.item_id || `codex-user-input-${request.rpc_id}`
-      store.markQuestionAnswered(sessionId, toolCallId, answers)
-      store.updateToolCallOutput(sessionId, toolCallId, JSON.stringify(answers))
-      store.setPendingCodexUserInputRequests(
-        sessionId,
-        store
-          .getPendingCodexUserInputRequests(sessionId)
-          .filter(item => item.rpc_id !== request.rpc_id)
-      )
-      store.setWaitingForInput(sessionId, false)
+      const toolCallId = getCodexUserInputRequestId(request)
+      const responseKey = `${sessionId}:${request.rpc_id}`
+      if (respondingCodexUserInputRequests.has(responseKey)) return
+      respondingCodexUserInputRequests.add(responseKey)
 
       const answerMap = buildCodexUserInputAnswerMap(request.questions, answers)
 
-      const persistAnsweredState = () => {
+      const completeResponse = () => {
+        store.markQuestionAnswered(sessionId, toolCallId, answers)
+        store.updateToolCallOutput(
+          sessionId,
+          toolCallId,
+          JSON.stringify(answers)
+        )
+        const remainingRequests = store
+          .getPendingCodexUserInputRequests(sessionId)
+          .filter(item => getCodexUserInputRequestId(item) !== toolCallId)
+        store.setPendingCodexUserInputRequests(sessionId, remainingRequests)
+        store.setWaitingForInput(sessionId, remainingRequests.length > 0)
         persistCodexPendingState(sessionId, worktreeId, worktreePath)
         invoke('update_session_state', {
           worktreeId,
@@ -2948,10 +2958,11 @@ export function useMessageHandlers({
           submittedAnswers:
             useChatStore.getState().submittedAnswers[sessionId] ?? {},
         }).catch(() => undefined)
+        respondingCodexUserInputRequests.delete(responseKey)
       }
 
       if (isCodexDevUserInputRequest(request)) {
-        persistAnsweredState()
+        completeResponse()
         console.info('[Codex Dev Flow] ToolRequestUserInputResponse', {
           answers: answerMap,
         })
@@ -2965,9 +2976,10 @@ export function useMessageHandlers({
         answers: answerMap,
       })
         .then(() => {
-          persistAnsweredState()
+          completeResponse()
         })
         .catch(err => {
+          respondingCodexUserInputRequests.delete(responseKey)
           console.error(
             '[useMessageHandlers] Failed to answer Codex user-input request:',
             err

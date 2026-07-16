@@ -176,6 +176,62 @@ describe('useStreamingEvents Codex MCP elicitation', () => {
   })
 })
 
+describe('useStreamingEvents Codex user input', () => {
+  beforeEach(() => {
+    setupListenMock()
+
+    useChatStore.setState({
+      pendingCodexUserInputRequests: {},
+      waitingForInputSessionIds: {},
+      activeToolCalls: {},
+      streamingContentBlocks: {},
+      worktreePaths: { 'worktree-1': '/tmp/worktree' },
+    })
+  })
+
+  it('upserts a repeated request instead of rendering a second prompt', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() =>
+      expect(registeredListeners.has('chat:codex_user_input_request')).toBe(
+        true
+      )
+    )
+
+    const event = {
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        request: {
+          rpc_id: 42,
+          item_id: 'question-1',
+          questions: [
+            {
+              id: 'model',
+              question: 'How should I continue?',
+              options: [{ label: 'Wait' }, { label: 'Use Codex' }],
+            },
+          ],
+        },
+      },
+    }
+    const listener = registeredListeners.get('chat:codex_user_input_request')
+    listener?.(event)
+    listener?.(event)
+
+    expect(
+      useChatStore.getState().pendingCodexUserInputRequests['session-1']
+    ).toHaveLength(1)
+    expect(useChatStore.getState().activeToolCalls['session-1']).toHaveLength(1)
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      [{ type: 'tool_use', tool_call_id: 'question-1' }]
+    )
+  })
+})
+
 describe('useStreamingEvents cancellation sanitization', () => {
   beforeEach(() => {
     vi.clearAllMocks()

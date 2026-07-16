@@ -17,9 +17,11 @@ import {
 } from '@/types/preferences'
 import { triggerImmediateGitPoll } from '@/services/git-status'
 import {
+  getCodexUserInputRequestId,
   isAskUserQuestion,
   isPlanToolCall,
   normalizeCodexQuestions,
+  upsertCodexUserInputRequest,
 } from '@/types/chat'
 import { playNotificationSound } from '@/lib/sounds'
 import { notifyIfBackground } from '@/lib/session-notifications'
@@ -718,19 +720,21 @@ export default function useStreamingEvents({
         const current =
           useChatStore.getState().pendingCodexUserInputRequests[session_id] ??
           []
-        const next = [...current, request]
+        const next = upsertCodexUserInputRequest(current, request)
         setPendingCodexUserInputRequests(session_id, next)
         setWaitingForInput(session_id, true)
 
         const questions = normalizeCodexQuestions(request.questions)
 
         const toolCall = {
-          id: request.item_id || `codex-user-input-${request.rpc_id}`,
+          id: getCodexUserInputRequestId(request),
           name: 'AskUserQuestion',
           input: { questions },
         }
         addToolCall(session_id, toolCall)
         addToolBlock(session_id, toolCall.id)
+
+        if (next === current) return
 
         notifySession(session_id, 'Needs your input')
         persistCodexPendingState(session_id, worktree_id, {

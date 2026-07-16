@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Loader2, Activity, Brain, ChevronRight } from 'lucide-react'
 import type { ContentBlock, ToolCall } from '@/types/chat'
-import { isPlanToolCall } from '@/types/chat'
+import { isAskUserQuestion, isPlanToolCall } from '@/types/chat'
 import {
   Collapsible,
   CollapsibleContent,
@@ -264,6 +264,43 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
       splitAtSteeredInputs(orderedActivityBlocks, activityToolCalls, !hasPlan),
     [orderedActivityBlocks, activityToolCalls, hasPlan]
   )
+
+  const questionToolCalls = toolCalls.filter(isAskUserQuestion)
+  if (questionToolCalls.length > 0) {
+    const questionIds = new Set(questionToolCalls.map(tool => tool.id))
+    const questionBlocks = contentBlocks.filter(
+      block => block.type === 'tool_use' && questionIds.has(block.tool_call_id)
+    )
+    const remainingBlocks = contentBlocks.filter(
+      block => block.type !== 'tool_use' || !questionIds.has(block.tool_call_id)
+    )
+    const remainingToolCalls = toolCalls.filter(
+      tool => !questionIds.has(tool.id)
+    )
+    const hasOtherActivity = hasVisibleActivity(
+      remainingBlocks,
+      remainingToolCalls,
+      streamingContent
+    )
+
+    return (
+      <div className="space-y-3">
+        {hasOtherActivity && (
+          <CompactStreamingTicker
+            {...props}
+            contentBlocks={remainingBlocks}
+            toolCalls={remainingToolCalls}
+          />
+        )}
+        <StreamingMessage
+          {...props}
+          contentBlocks={questionBlocks}
+          toolCalls={questionToolCalls}
+          streamingContent=""
+        />
+      </div>
+    )
+  }
 
   if (steeredTexts.length > 0) {
     let lastActivityIndex = -1
