@@ -4,7 +4,7 @@ import {
   Check,
   ChevronRight,
   CircleDot,
-  ClipboardCopy,
+  Copy,
   ExternalLink,
   FolderOpen,
   Github,
@@ -709,8 +709,8 @@ export function MobileSettingsMenu({
           )}
           {resumeCommand && (
             <DropdownMenuItem onSelect={handleCopyResumeCommand}>
-              <ClipboardCopy className="h-4 w-4" />
-              Resume Command
+              <Copy className="h-4 w-4" />
+              Native Resume Command
             </DropdownMenuItem>
           )}
           {worktreeId && (

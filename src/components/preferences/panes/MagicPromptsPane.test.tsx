@@ -21,6 +21,7 @@ vi.mock('@/services/preferences', () => ({
         investigate_linear_issue_mode: 'plan',
         investigate_sentry_issue_mode: 'plan',
         review_comments_mode: 'plan',
+        final_review_mode: 'plan',
         resolve_conflicts_mode: 'yolo',
       },
     },
@@ -143,6 +144,24 @@ describe('MagicPromptsPane', () => {
 
     expect(screen.getByText('{sentryRefs}')).toBeInTheDocument()
     expect(screen.getByText('{sentryContext}')).toBeInTheDocument()
+  })
+
+  it('provides dedicated Final Review settings', async () => {
+    const user = userEvent.setup()
+    render(<MagicPromptsPane />)
+
+    await user.click(screen.getByRole('button', { name: 'Final Review' }))
+
+    expect(
+      screen.getByRole('combobox', { name: 'Backend' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Model' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', { name: 'Default mode' })
+    ).toHaveTextContent('Plan')
+    expect(
+      screen.getByDisplayValue(/final pre-merge audit/i)
+    ).toBeInTheDocument()
   })
 
   it('uses the catalog Claude models for magic prompt model choices', async () => {

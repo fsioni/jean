@@ -9,10 +9,10 @@ import {
   LayoutDashboard,
   Command,
   CircleHelp,
+  Copy,
   Menu,
   Plus,
   Archive,
-  Terminal,
   FileText,
   Github,
   GitPullRequest,
@@ -483,8 +483,8 @@ export function FloatingDock() {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleCopyResumeCommand}>
-                <Terminal className="mr-2 h-4 w-4" />
-                Copy Resume Command
+                <Copy className="mr-2 h-4 w-4" />
+                Native Resume Command
               </DropdownMenuItem>
             </>
           )}

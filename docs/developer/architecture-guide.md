@@ -199,6 +199,7 @@ Grok-specific notes:
 - Grok ACP processes are kept warm per Jean session and reused for follow-up prompts, then idle-stopped after five minutes. If the process is gone (app restart, crash, cancellation, model/mode flag change), Jean spawns a new ACP process and reloads via persisted `grok_session_id`.
 - ACP `session/update` chunks are mapped to Jean's common chat stream events (`chat:chunk`, `chat:tool_use`, `chat:tool_result`, `chat:done`), and ACP session ids are persisted as `grok_session_id` for later `session/load`.
 - Jean implements the minimal ACP client surface Grok needs for headless tool execution: `session/request_permission`, `terminal/*`, and text-file read/write requests. Plan mode denies terminal and write requests; build/yolo can auto-approve via ACP/CLI flags.
+- Grok CLI currently advertises `promptCapabilities.image: false`. Jean rejects raster image attachments before saving or sending them, preserves already-pending images so the user can switch backends, and also validates Grok messages in Rust to prevent binary files from reaching ACP text-file reads. SVG attachments remain supported as text files.
 
 ### Component Hierarchy
 

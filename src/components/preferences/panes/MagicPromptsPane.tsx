@@ -65,6 +65,7 @@ import {
   DEFAULT_PR_CONTENT_PROMPT,
   DEFAULT_COMMIT_MESSAGE_PROMPT,
   DEFAULT_CODE_REVIEW_PROMPT,
+  DEFAULT_FINAL_REVIEW_PROMPT,
   DEFAULT_CONTEXT_SUMMARY_PROMPT,
   DEFAULT_RESOLVE_CONFLICTS_PROMPT,
   DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
@@ -356,6 +357,20 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_CODE_REVIEW_PROMPT,
+        defaultModel: 'claude-opus-4-8[1m]',
+      },
+      {
+        key: 'final_review',
+        modelKey: 'final_review_model',
+        effortKey: 'final_review_effort',
+        providerKey: 'final_review_provider',
+        backendKey: 'final_review_backend',
+        modeKey: 'final_review_mode',
+        label: 'Final Review',
+        description:
+          'Prompt for an audit-only merge-readiness review in a new session.',
+        variables: [],
+        defaultValue: DEFAULT_FINAL_REVIEW_PROMPT,
         defaultModel: 'claude-opus-4-8[1m]',
       },
       {

@@ -460,8 +460,6 @@ describe('useMessageSending Codex auto-steer', () => {
     expect(sendMessage.mutate).not.toHaveBeenCalled()
   })
 
-
-
   it('steers codex attachments instead of queueing when auto-steer is enabled', async () => {
     vi.mocked(steerCodexTurn).mockResolvedValue(undefined)
     const { result } = renderUseMessageSending({

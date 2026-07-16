@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   COMMANDCODE_DEFAULT_MAGIC_PROMPT_BACKENDS,
   COMMANDCODE_DEFAULT_MAGIC_PROMPT_MODELS,
+  DEFAULT_FINAL_REVIEW_PROMPT,
   DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
   defaultPreferences,
   GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
@@ -12,6 +13,15 @@ import {
 } from './preferences'
 
 describe('magic prompt preference resolvers', () => {
+  it('defines an audit-only final review prompt with tabular output', () => {
+    expect(DEFAULT_FINAL_REVIEW_PROMPT).toContain('Do not modify')
+    expect(DEFAULT_FINAL_REVIEW_PROMPT).toContain('regressions')
+    expect(DEFAULT_FINAL_REVIEW_PROMPT).toContain('consolidat')
+    expect(DEFAULT_FINAL_REVIEW_PROMPT).toContain('Fixes #')
+    expect(DEFAULT_FINAL_REVIEW_PROMPT).toContain('Markdown table')
+    expect(defaultPreferences.magic_prompt_modes.final_review_mode).toBe('plan')
+  })
+
   it('enables web access sounds by default for backwards compatibility', () => {
     expect(defaultPreferences.web_access_sounds_enabled).toBe(true)
   })

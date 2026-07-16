@@ -73,7 +73,9 @@ export function resolveSessionDebugDetails(params: {
             : finalBackend === 'commandcode'
               ? (preferences?.selected_commandcode_model ??
                 'commandcode/default')
-              : (preferences?.selected_model ?? 'claude-opus-4-8[1m]')
+              : finalBackend === 'grok'
+                ? (preferences?.selected_grok_model ?? 'grok/grok-4.5')
+                : (preferences?.selected_model ?? 'claude-opus-4-8[1m]')
 
   return {
     selectedBackend: finalBackend,

@@ -743,6 +743,12 @@ const magicPromptDefinitions: {
     keywords: ['code review prompt'],
   },
   {
+    key: 'final_review',
+    title: 'Final Review Prompt',
+    description: 'Audit merge readiness in a new session.',
+    keywords: ['final review prompt', 'pre-merge audit', 'merge readiness'],
+  },
+  {
     key: 'review_comments',
     title: 'Review Comments Prompt',
     description: 'Address inline PR review comments.',

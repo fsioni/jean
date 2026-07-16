@@ -11,6 +11,7 @@ import {
 import {
   Archive,
   ChevronDown,
+  Copy,
   Eye,
   EyeOff,
   GitBranchPlus,
@@ -1370,8 +1371,8 @@ export function SessionChatModal({
                                     )
                                 }}
                               >
-                                <Terminal className="mr-2 h-4 w-4" />
-                                Copy Resume Command
+                                <Copy className="mr-2 h-4 w-4" />
+                                Native Resume Command
                               </ContextMenuItem>
                             </>
                           )}

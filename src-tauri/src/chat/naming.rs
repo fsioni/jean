@@ -363,6 +363,12 @@ fn generate_names(app: &AppHandle, request: &NamingRequest) -> Result<NamingOutp
     if backend == super::types::Backend::Pi {
         return generate_names_pi(app, &prompt, &request.model, request);
     }
+    if backend == super::types::Backend::Commandcode {
+        return generate_names_commandcode(app, &prompt, &request.model, request);
+    }
+    if backend == super::types::Backend::Grok {
+        return generate_names_grok(app, &prompt, &request.model, request);
+    }
 
     let cli_path = resolve_cli_binary(app);
     if !cli_path.exists() {
@@ -577,6 +583,53 @@ fn generate_names_cursor(
     log::trace!("Cursor generated naming response: {json_str}");
     serde_json::from_str(&json_str)
         .map_err(|e| format!("Failed to parse Cursor naming JSON: {e}, raw: {json_str}"))
+}
+
+fn parse_commandcode_naming_output(text: &str) -> Result<NamingOutput, String> {
+    let json = extract_json_object(text)
+        .ok_or_else(|| "No JSON object found in Command Code naming response".to_string())?;
+    serde_json::from_str(json)
+        .map_err(|e| format!("Failed to parse Command Code naming JSON: {e}, raw: {json}"))
+}
+
+fn generate_names_commandcode(
+    app: &AppHandle,
+    prompt: &str,
+    model: &str,
+    request: &NamingRequest,
+) -> Result<NamingOutput, String> {
+    let worktree_path = request.worktree_path.to_string_lossy();
+    let text = super::commandcode::execute_one_shot_commandcode(
+        app,
+        prompt,
+        Some(worktree_path.as_ref()),
+        Some("plan"),
+        Some(model),
+    )?;
+    parse_commandcode_naming_output(&text)
+}
+
+fn parse_grok_naming_output(text: &str) -> Result<NamingOutput, String> {
+    let json = extract_json_object(text)
+        .ok_or_else(|| "No JSON object found in Grok naming response".to_string())?;
+    serde_json::from_str(json)
+        .map_err(|e| format!("Failed to parse Grok naming JSON: {e}, raw: {json}"))
+}
+
+fn generate_names_grok(
+    app: &AppHandle,
+    prompt: &str,
+    model: &str,
+    request: &NamingRequest,
+) -> Result<NamingOutput, String> {
+    let text = super::grok::execute_one_shot_grok(
+        app,
+        prompt,
+        model,
+        Some(&request.worktree_path),
+        request.reasoning_effort.as_deref(),
+    )?;
+    parse_grok_naming_output(&text)
 }
 
 fn choose_opencode_model(all_providers: &serde_json::Value) -> Option<(String, String)> {
@@ -1115,4 +1168,31 @@ pub fn spawn_naming_task(app: AppHandle, request: NamingRequest) {
     std::thread::spawn(move || {
         execute_naming(&app, &request);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_commandcode_naming_output_with_surrounding_text() {
+        let output = parse_commandcode_naming_output(
+            "Here is the result:\n{\"session_name\":\"Fix naming dispatch\",\"branch_name\":\"fix-naming-dispatch\"}",
+        )
+        .unwrap();
+
+        assert_eq!(output.session_name.as_deref(), Some("Fix naming dispatch"));
+        assert_eq!(output.branch_name.as_deref(), Some("fix-naming-dispatch"));
+    }
+
+    #[test]
+    fn parses_grok_naming_output() {
+        let output = parse_grok_naming_output(
+            "{\"session_name\":\"Route Grok naming\",\"branch_name\":\"route-grok-naming\"}",
+        )
+        .unwrap();
+
+        assert_eq!(output.session_name.as_deref(), Some("Route Grok naming"));
+        assert_eq!(output.branch_name.as_deref(), Some("route-grok-naming"));
+    }
 }

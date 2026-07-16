@@ -741,9 +741,9 @@ fn resolve_http_server_bind_host(prefs: &AppPreferences) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_global_system_prompt, parse_cli_args_from, resolve_headless_bind_host,
-        resolve_headless_token_required, resolve_http_server_bind_host, validate_headless_security,
-        AppPreferences,
+        default_global_system_prompt, default_model, parse_cli_args_from,
+        resolve_headless_bind_host, resolve_headless_token_required, resolve_http_server_bind_host,
+        validate_headless_security, AppPreferences,
     };
     use serde_json::json;
 
@@ -1109,6 +1109,11 @@ mod tests {
         );
         assert_eq!(prefs.magic_prompt_modes.investigate_issue_mode, "yolo");
         assert_eq!(prefs.magic_prompt_modes.review_comments_mode, "plan");
+        assert_eq!(
+            prefs.magic_prompt_models.final_review_model,
+            default_model()
+        );
+        assert_eq!(prefs.magic_prompt_modes.final_review_mode, "plan");
     }
 }
 
@@ -1147,6 +1152,8 @@ pub struct MagicPrompts {
     pub commit_message: Option<String>,
     #[serde(default)]
     pub code_review: Option<String>,
+    #[serde(default)]
+    pub final_review: Option<String>,
     #[serde(default)]
     pub context_summary: Option<String>,
     #[serde(default)]
@@ -1847,6 +1854,8 @@ pub struct MagicPromptModels {
     #[serde(default = "default_model")]
     pub code_review_model: String,
     #[serde(default = "default_model")]
+    pub final_review_model: String,
+    #[serde(default = "default_model")]
     pub context_summary_model: String,
     #[serde(default = "default_model")]
     pub resolve_conflicts_model: String,
@@ -1887,6 +1896,7 @@ impl Default for MagicPromptModels {
             pr_content_model: default_sonnet_model(),
             commit_message_model: default_sonnet_model(),
             code_review_model: default_model(),
+            final_review_model: default_model(),
             context_summary_model: default_model(),
             resolve_conflicts_model: default_model(),
             release_notes_model: default_sonnet_model(),
@@ -1906,11 +1916,12 @@ impl MagicPromptModels {
     /// default models are untouched. Returns true if any field changed.
     fn migrate_legacy_defaults(&mut self) -> bool {
         let new_opus = default_model();
-        let opus_fields: [&mut String; 11] = [
+        let opus_fields: [&mut String; 12] = [
             &mut self.investigate_issue_model,
             &mut self.investigate_pr_model,
             &mut self.investigate_workflow_run_model,
             &mut self.code_review_model,
+            &mut self.final_review_model,
             &mut self.context_summary_model,
             &mut self.resolve_conflicts_model,
             &mut self.investigate_security_alert_model,
@@ -1980,6 +1991,8 @@ pub struct MagicPromptProviders {
     #[serde(default)]
     pub code_review_provider: Option<String>,
     #[serde(default)]
+    pub final_review_provider: Option<String>,
+    #[serde(default)]
     pub context_summary_provider: Option<String>,
     #[serde(default)]
     pub resolve_conflicts_provider: Option<String>,
@@ -2015,6 +2028,8 @@ pub struct MagicPromptBackends {
     #[serde(default)]
     pub code_review_backend: Option<String>,
     #[serde(default)]
+    pub final_review_backend: Option<String>,
+    #[serde(default)]
     pub context_summary_backend: Option<String>,
     #[serde(default)]
     pub resolve_conflicts_backend: Option<String>,
@@ -2049,6 +2064,8 @@ pub struct MagicPromptReasoningEfforts {
     pub commit_message_effort: Option<String>,
     #[serde(default)]
     pub code_review_effort: Option<String>,
+    #[serde(default)]
+    pub final_review_effort: Option<String>,
     #[serde(default)]
     pub context_summary_effort: Option<String>,
     #[serde(default)]
@@ -2096,6 +2113,8 @@ pub struct MagicPromptModes {
     pub investigate_sentry_issue_mode: String,
     #[serde(default = "default_magic_prompt_plan_mode")]
     pub review_comments_mode: String,
+    #[serde(default = "default_magic_prompt_plan_mode")]
+    pub final_review_mode: String,
     #[serde(default = "default_magic_prompt_yolo_mode")]
     pub resolve_conflicts_mode: String,
 }
@@ -2111,6 +2130,7 @@ impl Default for MagicPromptModes {
             investigate_linear_issue_mode: default_magic_prompt_plan_mode(),
             investigate_sentry_issue_mode: default_magic_prompt_plan_mode(),
             review_comments_mode: default_magic_prompt_plan_mode(),
+            final_review_mode: default_magic_prompt_plan_mode(),
             resolve_conflicts_mode: default_magic_prompt_yolo_mode(),
         }
     }
@@ -3932,6 +3952,17 @@ mod magic_prompt_tests {
         let prompt = default_investigate_sentry_issue_prompt();
         assert!(prompt.contains("{sentryRefs}"));
         assert!(prompt.contains("{sentryContext}"));
+    }
+
+    #[test]
+    fn app_preferences_include_final_review_defaults() {
+        let preferences = AppPreferences::default();
+
+        assert_eq!(
+            preferences.magic_prompt_models.final_review_model,
+            default_model()
+        );
+        assert_eq!(preferences.magic_prompt_modes.final_review_mode, "plan");
     }
 
     #[test]

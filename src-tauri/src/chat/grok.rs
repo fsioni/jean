@@ -2,6 +2,7 @@
 
 use super::types::{ContentBlock, ToolCall, UsageData};
 use crate::http_server::EmitExt;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -1271,8 +1272,16 @@ fn handle_acp_client_request(
             let Some(path) = params.get("path").and_then(Value::as_str) else {
                 return send_acp_error(stdin, id, "Missing path");
             };
-            let content = std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read Grok ACP file {path}: {e}"))?;
+            let content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(error) => {
+                    return send_acp_error(
+                        stdin,
+                        id,
+                        &format!("Failed to read Grok ACP file {path}: {error}"),
+                    );
+                }
+            };
             let line = params.get("line").and_then(Value::as_u64).unwrap_or(1);
             let limit = params.get("limit").and_then(Value::as_u64);
             let selected = if line > 1 || limit.is_some() {
@@ -1446,13 +1455,7 @@ fn spawn_grok_acp_connection(
         "initialize",
         serde_json::json!({
             "protocolVersion": 1,
-            "clientCapabilities": {
-                "fs": {
-                    "readTextFile": true,
-                    "writeTextFile": !matches!(execution_mode, Some("plan") | None),
-                },
-                "terminal": true,
-            },
+            "clientCapabilities": grok_client_capabilities(),
         }),
     )?;
     let init_value =
@@ -1508,6 +1511,13 @@ fn spawn_grok_acp_connection(
     }
 
     Ok(connection)
+}
+
+fn grok_client_capabilities() -> Value {
+    // Grok and Jean run on the same machine. Advertising ACP client filesystem
+    // support makes Grok proxy binary image reads through the text-only
+    // fs/read_text_file method, corrupting its own session assets.
+    serde_json::json!({ "terminal": true })
 }
 
 fn kill_grok_acp_connection(connection: &mut GrokAcpConnection) {
@@ -1609,6 +1619,7 @@ fn send_grok_acp_prompt(
     execution_mode: Option<&str>,
     prepared_message: &str,
 ) -> Result<GrokResponse, String> {
+    let prompt = build_grok_acp_prompt(prepared_message)?;
     let prompt_request_id = connection.next_request_id;
     connection.next_request_id += 1;
     send_acp_request(
@@ -1617,7 +1628,7 @@ fn send_grok_acp_prompt(
         "session/prompt",
         serde_json::json!({
             "sessionId": connection.acp_session_id,
-            "prompt": [{ "type": "text", "text": prepared_message }],
+            "prompt": prompt,
         }),
     )?;
 
@@ -1723,6 +1734,44 @@ fn send_grok_acp_prompt(
     response.content = response.content.trim().to_string();
     connection.acp_session_id = response.session_id.clone();
     Ok(response)
+}
+
+fn build_grok_acp_prompt(message: &str) -> Result<Value, String> {
+    let image_paths = super::commands::extract_image_paths(message);
+    let mut cleaned = message.to_string();
+    let mut prompt = Vec::with_capacity(image_paths.len() + 1);
+
+    for path in image_paths {
+        cleaned = cleaned.replace(
+            &format!("[Image attached: {path} - Use the Read tool to view this image]"),
+            "",
+        );
+        let data = std::fs::read(&path)
+            .map_err(|error| format!("Failed to read Grok image attachment {path}: {error}"))?;
+        let mime_type = match Path::new(&path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            _ => "image/png",
+        };
+        prompt.push(serde_json::json!({
+            "type": "image",
+            "data": STANDARD.encode(data),
+            "mimeType": mime_type,
+        }));
+    }
+
+    prompt.insert(
+        0,
+        serde_json::json!({ "type": "text", "text": cleaned.trim() }),
+    );
+    Ok(Value::Array(prompt))
 }
 
 pub fn execute_grok(options: GrokExecutionOptions<'_>) -> Result<GrokResponse, String> {
@@ -1970,6 +2019,70 @@ mod tests {
             resolve_one_shot_grok_model("grok/grok-composer-2.5-fast"),
             "grok/grok-composer-2.5-fast"
         );
+    }
+
+    #[test]
+    fn builds_acp_image_blocks_from_jean_attachments() {
+        let path = std::env::temp_dir().join(format!(
+            "jean-grok-image-{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1, 2, 3]).unwrap();
+        let message = format!(
+            "Inspect this image\n\n[Image attached: {} - Use the Read tool to view this image]",
+            path.display()
+        );
+
+        let prompt = build_grok_acp_prompt(&message).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(prompt[0]["type"], "text");
+        assert_eq!(prompt[0]["text"], "Inspect this image");
+        assert_eq!(prompt[1]["type"], "image");
+        assert_eq!(prompt[1]["mimeType"], "image/png");
+        assert_eq!(prompt[1]["data"], "AQID");
+    }
+
+    #[test]
+    fn client_capabilities_leave_local_file_reads_to_grok() {
+        let capabilities = grok_client_capabilities();
+
+        assert_eq!(capabilities["terminal"], true);
+        assert!(capabilities.get("fs").is_none());
+    }
+
+    #[test]
+    fn binary_text_file_request_returns_acp_error_without_ending_connection() {
+        let path = std::env::temp_dir().join(format!(
+            "jean-grok-acp-binary-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "fs/read_text_file",
+            "params": { "path": path },
+        });
+        let mut output = Vec::new();
+        let mut terminals = HashMap::new();
+
+        let result = handle_acp_client_request(&mut output, &request, &mut terminals, Some("yolo"));
+        let _ = std::fs::remove_file(&path);
+
+        assert!(result.is_ok());
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert!(response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("stream did not contain valid UTF-8")));
     }
 
     #[test]
