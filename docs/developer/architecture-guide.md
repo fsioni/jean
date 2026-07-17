@@ -109,6 +109,11 @@ Each major system has focused documentation:
 Additional systems (no dedicated docs yet):
 
 - **Terminal** - Built-in PTY terminal emulator (`src-tauri/src/terminal/`).
+  On Unix, terminals launched with a command run it through the user's
+  interactive login shell so package scripts and native CLI sessions inherit
+  the same PATH as a normally opened terminal. Structured command arguments
+  are shell-escaped before launch; Windows continues to invoke binaries or
+  `.cmd`/`.bat` shims directly to avoid PowerShell argument rewriting.
   Sessions can use chat or terminal as their primary surface via
   `useUIStore.sessionPrimarySurface`. Full-screen terminal sessions own exactly
   one terminal instance via `sessionTerminalIds` and must render through

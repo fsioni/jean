@@ -12616,10 +12616,27 @@ pub async fn list_commandcode_skills() -> Result<Vec<ClaudeSkill>, String> {
     list_jean_global_backend_skills("commandcode").await
 }
 
-/// List Jean-global Grok skills.
+/// List Grok skills from Jean's global mirror and Grok's native skill root.
+///
+/// Grok CLI discovers skills from `~/.grok/skills` (not `~/.jean/skills/grok`).
+/// Jean still mirrors into the Jean-global path for cross-backend bookkeeping,
+/// so the slash-command UI unions both locations.
 #[tauri::command]
 pub async fn list_grok_skills() -> Result<Vec<ClaudeSkill>, String> {
-    list_jean_global_backend_skills("grok").await
+    let mut skills_map = std::collections::HashMap::new();
+
+    if let Some(home) = get_home_dir() {
+        collect_skills_from_dir(
+            &jean_global_backend_skills_dir(&home, "grok"),
+            &mut skills_map,
+        );
+        // Native path used by the Grok CLI itself.
+        collect_skills_from_dir(&home.join(".grok").join("skills"), &mut skills_map);
+    }
+
+    let mut skills: Vec<ClaudeSkill> = skills_map.into_values().collect();
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(skills)
 }
 
 async fn list_jean_global_backend_skills(backend: &str) -> Result<Vec<ClaudeSkill>, String> {

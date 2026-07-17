@@ -4486,12 +4486,12 @@ pub fn run() {
 
             let opinionated_cleanup_started_at = setup_start.elapsed();
             tauri::async_runtime::spawn(async move {
-                let result = tokio::task::spawn_blocking(|| {
+                let cleanup_result = tokio::task::spawn_blocking(|| {
                     opinionated::cleanup_disallowed_opinionated_skills_on_startup()
                 })
                 .await;
 
-                match result {
+                match cleanup_result {
                     Ok(Ok(count)) if count > 0 => log::info!(
                         "Startup: removed {count} disallowed opinionated skill path(s)"
                     ),
@@ -4503,6 +4503,28 @@ pub fn run() {
                     ),
                     Err(e) => log::warn!(
                         "Startup: disallowed opinionated skill cleanup task failed: {e}"
+                    ),
+                }
+
+                // Heal backends (e.g. Grok) that need skills in their native CLI
+                // path, not only under ~/.jean/skills/<backend>.
+                let sync_result = tokio::task::spawn_blocking(|| {
+                    opinionated::sync_native_backend_skills_on_startup()
+                })
+                .await;
+
+                match sync_result {
+                    Ok(Ok(count)) if count > 0 => log::info!(
+                        "Startup: synced {count} Jean-global skill(s) into native backend skill dirs"
+                    ),
+                    Ok(Ok(_)) => log::trace!(
+                        "Startup: no native backend skill sync needed"
+                    ),
+                    Ok(Err(e)) => log::warn!(
+                        "Startup: native backend skill sync failed: {e}"
+                    ),
+                    Err(e) => log::warn!(
+                        "Startup: native backend skill sync task failed: {e}"
                     ),
                 }
             });

@@ -24,11 +24,31 @@ fn is_windows_batch_file(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(unix)]
+fn build_unix_shell_command(
+    shell: &str,
+    command: &str,
+    command_args: Option<&[String]>,
+) -> CommandBuilder {
+    let command = match command_args {
+        Some(args) => std::iter::once(command)
+            .chain(args.iter().map(String::as_str))
+            .map(crate::platform::shell_escape)
+            .collect::<Vec<_>>()
+            .join(" "),
+        None => command.to_string(),
+    };
+
+    let mut builder = CommandBuilder::new(shell);
+    builder.args(["-l", "-i", "-c", &command]);
+    builder
+}
+
 /// Spawn a terminal, optionally running a command
 ///
-/// When `command_args` is provided alongside `command`, the binary at `command`
-/// is invoked directly with the given args (no shell wrapper). This avoids
-/// argument-parsing issues on Windows where PowerShell mangles quoted paths.
+/// On Unix, commands run through the user's interactive login shell so they
+/// receive the same PATH as a normal terminal. On Windows, structured command
+/// arguments are invoked directly to avoid PowerShell rewriting quoted paths.
 pub fn spawn_terminal(
     app: &AppHandle,
     terminal_id: String,
@@ -123,40 +143,40 @@ pub fn spawn_terminal(
         if run_command.is_empty() {
             return Err("Command is empty".to_string());
         }
-        if let Some(ref args) = command_args {
-            // Validate absolute paths exist upfront for a clear error message.
-            if run_command.starts_with('/') && !std::path::Path::new(run_command).exists() {
-                return Err(format!("Binary not found: {run_command}"));
-            }
+        #[cfg(unix)]
+        {
+            // Match a normally opened terminal so version managers and user PATH
+            // entries (for example ~/.bun/bin) are available to launched scripts.
+            build_unix_shell_command(&shell, run_command, command_args.as_deref())
+        }
+        #[cfg(windows)]
+        {
+            if let Some(ref args) = command_args {
+                // Validate absolute paths exist upfront for a clear error message.
+                if run_command.starts_with('/') && !std::path::Path::new(run_command).exists() {
+                    return Err(format!("Binary not found: {run_command}"));
+                }
 
-            let mut c = if cfg!(windows) && is_windows_batch_file(run_command) {
-                let mut c = CommandBuilder::new("cmd.exe");
-                c.arg("/C");
-                c.arg(run_command);
+                let mut c = if is_windows_batch_file(run_command) {
+                    let mut c = CommandBuilder::new("cmd.exe");
+                    c.arg("/C");
+                    c.arg(run_command);
+                    c
+                } else {
+                    // Direct binary invocation — CommandBuilder handles spaces in
+                    // paths natively without PowerShell parsing the arguments.
+                    CommandBuilder::new(run_command)
+                };
+                for arg in args {
+                    c.arg(arg);
+                }
                 c
             } else {
-                // Direct binary invocation — CommandBuilder uses execvp which handles
-                // spaces in paths natively. No shell wrapper needed.
-                CommandBuilder::new(run_command)
-            };
-            for arg in args {
-                c.arg(arg);
-            }
-            c
-        } else {
-            // Run the command wrapped in a shell
-            let mut c = CommandBuilder::new(&shell);
-            #[cfg(windows)]
-            {
+                let mut c = CommandBuilder::new(&shell);
                 c.arg("-Command");
                 c.arg(run_command);
+                c
             }
-            #[cfg(not(windows))]
-            {
-                c.arg("-c");
-                c.arg(run_command);
-            }
-            c
         }
     } else {
         CommandBuilder::new(&shell)
@@ -463,7 +483,32 @@ pub fn kill_all_terminals() -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::build_unix_shell_command;
     use super::is_windows_batch_file;
+
+    #[cfg(unix)]
+    #[test]
+    fn command_with_args_runs_through_interactive_login_shell() {
+        let command = build_unix_shell_command(
+            "/bin/bash",
+            "bun",
+            Some(&[
+                "run".to_string(),
+                "dev server".to_string(),
+                "it's-safe".to_string(),
+            ]),
+        );
+
+        let argv = command
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(argv[0..4], ["/bin/bash", "-l", "-i", "-c"]);
+        assert_eq!(argv[4], "'bun' 'run' 'dev server' 'it'\\''s-safe'");
+    }
 
     #[test]
     fn detects_windows_batch_shims_case_insensitively() {

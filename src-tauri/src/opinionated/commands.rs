@@ -10,6 +10,9 @@ use tauri::{AppHandle, Manager};
 pub struct PluginStatus {
     pub installed: bool,
     pub version: Option<String>,
+    pub install_supported: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsupported_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backends: Option<Vec<BackendPluginStatus>>,
 }
@@ -28,6 +31,7 @@ const SUPERPOWERS_ARCHIVE_URL: &str =
 const RTK_RELEASE_LATEST_API: &str = "https://api.github.com/repos/rtk-ai/rtk/releases/latest";
 const RTK_CLI_DIR_NAME: &str = "rtk-cli";
 const RTK_BINARY_NAME: &str = if cfg!(windows) { "rtk.exe" } else { "rtk" };
+const RTK_ARM64_MIN_GLIBC: (u32, u32) = (2, 39);
 
 fn superpowers_claude_plugin_target() -> &'static str {
     "superpowers@claude-plugins-official"
@@ -80,6 +84,8 @@ pub async fn uninstall_opinionated_plugin(
 }
 
 async fn check_rtk_status(app: &AppHandle) -> Result<PluginStatus, String> {
+    let unsupported_reason = current_rtk_install_unsupported_reason();
+    let install_supported = unsupported_reason.is_none();
     let managed_binary = rtk_binary_path(app).ok();
     let result = tokio::task::spawn_blocking(move || {
         let path_result = silent_command("rtk").arg("--version").output();
@@ -105,12 +111,16 @@ async fn check_rtk_status(app: &AppHandle) -> Result<PluginStatus, String> {
             Ok(PluginStatus {
                 installed: true,
                 version,
+                install_supported,
+                unsupported_reason,
                 backends: None,
             })
         }
         _ => Ok(PluginStatus {
             installed: false,
             version: None,
+            install_supported,
+            unsupported_reason,
             backends: None,
         }),
     }
@@ -136,11 +146,17 @@ async fn check_caveman_status(app: &AppHandle) -> Result<PluginStatus, String> {
     Ok(PluginStatus {
         installed,
         version,
+        install_supported: true,
+        unsupported_reason: None,
         backends: Some(statuses),
     })
 }
 
 async fn install_rtk(app: &AppHandle) -> Result<String, String> {
+    if let Some(reason) = current_rtk_install_unsupported_reason() {
+        return Err(reason);
+    }
+
     let asset = current_rtk_asset()?;
     let binary_path = rtk_binary_path(app)?;
 
@@ -301,6 +317,59 @@ fn persist_rtk_dir_to_user_path(_dir: &Path) {}
 
 fn current_rtk_asset() -> Result<RtkAsset, String> {
     rtk_asset_for_platform(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn parse_glibc_version(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.split_whitespace();
+    if parts.next()? != "glibc" {
+        return None;
+    }
+    let (major, minor) = parts.next()?.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+fn host_glibc_version() -> Option<(u32, u32)> {
+    if std::env::consts::OS != "linux" {
+        return None;
+    }
+
+    let output = silent_command("getconf")
+        .arg("GNU_LIBC_VERSION")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_glibc_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn current_rtk_install_unsupported_reason() -> Option<String> {
+    rtk_install_unsupported_reason(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        host_glibc_version(),
+    )
+}
+
+fn rtk_install_unsupported_reason(
+    os: &str,
+    arch: &str,
+    glibc_version: Option<(u32, u32)>,
+) -> Option<String> {
+    if os != "linux" || arch != "aarch64" {
+        return None;
+    }
+
+    match glibc_version {
+        Some(version) if version >= RTK_ARM64_MIN_GLIBC => None,
+        Some((major, minor)) => Some(format!(
+            "RTK's Linux ARM64 binary requires glibc 2.39 or newer; this system has glibc {major}.{minor}"
+        )),
+        None => Some(
+            "RTK installation is disabled on Linux ARM64 because Jean could not verify glibc 2.39 or newer"
+                .to_string(),
+        ),
+    }
 }
 
 fn rtk_asset_for_platform(os: &str, arch: &str) -> Result<RtkAsset, String> {
@@ -496,11 +565,25 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
         .iter()
         .map(|(id, _)| *id)
         .collect::<Vec<_>>();
-    let native_backends = detected_backends
+    let mut native_backends = detected_backends
         .iter()
         .copied()
         .filter(|backend| matches!(*backend, "claude" | "codex" | "opencode" | "cursor"))
         .collect::<Vec<_>>();
+
+    // Headless Linux servers may use Jean-managed backends that are not visible
+    // to the Caveman installer. Codex provides a reliable seed install that Jean
+    // can mirror to every backend.
+    #[cfg(target_os = "linux")]
+    if native_backends.is_empty() {
+        native_backends.push("codex");
+    }
+
+    #[cfg(target_os = "linux")]
+    let install_dir = std::env::temp_dir().join(format!("jean-caveman-{}", uuid::Uuid::new_v4()));
+    #[cfg(target_os = "linux")]
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("Failed to create Caveman install directory: {e}"))?;
 
     let install_result = if native_backends.is_empty() {
         None
@@ -510,18 +593,25 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
             "github:JuliusBrussee/caveman".to_string(),
             "--".to_string(),
             "--non-interactive".to_string(),
-            "--with-init".to_string(),
         ];
+
+        #[cfg(not(target_os = "linux"))]
+        args.push("--with-init".to_string());
 
         for backend in &native_backends {
             args.push("--only".to_string());
             args.push((*backend).to_string());
         }
 
+        #[cfg(target_os = "linux")]
+        let install_workdir = install_dir.clone();
+
         Some(
             tokio::task::spawn_blocking(move || {
                 let mut command = silent_command("npx");
                 command.args(args);
+                #[cfg(target_os = "linux")]
+                command.current_dir(install_workdir);
                 command.output()
             })
             .await
@@ -540,11 +630,24 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
         _ => {
             let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
             let backends_for_global = backends.clone();
+            #[cfg(target_os = "linux")]
+            let linux_source = install_dir.join(".agents").join("skills").join("caveman");
             let global_result = tokio::task::spawn_blocking(move || {
+                #[cfg(target_os = "linux")]
+                if linux_source.join("SKILL.md").exists() {
+                    return mirror_caveman_source_to_jean_global_backends(
+                        &linux_source,
+                        &home,
+                        &backends_for_global,
+                    );
+                }
                 mirror_caveman_to_jean_global_backends(&home, &backends_for_global)
             })
             .await
             .map_err(|e| e.to_string())?;
+
+            #[cfg(target_os = "linux")]
+            let _ = std::fs::remove_dir_all(&install_dir);
 
             let mut warnings = Vec::new();
             if let Err(e) = global_result {
@@ -606,6 +709,8 @@ async fn check_superpowers_status(app: &AppHandle) -> Result<PluginStatus, Strin
     Ok(PluginStatus {
         installed: superpowers_status_installed(&covered_backends, &detected_jean_backends(app)),
         version,
+        install_supported: true,
+        unsupported_reason: None,
         backends: Some(statuses),
     })
 }
@@ -916,6 +1021,10 @@ fn uninstall_caveman_from_home(home: &Path) -> Result<Vec<String>, String> {
         &home.join(".cursor").join("rules").join("caveman.mdc"),
         &mut removed,
     )?;
+    // Grok CLI discovers skills from ~/.grok/skills, not Jean's global mirror.
+    remove_matching_skill_dirs(&home.join(".grok").join("skills"), "caveman", &mut removed)?;
+    // Caveman pack also ships cavecrew as a sibling skill name.
+    remove_matching_skill_dirs(&home.join(".grok").join("skills"), "cavecrew", &mut removed)?;
     for backend in [
         "claude",
         "codex",
@@ -928,6 +1037,11 @@ fn uninstall_caveman_from_home(home: &Path) -> Result<Vec<String>, String> {
         remove_matching_skill_dirs(
             &jean_global_backend_skills_dir(home, backend),
             "caveman",
+            &mut removed,
+        )?;
+        remove_matching_skill_dirs(
+            &jean_global_backend_skills_dir(home, backend),
+            "cavecrew",
             &mut removed,
         )?;
     }
@@ -954,6 +1068,12 @@ fn uninstall_superpowers_from_home(home: &Path) -> Result<Vec<String>, String> {
     )?;
     remove_matching_skill_dirs(
         &home.join(".cursor").join("skills-cursor"),
+        "superpowers",
+        &mut removed,
+    )?;
+    // Grok CLI discovers skills from ~/.grok/skills, not Jean's global mirror.
+    remove_matching_skill_dirs(
+        &home.join(".grok").join("skills"),
         "superpowers",
         &mut removed,
     )?;
@@ -1108,7 +1228,13 @@ fn caveman_installed_for_backend(home: &Path, backend: &str) -> bool {
                     .exists()
                 || global_installed
         }
-        "pi" | "commandcode" | "grok" | "kimi" => global_installed,
+        // Grok CLI only auto-discovers ~/.grok/skills (plus compat dirs), not
+        // Jean's global mirror. Prefer the native path so status matches CLI access.
+        "grok" => {
+            skill_installed_marker(&home.join(".grok").join("skills"), "caveman")
+                || global_installed
+        }
+        "pi" | "commandcode" | "kimi" => global_installed,
         _ => false,
     }
 }
@@ -1140,7 +1266,13 @@ fn superpowers_installed_for_backend(home: &Path, backend: &str) -> bool {
             skill_installed_marker(&home.join(".cursor").join("skills-cursor"), "superpowers")
                 || global_installed
         }
-        "pi" | "commandcode" | "grok" | "kimi" => global_installed,
+        // Grok CLI only auto-discovers ~/.grok/skills (plus compat dirs), not
+        // Jean's global mirror. Prefer the native path so status matches CLI access.
+        "grok" => {
+            skill_installed_marker(&home.join(".grok").join("skills"), "superpowers")
+                || global_installed
+        }
+        "pi" | "commandcode" | "kimi" => global_installed,
         _ => false,
     }
 }
@@ -1149,14 +1281,16 @@ fn jean_global_backend_skills_dir(home: &Path, backend: &str) -> PathBuf {
     home.join(".jean").join("skills").join(backend)
 }
 
+/// Native skill directory used by the backend's own CLI (when it differs from
+/// Jean's global mirror under `~/.jean/skills/<backend>`).
 fn backend_skills_dir(home: &Path, backend: &str) -> Option<PathBuf> {
     match backend {
         "codex" => Some(home.join(".codex").join("skills")),
         "opencode" => Some(opencode_config_dir(home).join("skills")),
         "cursor" => Some(home.join(".cursor").join("skills-cursor")),
-        "pi" | "commandcode" | "grok" | "kimi" => {
-            Some(jean_global_backend_skills_dir(home, backend))
-        }
+        // Grok discovers user skills from ~/.grok/skills — not ~/.jean/skills/grok.
+        "grok" => Some(home.join(".grok").join("skills")),
+        "pi" | "commandcode" | "kimi" => Some(jean_global_backend_skills_dir(home, backend)),
         _ => None,
     }
 }
@@ -1276,6 +1410,7 @@ fn find_caveman_skill_dir(home: &Path) -> Option<PathBuf> {
         home.join(".codex").join("skills"),
         opencode_config_dir(home).join("skills"),
         home.join(".cursor").join("skills-cursor"),
+        home.join(".grok").join("skills"),
         jean_global_backend_skills_dir(home, "pi"),
         jean_global_backend_skills_dir(home, "commandcode"),
         jean_global_backend_skills_dir(home, "grok"),
@@ -1295,6 +1430,36 @@ fn find_caveman_skill_dir(home: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Collect the caveman pack: the primary skill dir plus sibling skills
+/// (`caveman-*`, `cavecrew`) from the same parent skills directory.
+fn caveman_skill_sources(source: &Path) -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    if source.is_dir() && source.join("SKILL.md").exists() {
+        sources.push(source.to_path_buf());
+    }
+
+    let Some(parent) = source.parent() else {
+        return sources;
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return sources;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if sources.iter().any(|existing| existing == &path) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        let is_related = name.contains("caveman") || name == "cavecrew";
+        if path.is_dir() && path.join("SKILL.md").exists() && is_related {
+            sources.push(path);
+        }
+    }
+
+    sources
+}
+
 fn mirror_caveman_to_jean_global_backends(
     home: &Path,
     backends: &[&'static str],
@@ -1303,11 +1468,50 @@ fn mirror_caveman_to_jean_global_backends(
         return Err("No installed Caveman skill directory found to mirror globally".to_string());
     };
 
+    mirror_caveman_source_to_jean_global_backends(&source, home, backends)
+}
+
+fn mirror_caveman_source_to_jean_global_backends(
+    source: &Path,
+    home: &Path,
+    backends: &[&'static str],
+) -> Result<usize, String> {
+    let skill_sources = caveman_skill_sources(source);
+    if skill_sources.is_empty() {
+        return Err(format!(
+            "No Caveman skill files found under {}",
+            source.display()
+        ));
+    }
+
     let mut copied = 0;
     for backend in backends {
-        let target = jean_global_backend_skills_dir(home, backend).join("caveman");
-        copy_dir_replace(&source, &target)?;
-        copied += 1;
+        let jean_dir = jean_global_backend_skills_dir(home, backend);
+        for skill_source in &skill_sources {
+            let name = skill_source
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "caveman".to_string());
+            let target = jean_dir.join(&name);
+            copy_dir_replace(skill_source, &target)?;
+            copied += 1;
+        }
+
+        // Also install into the backend CLI's native skills dir when it differs
+        // from Jean's global mirror (e.g. Grok → ~/.grok/skills).
+        if let Some(native_dir) = backend_skills_dir(home, backend) {
+            if native_dir != jean_dir {
+                for skill_source in &skill_sources {
+                    let name = skill_source
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "caveman".to_string());
+                    let target = native_dir.join(&name);
+                    copy_dir_replace(skill_source, &target)?;
+                    copied += 1;
+                }
+            }
+        }
     }
 
     Ok(copied)
@@ -1486,6 +1690,7 @@ fn remove_superpowers_git_worktree_skill(
         home.join(".codex").join("skills"),
         opencode_config_dir(home).join("skills"),
         home.join(".cursor").join("skills-cursor"),
+        home.join(".grok").join("skills"),
         jean_global_backend_skills_dir(home, "claude"),
         jean_global_backend_skills_dir(home, "codex"),
         jean_global_backend_skills_dir(home, "opencode"),
@@ -1528,6 +1733,53 @@ fn cleanup_disallowed_opinionated_skills_in_home(home: &Path) -> Result<usize, S
     let mut removed = Vec::new();
     remove_superpowers_git_worktree_skill(home, &mut removed)?;
     Ok(removed.len())
+}
+
+/// Heal backends whose CLI skill roots differ from Jean's global mirror
+/// (notably Grok → `~/.grok/skills`). Copies any skill dirs present under
+/// `~/.jean/skills/<backend>` that are missing from the native root.
+pub fn sync_native_backend_skills_on_startup() -> Result<usize, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    sync_native_backend_skills_in_home(&home)
+}
+
+fn sync_native_backend_skills_in_home(home: &Path) -> Result<usize, String> {
+    let mut synced = 0;
+
+    for (backend, _) in installable_jean_backends() {
+        let jean_dir = jean_global_backend_skills_dir(home, backend);
+        let Some(native_dir) = backend_skills_dir(home, backend) else {
+            continue;
+        };
+        if native_dir == jean_dir || !jean_dir.is_dir() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&jean_dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let source = entry.path();
+            if !source.is_dir() || !source.join("SKILL.md").exists() {
+                continue;
+            }
+
+            let name = entry.file_name();
+            let target = native_dir.join(&name);
+            // Only heal missing skills so we do not overwrite user edits in the
+            // native dir on every launch.
+            if target.join("SKILL.md").exists() {
+                continue;
+            }
+
+            copy_dir_replace(&source, &target)?;
+            synced += 1;
+        }
+    }
+
+    Ok(synced)
 }
 
 fn remove_named_skill_dirs_under(
@@ -1740,6 +1992,129 @@ mod tests {
     }
 
     #[test]
+    fn mirrors_explicit_caveman_source_to_jean_backends() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source").join("caveman");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::write(source.join("SKILL.md"), "# Caveman").expect("write skill");
+
+        let copied =
+            mirror_caveman_source_to_jean_global_backends(&source, temp.path(), &["codex", "pi"])
+                .expect("mirror skills");
+
+        // codex gets jean-global + native (~/.codex/skills); pi only jean-global
+        assert_eq!(copied, 3);
+        assert!(temp
+            .path()
+            .join(".jean/skills/codex/caveman/SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".codex/skills/caveman/SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".jean/skills/pi/caveman/SKILL.md")
+            .exists());
+    }
+
+    #[test]
+    fn mirrors_caveman_pack_to_grok_native_skills_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let skills_parent = temp.path().join("source");
+        let caveman = skills_parent.join("caveman");
+        let sibling = skills_parent.join("caveman-commit");
+        std::fs::create_dir_all(&caveman).expect("create caveman");
+        std::fs::create_dir_all(&sibling).expect("create sibling");
+        std::fs::write(caveman.join("SKILL.md"), "# Caveman").expect("write caveman");
+        std::fs::write(sibling.join("SKILL.md"), "# Commit").expect("write sibling");
+
+        let copied =
+            mirror_caveman_source_to_jean_global_backends(&caveman, temp.path(), &["grok"])
+                .expect("mirror skills");
+
+        // 2 skills × (jean-global + ~/.grok/skills)
+        assert_eq!(copied, 4);
+        assert!(temp
+            .path()
+            .join(".jean/skills/grok/caveman/SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".jean/skills/grok/caveman-commit/SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".grok/skills/caveman/SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".grok/skills/caveman-commit/SKILL.md")
+            .exists());
+    }
+
+    #[test]
+    fn grok_backend_skills_dir_is_native_grok_path() {
+        let home = PathBuf::from("/tmp/fake-home");
+        assert_eq!(
+            backend_skills_dir(&home, "grok"),
+            Some(home.join(".grok").join("skills"))
+        );
+        assert_eq!(
+            jean_global_backend_skills_dir(&home, "grok"),
+            home.join(".jean").join("skills").join("grok")
+        );
+    }
+
+    #[test]
+    fn backend_marker_detects_grok_native_skill() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let skill_dir = temp.path().join(".grok").join("skills").join("caveman");
+        std::fs::create_dir_all(&skill_dir).expect("create grok skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), "# Caveman").expect("write skill");
+
+        assert!(caveman_installed_for_backend(temp.path(), "grok"));
+        assert!(superpowers_installed_for_backend(temp.path(), "grok") == false);
+    }
+
+    #[test]
+    fn startup_sync_heals_missing_grok_native_skills() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let jean_skill = temp
+            .path()
+            .join(".jean")
+            .join("skills")
+            .join("grok")
+            .join("superpowers-writing-plans");
+        std::fs::create_dir_all(&jean_skill).expect("create jean skill");
+        std::fs::write(jean_skill.join("SKILL.md"), "# Plans").expect("write skill");
+
+        // Pre-existing native skill should not be overwritten.
+        let native_existing = temp
+            .path()
+            .join(".grok")
+            .join("skills")
+            .join("keep-me");
+        std::fs::create_dir_all(&native_existing).expect("create existing");
+        std::fs::write(native_existing.join("SKILL.md"), "# Keep").expect("write keep");
+
+        let synced = sync_native_backend_skills_in_home(temp.path()).expect("sync");
+        assert_eq!(synced, 1);
+        assert!(temp
+            .path()
+            .join(".grok/skills/superpowers-writing-plans/SKILL.md")
+            .exists());
+        assert_eq!(
+            std::fs::read_to_string(native_existing.join("SKILL.md")).expect("read"),
+            "# Keep"
+        );
+
+        // Second run is a no-op once native skill exists.
+        let synced_again = sync_native_backend_skills_in_home(temp.path()).expect("sync again");
+        assert_eq!(synced_again, 0);
+    }
+
+    #[test]
     #[cfg(not(windows))]
     fn backend_marker_detects_opencode_plugin() {
         if std::env::var_os("XDG_CONFIG_HOME").is_some() {
@@ -1806,6 +2181,22 @@ mod tests {
         assert_eq!(asset.name, "rtk-x86_64-pc-windows-msvc.zip");
         assert_eq!(asset.binary_name, "rtk.exe");
         assert_eq!(asset.format, RtkArchiveFormat::Zip);
+    }
+
+    #[test]
+    fn disables_rtk_install_only_on_incompatible_linux_aarch64() {
+        assert!(rtk_install_unsupported_reason("linux", "aarch64", Some((2, 35))).is_some());
+        assert!(rtk_install_unsupported_reason("linux", "aarch64", None).is_some());
+        assert!(rtk_install_unsupported_reason("linux", "aarch64", Some((2, 39))).is_none());
+        assert!(rtk_install_unsupported_reason("linux", "x86_64", Some((2, 35))).is_none());
+        assert!(rtk_install_unsupported_reason("macos", "aarch64", Some((2, 35))).is_none());
+    }
+
+    #[test]
+    fn parses_host_glibc_version() {
+        assert_eq!(parse_glibc_version("glibc 2.35\n"), Some((2, 35)));
+        assert_eq!(parse_glibc_version("glibc 2.39"), Some((2, 39)));
+        assert_eq!(parse_glibc_version("musl libc 1.2.4"), None);
     }
 
     #[test]
