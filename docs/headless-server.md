@@ -9,18 +9,17 @@ X/Wayland display.
 
 ## Start locally
 
-When running a debug binary directly with `cargo build` / `./target/debug/jean`,
-build the browser bundle first. Jean embeds `dist/` into the server binary at
-compile time, so production deploys only need the compiled binary.
+When running a debug binary directly, build the browser bundle first. Jean
+embeds `dist/` into the server binary at compile time, so production deploys
+only need the compiled binary.
 
 ```bash
 bun run build
-cd src-tauri
-cargo build --bin jean --bin jean-server
+cargo build --manifest-path src-server/Cargo.toml
 ```
 
 ```bash
-xvfb-run -a ./target/debug/jean --headless --host 127.0.0.1 --port 3456
+xvfb-run -a ./src-server/target/debug/jean-server --host 127.0.0.1 --port 3456
 curl http://127.0.0.1:3456/healthz
 ```
 
@@ -34,14 +33,43 @@ For a production single-binary server:
 
 ```bash
 bun run build
-cd src-tauri
-cargo build --release --bin jean-server
-xvfb-run -a ./target/release/jean-server --host 0.0.0.0 --port 3456 --token "$JEAN_TOKEN"
+cargo build --release --manifest-path src-server/Cargo.toml
+xvfb-run -a ./src-server/target/release/jean-server --host 0.0.0.0 --port 3456 --token "$JEAN_TOKEN"
 ```
 
-After `cargo build --release --bin jean-server` finishes, `dist/` is no longer
-needed on the target server. Re-run `bun run build` before compiling whenever
-frontend code changes.
+After the release build finishes, `dist/` is no longer needed on the target
+server. Re-run `bun run build` before compiling whenever frontend code changes.
+
+## Install the local development build
+
+Install the Linux build dependencies once on Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf xdg-utils
+```
+
+On a Linux host where `jean-server.service` already runs the binary at
+`~/.local/bin/jean-server`, use:
+
+```bash
+bun run install:local:server
+tail -f tmp/install-local-server.log
+```
+
+The command runs in the background by default. It builds and embeds the current
+frontend, compiles `src-server` in release mode, atomically replaces the binary,
+and queues a systemd restart. The browser connection will briefly disconnect
+while the service restarts. Use `bun run install:local:server:foreground` to
+keep build output in the current terminal.
+
+Override the defaults when the service uses a different unit or binary path:
+
+```bash
+JEAN_SERVER_INSTALL_PATH=/opt/jean/jean-server \
+JEAN_SERVER_SERVICE=jean-dev.service \
+bun run install:local:server
+```
 
 ## Options and environment
 
@@ -92,6 +120,10 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+Jean loads the service user's interactive login-shell `PATH` at startup, so
+browser terminals can find tools installed by shell setup scripts (for example
+`~/.bun/bin/bun`) even though systemd itself provides a minimal environment.
 
 ## Docker notes
 

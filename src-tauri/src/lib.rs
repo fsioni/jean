@@ -4196,6 +4196,13 @@ pub fn run() {
     let cli_args = parse_cli_args();
     let headless = cli_args.headless;
 
+    // systemd starts headless services with a minimal PATH. Load the service
+    // user's normal shell PATH before any terminal or CLI process is spawned.
+    #[cfg(target_os = "linux")]
+    if headless {
+        crate::platform::fix_headless_path();
+    }
+
     // macOS PATH fix is handled lazily on first silent_command() call via
     // platform::ensure_macos_path(). No background thread needed — the Once guard
     // ensures the shell is spawned exactly once, blocking only the first CLI invocation.
