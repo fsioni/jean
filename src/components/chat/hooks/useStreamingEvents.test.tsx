@@ -1220,4 +1220,58 @@ describe('useStreamingEvents replay dedupe', () => {
       useChatStore.getState().streamingReplayContentBlocks['session-1']
     ).toBeUndefined()
   })
+
+  it('keeps deduplicating snapshot output when replay contains unpersisted thinking', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() =>
+      expect(registeredListeners.has('chat:thinking')).toBe(true)
+    )
+
+    registeredListeners.get('chat:thinking')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        content: 'Reasoning omitted from the running snapshot.',
+      },
+    })
+    registeredListeners.get('chat:chunk')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        content: 'Before tool. ',
+      },
+    })
+    registeredListeners.get('chat:tool_block')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        tool_call_id: 'tool-1',
+      },
+    })
+    registeredListeners.get('chat:chunk')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        content: 'After tool.',
+      },
+    })
+
+    expect(useChatStore.getState().streamingContents['session-1']).toBe(
+      'Before tool. After tool.'
+    )
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      [
+        { type: 'text', text: 'Before tool. ' },
+        { type: 'tool_use', tool_call_id: 'tool-1' },
+        { type: 'text', text: 'After tool.' },
+      ]
+    )
+    expect(
+      useChatStore.getState().streamingReplayContentBlocks['session-1']
+    ).toBeUndefined()
+  })
 })

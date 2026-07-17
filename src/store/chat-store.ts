@@ -1711,8 +1711,12 @@ export const useChatStore = create<ChatUIState>()(
         if (!blocks?.length || !first) return thinking
 
         if (first.type !== 'thinking') {
-          get().clearStreamingReplayContentBlocks(sessionId)
-          return thinking
+          // Codex persists completed agent/tool items in running snapshots but
+          // not its transient reasoning deltas. Those deltas still exist in the
+          // WebSocket replay buffer and can arrive before the first persisted
+          // text block. Drop them without abandoning the remaining snapshot
+          // dedupe, otherwise every following text/tool event renders twice.
+          return ''
         }
 
         if (first.thinking.startsWith(thinking)) {
