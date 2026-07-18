@@ -172,8 +172,6 @@ function App() {
   const pendingUpdateRef = useRef<any>(null)
 
   useEffect(() => {
-    if (!webBackend) return
-
     invoke<'mac' | 'windows' | 'linux'>('get_server_platform')
       .then(platform => {
         setServerPlatform(platform)

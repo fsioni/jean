@@ -34,4 +34,10 @@ describe('web connecting overlay', () => {
       'fontFamily: \'system-ui, -apple-system, "Segoe UI", sans-serif\''
     )
   })
+
+  it('loads the server platform for both local and remote backends', () => {
+    expect(source).toMatch(
+      /useEffect\(\(\) => \{\s*invoke<'mac' \| 'windows' \| 'linux'>\('get_server_platform'\)/
+    )
+  })
 })
