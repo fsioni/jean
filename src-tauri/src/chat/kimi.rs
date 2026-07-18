@@ -1204,7 +1204,7 @@ fn execute_kimi_attached(
         });
     }
 
-    let result = execute_kimi_child(&mut child, &options);
+    let result = execute_kimi_child(&mut child, options);
     let cancelled = !super::registry::is_process_running(options.jean_session_id);
     super::registry::unregister_process(options.jean_session_id);
     let _ = child.kill();

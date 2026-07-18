@@ -1560,8 +1560,11 @@ pub(crate) fn build_grok_interject_params(
 /// Fire-and-forget on the wire: the prompt loop ignores non-matching JSON-RPC
 /// response ids, and Grok drains interjections at the next safe point.
 pub fn inject_grok_interjection(
+    // Used only on Unix (detached host socket path); kept in signature for all platforms.
+    #[cfg_attr(not(unix), allow(unused_variables))]
     app: &AppHandle,
     jean_session_id: &str,
+    #[cfg_attr(not(unix), allow(unused_variables))]
     run_id: &str,
     text: &str,
 ) -> Result<(), String> {
@@ -2704,13 +2707,30 @@ fn is_plan_execution_mode(execution_mode: Option<&str>) -> bool {
 
 /// Whether a Grok tool name is safe to auto-approve in plan mode.
 fn is_plan_safe_tool_name(name: &str) -> bool {
-    match name.trim().to_ascii_lowercase().as_str() {
-        "web_fetch" | "webfetch" | "webfetchtool" | "fetch" | "web_search" | "websearch"
-        | "websearchtool" | "read_file" | "read" | "grep" | "search" | "list_dir" | "list"
-        | "glob" | "semantic_search" | "open_page" | "browse" | "todo_write" | "todowrite"
-        | "todo_read" | "todoread" => true,
-        _ => false,
-    }
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "web_fetch"
+            | "webfetch"
+            | "webfetchtool"
+            | "fetch"
+            | "web_search"
+            | "websearch"
+            | "websearchtool"
+            | "read_file"
+            | "read"
+            | "grep"
+            | "search"
+            | "list_dir"
+            | "list"
+            | "glob"
+            | "semantic_search"
+            | "open_page"
+            | "browse"
+            | "todo_write"
+            | "todowrite"
+            | "todo_read"
+            | "todoread"
+    )
 }
 
 /// Plan mode may auto-approve read-oriented tools so research (WebFetch, Read,

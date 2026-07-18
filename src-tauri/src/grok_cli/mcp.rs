@@ -524,14 +524,13 @@ fn config_to_acp_server(name: &str, config: &Value) -> Option<Value> {
             })
             .unwrap_or_default();
         (cmd.to_string(), args)
-    } else if let Some(arr) = obj.get("command").and_then(Value::as_array) {
+    } else {
+        let arr = obj.get("command").and_then(Value::as_array)?;
         // OpenCode local: "command": ["npx", "-y", "..."]
         let mut iter = arr.iter().filter_map(|v| v.as_str());
         let cmd = iter.next()?.to_string();
         let args = iter.map(|s| Value::String(s.to_string())).collect();
         (cmd, args)
-    } else {
-        return None;
     };
 
     let mut entry = Map::new();

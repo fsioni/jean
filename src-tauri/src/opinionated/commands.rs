@@ -565,7 +565,7 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
         .iter()
         .map(|(id, _)| *id)
         .collect::<Vec<_>>();
-    let mut native_backends = detected_backends
+    let native_backends = detected_backends
         .iter()
         .copied()
         .filter(|backend| matches!(*backend, "claude" | "codex" | "opencode" | "cursor"))
@@ -575,9 +575,13 @@ async fn install_caveman(app: &AppHandle) -> Result<String, String> {
     // to the Caveman installer. Codex provides a reliable seed install that Jean
     // can mirror to every backend.
     #[cfg(target_os = "linux")]
-    if native_backends.is_empty() {
-        native_backends.push("codex");
-    }
+    let native_backends = {
+        let mut native_backends = native_backends;
+        if native_backends.is_empty() {
+            native_backends.push("codex");
+        }
+        native_backends
+    };
 
     #[cfg(target_os = "linux")]
     let install_dir = std::env::temp_dir().join(format!("jean-caveman-{}", uuid::Uuid::new_v4()));

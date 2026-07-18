@@ -3083,7 +3083,7 @@ async fn send_native_notification(
 
     #[cfg(target_os = "windows")]
     {
-        return platform::notifications::show_notification(&app, title, body);
+        platform::notifications::show_notification(&app, title, body)
     }
 
     #[cfg(all(not(target_os = "windows"), not(mobile)))]
