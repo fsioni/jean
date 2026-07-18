@@ -430,9 +430,11 @@ Caused by:
   process didn't exit successfully: `...\jean_lib-….exe` (exit code: 0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND)
 ```
 
-Jean's `src-tauri/build.rs` embeds `windows-app-manifest.xml` into test/bench
-binaries on Windows MSVC (Tauri's recommended workaround). Keep that embed if you
-add more `tauri::test` coverage.
+Jean's `src-tauri/build.rs` embeds `windows-app-manifest.xml` via
+`cargo:rustc-link-arg` on Windows MSVC (Tauri's recommended workaround). Keep
+that embed if you add more `tauri::test` coverage. Note: do not use
+`cargo:rustc-link-arg-tests` here — this crate has no `tests/` integration-test
+target, and Cargo rejects that instruction.
 
 ### Testing File Operations
 
