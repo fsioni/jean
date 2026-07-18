@@ -102,6 +102,14 @@ pub async fn dispatch_command(
         // Preferences & UI State
         // =====================================================================
         "get_server_platform" => to_value(crate::server_platform_name()),
+        "check_server_update" => {
+            let result = crate::server_update::check_server_update(&app).await?;
+            to_value(result)
+        }
+        "apply_server_update" => {
+            let result = crate::server_update::apply_server_update(app.clone()).await?;
+            to_value(result)
+        }
         "load_preferences" => {
             let result = crate::load_preferences(app.clone()).await?;
             to_value(result)
@@ -2382,6 +2390,10 @@ pub async fn dispatch_command(
         }
         "check_grok_cli_auth" => {
             let result = crate::grok_cli::check_grok_cli_auth(app.clone()).await?;
+            to_value(result)
+        }
+        "get_grok_usage" => {
+            let result = crate::grok_cli::get_grok_usage(app.clone()).await?;
             to_value(result)
         }
         "list_grok_models" => {

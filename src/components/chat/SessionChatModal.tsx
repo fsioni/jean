@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type MutableRefObject,
   type RefObject,
 } from 'react'
 import {
@@ -97,6 +98,7 @@ import {
 } from './session-card-utils'
 import {
   buildReorderedSessionIdsWithinStatus,
+  resolveModalSessionId,
   sortSessionCardsForTabs,
 } from './session-tab-order'
 import { useCanvasStoreState } from './hooks/useCanvasStoreState'
@@ -114,6 +116,11 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
+import {
+  closeChatTerminal,
+  isChatTerminalOpen,
+  openChatTerminal,
+} from '@/lib/terminal-gesture'
 import {
   MODAL_TERMINAL_PRIMARY_ROW_CLASS,
   MODAL_TERMINAL_SECONDARY_ROW_CLASS,
@@ -186,10 +193,53 @@ export function SessionChatModal({
 }: SessionChatModalProps) {
   const isMobile = useIsMobile()
   const isTouch = useIsTouchDevice()
+  const isModalTerminalOpen = useTerminalStore(
+    state => state.modalTerminalOpen[worktreeId] ?? false
+  )
+  // Left-edge swipe right: close terminal if open, else dismiss modal
+  const swipeBackCallback = useCallback(() => {
+    if (worktreeId && isChatTerminalOpen(worktreeId, 'modal')) {
+      closeChatTerminal(worktreeId, 'modal')
+      return
+    }
+    onClose()
+  }, [worktreeId, onClose])
   const swipe = useSwipeBack({
-    onSwipeBack: onClose,
+    onSwipeBack: swipeBackCallback,
     enabled: isTouch && isOpen,
+    // Closing terminal is an overlay dismiss — no full content slide-off
+    animateToEnd: !isModalTerminalOpen,
   })
+  // Right-edge swipe left: open terminal
+  const swipeOpenTerminalCallback = useCallback(() => {
+    if (!worktreeId) return
+    openChatTerminal(worktreeId, 'modal')
+  }, [worktreeId])
+  const canSwipeOpenTerminal =
+    isTouch && isOpen && !!worktreeId && !isModalTerminalOpen
+  const swipeOpenTerminal = useSwipeBack({
+    onSwipeBack: swipeOpenTerminalCallback,
+    enabled: canSwipeOpenTerminal,
+    animateToEnd: false,
+    edge: 'right',
+  })
+  // Shared host for left-edge (back/close terminal) and right-edge (open terminal)
+  const setSwipeContainerRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      const swipeRef =
+        swipe.containerRef as MutableRefObject<HTMLDivElement | null>
+      const openTerminalRef =
+        swipeOpenTerminal.containerRef as MutableRefObject<HTMLDivElement | null>
+      if (!isTouch) {
+        swipeRef.current = null
+        openTerminalRef.current = null
+        return
+      }
+      swipeRef.current = el
+      openTerminalRef.current = el
+    },
+    [isTouch, swipe.containerRef, swipeOpenTerminal.containerRef]
+  )
   const { data: sessionsData } = useSessions(
     worktreeId || null,
     worktreePath || null
@@ -200,9 +250,6 @@ export function SessionChatModal({
   )
   const { data: preferences } = usePreferences()
   const { data: runScripts = [] } = useRunScripts(worktreePath)
-  const isModalTerminalOpen = useTerminalStore(
-    state => state.modalTerminalOpen[worktreeId] ?? false
-  )
   const modalTerminalDockMode = useTerminalStore(
     state => state.modalTerminalDockMode
   )
@@ -255,10 +302,10 @@ export function SessionChatModal({
   const activeSessionId = useChatStore(
     state => state.activeSessionIds[worktreeId]
   )
-  const currentSessionId =
-    activeSessionId && sessions.some(session => session.id === activeSessionId)
-      ? activeSessionId
-      : (sessions[0]?.id ?? null)
+  const currentSessionId = resolveModalSessionId(
+    activeSessionId,
+    sessions.map(session => session.id)
+  )
   const currentSession = sessions.find(s => s.id === currentSessionId) ?? null
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
@@ -910,14 +957,15 @@ export function SessionChatModal({
     <>
       <div
         key={worktreeId}
-        ref={isTouch ? swipe.containerRef : undefined}
+        ref={setSwipeContainerRef}
         className={cn(
           'absolute inset-0 z-10 flex min-w-0 overflow-hidden bg-background pt-[3px]',
           !isMobile && 'pb-2',
           hasBottomDock ? 'flex-col' : 'flex-row'
         )}
+        data-testid="session-chat-modal-swipe"
         style={
-          isMobile
+          isMobile && (swipe.isSwiping || swipe.translateX !== 0)
             ? {
                 transform: `translateX(${swipe.translateX}px)`,
                 transition: swipe.transitionStyle || undefined,
@@ -927,12 +975,21 @@ export function SessionChatModal({
         }
       >
         {isMobile && (
-          <div
-            className={cn(
-              'absolute left-0 top-1/2 z-50 h-10 w-1 -translate-y-1/2 rounded-r-full bg-muted-foreground/20 transition-opacity duration-300',
-              swipe.isSwiping ? 'opacity-0' : 'opacity-100'
+          <>
+            <div
+              className={cn(
+                'absolute left-0 top-1/2 z-50 h-10 w-1 -translate-y-1/2 rounded-r-full bg-muted-foreground/20 transition-opacity duration-300',
+                swipe.isSwiping ? 'opacity-0' : 'opacity-100'
+              )}
+              aria-hidden
+            />
+            {canSwipeOpenTerminal && (
+              <div
+                className="pointer-events-none absolute right-0 top-1/2 z-50 h-10 w-1 -translate-y-1/2 rounded-l-full bg-muted-foreground/20"
+                aria-hidden
+              />
             )}
-          />
+          </>
         )}
         {isModalTerminalOpen && modalTerminalDockMode === 'left' && (
           <ModalTerminalDrawer
@@ -1437,7 +1494,26 @@ export function SessionChatModal({
                   worktreePath={worktreePath}
                 />
               </div>
-            ) : null}
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  {sessionsData
+                    ? 'No sessions yet. Create one to start chatting.'
+                    : 'Loading sessions…'}
+                </p>
+                {sessionsData && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCreateSession}
+                  >
+                    <Plus className="mr-2 h-3.5 w-3.5" />
+                    New session
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

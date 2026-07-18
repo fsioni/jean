@@ -12,6 +12,7 @@ test('server release workflow builds binaries and publishes docker image', () =>
   assert.match(workflow, /cd src-server && cargo build --release/)
   assert.match(workflow, /jean-server-linux-amd64/)
   assert.match(workflow, /jean-server-linux-arm64/)
+  assert.match(workflow, /server-latest\.json/)
   assert.match(workflow, /docker\/build-push-action@v6/)
   assert.match(workflow, /ghcr\.io/)
 })

@@ -34,12 +34,13 @@ function attachmentCount(msg: QueuedMessage): number {
 
 function canEditQueuedMessage(msg: QueuedMessage): boolean {
   const backend = msg.backend ?? 'claude'
-  if (backend === 'codex') return false
-  // Text-only steer backends: hide edit when the prompt will be auto-drained
-  // into the running turn. With attachments, steer is blocked so edit stays.
+  // Steer-capable backends auto-drain queued prompts into the running turn
+  // (attachments are path refs in the steered text), so hide edit for those.
   if (
-    (backend === 'opencode' || backend === 'pi' || backend === 'grok') &&
-    attachmentCount(msg) === 0
+    backend === 'codex' ||
+    backend === 'opencode' ||
+    backend === 'pi' ||
+    backend === 'grok'
   ) {
     return false
   }

@@ -580,8 +580,8 @@ describe('useMessageSending Codex auto-steer', () => {
     expect(useChatStore.getState().messageQueues['session-1']).toHaveLength(1)
   })
 
-  it('queues grok prompts with attachments instead of steering', async () => {
-    const { toast } = await import('sonner')
+  it('steers grok prompts with pasted images as path refs', async () => {
+    vi.mocked(steerGrokTurn).mockResolvedValue(undefined)
     const { result } = renderUseMessageSending({
       selectedBackend: 'grok',
       selectedModel: 'grok/grok-4.5',
@@ -601,12 +601,91 @@ describe('useMessageSending Codex auto-steer', () => {
       } as unknown as React.FormEvent)
     })
 
-    expect(steerGrokTurn).not.toHaveBeenCalled()
-    expect(persistEnqueue).toHaveBeenCalled()
-    expect(useChatStore.getState().messageQueues['session-1']).toHaveLength(1)
-    expect(toast.message).toHaveBeenCalledWith(
-      'Attachments can’t be steered mid-turn — queued for after this turn'
+    expect(steerGrokTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining(
+        '[Image attached: /tmp/img.png - Use the Read tool to view this image]'
+      )
     )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('steers grok prompts with pasted text files as path refs', async () => {
+    vi.mocked(steerGrokTurn).mockResolvedValue(undefined)
+    const { result } = renderUseMessageSending({
+      selectedBackend: 'grok',
+      selectedModel: 'grok/grok-4.5',
+      inputValue: 'check this paste',
+    })
+    useChatStore.setState({
+      pendingTextFiles: {
+        'session-1': [
+          {
+            id: 'txt-1',
+            path: '/tmp/pasted-texts/paste-1.txt',
+            filename: 'paste-1.txt',
+            content: 'hello',
+            size: 5,
+          },
+        ],
+      },
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerGrokTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining(
+        '[Text file attached: /tmp/pasted-texts/paste-1.txt - Use the Read tool to view this file]'
+      )
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('steers grok prompts with file @-mentions instead of queueing', async () => {
+    vi.mocked(steerGrokTurn).mockResolvedValue(undefined)
+    const { result } = renderUseMessageSending({
+      selectedBackend: 'grok',
+      selectedModel: 'grok/grok-4.5',
+      inputValue:
+        'i dont think we need to change the @AppServiceProvider.php as it worked before without it',
+    })
+    useChatStore.setState({
+      pendingFiles: {
+        'session-1': [
+          {
+            id: 'file-1',
+            relativePath: 'app/Providers/AppServiceProvider.php',
+            extension: 'php',
+            isDirectory: false,
+          },
+        ],
+      },
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent)
+    })
+
+    expect(steerGrokTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining(
+        '[File: app/Providers/AppServiceProvider.php - Use the Read tool to view this file]'
+      )
+    )
+    expect(persistEnqueue).not.toHaveBeenCalled()
+    expect(
+      useChatStore.getState().messageQueues['session-1'] ?? []
+    ).toHaveLength(0)
   })
 
   it('queues opencode prompts instead of steering when opencode auto-steer is disabled', async () => {

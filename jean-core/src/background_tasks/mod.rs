@@ -781,11 +781,18 @@ impl BackgroundTaskManager {
 }
 
 async fn refresh_usage_caches(app: &AppHandle) {
-    // Claude usage polling disabled — auth bug causes repeated logouts
-    // Keep refresh_claude_usage_cache() for re-enabling later.
+    // Claude usage is safe again: CAS credential writes + no forced refresh when
+    // expires_at is missing (OpenUsage-aligned). Cache absorbs 429s.
+    if let Err(e) = refresh_claude_usage_cache(app).await {
+        log::trace!("Background usage refresh (Claude) skipped/failed: {e}");
+    }
 
     if let Err(e) = refresh_codex_usage_cache(app).await {
         log::trace!("Background usage refresh (Codex) skipped/failed: {e}");
+    }
+
+    if let Err(e) = refresh_grok_usage_cache(app).await {
+        log::trace!("Background usage refresh (Grok) skipped/failed: {e}");
     }
 }
 
@@ -816,6 +823,21 @@ async fn refresh_codex_usage_cache(app: &AppHandle) -> Result<(), String> {
     }
 
     let _ = crate::codex_cli::get_codex_usage(app.clone()).await?;
+    Ok(())
+}
+
+async fn refresh_grok_usage_cache(app: &AppHandle) -> Result<(), String> {
+    let status = crate::grok_cli::check_grok_cli_installed(app.clone()).await?;
+    if !status.installed {
+        return Ok(());
+    }
+
+    let auth = crate::grok_cli::check_grok_cli_auth(app.clone()).await?;
+    if !auth.authenticated {
+        return Ok(());
+    }
+
+    let _ = crate::grok_cli::get_grok_usage(app.clone()).await?;
     Ok(())
 }
 

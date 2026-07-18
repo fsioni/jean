@@ -174,26 +174,29 @@ export function CommandPalette() {
                 key={cmd.id}
                 value={`${cmd.label} ${cmd.description ?? ''}`}
                 onSelect={() => handleCommandSelect(cmd.id)}
+                className="items-start"
               >
                 {cmd.avatarUrl ? (
                   <img
                     src={cmd.avatarUrl}
                     alt={cmd.label}
-                    className="mr-2 size-4 shrink-0 rounded object-cover"
+                    className="mt-0.5 size-4 shrink-0 rounded object-cover"
                   />
                 ) : (
-                  <div className="mr-2 flex size-4 shrink-0 items-center justify-center rounded bg-muted-foreground/20">
+                  <div className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded bg-muted-foreground/20">
                     <span className="text-[10px] font-medium uppercase">
                       {cmd.avatarFallback}
                     </span>
                   </div>
                 )}
-                <span>{cmd.label}</span>
-                {cmd.description && (
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {cmd.description}
-                  </span>
-                )}
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate leading-snug">{cmd.label}</span>
+                  {cmd.description && (
+                    <span className="text-xs leading-snug text-muted-foreground">
+                      {cmd.description}
+                    </span>
+                  )}
+                </div>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -208,16 +211,23 @@ export function CommandPalette() {
                   key={command.id}
                   value={`${command.id} ${command.label} ${command.description ?? ''} ${command.keywords?.join(' ') ?? ''}`}
                   onSelect={() => handleCommandSelect(command.id)}
+                  className="items-start"
                 >
-                  {command.icon && <command.icon className="mr-2 h-4 w-4" />}
-                  <span>{command.label}</span>
-                  {command.description && (
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {command.description}
-                    </span>
+                  {command.icon && (
+                    <command.icon className="mt-0.5 size-4 shrink-0" />
                   )}
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate leading-snug">
+                      {command.label}
+                    </span>
+                    {command.description && (
+                      <span className="text-xs leading-snug text-muted-foreground">
+                        {command.description}
+                      </span>
+                    )}
+                  </div>
                   {command.shortcut && (
-                    <CommandShortcut>
+                    <CommandShortcut className="self-center">
                       {formatShortcutDisplay(command.shortcut)}
                     </CommandShortcut>
                   )}

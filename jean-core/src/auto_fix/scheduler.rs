@@ -891,11 +891,12 @@ fn disable_project_auto_fix(app: &AppHandle, project_id: &str) {
 
 fn default_model_for_backend(backend: &str) -> String {
     match backend {
-        "codex" => "gpt-5.3-codex".to_string(),
-        "opencode" => "opencode/gpt-5.5".to_string(),
+        "codex" => "gpt-5.6-sol".to_string(),
+        "opencode" => "opencode/gpt-5.6-sol".to_string(),
         "cursor" => "cursor/auto".to_string(),
         "pi" => "pi/sonnet".to_string(),
         "commandcode" => "commandcode/default".to_string(),
+        "grok" => "grok/grok-4.5".to_string(),
         _ => "claude-opus-4-8[1m]".to_string(),
     }
 }
@@ -1236,11 +1237,15 @@ mod tests {
         );
         assert_eq!(
             default_model_for_backend("codex"),
-            "gpt-5.3-codex".to_string()
+            "gpt-5.6-sol".to_string()
         );
         assert_eq!(
             default_model_for_backend("opencode"),
-            "opencode/gpt-5.5".to_string()
+            "opencode/gpt-5.6-sol".to_string()
+        );
+        assert_eq!(
+            default_model_for_backend("grok"),
+            "grok/grok-4.5".to_string()
         );
         assert_eq!(
             default_model_for_backend("cursor"),

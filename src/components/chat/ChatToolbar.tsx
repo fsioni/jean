@@ -73,6 +73,9 @@ export {
 }
 export type { ChatToolbarProps }
 
+/** Tracks concurrent ChatToolbar mounts (remount races during session switch). */
+let chatToolbarMountCount = 0
+
 export const ChatToolbar = memo(function ChatToolbar({
   isSending,
   hasPendingQuestions,
@@ -170,10 +173,18 @@ export const ChatToolbar = memo(function ChatToolbar({
   })
 
   // Signal to FloatingDock that its burger counterpart now lives in this toolbar.
+  // Use a process-wide mount count so React remount races (session key change)
+  // cannot leave chatToolbarMounted=false while a newer toolbar is mounted —
+  // that would show FloatingDock over a blank-looking chat on mobile/web.
   useEffect(() => {
-    const { setChatToolbarMounted } = useUIStore.getState()
-    setChatToolbarMounted(true)
-    return () => setChatToolbarMounted(false)
+    chatToolbarMountCount += 1
+    useUIStore.getState().setChatToolbarMounted(true)
+    return () => {
+      chatToolbarMountCount = Math.max(0, chatToolbarMountCount - 1)
+      if (chatToolbarMountCount === 0) {
+        useUIStore.getState().setChatToolbarMounted(false)
+      }
+    }
   }, [])
 
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({

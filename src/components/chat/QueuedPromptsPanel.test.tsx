@@ -210,16 +210,38 @@ describe('QueuedPromptsPanel', () => {
     expect(screen.queryByLabelText('Edit queued prompt')).not.toBeInTheDocument()
   })
 
-  it('shows edit for text-only steering backends when attachments prevent steering', () => {
+  it('does not show edit for steering backends with file @-mentions', () => {
     renderPanel({
       messages: [
         createMessage('msg-1', 'Pi prompt', {
           backend: 'pi',
-          pendingFiles: [{ id: 'file-1', path: '/tmp/file.txt' }] as never,
+          pendingFiles: [
+            {
+              id: 'file-1',
+              relativePath: 'file.txt',
+              extension: 'txt',
+              isDirectory: false,
+            },
+          ],
         } as Partial<QueuedMessage>),
       ],
     })
 
-    expect(screen.getByLabelText('Edit queued prompt')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Edit queued prompt')).not.toBeInTheDocument()
+  })
+
+  it('does not show edit for steering backends with pasted images', () => {
+    renderPanel({
+      messages: [
+        createMessage('msg-1', 'Grok prompt', {
+          backend: 'grok',
+          pendingImages: [
+            { id: 'img-1', path: '/tmp/a.png', filename: 'a.png' },
+          ],
+        } as Partial<QueuedMessage>),
+      ],
+    })
+
+    expect(screen.queryByLabelText('Edit queued prompt')).not.toBeInTheDocument()
   })
 })

@@ -83,10 +83,10 @@ function getDefaultModelForBackend(
     | undefined
 ): string {
   if (backend === 'codex') {
-    return preferences?.selected_codex_model ?? 'gpt-5.5'
+    return preferences?.selected_codex_model ?? 'gpt-5.6-sol'
   }
   if (backend === 'opencode') {
-    return preferences?.selected_opencode_model ?? 'opencode/gpt-5.5'
+    return preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol'
   }
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
@@ -353,11 +353,7 @@ export function useWorktreeApproval({
       // Step 8: Send plan as first message with mode-specific overrides
       const isYolo = mode === 'yolo'
       const modeLabel = isYolo ? 'Yolo' : 'Build'
-      const originalBackend = card.session.backend as
-        | 'claude'
-        | 'codex'
-        | 'opencode'
-        | undefined
+      const originalBackend = card.session.backend as CliBackend | undefined
       const modeBackendPref = isYolo
         ? preferences?.yolo_backend
         : preferences?.build_backend
@@ -370,16 +366,10 @@ export function useWorktreeApproval({
       const modeEffortPref = isYolo
         ? preferences?.yolo_effort_level
         : preferences?.build_effort_level
-      const modeBackendOverride = modeBackendPref as
-        | 'claude'
-        | 'codex'
-        | 'opencode'
-        | null
-      const backend = (modeBackendOverride ?? originalBackend ?? undefined) as
-        | 'claude'
-        | 'codex'
-        | 'opencode'
-        | undefined
+      const modeBackendOverride = modeBackendPref as CliBackend | null
+      const backend = (modeBackendOverride ??
+        originalBackend ??
+        undefined) as CliBackend | undefined
       const model =
         modeModelPref ??
         (modeBackendOverride
@@ -399,6 +389,13 @@ export function useWorktreeApproval({
           ) ?? 'high'
         effortLevel =
           mapCodexReasoningToEffort(modeEffortPref) ?? defaultCodexEffort
+      } else if (backend === 'grok') {
+        const defaultGrokEffort =
+          mapCodexReasoningToEffort(
+            preferences?.default_grok_reasoning_effort
+          ) ?? 'high'
+        effortLevel =
+          mapCodexReasoningToEffort(modeEffortPref) ?? defaultGrokEffort
       } else {
         const fallbackThinking = isThinkingLevel(preferences?.thinking_level)
           ? preferences.thinking_level

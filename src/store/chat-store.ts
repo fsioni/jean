@@ -42,7 +42,10 @@ export type { ClaudeModel, CodexModel }
 export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-4-8[1m]'
 
 /** Default Codex model */
-export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.5'
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.6-sol'
+
+/** Default OpenCode model */
+export const DEFAULT_OPENCODE_MODEL = 'opencode/gpt-5.6-sol'
 
 /** Default thinking level */
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'off'

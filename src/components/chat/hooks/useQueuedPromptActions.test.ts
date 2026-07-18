@@ -247,7 +247,9 @@ describe('useQueuedPromptActions', () => {
     expect(steerCodexTurn).toHaveBeenCalledWith(
       'worktree-1',
       'session-1',
-      'prompt msg-1',
+      `prompt msg-1
+
+[Image attached: /tmp/img.png - Use the Read tool to view this image]`,
       expect.objectContaining({ id: 'msg-1' })
     )
     expect(cancelChatMessage).not.toHaveBeenCalled()
@@ -377,11 +379,12 @@ describe('useQueuedPromptActions', () => {
     expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
   })
 
-  it('busy opencode session with attachments: skips steer, cancels instead', async () => {
+  it('busy opencode session with pasted text files: steers with path refs', async () => {
     useChatStore.setState({
       messageQueues: {
         'session-1': [
           createMessage('msg-1', {
+            message: 'check paste',
             pendingTextFiles: [
               { id: 'txt-1', path: '/tmp/input.txt' },
             ] as never,
@@ -397,16 +400,29 @@ describe('useQueuedPromptActions', () => {
       await result.current.handleSendQueuedNow('session-1', 'msg-1')
     })
 
-    expect(steerOpencodeTurn).not.toHaveBeenCalled()
-    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+    expect(steerOpencodeTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      '/tmp/worktree-1',
+      'session-1',
+      expect.stringContaining('[Text file attached: /tmp/input.txt')
+    )
+    expect(cancelChatMessage).not.toHaveBeenCalled()
   })
 
-  it('busy pi session with attachments: skips steer, cancels instead', async () => {
+  it('busy pi session with file @-mentions: steers with file path refs', async () => {
     useChatStore.setState({
       messageQueues: {
         'session-1': [
           createMessage('msg-1', {
-            pendingFiles: [{ id: 'file-1', path: '/tmp/file.txt' }] as never,
+            message: 'check @file.txt',
+            pendingFiles: [
+              {
+                id: 'file-1',
+                relativePath: 'file.txt',
+                extension: 'txt',
+                isDirectory: false,
+              },
+            ],
           }),
         ],
       },
@@ -419,15 +435,49 @@ describe('useQueuedPromptActions', () => {
       await result.current.handleSendQueuedNow('session-1', 'msg-1')
     })
 
-    expect(steerPiTurn).not.toHaveBeenCalled()
-    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+    expect(steerPiTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining('[File: file.txt')
+    )
+    expect(cancelChatMessage).not.toHaveBeenCalled()
   })
 
-  it('busy grok session with attachments: skips steer, cancels instead', async () => {
+  it('busy pi session with pasted text files: steers with path refs', async () => {
     useChatStore.setState({
       messageQueues: {
         'session-1': [
           createMessage('msg-1', {
+            message: 'check paste',
+            pendingTextFiles: [
+              { id: 'txt-1', path: '/tmp/paste.txt' },
+            ] as never,
+          }),
+        ],
+      },
+      sendingSessionIds: { 'session-1': true },
+      selectedBackends: { 'session-1': 'pi' },
+    })
+    const { result } = renderHook(() => useQueuedPromptActions())
+
+    await act(async () => {
+      await result.current.handleSendQueuedNow('session-1', 'msg-1')
+    })
+
+    expect(steerPiTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining('[Text file attached: /tmp/paste.txt')
+    )
+    expect(cancelChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('busy grok session with images: steers with path refs', async () => {
+    useChatStore.setState({
+      messageQueues: {
+        'session-1': [
+          createMessage('msg-1', {
+            message: 'check image',
             pendingImages: [
               { id: 'img-1', path: '/tmp/a.png', filename: 'a.png' },
             ] as never,
@@ -443,8 +493,12 @@ describe('useQueuedPromptActions', () => {
       await result.current.handleSendQueuedNow('session-1', 'msg-1')
     })
 
-    expect(steerGrokTurn).not.toHaveBeenCalled()
-    expect(cancelChatMessage).toHaveBeenCalledWith('session-1', 'worktree-1')
+    expect(steerGrokTurn).toHaveBeenCalledWith(
+      'worktree-1',
+      'session-1',
+      expect.stringContaining('[Image attached: /tmp/a.png')
+    )
+    expect(cancelChatMessage).not.toHaveBeenCalled()
   })
 
   it('busy claude session: promotes to front and cancels the run', async () => {

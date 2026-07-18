@@ -42,10 +42,10 @@ export function resolveDefaultModelForBackend(
   availableModels?: ModelOption[]
 ): string {
   if (backend === 'codex') {
-    return preferences?.selected_codex_model ?? 'gpt-5.5'
+    return preferences?.selected_codex_model ?? 'gpt-5.6-sol'
   }
   if (backend === 'opencode') {
-    return preferences?.selected_opencode_model ?? 'opencode/gpt-5.5'
+    return preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol'
   }
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'

@@ -66,6 +66,15 @@ describe('magic prompt preference resolvers', () => {
       'grok/grok-4.5'
     )
     expect(defaultPreferences.selected_grok_model).toBe('grok/grok-4.5')
+    expect(defaultPreferences.default_grok_reasoning_effort).toBe('high')
+  })
+
+  it('defaults Claude to Opus 4.8 and Codex/OpenCode to GPT 5.6 Sol', () => {
+    expect(defaultPreferences.selected_model).toBe('claude-opus-4-8[1m]')
+    expect(defaultPreferences.selected_codex_model).toBe('gpt-5.6-sol')
+    expect(defaultPreferences.selected_opencode_model).toBe(
+      'opencode/gpt-5.6-sol'
+    )
   })
 
   it('provides magic prompt defaults for Kimi Code', () => {

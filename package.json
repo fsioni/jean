@@ -38,6 +38,7 @@
     "install:local:server": "bun scripts/install-local-server.mjs",
     "install:local:server:foreground": "bun scripts/install-local-server.mjs --foreground",
     "test:install-local-server": "node --test scripts/install-local-server.test.mjs",
+    "test:install-jean-server": "node --test scripts/install-jean-server.test.mjs",
     "tauri:build:linux": "tauri build --bundles deb,rpm",
     "tauri:build:linux:appimage": "bash scripts/build-appimage.sh",
     "tauri:build:windows": "tauri build --bundles msi,nsis",

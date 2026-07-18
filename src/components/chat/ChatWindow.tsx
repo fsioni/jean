@@ -447,14 +447,19 @@ export function ChatWindow({
     hasReviewResults,
   })
   const hasReviewPanel = hasReviewResults || isCodeReviewLoadingPanel
-  const showReviewFullWidth = hasReviewPanel && reviewSidebarVisible
+  // Full-width review replaces the entire chat (messages + input + toolbar).
+  // On mobile that blanks the only surface the user has — keep chat mounted
+  // and let findings stay reachable via inline blocks / floating buttons.
+  const showReviewFullWidth =
+    hasReviewPanel && reviewSidebarVisible && !isMobile
 
-  // Sync review sidebar panel with reviewSidebarVisible state
+  // Sync review sidebar panel with reviewSidebarVisible state (desktop only)
   useEffect(() => {
+    if (isMobile) return
     if (hasReviewPanel && !reviewSidebarVisible) {
       useChatStore.getState().setReviewSidebarVisible(true)
     }
-  }, [hasReviewPanel, reviewSidebarVisible])
+  }, [hasReviewPanel, reviewSidebarVisible, isMobile])
 
   useEffect(() => {
     const panel = reviewPanelRef.current
@@ -774,6 +779,7 @@ export function ChatWindow({
       ? (installedBackends[0] as CliBackend)
       : resolvedBackend)
   const isCodexBackend = selectedBackend === 'codex'
+  const isGrokBackend = selectedBackend === 'grok'
   const isCursorBackend = selectedBackend === 'cursor'
 
   // Per-session model selection, falls back to preferences default (backend-aware)
@@ -818,7 +824,17 @@ export function ChatWindow({
           xhigh: 'xhigh',
         } as Record<string, EffortLevel>
       )[preferences?.default_codex_reasoning_effort ?? 'high'] ?? 'high')
-    : ((preferences?.default_effort_level as EffortLevel) ?? 'high')
+    : isGrokBackend
+      ? ((
+          {
+            low: 'low',
+            medium: 'medium',
+            high: 'high',
+            xhigh: 'xhigh',
+            max: 'max',
+          } as Record<string, EffortLevel>
+        )[preferences?.default_grok_reasoning_effort ?? 'high'] ?? 'high')
+      : ((preferences?.default_effort_level as EffortLevel) ?? 'high')
   const sessionEffortLevel = useChatStore(state =>
     deferredSessionId ? state.effortLevels[deferredSessionId] : undefined
   )
@@ -1331,9 +1347,9 @@ export function ChatWindow({
         override?.model ??
         yoloModelRef.current ??
         (yoloBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : yoloBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : yoloBackend === 'pi'
@@ -1522,9 +1538,9 @@ export function ChatWindow({
         override?.model ??
         buildModelRef.current ??
         (buildBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : buildBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : buildBackend === 'pi'
@@ -1796,9 +1812,9 @@ export function ChatWindow({
         override?.model ??
         modeModelRef.current ??
         (modeBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : modeBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : modeBackend === 'pi'
@@ -2833,14 +2849,25 @@ export function ChatWindow({
             />
           </div>
         ) : (
-          <ResizablePanelGroup direction="horizontal" className="flex-1">
-            <ResizablePanel defaultSize={100} minSize={40}>
-              <ResizablePanelGroup direction="vertical" className="h-full">
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="min-h-0 flex-1"
+          >
+            <ResizablePanel
+              defaultSize={100}
+              minSize={isMobile ? 0 : 40}
+              className="min-h-0"
+            >
+              <ResizablePanelGroup
+                direction="vertical"
+                className="h-full min-h-0"
+              >
                 <ResizablePanel
                   defaultSize={terminalVisible ? 70 : 100}
-                  minSize={30}
+                  minSize={isMobile || isModal ? 0 : 30}
+                  className="min-h-0"
                 >
-                  <div className="flex h-full flex-col">
+                  <div className="flex h-full min-h-0 flex-col">
                     {/* Messages area */}
                     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
                       {/* Session label badge - absolute positioned to avoid covering content */}

@@ -5,7 +5,7 @@ import type { AppPreferences } from '@/types/preferences'
 const preferences = {
   selected_model: 'claude-sonnet-4-6[1m]',
   selected_codex_model: 'gpt-5.5-fast',
-  selected_opencode_model: 'opencode/gpt-5.5',
+  selected_opencode_model: 'opencode/gpt-5.6-sol',
   selected_cursor_model: 'cursor/auto',
   selected_commandcode_model: 'commandcode/deepseek/deepseek-v4-flash',
   selected_kimi_model: 'kimi/custom-coding-model',
@@ -14,8 +14,8 @@ const preferences = {
 describe('resolveDefaultModelForBackend', () => {
   it.each([
     ['claude', 'claude-opus-4-8[1m]'],
-    ['codex', 'gpt-5.5'],
-    ['opencode', 'opencode/gpt-5.5'],
+    ['codex', 'gpt-5.6-sol'],
+    ['opencode', 'opencode/gpt-5.6-sol'],
     ['cursor', 'cursor/auto'],
   ] as const)(
     'falls back to the built-in %s default when no preference exists',

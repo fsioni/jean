@@ -1,11 +1,18 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen } from '@/test/test-utils'
+import { render, screen, waitFor } from '@/test/test-utils'
 import { MobileLeftSidebar } from './MobileLeftSidebar'
 
 vi.mock('./LeftSideBar', () => ({
-  LeftSideBar: () => <div data-testid="left-sidebar-content">Sidebar body</div>,
+  LeftSideBar: () => (
+    <div data-testid="left-sidebar-content">
+      <button type="button" aria-label="Expand all projects">
+        Expand all
+      </button>
+      Sidebar body
+    </div>
+  ),
 }))
 
 describe('MobileLeftSidebar', () => {
@@ -53,5 +60,20 @@ describe('MobileLeftSidebar', () => {
 
     await user.click(overlay as Element)
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('does not autofocus expand-all (avoids tooltip on open)', async () => {
+    render(
+      <MobileLeftSidebar open={true} onOpenChange={vi.fn()} width={250} />
+    )
+
+    const expandAll = await screen.findByRole('button', {
+      name: 'Expand all projects',
+    })
+
+    // Allow Radix open animation / focus cycle to settle
+    await waitFor(() => {
+      expect(expandAll).not.toHaveFocus()
+    })
   })
 })

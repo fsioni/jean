@@ -38,6 +38,62 @@ cargo build --release --manifest-path src-server/Cargo.toml
 After the release build finishes, `dist/` is no longer needed on the target
 server. Re-run `bun run build` before compiling whenever frontend code changes.
 
+## Install on a server (release binary + systemd)
+
+Use the production installer to download the latest `jean-server` release,
+install the binary, write an env file, and register a systemd service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash -s -- -y
+```
+
+Or from a clone of this repo:
+
+```bash
+sudo ./scripts/install-jean-server.sh --host 127.0.0.1 --port 3456 -y
+```
+
+Common options:
+
+```bash
+# Bind on all interfaces with an explicit token
+sudo ./scripts/install-jean-server.sh \
+  --host 0.0.0.0 \
+  --port 3456 \
+  --token "$(openssl rand -base64 32)" \
+  -y
+
+# Install as the current user (user systemd unit under ~/.config/systemd/user)
+./scripts/install-jean-server.sh --user-install --host 127.0.0.1 -y
+
+# Pin a release
+sudo ./scripts/install-jean-server.sh --version v0.1.66 -y
+
+# Binary only (no service)
+sudo ./scripts/install-jean-server.sh --no-service -y
+```
+
+Defaults:
+
+| Item | System install | `--user-install` |
+| --- | --- | --- |
+| Binary | `/usr/local/bin/jean-server` | `~/.local/bin/jean-server` |
+| Env file | `/etc/jean-server.env` | `~/.config/jean-server/jean-server.env` |
+| Service | `jean-server.service` (system) | `jean-server.service` (user) |
+| Host / port | `127.0.0.1:3456` | same |
+| Token | auto-generated (printed once) | same |
+
+Re-running the installer reuses an existing `JEAN_TOKEN` from the env file unless
+you pass `--token`. Data under `JEAN_DATA_DIR` / the default app-data directory is
+left intact. Uninstall:
+
+```bash
+sudo ./scripts/install-jean-server.sh --uninstall -y
+```
+
+If systemd is not available, the script still installs the binary + env file and
+prints an OpenRC example unit.
+
 ## Install the local development build
 
 Install the Linux build dependencies once on Ubuntu:
@@ -182,6 +238,22 @@ Bind directly to the Tailscale IP and keep token auth enabled:
 ```bash
 jean --headless --host 100.x.y.z --port 3456 --token "$JEAN_TOKEN"
 ```
+
+## Server updates (bare-metal Linux)
+
+`jean-server` can install a newer binary when you choose to from Web Access.
+Nothing is installed in the background — apply only runs after you click
+**Update & restart**.
+
+| Piece | Behavior |
+| --- | --- |
+| Manifest | `server-latest.json` on the latest GitHub release |
+| Check | Web Access calls `check_server_update` after connect and shows a toast if newer |
+| Apply | User clicks **Update & restart** → `apply_server_update` |
+| Verify | SHA-256 from the release manifest |
+| Restart | `systemctl restart jean-server.service` when that unit is loaded (or `JEAN_SERVER_SERVICE`), otherwise re-exec |
+| Containers | Not supported — update the Docker/GHCR image instead |
+| Active sessions | Apply is refused while chat sessions are running |
 
 ## Security recommendations
 

@@ -147,6 +147,7 @@ import type { AppPreferences } from '@/types/preferences'
 import {
   effortLevelOptions,
   codexReasoningOptions,
+  grokReasoningOptions,
   backendOptions,
   getTerminalOptions,
   getEditorOptions,
@@ -160,6 +161,7 @@ import {
   type CodexModel,
   type CodexGoalExecutionMode,
   type CodexReasoningEffort,
+  type GrokReasoningEffort,
   type CursorModel,
   type PiModel,
   type GrokModel,
@@ -270,7 +272,7 @@ const backendPaneMeta = {
   },
   grok: {
     description:
-      'Configure the Grok CLI, default model, and native ACP session behavior.',
+      'Configure the Grok CLI, default model, effort level, and native ACP session behavior.',
   },
   kimi: {
     description:
@@ -290,12 +292,21 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const codexReasoning = getCatalogModelReasoning(
     modelCatalog,
     'codex',
-    preferences?.selected_codex_model ?? 'gpt-5.5'
+    preferences?.selected_codex_model ?? 'gpt-5.6-sol'
   )
   const selectedCodexReasoningOptions =
     codexReasoning?.type === 'effort'
       ? codexReasoning.levels
       : codexReasoningOptions
+  const grokReasoning = getCatalogModelReasoning(
+    modelCatalog,
+    'grok',
+    preferences?.selected_grok_model ?? 'grok/grok-4.5'
+  )
+  const selectedGrokReasoningOptions =
+    grokReasoning?.type === 'effort'
+      ? grokReasoning.levels
+      : grokReasoningOptions
   const claudeReasoning = getCatalogModelReasoning(
     modelCatalog,
     'claude',
@@ -1060,6 +1071,14 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
   }
 
+  const handleGrokReasoningChange = (value: GrokReasoningEffort) => {
+    if (preferences) {
+      patchPreferences.mutate({
+        default_grok_reasoning_effort: value,
+      })
+    }
+  }
+
   const handleKimiModelChange = (value: KimiModel) => {
     if (preferences) {
       patchPreferences.mutate({ selected_kimi_model: value })
@@ -1067,7 +1086,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   }
 
   const selectedOpenCodeModel =
-    preferences?.selected_opencode_model ?? 'opencode/gpt-5.5'
+    preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol'
   const formatOpenCodeModelLabelForSettings = (value: string) => {
     const formatted = formatOpencodeModelLabel(value)
     return value.startsWith('opencode/')
@@ -3025,7 +3044,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               description="Codex model for AI assistance"
             >
               <Select
-                value={preferences?.selected_codex_model ?? 'gpt-5.5'}
+                value={preferences?.selected_codex_model ?? 'gpt-5.6-sol'}
                 onValueChange={handleCodexModelChange}
               >
                 <SelectTrigger className="w-full sm:w-80">
@@ -3540,6 +3559,26 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   </SelectTrigger>
                   <SelectContent>
                     {grokModelOptions.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </InlineField>
+              <InlineField
+                label="Reasoning effort"
+                description="Default Grok reasoning effort for new sessions"
+              >
+                <Select
+                  value={preferences?.default_grok_reasoning_effort ?? 'high'}
+                  onValueChange={handleGrokReasoningChange}
+                >
+                  <SelectTrigger className="w-80 max-w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedGrokReasoningOptions.map(option => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>

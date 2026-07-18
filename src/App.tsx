@@ -47,6 +47,7 @@ import { useLinuxFileDrop } from './hooks/useLinuxFileDrop'
 import { useZoom } from './hooks/use-zoom'
 import { useImmediateSessionStateSave } from './hooks/useImmediateSessionStateSave'
 import { useCliVersionCheck } from './hooks/useCliVersionCheck'
+import { useServerUpdateCheck } from './hooks/useServerUpdateCheck'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import { useBackgroundInvestigation } from './hooks/useBackgroundInvestigation'
 import { useAutoArchiveOnMerge } from './hooks/useAutoArchiveOnMerge'
@@ -668,6 +669,9 @@ function App() {
 
   // Check for CLI updates on startup (shows toast notification if updates available)
   useCliVersionCheck()
+
+  // Headless jean-server binary updates (Web Access only)
+  useServerUpdateCheck()
 
   // Global streaming event listeners - must be at App level so they stay active
   // even when ChatWindow is unmounted (e.g., when viewing a different worktree)

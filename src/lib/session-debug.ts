@@ -63,9 +63,9 @@ export function resolveSessionDebugDetails(params: {
 
   const defaultModel =
     finalBackend === 'codex'
-      ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+      ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
       : finalBackend === 'opencode'
-        ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+        ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
         : finalBackend === 'cursor'
           ? (preferences?.selected_cursor_model ?? 'cursor/auto')
           : finalBackend === 'pi'

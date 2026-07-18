@@ -483,8 +483,11 @@ export function useMessageSending({
       )
       if (isSendingNow) {
         // Auto-steer: inject the prompt into a steer-capable running turn
-        // instead of queueing. Attachments can't be injected mid-turn; steer
-        // failures (turn ended / not started yet) fall back to the normal queue.
+        // instead of queueing. All attachment kinds (file @-mentions, skills,
+        // pasted images, pasted text files) serialize to path refs via
+        // buildMessageWithRefs, so text-only steer backends (Grok/Pi/OpenCode)
+        // can carry them. Codex additionally gets structured attachment input.
+        // Steer failures (turn ended / not started yet) fall back to queue.
         const hasAttachments =
           images.length > 0 ||
           files.length > 0 ||
@@ -499,17 +502,12 @@ export function useMessageSending({
               : backend === 'grok'
                 ? (preferences?.grok_auto_steer_enabled ?? true)
                 : (preferences?.codex_auto_steer_enabled ?? true)
-        const canSteerWithAttachments = backend === 'codex'
         const isSteerBackend =
           backend === 'codex' ||
           backend === 'opencode' ||
           backend === 'pi' ||
           backend === 'grok'
-        if (
-          isSteerBackend &&
-          autoSteerEnabled &&
-          (!hasAttachments || canSteerWithAttachments)
-        ) {
+        if (isSteerBackend && autoSteerEnabled) {
           try {
             const steerMessage = buildMessageWithRefs(queuedMessage)
             if (backend === 'pi') {
@@ -552,17 +550,6 @@ export function useMessageSending({
               `[Send] handleSubmit steer failed, falling back to queue: ${err}`
             )
           }
-        } else if (
-          isSteerBackend &&
-          autoSteerEnabled &&
-          hasAttachments &&
-          !canSteerWithAttachments
-        ) {
-          // Mid-turn inject is text-only for Grok/PI/OpenCode — attachments
-          // must wait until the current turn finishes.
-          toast.message(
-            'Attachments can’t be steered mid-turn — queued for after this turn'
-          )
         }
         console.log(`[Send] handleSubmit ENQUEUING (session is sending)`)
         enqueueMessage(activeSessionId, queuedMessage)

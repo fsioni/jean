@@ -48,9 +48,13 @@ const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+/// Matches Claude Code / OpenUsage refresh scopes (includes file_upload).
 const CLAUDE_OAUTH_SCOPES: &str =
-    "user:profile user:inference user:sessions:claude_code user:mcp_servers";
+    "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 const CLAUDE_USAGE_CACHE_TTL_SECS: u64 = 5 * 60;
+/// Stale cache is still served on 429 / transient API failures (OpenUsage pattern).
+const CLAUDE_USAGE_STALE_CACHE_MAX_SECS: u64 = 6 * 60 * 60;
+const CLAUDE_USAGE_USER_AGENT: &str = "claude-code/2.1.69";
 static CLAUDE_USAGE_FETCH_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
 fn claude_usage_fetch_lock() -> &'static AsyncMutex<()> {
@@ -647,6 +651,15 @@ struct ClaudeOauthCredentials {
     expires_at: Option<u64>,
     #[serde(default)]
     subscription_type: Option<String>,
+    #[serde(default)]
+    rate_limit_tier: Option<String>,
+    /// Granted OAuth scopes. Usage endpoint needs `user:profile`.
+    #[serde(default)]
+    scopes: Option<Vec<String>>,
+    /// Preserve unknown Claude CLI fields so token rotation never strips them.
+    /// OpenUsage-style safety: writing back a partial oauth object can log the user out.
+    #[serde(flatten)]
+    extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -843,6 +856,17 @@ fn load_claude_credentials() -> Result<(ClaudeCredentialSource, ClaudeCredential
         ));
     }
 
+    // OpenUsage order: macOS keychain is Claude Code's source of truth and must win
+    // over a potentially stale ~/.claude/.credentials.json.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(parsed) = load_credentials_from_keychain() {
+            if credentials_have_access_token(&parsed) {
+                return Ok((ClaudeCredentialSource::Keychain, parsed));
+            }
+        }
+    }
+
     let cred_path = get_claude_credentials_path()?;
     if cred_path.exists() {
         let raw = std::fs::read_to_string(&cred_path)
@@ -853,16 +877,76 @@ fn load_claude_credentials() -> Result<(ClaudeCredentialSource, ClaudeCredential
         }
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(parsed) = load_credentials_from_keychain() {
-            if credentials_have_access_token(&parsed) {
-                return Ok((ClaudeCredentialSource::Keychain, parsed));
-            }
+    Err("Claude credentials not found. Run `claude` to authenticate.".to_string())
+}
+
+fn oauth_access_token(creds: &ClaudeCredentialsFile) -> Option<&str> {
+    creds
+        .claude_ai_oauth
+        .as_ref()
+        .and_then(|o| o.access_token.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn oauth_refresh_token(creds: &ClaudeCredentialsFile) -> Option<&str> {
+    creds
+        .claude_ai_oauth
+        .as_ref()
+        .and_then(|o| o.refresh_token.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Best-effort compare-and-swap write (OpenUsage `save(ifUnchanged:)` pattern).
+/// Re-reads the live credential source and only persists if the access+refresh pair we
+/// started with is still current — avoids clobbering a concurrent `claude` re-login.
+fn persist_claude_credentials_if_unchanged(
+    source: &ClaudeCredentialSource,
+    expected_access: Option<&str>,
+    expected_refresh: Option<&str>,
+    full_data: &ClaudeCredentialsFile,
+) -> Result<bool, String> {
+    let current = match reload_claude_credentials_from_source(source) {
+        Ok(creds) => creds,
+        Err(e) => {
+            log::warn!("Claude credential re-read before persist failed: {e}");
+            // Fall through to write — better than losing a rotated refresh token on disk.
+            return persist_claude_credentials(source, full_data).map(|()| true);
         }
+    };
+
+    let current_access = oauth_access_token(&current);
+    let current_refresh = oauth_refresh_token(&current);
+    if current_access != expected_access.map(str::trim).filter(|s| !s.is_empty())
+        || current_refresh != expected_refresh.map(str::trim).filter(|s| !s.is_empty())
+    {
+        log::info!(
+            "Claude credentials changed during refresh; skipping write to avoid clobbering login"
+        );
+        return Ok(false);
     }
 
-    Err("Claude credentials not found. Run `claude` to authenticate.".to_string())
+    persist_claude_credentials(source, full_data)?;
+    Ok(true)
+}
+
+fn reload_claude_credentials_from_source(
+    source: &ClaudeCredentialSource,
+) -> Result<ClaudeCredentialsFile, String> {
+    match source {
+        ClaudeCredentialSource::File(path) => {
+            let raw = std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to re-read Claude credentials file: {e}"))?;
+            parse_claude_credentials(&raw)
+        }
+        ClaudeCredentialSource::WslFile { distro, path } => {
+            read_wsl_claude_credentials(distro, path)
+        }
+        #[cfg(target_os = "macos")]
+        ClaudeCredentialSource::Keychain => load_credentials_from_keychain()
+            .ok_or_else(|| "Claude keychain credentials unavailable on re-read".to_string()),
+    }
 }
 
 fn persist_claude_credentials(
@@ -919,12 +1003,29 @@ fn persist_claude_credentials(
     }
 }
 
+/// OpenUsage: missing expires_at means "do not force-refresh" (token may still work).
+/// Jean previously returned true here, which rotated tokens too aggressively and contributed
+/// to the logout loop.
 fn token_needs_refresh(oauth: &ClaudeOauthCredentials, now_ms: u64) -> bool {
     let Some(expires_at) = oauth.expires_at else {
-        return true;
+        return false;
+    };
+    // Claude stores expires_at as epoch milliseconds.
+    let expires_ms = if expires_at > 1_000_000_000_000 {
+        expires_at
+    } else {
+        expires_at.saturating_mul(1000)
     };
     let refresh_buffer_ms = 5 * 60 * 1000;
-    now_ms.saturating_add(refresh_buffer_ms) >= expires_at
+    now_ms.saturating_add(refresh_buffer_ms) >= expires_ms
+}
+
+fn oauth_has_usage_scope(oauth: &ClaudeOauthCredentials) -> bool {
+    match &oauth.scopes {
+        Some(scopes) if !scopes.is_empty() => scopes.iter().any(|s| s == "user:profile"),
+        // Older credentials predate scopes field — allow and let the API reject if needed.
+        _ => true,
+    }
 }
 
 fn get_usage_cache_dir() -> Option<PathBuf> {
@@ -941,6 +1042,17 @@ fn load_cached_claude_usage(now_secs: u64) -> Option<ClaudeUsageSnapshot> {
     let content = std::fs::read_to_string(path).ok()?;
     let entry: ClaudeUsageCacheEntry = serde_json::from_str(&content).ok()?;
     if now_secs.saturating_sub(entry.cached_at) <= CLAUDE_USAGE_CACHE_TTL_SECS {
+        return Some(entry.snapshot);
+    }
+    None
+}
+
+/// Serve last-good usage during 429 / transient failures (OpenUsage cooldown pattern).
+fn load_stale_cached_claude_usage(now_secs: u64) -> Option<ClaudeUsageSnapshot> {
+    let path = get_claude_usage_cache_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let entry: ClaudeUsageCacheEntry = serde_json::from_str(&content).ok()?;
+    if now_secs.saturating_sub(entry.cached_at) <= CLAUDE_USAGE_STALE_CACHE_MAX_SECS {
         return Some(entry.snapshot);
     }
     None
@@ -971,14 +1083,16 @@ async fn refresh_claude_access_token(
     let oauth = full_data.claude_ai_oauth.clone().ok_or_else(|| {
         "Claude OAuth credentials missing. Run `claude` to authenticate.".to_string()
     })?;
-    let refresh_token = oauth
-        .refresh_token
+    let expected_access = oauth.access_token.clone();
+    let expected_refresh = oauth.refresh_token.clone();
+    let refresh_token = expected_refresh
         .clone()
         .ok_or_else(|| "Claude refresh token missing. Run `claude` to authenticate.".to_string())?;
 
     let response = client
         .post(CLAUDE_REFRESH_URL)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::USER_AGENT, CLAUDE_USAGE_USER_AGENT)
         .json(&serde_json::json!({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -1001,8 +1115,9 @@ async fn refresh_claude_access_token(
             log::trace!("Claude token refresh: invalid_grant");
             return Err("Claude session expired. Run `claude` to log in again.".to_string());
         }
-        log::trace!("Claude token refresh: unauthorized response");
-        return Err("Claude token expired. Run `claude` to log in again.".to_string());
+        // OpenUsage: non-invalid_grant 400/401 may be WAF/proxy — don't force re-login.
+        log::trace!("Claude token refresh: unauthorized/bad request without invalid_grant");
+        return Ok(None);
     }
 
     if !response.status().is_success() {
@@ -1018,10 +1133,11 @@ async fn refresh_claude_access_token(
         .await
         .map_err(|e| format!("Failed to parse Claude refresh response JSON: {e}"))?;
 
+    // Mutate in place so flatten `extra` / scopes / rate_limit_tier are preserved.
     let mut next_oauth = oauth;
     next_oauth.access_token = Some(refreshed.access_token.clone());
-    if let Some(refresh_token) = refreshed.refresh_token {
-        next_oauth.refresh_token = Some(refresh_token);
+    if let Some(new_refresh) = refreshed.refresh_token {
+        next_oauth.refresh_token = Some(new_refresh);
     }
     if let Some(expires_in) = refreshed.expires_in {
         let now_ms = SystemTime::now()
@@ -1032,8 +1148,19 @@ async fn refresh_claude_access_token(
     }
 
     full_data.claude_ai_oauth = Some(next_oauth.clone());
-    if let Err(e) = persist_claude_credentials(source, full_data) {
-        log::warn!("Claude token refresh succeeded but failed to persist credentials: {e}");
+    match persist_claude_credentials_if_unchanged(
+        source,
+        expected_access.as_deref(),
+        expected_refresh.as_deref(),
+        full_data,
+    ) {
+        Ok(true) => log::trace!("Claude token refresh: persisted rotated credentials"),
+        Ok(false) => log::info!(
+            "Claude token refresh: using rotated token in-memory only (disk login changed)"
+        ),
+        Err(e) => log::warn!(
+            "Claude token refresh succeeded but failed to persist credentials: {e}"
+        ),
     }
 
     log::trace!("Claude token refresh: success");
@@ -1103,6 +1230,19 @@ pub async fn get_claude_usage() -> Result<ClaudeUsageSnapshot, String> {
     get_claude_usage_with_source("ui").await
 }
 
+fn claude_usage_request(
+    client: &reqwest::Client,
+    access_token: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .get(CLAUDE_USAGE_URL)
+        .bearer_auth(access_token.trim())
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::USER_AGENT, CLAUDE_USAGE_USER_AGENT)
+        .header("anthropic-beta", "oauth-2025-04-20")
+}
+
 pub(crate) async fn get_claude_usage_with_source(
     request_source: &'static str,
 ) -> Result<ClaudeUsageSnapshot, String> {
@@ -1126,6 +1266,13 @@ pub(crate) async fn get_claude_usage_with_source(
         "Claude OAuth credentials missing. Run `claude` to authenticate.".to_string()
     })?;
 
+    if !oauth_has_usage_scope(&oauth) {
+        return Err(
+            "Claude login can run models but lacks usage access (missing user:profile scope). Run `claude` and sign in again."
+                .to_string(),
+        );
+    }
+
     let mut access_token = oauth
         .access_token
         .clone()
@@ -1144,12 +1291,7 @@ pub(crate) async fn get_claude_usage_with_source(
         }
     }
 
-    let mut response = usage_client
-        .get(CLAUDE_USAGE_URL)
-        .bearer_auth(access_token.trim())
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header("anthropic-beta", "oauth-2025-04-20")
+    let mut response = claude_usage_request(&usage_client, &access_token)
         .send()
         .await
         .map_err(|e| format!("Failed to fetch Claude usage: {e}"))?;
@@ -1161,24 +1303,45 @@ pub(crate) async fn get_claude_usage_with_source(
         if let Some(refreshed_token) =
             refresh_claude_access_token(&usage_client, &source, &mut credentials).await?
         {
-            response = usage_client
-                .get(CLAUDE_USAGE_URL)
-                .bearer_auth(refreshed_token.trim())
-                .header(reqwest::header::ACCEPT, "application/json")
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .header("anthropic-beta", "oauth-2025-04-20")
+            response = claude_usage_request(&usage_client, &refreshed_token)
                 .send()
                 .await
                 .map_err(|e| format!("Failed to fetch Claude usage: {e}"))?;
         }
     }
 
+    // OpenUsage: 429 is common — serve stale cache instead of failing hard / re-login.
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if let Some(stale) = load_stale_cached_claude_usage(now_secs) {
+            log::info!(
+                "Claude usage rate-limited (429); serving stale cache (source={request_source})"
+            );
+            return Ok(stale);
+        }
+        return Err(
+            "Claude usage API is rate-limiting requests. Try again in a few minutes.".to_string(),
+        );
+    }
+
     if response.status() == reqwest::StatusCode::UNAUTHORIZED
         || response.status() == reqwest::StatusCode::FORBIDDEN
     {
+        if let Some(stale) = load_stale_cached_claude_usage(now_secs) {
+            log::warn!(
+                "Claude usage auth failed; serving stale cache (source={request_source})"
+            );
+            return Ok(stale);
+        }
         return Err("Claude token expired. Run `claude` to log in again.".to_string());
     }
     if !response.status().is_success() {
+        if let Some(stale) = load_stale_cached_claude_usage(now_secs) {
+            log::warn!(
+                "Claude usage HTTP {}; serving stale cache (source={request_source})",
+                response.status()
+            );
+            return Ok(stale);
+        }
         return Err(format!(
             "Claude usage request failed (HTTP {}).",
             response.status()
@@ -1331,5 +1494,84 @@ mod tests {
             ..Default::default()
         });
         assert!(credentials_have_access_token(&credentials));
+    }
+
+    #[test]
+    fn token_needs_refresh_does_not_force_when_expires_missing() {
+        // OpenUsage alignment: missing expires_at must not force rotation.
+        let oauth = ClaudeOauthCredentials {
+            access_token: Some("token".into()),
+            refresh_token: Some("refresh".into()),
+            expires_at: None,
+            ..Default::default()
+        };
+        assert!(!token_needs_refresh(&oauth, 1_700_000_000_000));
+    }
+
+    #[test]
+    fn token_needs_refresh_respects_buffer_for_ms_and_secs() {
+        let now_ms = 1_700_000_000_000u64;
+        let near = ClaudeOauthCredentials {
+            expires_at: Some(now_ms + 60_000), // 1 minute left
+            ..Default::default()
+        };
+        assert!(token_needs_refresh(&near, now_ms));
+
+        let far = ClaudeOauthCredentials {
+            expires_at: Some(now_ms + 30 * 60 * 1000), // 30 minutes
+            ..Default::default()
+        };
+        assert!(!token_needs_refresh(&far, now_ms));
+
+        // Seconds form (legacy) still works
+        let secs = ClaudeOauthCredentials {
+            expires_at: Some(now_ms / 1000 + 60),
+            ..Default::default()
+        };
+        assert!(token_needs_refresh(&secs, now_ms));
+    }
+
+    #[test]
+    fn oauth_credentials_roundtrip_preserves_unknown_fields() {
+        let raw = r#"{
+            "claudeAiOauth": {
+                "accessToken": "a",
+                "refreshToken": "r",
+                "expiresAt": 1700000000000,
+                "subscriptionType": "pro",
+                "scopes": ["user:profile", "user:inference"],
+                "rateLimitTier": "default_claude_ai",
+                "customFutureField": {"nested": true}
+            },
+            "otherTopLevel": 1
+        }"#;
+        let parsed = parse_claude_credentials(raw).expect("parse");
+        let oauth = parsed.claude_ai_oauth.as_ref().expect("oauth");
+        assert_eq!(oauth.access_token.as_deref(), Some("a"));
+        assert_eq!(oauth.subscription_type.as_deref(), Some("pro"));
+        assert!(oauth_has_usage_scope(oauth));
+        assert!(oauth.extra.contains_key("customFutureField"));
+
+        let serialized = serde_json::to_value(&parsed).expect("serialize");
+        assert_eq!(
+            serialized["claudeAiOauth"]["customFutureField"]["nested"],
+            true
+        );
+        assert_eq!(serialized["otherTopLevel"], 1);
+    }
+
+    #[test]
+    fn oauth_has_usage_scope_detects_missing_profile() {
+        let missing = ClaudeOauthCredentials {
+            scopes: Some(vec!["user:inference".into()]),
+            ..Default::default()
+        };
+        assert!(!oauth_has_usage_scope(&missing));
+
+        let ok = ClaudeOauthCredentials {
+            scopes: Some(vec!["user:profile".into(), "user:inference".into()]),
+            ..Default::default()
+        };
+        assert!(oauth_has_usage_scope(&ok));
     }
 }

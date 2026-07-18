@@ -58,6 +58,7 @@ mod opinionated;
 mod pi_cli;
 mod platform;
 mod projects;
+mod server_update;
 mod terminal;
 
 // Validation functions
@@ -307,6 +308,8 @@ pub struct AppPreferences {
     pub selected_kimi_model: String, // Default Kimi Code model
     #[serde(default = "default_codex_reasoning_effort")]
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
+    #[serde(default = "default_grok_reasoning_effort")]
+    pub default_grok_reasoning_effort: String, // Grok reasoning effort: low, medium, high, xhigh, max
     #[serde(default = "default_codex_goal_execution_mode")]
     pub codex_goal_execution_mode: String, // Codex /goal execution mode: build or yolo
     #[serde(default = "default_codex_multi_agent_enabled")]
@@ -380,7 +383,7 @@ pub struct AppPreferences {
     #[serde(default)]
     pub terminal_background_custom: Option<String>, // hex like "#101010"; only used when mode == "custom"
     #[serde(default = "default_auto_update_ai_backends")]
-    pub auto_update_ai_backends: bool, // Automatically update AI backend CLIs when a new version is available
+    pub auto_update_ai_backends: bool, // Automatically update AI backend CLIs when a new version is detected
     #[serde(default = "default_jean_mcp_enabled")]
     pub jean_mcp_enabled: bool, // Expose Jean MCP server to spawned CLIs through explicit CLI config entries
     #[serde(default = "default_jean_mcp_max_depth")]
@@ -649,11 +652,11 @@ fn normalize_parallel_execution_preferences(preferences: &mut AppPreferences) ->
 }
 
 fn default_codex_model() -> String {
-    "gpt-5.5".to_string()
+    "gpt-5.6-sol".to_string()
 }
 
 fn default_opencode_model() -> String {
-    "opencode/gpt-5.5".to_string()
+    "opencode/gpt-5.6-sol".to_string()
 }
 
 fn default_cursor_model() -> String {
@@ -681,6 +684,10 @@ fn default_grok_cli_source() -> String {
 }
 
 fn default_codex_reasoning_effort() -> String {
+    "high".to_string()
+}
+
+fn default_grok_reasoning_effort() -> String {
     "high".to_string()
 }
 
@@ -2360,6 +2367,7 @@ impl Default for AppPreferences {
             selected_grok_model: default_grok_model(),
             selected_kimi_model: default_kimi_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
+            default_grok_reasoning_effort: default_grok_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
             codex_multi_agent_enabled: default_codex_multi_agent_enabled(),
             codex_auto_steer_enabled: default_codex_auto_steer(),
@@ -2450,6 +2458,14 @@ pub struct UIState {
     /// Unsent chat textarea content per session
     #[serde(default)]
     pub input_drafts: std::collections::HashMap<String, String>,
+
+    /// Unsent image attachments per session (files already on disk)
+    #[serde(default)]
+    pub pending_images: std::collections::HashMap<String, Vec<PendingImageDraft>>,
+
+    /// Unsent large-text paste attachments per session (files already on disk)
+    #[serde(default)]
+    pub pending_text_files: std::collections::HashMap<String, Vec<PendingTextFileDraft>>,
 
     /// Whether the review sidebar is visible
     #[serde(default)]
@@ -2598,6 +2614,26 @@ pub struct BrowserTabPersisted {
     pub title: Option<String>,
 }
 
+/// Unsent image attachment metadata persisted with UI state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingImageDraft {
+    pub id: String,
+    pub path: String,
+    pub filename: String,
+}
+
+/// Unsent large-text paste attachment metadata persisted with UI state.
+/// Content is optional so restore can re-read from disk without bloating UI state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingTextFileDraft {
+    pub id: String,
+    pub path: String,
+    pub filename: String,
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectCanvasSettings {
     #[serde(default)]
@@ -2619,6 +2655,8 @@ impl Default for UIState {
             left_sidebar_visible: None,
             active_session_ids: std::collections::HashMap::new(),
             input_drafts: std::collections::HashMap::new(),
+            pending_images: std::collections::HashMap::new(),
+            pending_text_files: std::collections::HashMap::new(),
             review_sidebar_visible: None,
             modal_terminal_open: std::collections::HashMap::new(),
             modal_terminal_dock_mode: None,

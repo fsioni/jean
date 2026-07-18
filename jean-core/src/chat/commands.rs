@@ -8697,22 +8697,10 @@ fn queued_message_is_steerable_for_backend(msg: &serde_json::Value, backend: &st
         return false;
     }
 
-    if backend == "codex" {
-        return true;
-    }
-
-    const ATTACHMENT_KEYS: [&str; 4] = [
-        "pendingImages",
-        "pendingFiles",
-        "pendingSkills",
-        "pendingTextFiles",
-    ];
-    ATTACHMENT_KEYS.iter().all(|key| {
-        msg.get(key)
-            .and_then(Value::as_array)
-            .map(|a| a.is_empty())
-            .unwrap_or(true)
-    })
+    // Codex, OpenCode, Pi, and Grok can all steer queued prompts. Attachment
+    // kinds (file @-mentions, skills, pasted images, pasted text files) become
+    // path refs in the steered text via build_queued_message_with_refs.
+    matches!(backend, "codex" | "opencode" | "pi" | "grok")
 }
 
 fn queued_message_supports_any_steering(msg: &serde_json::Value) -> bool {
@@ -9020,12 +9008,15 @@ async fn drain_queue_into_opencode_turn(
         };
 
         let Some(msg) = popped else { return };
-        let text = msg
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let text = match build_queued_message_with_refs(&msg) {
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                log::warn!(
+                    "[OpenCodeSteer] failed to build steerable message session={session_id}: {e}"
+                );
+                continue;
+            }
+        };
         if text.is_empty() {
             continue;
         }
@@ -9125,12 +9116,13 @@ async fn drain_queue_into_pi_turn(app: &AppHandle, worktree_id: &str, session_id
         };
 
         let Some(msg) = popped else { return };
-        let text = msg
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let text = match build_queued_message_with_refs(&msg) {
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                log::warn!("[PiSteer] failed to build steerable message session={session_id}: {e}");
+                continue;
+            }
+        };
         if text.is_empty() {
             continue;
         }
@@ -9207,12 +9199,15 @@ async fn drain_queue_into_grok_turn(app: &AppHandle, worktree_id: &str, session_
         };
 
         let Some(msg) = popped else { return };
-        let text = msg
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let text = match build_queued_message_with_refs(&msg) {
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                log::warn!(
+                    "[GrokSteer] failed to build steerable message session={session_id}: {e}"
+                );
+                continue;
+            }
+        };
         if text.is_empty() {
             continue;
         }
@@ -9411,7 +9406,7 @@ mod tests {
     }
 
     #[test]
-    fn queued_message_steerable_for_backend_accepts_opencode_text_only() {
+    fn queued_message_steerable_for_backend_accepts_opencode_with_attachments() {
         let opencode_plain = serde_json::json!({
             "id": "m1",
             "message": "hello",
@@ -9426,20 +9421,32 @@ mod tests {
             "opencode"
         ));
 
+        // Path-ref attachments (file mentions, pasted text) remain steerable.
         let opencode_with_file = serde_json::json!({
             "id": "m2",
             "message": "hello",
             "backend": "opencode",
             "pendingFiles": [{ "id": "file-1", "path": "/tmp/a.txt" }],
         });
-        assert!(!queued_message_is_steerable_for_backend(
+        assert!(queued_message_is_steerable_for_backend(
             &opencode_with_file,
+            "opencode"
+        ));
+
+        let opencode_with_text_file = serde_json::json!({
+            "id": "m3",
+            "message": "hello",
+            "backend": "opencode",
+            "pendingTextFiles": [{ "id": "txt-1", "path": "/tmp/paste.txt" }],
+        });
+        assert!(queued_message_is_steerable_for_backend(
+            &opencode_with_text_file,
             "opencode"
         ));
     }
 
     #[test]
-    fn queued_message_steerable_for_backend_accepts_grok_text_only() {
+    fn queued_message_steerable_for_backend_accepts_grok_with_attachments() {
         let grok_plain = serde_json::json!({
             "id": "m1",
             "message": "hello",
@@ -9452,13 +9459,27 @@ mod tests {
         assert!(queued_message_is_steerable_for_backend(&grok_plain, "grok"));
         assert!(queued_message_supports_any_steering(&grok_plain));
 
-        let grok_with_image = serde_json::json!({
+        let grok_with_file = serde_json::json!({
             "id": "m2",
+            "message": "check @AppServiceProvider.php",
+            "backend": "grok",
+            "pendingFiles": [{
+                "id": "file-1",
+                "relativePath": "app/Providers/AppServiceProvider.php",
+                "isDirectory": false
+            }],
+        });
+        assert!(queued_message_is_steerable_for_backend(&grok_with_file, "grok"));
+        assert!(queued_message_supports_any_steering(&grok_with_file));
+
+        // Pasted images are path refs too — steerable for Grok.
+        let grok_with_image = serde_json::json!({
+            "id": "m3",
             "message": "hello",
             "backend": "grok",
             "pendingImages": [{ "id": "img-1", "path": "/tmp/a.png" }],
         });
-        assert!(!queued_message_is_steerable_for_backend(
+        assert!(queued_message_is_steerable_for_backend(
             &grok_with_image,
             "grok"
         ));

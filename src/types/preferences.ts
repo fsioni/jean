@@ -863,13 +863,13 @@ function makeMagicPromptModelsPreset(
   }
 }
 
-/** Codex preset: use GPT-5.5 for all magic prompts */
+/** Codex preset: use GPT-5.6 Sol for all magic prompts */
 export const CODEX_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
-  makeMagicPromptModelsPreset('gpt-5.5')
+  makeMagicPromptModelsPreset('gpt-5.6-sol')
 
-/** Codex fast preset: use GPT-5.5 Fast for all magic prompts */
+/** Codex fast preset: use GPT-5.6 Sol Fast for all magic prompts */
 export const CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
-  makeMagicPromptModelsPreset('gpt-5.5-fast')
+  makeMagicPromptModelsPreset('gpt-5.6-sol-fast')
 
 /** GPT-5.6 Codex presets for all magic prompts */
 export const CODEX_56_SOL_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
@@ -886,24 +886,8 @@ export const CODEX_56_TERRA_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels 
   makeMagicPromptModelsPreset('gpt-5.6-terra-fast')
 
 /** OpenCode preset for all magic prompts */
-export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'opencode/gpt-5.5',
-  investigate_pr_model: 'opencode/gpt-5.5',
-  investigate_workflow_run_model: 'opencode/gpt-5.5',
-  pr_content_model: 'opencode/gpt-5.5',
-  commit_message_model: 'opencode/gpt-5.5',
-  code_review_model: 'opencode/gpt-5.5',
-  final_review_model: 'opencode/gpt-5.5',
-  context_summary_model: 'opencode/gpt-5.5',
-  resolve_conflicts_model: 'opencode/gpt-5.5',
-  release_notes_model: 'opencode/gpt-5.5',
-  session_naming_model: 'opencode/gpt-5.5',
-  investigate_security_alert_model: 'opencode/gpt-5.5',
-  investigate_advisory_model: 'opencode/gpt-5.5',
-  investigate_linear_issue_model: 'opencode/gpt-5.5',
-  investigate_sentry_issue_model: 'opencode/gpt-5.5',
-  review_comments_model: 'opencode/gpt-5.5',
-}
+export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
+  makeMagicPromptModelsPreset('opencode/gpt-5.6-sol')
 
 /** PI preset for all magic prompts */
 export const PI_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
@@ -1240,6 +1224,7 @@ export interface AppPreferences {
   selected_grok_model: GrokModel // Default Grok model
   selected_kimi_model?: KimiModel // Default Kimi Code model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
+  default_grok_reasoning_effort: GrokReasoningEffort // Default reasoning effort for Grok: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
   codex_max_agent_threads: number // Max concurrent agent threads (1-8) when multi-agent is enabled
@@ -1660,10 +1645,12 @@ export function normalizeCodexModel(model: string): CodexModel {
     ]
   }
 
-  return isCodexModel(model) ? model : 'gpt-5.5'
+  return isCodexModel(model) ? model : 'gpt-5.6-sol'
 }
 
 export type CodexReasoningEffort = string
+
+export type GrokReasoningEffort = string
 
 export type MagicPromptReasoningEffort = string | null
 
@@ -1729,6 +1716,17 @@ export const codexReasoningOptions: {
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'xHigh' },
+]
+
+export const grokReasoningOptions: {
+  value: GrokReasoningEffort
+  label: string
+}[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'xHigh' },
+  { value: 'max', label: 'Max' },
 ]
 
 // =============================================================================
@@ -2141,14 +2139,15 @@ export const defaultPreferences: AppPreferences = {
   default_execution_mode: 'plan', // Default: plan mode
   default_backend: 'claude', // Default: Claude
   default_new_session_kind: 'chat', // Default: Jean Chat for CMD+T
-  selected_codex_model: 'gpt-5.5', // Default: latest Codex model
-  selected_opencode_model: 'opencode/gpt-5.5', // Default OpenCode model
+  selected_codex_model: 'gpt-5.6-sol', // Default: latest Codex model
+  selected_opencode_model: 'opencode/gpt-5.6-sol', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
   selected_grok_model: 'grok/grok-4.5', // Default Grok model
   selected_kimi_model: 'kimi/default', // Use Kimi Code's configured default model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
+  default_grok_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: true, // Default: enabled to match parallel execution prompting
   codex_max_agent_threads: 3, // Default: 3 threads
