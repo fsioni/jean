@@ -415,6 +415,25 @@ async fn test_app_commands() {
 }
 ```
 
+#### Windows: `STATUS_ENTRYPOINT_NOT_FOUND` with Tauri tests
+
+Using `tauri` with `features = ["test"]` (or creating windows in unit tests) links
+Common Controls v6. The main app binary gets the required Windows application
+manifest via `tauri-build`/winres, but `cargo test --lib` builds a separate
+harness that does not.
+
+Without the manifest, the entire test process fails to start on Windows MSVC:
+
+```text
+error: test failed, to rerun pass `--lib`
+Caused by:
+  process didn't exit successfully: `...\jean_lib-….exe` (exit code: 0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND)
+```
+
+Jean's `src-tauri/build.rs` embeds `windows-app-manifest.xml` into test/bench
+binaries on Windows MSVC (Tauri's recommended workaround). Keep that embed if you
+add more `tauri::test` coverage.
+
 ### Testing File Operations
 
 ```rust
