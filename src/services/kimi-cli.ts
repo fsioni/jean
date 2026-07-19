@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import { toast } from 'sonner'
-import { hasBackend } from '@/lib/environment'
+import { hasBackendTransport } from '@/lib/environment'
 import type {
   KimiAuthStatus,
   KimiCliStatus,
@@ -15,7 +15,7 @@ import type {
   KimiReleaseInfo,
 } from '@/types/kimi-cli'
 
-const isTauri = hasBackend
+const isTauri = hasBackendTransport
 
 export const kimiCliQueryKeys = {
   all: ['kimi-cli'] as const,

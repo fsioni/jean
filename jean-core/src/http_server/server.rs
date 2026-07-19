@@ -287,10 +287,29 @@ pub async fn start_server(
 fn cors_layer_from_env() -> CorsLayer {
     let mut layer = CorsLayer::new().allow_methods(Any).allow_headers(Any);
     let raw = std::env::var("JEAN_ALLOWED_ORIGINS").unwrap_or_default();
-    let origins: Vec<HeaderValue> = raw
-        .split(',')
+    let origins = cors_origins(&raw);
+
+    if raw.trim() == "*" {
+        layer = layer.allow_origin(AllowOrigin::any());
+    } else {
+        layer = layer.allow_origin(AllowOrigin::list(origins));
+    }
+
+    layer
+}
+
+fn cors_origins(raw: &str) -> Vec<HeaderValue> {
+    const NATIVE_CLIENT_ORIGINS: &[&str] = &[
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "http://localhost:1420",
+    ];
+
+    raw.split(',')
         .map(str::trim)
         .filter(|origin| !origin.is_empty())
+        .chain(NATIVE_CLIENT_ORIGINS.iter().copied())
         .filter_map(|origin| match HeaderValue::from_str(origin) {
             Ok(value) => Some(value),
             Err(e) => {
@@ -298,15 +317,7 @@ fn cors_layer_from_env() -> CorsLayer {
                 None
             }
         })
-        .collect();
-
-    if raw.trim() == "*" {
-        layer = layer.allow_origin(AllowOrigin::any());
-    } else if !origins.is_empty() {
-        layer = layer.allow_origin(AllowOrigin::list(origins));
-    }
-
-    layer
+        .collect()
 }
 
 async fn health_handler() -> Response {
@@ -1583,6 +1594,19 @@ mod tests {
             crate::server_platform_name(),
             "mac" | "windows" | "linux"
         ));
+    }
+
+    #[test]
+    fn default_cors_origins_allow_native_jean_clients() {
+        let origins: Vec<String> = super::cors_origins("")
+            .into_iter()
+            .map(|value| value.to_str().expect("valid origin").to_string())
+            .collect();
+
+        assert!(origins.contains(&"tauri://localhost".to_string()));
+        assert!(origins.contains(&"http://tauri.localhost".to_string()));
+        assert!(origins.contains(&"https://tauri.localhost".to_string()));
+        assert!(origins.contains(&"http://localhost:1420".to_string()));
     }
 
     #[test]

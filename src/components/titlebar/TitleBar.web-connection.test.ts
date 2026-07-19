@@ -15,4 +15,11 @@ describe('web connection header', () => {
       '<UnreadBell title={title} hideTitle={hideTitle} />'
     )
   })
+
+  it('uses the client platform for native window chrome', () => {
+    expect(source).toContain('isClientMacOS')
+    expect(source).toContain('isClientLinux')
+    expect(source).not.toContain('native && isMacOS')
+    expect(source).not.toContain('native && isLinux')
+  })
 })

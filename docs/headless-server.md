@@ -260,4 +260,15 @@ Nothing is installed in the background — apply only runs after you click
 - Prefer `127.0.0.1` behind Caddy/Nginx, SSH tunnel, or Tailscale.
 - Keep token auth enabled for every non-localhost bind.
 - Use a long random token, for example `openssl rand -base64 32`.
-- Set `JEAN_ALLOWED_ORIGINS=https://jean.example.com` only when you need cross-origin browser access; otherwise keep the default same-origin behavior.
+- Set `JEAN_ALLOWED_ORIGINS=https://jean.example.com` only when you need additional cross-origin browser access; native Jean client origins are allowed by default.
+
+## Connect from the native Jean app
+
+In the desktop app, click the server icon in the title bar, choose **Add
+remote**, and enter either the full Web Access URL (including `?token=...`) or
+the server URL and token separately. Selecting the remote switches the entire
+Jean UI to that server. Select **Local** from the same dialog to return to the
+desktop app's local backend.
+
+Native Jean client origins are allowed automatically. HTTP and HTTPS server
+URLs are both supported; keep token authentication enabled on remote servers.

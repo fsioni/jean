@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import { toast } from 'sonner'
-import { hasBackend } from '@/lib/environment'
+import { hasBackendTransport } from '@/lib/environment'
 import type {
   GrokAuthStatus,
   GrokCliStatus,
@@ -16,7 +16,7 @@ import type {
   GrokUsageSnapshot,
 } from '@/types/grok-cli'
 
-const isTauri = hasBackend
+const isTauri = hasBackendTransport
 const USAGE_REFRESH_MS = 1000 * 60 * 5
 
 export const grokCliQueryKeys = {

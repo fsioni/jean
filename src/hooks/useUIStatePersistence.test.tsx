@@ -11,6 +11,7 @@ let nativeApp = false
 
 vi.mock('@/lib/environment', () => ({
   isNativeApp: () => nativeApp,
+  isLocalBackend: () => nativeApp,
   hasBackend: () => true,
 }))
 

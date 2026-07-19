@@ -36,6 +36,8 @@ class MockWebSocket {
 async function flushAsync() {
   await Promise.resolve()
   await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 function getWs(index: number): MockWebSocket {
@@ -54,7 +56,9 @@ async function loadTransportModule() {
   return import('./transport')
 }
 
-async function loadNativeTransportModule(tauriInvoke: ReturnType<typeof vi.fn>) {
+async function loadNativeTransportModule(
+  tauriInvoke: ReturnType<typeof vi.fn>
+) {
   vi.resetModules()
   vi.doMock('./environment', () => ({
     isNativeApp: () => true,
@@ -62,6 +66,24 @@ async function loadNativeTransportModule(tauriInvoke: ReturnType<typeof vi.fn>) 
     setWebAccessEnabled: vi.fn(),
   }))
   vi.doMock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+  return import('./transport')
+}
+
+async function loadRemoteNativeTransportModule() {
+  vi.resetModules()
+  vi.doMock('./environment', () => ({
+    isNativeApp: () => true,
+    setWsConnected: setWsConnectedMock,
+    setWebAccessEnabled: vi.fn(),
+  }))
+  vi.doMock('./remote-connections', () => ({
+    getActiveRemoteConnection: () => ({
+      id: 'remote-1',
+      name: 'Server',
+      url: 'https://jean.example.com',
+      token: 'secret',
+    }),
+  }))
   return import('./transport')
 }
 
@@ -85,6 +107,29 @@ describe('transport bootstrap', () => {
     vi.unstubAllGlobals()
     vi.doUnmock('./environment')
     vi.doUnmock('@tauri-apps/api/core')
+    vi.doUnmock('./remote-connections')
+  })
+
+  it('routes native shared commands to the selected remote Jean', async () => {
+    const transport = await loadRemoteNativeTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+    const ws = getWs(0)
+
+    const request = transport.invoke('list_projects')
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://jean.example.com/api/auth?token=secret',
+      expect.objectContaining({ signal: expect.anything() })
+    )
+    expect(ws.url).toBe('wss://jean.example.com/ws?token=secret')
+    expect(ws.send).toHaveBeenCalledWith(
+      expect.stringContaining('"command":"list_projects"')
+    )
+    const sent = JSON.parse(String(ws.send.mock.calls.at(-1)?.[0]))
+    ws.receive({ type: 'response', id: sent.id, data: [] })
+    await request
   })
 
   it('routes shared native commands through the jean-core dispatcher', async () => {

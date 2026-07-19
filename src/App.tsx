@@ -11,6 +11,7 @@ import {
   hasPreloadedData,
   listen,
   onEstablishedWsDisconnect,
+  usesWebSocketBackend,
   type InitialData,
 } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
@@ -70,6 +71,12 @@ import {
 import { useExternalLinkInterceptor } from './hooks/useExternalLinkInterceptor'
 import { WebAccessAuthScreen } from './components/web/WebAccessAuthScreen'
 import { peekWebReloadState, saveWebReloadState } from './lib/web-reload-state'
+import {
+  clearConnectionSwitch,
+  getActiveRemoteConnection,
+  isConnectionSwitchPending,
+} from './lib/remote-connections'
+import { RemoteConnectionRecovery } from './components/remote/RemoteConnectionRecovery'
 
 interface AutoFixStoppedEvent {
   projectId: string
@@ -97,8 +104,13 @@ function WebLoadingScreen({ label }: { label: string }) {
 /** Full-screen auth error overlay for web access mode. */
 function WsAuthErrorOverlay() {
   const authError = useWsAuthError()
+  const remote = getActiveRemoteConnection()
 
   if (!authError) return null
+
+  if (remote) {
+    return <RemoteConnectionRecovery connection={remote} error={authError} />
+  }
 
   const handleTokenSubmit = (token: string) => {
     localStorage.setItem('jean-http-token', token)
@@ -116,8 +128,10 @@ function WsAuthErrorOverlay() {
 }
 
 function App() {
+  const webBackend = usesWebSocketBackend()
+  const wsAuthError = useWsAuthError()
   // Track preloading state for web view
-  const [isPreloading, setIsPreloading] = useState(!isNativeApp())
+  const [isPreloading, setIsPreloading] = useState(webBackend)
   const [platformVersion, setPlatformVersion] = useState(0)
   const queryClient = useQueryClient()
   const { data: preferences } = usePreferences()
@@ -158,8 +172,6 @@ function App() {
   const pendingUpdateRef = useRef<any>(null)
 
   useEffect(() => {
-    if (!isNativeApp()) return
-
     invoke<'mac' | 'windows' | 'linux'>('get_server_platform')
       .then(platform => {
         setServerPlatform(platform)
@@ -168,7 +180,7 @@ function App() {
       .catch(error => {
         logger.warn('Failed to load server platform', { error })
       })
-  }, [])
+  }, [webBackend])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -567,7 +579,7 @@ function App() {
 
   // Preload initial data via HTTP for web view (faster than waiting for WebSocket)
   useEffect(() => {
-    if (isNativeApp()) return
+    if (!webBackend) return
 
     const initialSelectedProjectId =
       peekWebReloadState()?.projectId ??
@@ -589,7 +601,7 @@ function App() {
       .finally(() => {
         setIsPreloading(false)
       })
-  }, [queryClient, seedCache])
+  }, [queryClient, seedCache, webBackend])
 
   // Global safety net for uncaught async errors / promise rejections.
   // Without this, a thrown invoke() (e.g. auth/network failure) can leave the
@@ -683,20 +695,20 @@ function App() {
   // Browser mode: only open WebSocket after preload + listener registration.
   // This lets us replay buffered server events before live events start arriving.
   useEffect(() => {
-    if (isNativeApp()) return
+    if (!webBackend || isNativeApp()) return
 
     return onEstablishedWsDisconnect(() => {
       logger.info('WebSocket disconnected, reloading web app')
       captureWebReloadState()
       window.location.reload()
     })
-  }, [captureWebReloadState])
+  }, [captureWebReloadState, webBackend])
 
   useEffect(() => {
-    if (isNativeApp() || isPreloading || hasStartedTransportRef.current) return
+    if (!webBackend || isPreloading || hasStartedTransportRef.current) return
     hasStartedTransportRef.current = true
     connectTransport()
-  }, [isPreloading])
+  }, [isPreloading, webBackend])
 
   // Global queue processor - must be at App level so queued messages execute
   // even when the worktree is not focused (ChatWindow unmounted)
@@ -718,7 +730,7 @@ function App() {
   // backend work.
   const wsConnected = useWsConnectionStatus()
   useEffect(() => {
-    if (isNativeApp() || !wsConnected) return
+    if (!webBackend || !wsConnected) return
 
     // First connect: invalidate non-preloaded queries. If the HTTP preload
     // failed, invalidate everything so it fetches over the open WebSocket.
@@ -741,7 +753,7 @@ function App() {
       )
       queryClient.invalidateQueries()
     }
-  }, [wsConnected, queryClient])
+  }, [wsConnected, queryClient, webBackend])
 
   // Add native-app class to body for desktop-only CSS (cursor, user-select, etc.)
   useEffect(() => {
@@ -965,9 +977,10 @@ function App() {
 
   // Kill all terminals on page refresh/close (backup for Rust-side cleanup)
   useEffect(() => {
-    if (!isNativeApp()) return
+    if (!isNativeApp() || webBackend) return
 
     const handleBeforeUnload = () => {
+      if (isConnectionSwitchPending()) return
       // Best-effort sync cleanup for refresh scenarios
       // Note: async operations may not complete, but Rust-side RunEvent::Exit
       // will handle proper cleanup on app quit
@@ -977,7 +990,7 @@ function App() {
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [])
+  }, [webBackend])
 
   // Initialize command system and cleanup on app startup
   useEffect(() => {
@@ -1043,7 +1056,7 @@ function App() {
         webAccessSoundsEnabled: prefs?.web_access_sounds_enabled ?? true,
       })
 
-      if (isNativeApp()) {
+      if (isNativeApp() && !webBackend && !isConnectionSwitchPending()) {
         // Kill any orphaned terminals from previous native app session/reload.
         // Web access clients must not kill server-owned terminals when their
         // browser tab reloads, sleeps, or is discarded.
@@ -1210,6 +1223,8 @@ function App() {
         .catch(error => {
           logger.error('Failed to check resumable sessions', { error })
         })
+
+      clearConnectionSwitch()
     }, 2500)
 
     // Check for updates 5 seconds after app loads, then every 30 minutes
@@ -1222,7 +1237,7 @@ function App() {
       window.removeEventListener('install-pending-update', handleInstallPending)
       window.removeEventListener('update-available', handleUpdateAvailable)
     }
-  }, [installAppUpdate])
+  }, [installAppUpdate, webBackend])
 
   // Show loading screen while preloading initial data (web view only)
   if (isPreloading) {
@@ -1233,10 +1248,10 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <MainWindow />
-        {!isNativeApp() && !wsConnected && (
+        {webBackend && !wsConnected && !wsAuthError && (
           <WebLoadingScreen label="Loading Jean..." />
         )}
-        {!isNativeApp() && <WsAuthErrorOverlay />}
+        {webBackend && <WsAuthErrorOverlay />}
       </ThemeProvider>
     </ErrorBoundary>
   )

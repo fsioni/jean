@@ -10,6 +10,37 @@ import { useSyncExternalStore } from 'react'
 import { isNativeApp, setWebAccessEnabled, setWsConnected } from './environment'
 import { generateId } from './uuid'
 import { isServerWindows } from './platform'
+import { getActiveRemoteConnection } from './remote-connections'
+
+export function usesWebSocketBackend(): boolean {
+  return !isNativeApp() || getActiveRemoteConnection() !== null
+}
+
+function getWebBackendBaseUrl(): string {
+  return getActiveRemoteConnection()?.url ?? window.location.origin
+}
+
+function getWebBackendToken(): string {
+  const remote = getActiveRemoteConnection()
+  if (remote) return remote.token
+  const urlToken = new URLSearchParams(window.location.search).get('token')
+  return urlToken || localStorage.getItem('jean-http-token') || ''
+}
+
+function backendUrl(path: string): string {
+  const base = `${getWebBackendBaseUrl().replace(/\/+$/, '')}/`
+  return new URL(path.replace(/^\/+/, ''), base).toString()
+}
+
+function fetchBackend(url: string): Promise<Response> {
+  if (!getActiveRemoteConnection()) return fetch(url)
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 12_000)
+  return fetch(url, { signal: controller.signal }).finally(() =>
+    clearTimeout(timeout)
+  )
+}
 
 // ---------------------------------------------------------------------------
 // File source URL conversion (drop-in for Tauri's convertFileSrc)
@@ -34,7 +65,7 @@ export function setAppDataDir(dir: string): void {
  * In browser mode, converts to /api/files/ URLs served by the HTTP server.
  */
 export function convertFileSrc(filePath: string, protocol = 'asset'): string {
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     // Use Tauri's native implementation which correctly percent-encodes paths
     // on all platforms (JS encodeURIComponent misses dots/hyphens/underscores
     // that Tauri's Rust encoder expects on Windows).
@@ -51,13 +82,14 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
   }
 
   // Browser mode: convert server filesystem path to /api/files/ URL
-  const token = localStorage.getItem('jean-http-token') || ''
+  const token = getWebBackendToken()
   const params = token ? `?token=${encodeURIComponent(token)}` : ''
+  const base = getActiveRemoteConnection()?.url ?? ''
 
   // Try exact prefix match with cached app data dir
   if (_appDataDir && filePath.startsWith(_appDataDir)) {
     const relativePath = filePath.substring(_appDataDir.length)
-    return `/api/files/${encodeURI(relativePath)}${params}`
+    return `${base}/api/files/${encodeURI(relativePath)}${params}`
   }
 
   // Fallback: detect app data dir marker in path (works before _appDataDir is set)
@@ -65,7 +97,7 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
     const idx = filePath.indexOf(marker)
     if (idx !== -1) {
       const relativePath = filePath.substring(idx + marker.length)
-      return `/api/files/${encodeURI(relativePath)}${params}`
+      return `${base}/api/files/${encodeURI(relativePath)}${params}`
     }
   }
 
@@ -80,13 +112,14 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
  * project/worktree roots before serving it.
  */
 export function convertProjectFileSrc(filePath: string): string {
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     return convertFileSrc(filePath)
   }
 
-  const token = localStorage.getItem('jean-http-token') || ''
+  const token = getWebBackendToken()
   const params = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `/api/project-files/${encodeURIComponent(filePath)}${params}`
+  const base = getActiveRemoteConnection()?.url ?? ''
+  return `${base}/api/project-files/${encodeURIComponent(filePath)}${params}`
 }
 
 /** Unlisten function type — compatible with Tauri's UnlistenFn. */
@@ -127,6 +160,31 @@ const DESKTOP_ONLY_COMMANDS = new Set([
   'has_active_browser_tab',
 ])
 
+// These commands belong to the local desktop shell even when its application
+// content is connected to a remote Jean backend.
+const LOCAL_SHELL_COMMANDS = new Set([
+  'set_window_vibrancy',
+  'send_native_notification',
+  'read_clipboard_image',
+  'write_clipboard_text',
+  'browser_create',
+  'browser_navigate',
+  'browser_back',
+  'browser_forward',
+  'browser_reload',
+  'browser_stop',
+  'browser_set_bounds',
+  'browser_set_visible',
+  'browser_set_focus',
+  'browser_get_url',
+  'browser_close',
+  'browser_report_title',
+  'browser_enable_grab',
+  'browser_report_grab_context',
+  'get_active_browser_tabs',
+  'has_active_browser_tab',
+])
+
 // ---------------------------------------------------------------------------
 // Public API (same signatures as Tauri)
 // ---------------------------------------------------------------------------
@@ -148,7 +206,10 @@ export async function invoke<T>(
     return null as T
   }
 
-  if (isNativeApp()) {
+  if (
+    !usesWebSocketBackend() ||
+    (isNativeApp() && LOCAL_SHELL_COMMANDS.has(command))
+  ) {
     const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
     if (DESKTOP_ONLY_COMMANDS.has(command)) {
       return tauriInvoke<T>(command, args)
@@ -180,7 +241,7 @@ export async function listen<T>(
     return () => et.removeEventListener(event, wrapped)
   }
 
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     const { listen: tauriListen } = await import('@tauri-apps/api/event')
     return tauriListen<T>(event, handler)
   }
@@ -193,7 +254,7 @@ export async function listen<T>(
  * tracking was lost but the Rust PTY and replay buffer are still alive.
  */
 export function requestTerminalReplay(terminalId: string, lastSeq = 0): void {
-  if (isNativeApp()) return
+  if (!usesWebSocketBackend()) return
   wsTransport.requestTerminalReplay(terminalId, lastSeq)
 }
 
@@ -227,16 +288,15 @@ let initialDataResolved = false
  * Centralizes token and selected_project encoding.
  */
 function buildInitUrl(opts: { selectedProjectId?: string | null }): string {
-  const urlToken = new URLSearchParams(window.location.search).get('token')
-  const token = urlToken || localStorage.getItem('jean-http-token') || ''
-
+  const token = getWebBackendToken()
   const params = new URLSearchParams()
   if (token) params.set('token', token)
   if (opts.selectedProjectId) {
     params.set('selected_project', opts.selectedProjectId)
   }
   const qs = params.toString()
-  return qs ? `/api/init?${qs}` : '/api/init'
+  const url = backendUrl('api/init')
+  return qs ? `${url}?${qs}` : url
 }
 
 /**
@@ -253,7 +313,7 @@ function buildInitUrl(opts: { selectedProjectId?: string | null }): string {
 export async function preloadInitialData(
   selectedProjectId?: string | null
 ): Promise<InitialData | null> {
-  if (isNativeApp()) return null
+  if (!usesWebSocketBackend()) return null
   setWebAccessEnabled(true)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (typeof window !== 'undefined' && (window as any).__JEAN_E2E_MOCK__)
@@ -263,7 +323,7 @@ export async function preloadInitialData(
   initialDataPromise = (async () => {
     try {
       const url = buildInitUrl({ selectedProjectId })
-      const response = await fetch(url)
+      const response = await fetchBackend(url)
       if (!response.ok) {
         return null
       }
@@ -430,12 +490,14 @@ class WsTransport {
     )
       return
 
+    const remote = getActiveRemoteConnection()
     // Read token from URL query param or localStorage
     const urlToken = new URLSearchParams(window.location.search).get('token')
-    const token = urlToken || localStorage.getItem('jean-http-token') || ''
+    const token =
+      remote?.token || urlToken || localStorage.getItem('jean-http-token') || ''
 
     // Persist token from URL to localStorage for future page loads
-    if (urlToken) {
+    if (!remote && urlToken) {
       localStorage.setItem('jean-http-token', urlToken)
 
       // Remove token from URL for security (prevent history/bookmark exposure)
@@ -458,15 +520,18 @@ class WsTransport {
   }
 
   private async validateAndConnect(token: string): Promise<void> {
+    const authBaseUrl = backendUrl('api/auth')
     const authUrl = token
-      ? `${window.location.origin}/api/auth?token=${encodeURIComponent(token)}`
-      : `${window.location.origin}/api/auth`
+      ? `${authBaseUrl}?token=${encodeURIComponent(token)}`
+      : authBaseUrl
 
     try {
-      const res = await fetch(authUrl)
+      const res = await fetchBackend(authUrl)
       if (!res.ok) {
         // Invalid token — clear it and wait for the user to provide another.
-        localStorage.removeItem('jean-http-token')
+        if (!getActiveRemoteConnection()) {
+          localStorage.removeItem('jean-http-token')
+        }
         this.setAuthError(
           token
             ? "Invalid access token. Check the URL in Jean's Web Access settings."
@@ -475,6 +540,10 @@ class WsTransport {
         return
       }
     } catch {
+      if (getActiveRemoteConnection()) {
+        this.setAuthError('Unable to connect to the selected Jean server.')
+        return
+      }
       // The initial page load may race server startup. Retry connecting until
       // the first successful socket; established sockets use a page reload.
       this.setAuthError(null)
@@ -488,10 +557,10 @@ class WsTransport {
   }
 
   private connectWs(token: string): void {
-    // Derive WS URL from current page location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const url = `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`
+    const base = new URL(backendUrl('ws'))
+    base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+    base.searchParams.set('token', token)
+    const url = base.toString()
 
     this.ws = new WebSocket(url)
     this.clearConnectWatchdog()
@@ -555,6 +624,9 @@ class WsTransport {
       this.ws = null
 
       this.setConnected(false)
+      if (wasConnected && getActiveRemoteConnection()) {
+        this.setAuthError('Connection to the selected Jean server was lost.')
+      }
 
       // Clear event buffer — stale events from a dead connection
       // must not be delivered when the next connection opens.
@@ -951,7 +1023,7 @@ export function useWsConnectionStatus(): boolean {
 
 /** Start browser WebSocket transport after preload/bootstrap is complete. */
 export function connectTransport(): void {
-  if (isNativeApp() || isE2eMocked) return
+  if (!usesWebSocketBackend() || isE2eMocked) return
   setWebAccessEnabled(true)
   wsTransport.enableConnect()
 }
@@ -967,7 +1039,7 @@ export function onEstablishedWsDisconnect(callback: () => void): () => void {
  * Web mode: reflects current WebSocket connected state.
  */
 export function isTransportConnected(): boolean {
-  if (isNativeApp() || isE2eMocked) return true
+  if (!usesWebSocketBackend() || isE2eMocked) return true
   return wsTransport.connected
 }
 

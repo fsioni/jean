@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { isLinux, isMacOS, openExternal } from '@/lib/platform'
+import { isClientLinux, isClientMacOS, openExternal } from '@/lib/platform'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -35,6 +35,7 @@ import { UnreadBell } from '@/components/unread/UnreadBell'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FALLBACK_APP_VERSION } from '@/lib/app-version'
 import { LinuxWindowControls } from './LinuxWindowControls'
+import { RemoteConnectionsDialog } from '@/components/remote/RemoteConnectionsDialog'
 
 interface TitleBarProps {
   className?: string
@@ -87,7 +88,7 @@ export function TitleBar({
         <div
           className={cn(
             'relative z-10 flex items-center gap-1 pt-1',
-            native && isMacOS ? 'pl-[80px]' : 'pl-2'
+            native && isClientMacOS ? 'pl-[80px]' : 'pl-2'
           )}
         >
           <Tooltip>
@@ -150,6 +151,7 @@ export function TitleBar({
               <TooltipContent>GitHub</TooltipContent>
             </Tooltip>
           )}
+          {native && <RemoteConnectionsDialog />}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -210,7 +212,7 @@ export function TitleBar({
             v{appVersion}
           </button>
         )}
-        {native && isLinux && <LinuxWindowControls />}
+        {native && isClientLinux && <LinuxWindowControls />}
       </div>
     </div>
   )

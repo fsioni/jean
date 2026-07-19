@@ -11,7 +11,7 @@ import {
 } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { browserBackend } from '@/hooks/useBrowserPane'
-import { isNativeApp } from '@/lib/environment'
+import { isLocalBackend } from '@/lib/environment'
 import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import type { BrowserTab } from '@/types/browser'
@@ -158,7 +158,7 @@ export function useUIStatePersistence() {
       modalTerminalWidth,
       modalTerminalHeight,
     } = useTerminalStore.getState()
-    const shouldPersistTerminalRuntime = !isNativeApp()
+    const shouldPersistTerminalRuntime = !isLocalBackend()
     const terminalInstancesForPersist = shouldPersistTerminalRuntime
       ? Object.fromEntries(
           Object.entries(terminals)
@@ -543,7 +543,7 @@ export function useUIStatePersistence() {
     }
 
     const restoreTerminalRuntimeState = async (shouldCancel: () => boolean) => {
-      if (isNativeApp() || shouldCancel()) return
+      if (isLocalBackend() || shouldCancel()) return
 
       // PHASE 1: Always restore the *user-intent* UI flags for terminal
       // surfaces. These are independent of whether any PTYs survived the
@@ -1209,7 +1209,7 @@ export function useUIStatePersistence() {
         bottomHeightChanged
       ) {
         // Detect tab removals — close their backing webviews
-        if (tabsChanged && isNativeApp()) {
+        if (tabsChanged && isLocalBackend()) {
           const prevIds = new Set<string>()
           for (const list of Object.values(prevBrowserTabs)) {
             for (const t of list) prevIds.add(t.id)

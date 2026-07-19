@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { invoke } from '@/lib/transport'
-import { isNativeApp } from '@/lib/environment'
+import { isLocalBackend } from '@/lib/environment'
 import { logger } from '@/lib/logger'
 
 export interface ServerUpdateStatus {
@@ -102,7 +102,7 @@ export function useServerUpdateCheck() {
   )
 
   useEffect(() => {
-    if (isNativeApp()) return
+    if (isLocalBackend()) return
 
     let cancelled = false
 
