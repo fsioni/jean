@@ -1632,19 +1632,6 @@ pub(crate) fn extract_text_file_paths(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// Delete a pasted file (image or text) by path - internal helper
-/// Does not validate path (validation done at command level)
-fn delete_pasted_file(path: &str) {
-    let file_path = std::path::PathBuf::from(path);
-    if file_path.exists() {
-        if let Err(e) = std::fs::remove_file(&file_path) {
-            log::warn!("Failed to delete pasted file {path}: {e}");
-        } else {
-            log::trace!("Deleted pasted file: {path}");
-        }
-    }
-}
-
 fn plan_mode_content_waits_for_approval(
     backend: &Backend,
     execution_mode: Option<&str>,
@@ -1709,28 +1696,14 @@ pub async fn close_session(
 ) -> Result<Option<String>, String> {
     log::trace!("Closing session: {session_id}");
 
+    let sessions = load_sessions(&app, &worktree_path, &worktree_id)?;
+    if sessions.find_session(&session_id).is_none() {
+        return Err(format!("Session not found: {session_id}"));
+    }
+
     // Cancel only if a process is actively running — avoids spurious chat:cancelled events
     // for idle sessions (e.g. those waiting for plan approval during clear-context flows).
     let _ = cancel_process_if_running(&app, &session_id, &worktree_id);
-
-    // Collect pasted file paths for cleanup (outside lock - read-only NDJSON access)
-    let mut files_to_delete: Vec<String> = Vec::new();
-    let messages = run_log::load_session_messages(&app, &session_id).unwrap_or_default();
-    for message in &messages {
-        files_to_delete.extend(extract_image_paths(&message.content));
-        files_to_delete.extend(extract_text_file_paths(&message.content));
-    }
-
-    // Delete pasted files (outside lock - doesn't touch sessions file)
-    if !files_to_delete.is_empty() {
-        log::trace!(
-            "Cleaning up {} pasted files for session {session_id}",
-            files_to_delete.len()
-        );
-        for path in files_to_delete {
-            delete_pasted_file(&path);
-        }
-    }
 
     // Delete session data (outside lock - separate directory)
     if let Err(e) = delete_session_data(&app, &session_id) {
@@ -2096,6 +2069,21 @@ pub async fn delete_archived_session(
 ) -> Result<(), String> {
     log::trace!("Permanently deleting archived session: {session_id}");
 
+    with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
+        let session_idx = sessions
+            .sessions
+            .iter()
+            .position(|s| s.id == session_id)
+            .ok_or_else(|| format!("Session not found: {session_id}"))?;
+
+        if sessions.sessions[session_idx].archived_at.is_none() {
+            return Err("Cannot delete non-archived session. Archive it first.".to_string());
+        }
+
+        sessions.sessions.remove(session_idx);
+        Ok(())
+    })?;
+
     // Delete session data directory (outside lock - separate directory)
     if let Err(e) = delete_session_data(&app, &session_id) {
         log::warn!("Failed to delete session data: {e}");
@@ -2116,21 +2104,8 @@ pub async fn delete_archived_session(
     // Clean up combined-context files for this session
     cleanup_combined_context_files(&app, &session_id);
 
-    with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
-        let session_idx = sessions
-            .sessions
-            .iter()
-            .position(|s| s.id == session_id)
-            .ok_or_else(|| format!("Session not found: {session_id}"))?;
-
-        if sessions.sessions[session_idx].archived_at.is_none() {
-            return Err("Cannot delete non-archived session. Archive it first.".to_string());
-        }
-
-        sessions.sessions.remove(session_idx);
-        log::trace!("Archived session permanently deleted: {session_id}");
-        Ok(())
-    })
+    log::trace!("Archived session permanently deleted: {session_id}");
+    Ok(())
 }
 
 /// List archived sessions for a worktree

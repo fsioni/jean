@@ -305,9 +305,7 @@ impl BackgroundTaskManager {
                         last_cleanup_poll_time.store(now, Ordering::Relaxed);
                         let app_handle = app.clone();
                         tauri::async_runtime::spawn(async move {
-                            log::trace!(
-                                "Background cleanup tick (combined-contexts + pasted files)"
-                            );
+                            log::trace!("Background cleanup tick (combined-contexts)");
                             match crate::chat::storage::cleanup_orphaned_combined_contexts(
                                 &app_handle,
                             ) {
@@ -320,18 +318,6 @@ impl BackgroundTaskManager {
                                 }
                                 Err(e) => {
                                     log::warn!("Background combined-context cleanup failed: {e}");
-                                }
-                            }
-                            match crate::chat::storage::cleanup_orphaned_pasted_files(&app_handle) {
-                                Ok(deleted) => {
-                                    if deleted > 0 {
-                                        log::debug!(
-                                            "Background cleanup: removed {deleted} orphaned pasted files"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!("Background pasted-files cleanup failed: {e}");
                                 }
                             }
                         });

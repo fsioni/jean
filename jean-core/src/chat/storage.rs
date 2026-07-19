@@ -26,6 +26,9 @@ static INDEX_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
 static METADATA_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Serializes metadata attachment references with session attachment deletion.
+static PASTED_FILES_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
 /// Global mutex to prevent concurrent read-modify-write races on session-context-metadata.json.
 static SAVED_CONTEXTS_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -265,6 +268,11 @@ fn load_metadata_internal(
 
 /// Save session metadata (internal, no locking - atomic write)
 fn save_metadata_internal(app: &AppHandle, metadata: &SessionMetadata) -> Result<(), String> {
+    let _pasted_files_guard = PASTED_FILES_LOCK.lock().unwrap();
+    save_metadata_file(app, metadata)
+}
+
+fn save_metadata_file(app: &AppHandle, metadata: &SessionMetadata) -> Result<(), String> {
     let path = get_metadata_path(app, &metadata.id)?;
     let temp_path = path.with_extension("tmp");
 
@@ -353,6 +361,50 @@ where
 pub fn delete_session_data(app: &AppHandle, session_id: &str) -> Result<(), String> {
     let lock = get_metadata_lock(session_id);
     let _guard = lock.lock().unwrap();
+    let _pasted_files_guard = PASTED_FILES_LOCK.lock().unwrap();
+
+    if let Some(metadata) = load_metadata_internal(app, session_id)? {
+        let mut other_sessions = Vec::new();
+        for other_session_id in list_all_session_ids(app)? {
+            if other_session_id == session_id {
+                continue;
+            }
+            if let Some(other_metadata) = load_metadata_internal(app, &other_session_id)? {
+                other_sessions.push(other_metadata);
+            }
+        }
+
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+        let allowed_dirs = [
+            app_data_dir.join("pasted-images"),
+            app_data_dir.join("pasted-texts"),
+        ];
+
+        let mut deletion_errors = Vec::new();
+        for path in session_pasted_paths_safe_to_delete(&metadata, &other_sessions) {
+            let path = PathBuf::from(path);
+            if !allowed_dirs.iter().any(|dir| path.parent() == Some(dir)) {
+                log::warn!("Skipping pasted file outside app data: {}", path.display());
+                continue;
+            }
+
+            match fs::remove_file(&path) {
+                Ok(()) => log::trace!("Deleted session pasted file: {}", path.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => deletion_errors.push(format!("{}: {e}", path.display())),
+            }
+        }
+
+        if !deletion_errors.is_empty() {
+            return Err(format!(
+                "Failed to delete session pasted files: {}",
+                deletion_errors.join(", ")
+            ));
+        }
+    }
 
     let data_dir = get_data_dir(app)?;
     let session_dir = data_dir.join(session_id);
@@ -364,6 +416,47 @@ pub fn delete_session_data(app: &AppHandle, session_id: &str) -> Result<(), Stri
     }
 
     Ok(())
+}
+
+fn collect_session_pasted_paths(metadata: &SessionMetadata) -> Vec<String> {
+    let mut paths = Vec::new();
+
+    for run in &metadata.runs {
+        paths.extend(super::commands::extract_image_paths(&run.user_message));
+        paths.extend(super::commands::extract_text_file_paths(&run.user_message));
+    }
+
+    for queued_message in &metadata.queued_messages {
+        for key in ["pendingImages", "pendingTextFiles"] {
+            if let Some(attachments) = queued_message.get(key).and_then(|value| value.as_array()) {
+                paths.extend(attachments.iter().filter_map(|attachment| {
+                    attachment
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                }));
+            }
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn session_pasted_paths_safe_to_delete<'a>(
+    metadata: &SessionMetadata,
+    other_sessions: impl IntoIterator<Item = &'a SessionMetadata>,
+) -> Vec<String> {
+    let referenced_elsewhere: HashSet<String> = other_sessions
+        .into_iter()
+        .flat_map(collect_session_pasted_paths)
+        .collect();
+
+    collect_session_pasted_paths(metadata)
+        .into_iter()
+        .filter(|path| !referenced_elsewhere.contains(path))
+        .collect()
 }
 
 /// List all session IDs in the data directory (for recovery scanning)
@@ -594,92 +687,6 @@ pub fn cleanup_orphaned_combined_contexts(app: &AppHandle) -> Result<u32, String
 
     if deleted > 0 {
         log::debug!("Cleaned up {deleted} orphaned combined-context files");
-    }
-
-    Ok(deleted)
-}
-
-/// Delete orphaned pasted image and text files that are not referenced by any
-/// session's messages. Returns the number of deleted files.
-pub fn cleanup_orphaned_pasted_files(app: &AppHandle) -> Result<u32, String> {
-    // Collect all referenced session IDs from index files
-    let index_dir = get_index_dir(app)?;
-    let mut referenced_session_ids = std::collections::HashSet::new();
-
-    if let Ok(entries) = fs::read_dir(&index_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(index) =
-                        serde_json::from_str::<crate::chat::types::WorktreeIndex>(&content)
-                    {
-                        for session in &index.sessions {
-                            referenced_session_ids.insert(session.id.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Collect all referenced pasted file paths from session messages
-    let mut referenced_paths = std::collections::HashSet::new();
-
-    for session_id in &referenced_session_ids {
-        let messages = super::run_log::load_session_messages(app, session_id).unwrap_or_default();
-        for message in &messages {
-            for path in super::commands::extract_image_paths(&message.content) {
-                referenced_paths.insert(path);
-            }
-            for path in super::commands::extract_text_file_paths(&message.content) {
-                referenced_paths.insert(path);
-            }
-        }
-    }
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
-
-    let mut deleted = 0u32;
-
-    // Scan pasted-images/ and pasted-texts/ directories
-    for dir_name in &["pasted-images", "pasted-texts"] {
-        let dir = app_data_dir.join(dir_name);
-        if !dir.exists() {
-            continue;
-        }
-
-        if let Ok(entries) = fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // Skip non-files and temp files
-                if !path.is_file() || path.extension().is_some_and(|ext| ext == "tmp") {
-                    continue;
-                }
-
-                let path_str = path.to_str().unwrap_or_default().to_string();
-                if !referenced_paths.contains(&path_str) {
-                    log::trace!(
-                        "Deleting orphaned pasted file: {}",
-                        path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                    );
-                    if let Err(e) = fs::remove_file(&path) {
-                        log::warn!("Failed to delete orphaned pasted file: {e}");
-                    } else {
-                        deleted += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    if deleted > 0 {
-        log::debug!("Cleaned up {deleted} orphaned pasted files");
     }
 
     Ok(deleted)
@@ -1257,5 +1264,69 @@ mod tests {
         assert!(!index_dir.join("orphan-wt.json").exists());
         assert!(!index_dir.join("base-old-project.json").exists());
         assert!(index_dir.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn test_collect_session_pasted_paths_includes_cancelled_runs() {
+        let mut metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "worktree-1".to_string(),
+            "Session 1".to_string(),
+            0,
+        );
+        metadata.runs.push(
+            serde_json::from_value(serde_json::json!({
+                "run_id": "run-1",
+                "user_message_id": "message-1",
+                "user_message": "Cancelled prompt\n\n[Image attached: /tmp/pasted-images/image.png - Use the Read tool to view this image]\n[Text file attached: /tmp/pasted-texts/paste.txt - Use the Read tool to view this file]",
+                "started_at": 1,
+                "ended_at": 2,
+                "status": "cancelled",
+                "cancelled": true
+            }))
+            .expect("run entry"),
+        );
+        metadata.queued_messages.push(serde_json::json!({
+            "pendingImages": [{ "path": "/tmp/pasted-images/queued.png" }],
+            "pendingTextFiles": [{ "path": "/tmp/pasted-texts/queued.txt" }]
+        }));
+
+        let paths = collect_session_pasted_paths(&metadata);
+
+        assert_eq!(
+            paths,
+            vec![
+                "/tmp/pasted-images/image.png".to_string(),
+                "/tmp/pasted-images/queued.png".to_string(),
+                "/tmp/pasted-texts/paste.txt".to_string(),
+                "/tmp/pasted-texts/queued.txt".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_session_pasted_paths_safe_to_delete_keeps_shared_images() {
+        let mut source = SessionMetadata::new(
+            "source".to_string(),
+            "worktree-1".to_string(),
+            "Source".to_string(),
+            0,
+        );
+        source.runs.push(
+            serde_json::from_value(serde_json::json!({
+                "run_id": "run-1",
+                "user_message_id": "message-1",
+                "user_message": "[Image attached: /tmp/pasted-images/shared.png - Use the Read tool to view this image]",
+                "started_at": 1,
+                "status": "completed"
+            }))
+            .expect("run entry"),
+        );
+        let mut fork = source.clone();
+        fork.id = "fork".to_string();
+
+        let paths = session_pasted_paths_safe_to_delete(&source, [&fork]);
+
+        assert!(paths.is_empty());
     }
 }

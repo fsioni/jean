@@ -77,6 +77,7 @@ import {
   isConnectionSwitchPending,
 } from './lib/remote-connections'
 import { RemoteConnectionRecovery } from './components/remote/RemoteConnectionRecovery'
+import { getStartupOnboardingAction } from './lib/startup-onboarding'
 
 interface AutoFixStoppedEvent {
   projectId: string
@@ -814,56 +815,51 @@ function App() {
     if (!isNativeApp()) return
     if (!cliCheckReady) return
 
-    // Wait until the status queries have actually resolved before deciding.
-    if (!claudeStatus || !codexStatus || !opencodeStatus || !ghStatus) return
-
-    const isLoading =
-      isClaudeStatusLoading ||
-      isCodexStatusLoading ||
-      isOpencodeStatusLoading ||
-      isGhStatusLoading ||
-      (claudeStatus?.installed && isClaudeAuthLoading) ||
-      (codexStatus?.installed && isCodexAuthLoading) ||
-      (opencodeStatus?.installed && isOpencodeAuthLoading) ||
-      (ghStatus?.installed && isGhAuthLoading)
-    if (isLoading) return
-
-    const ghReady = !!ghStatus?.installed && !!ghAuth?.authenticated
-    const claudeReady = !!claudeStatus?.installed && !!claudeAuth?.authenticated
-    const codexReady = !!codexStatus?.installed && !!codexAuth?.authenticated
-    const opencodeReady =
-      !!opencodeStatus?.installed && !!opencodeAuth?.authenticated
-    const hasAiBackendReady = claudeReady || codexReady || opencodeReady
-
-    if (useUIStore.getState().onboardingDismissed) return
-
-    // On Windows, show onboarding if WSL mode hasn't been chosen yet
+    const onboarding = useUIStore.getState()
     const prefs = queryClient.getQueryData<AppPreferences>(['preferences'])
-    if (isWindows && prefs && !prefs.wsl_mode_chosen) {
-      logger.info('Windows WSL mode not chosen, showing onboarding')
-      useUIStore.getState().setOnboardingOpen(true)
+    const action = getStartupOnboardingAction({
+      statuses: [claudeStatus, codexStatus, opencodeStatus, ghStatus],
+      auth: [claudeAuth, codexAuth, opencodeAuth, ghAuth],
+      onboardingOpen: onboarding.onboardingOpen,
+      onboardingDismissed: onboarding.onboardingDismissed,
+      onboardingManuallyTriggered: onboarding.onboardingManuallyTriggered,
+      requiresWslChoice: !!(isWindows && prefs && !prefs.wsl_mode_chosen),
+    })
+
+    if (action === 'wait' || action === 'none') return
+
+    if (action === 'ready') {
+      if (prefs && !prefs.has_seen_feature_tour) {
+        onboarding.setFeatureTourOpen(true)
+      }
       return
     }
 
-    if (!ghReady || !hasAiBackendReady) {
-      logger.info('CLI setup needed, showing onboarding', {
-        claudeInstalled: claudeStatus?.installed,
-        codexInstalled: codexStatus?.installed,
-        opencodeInstalled: opencodeStatus?.installed,
-        ghInstalled: ghStatus?.installed,
-        claudeAuth: claudeAuth?.authenticated,
-        codexAuth: codexAuth?.authenticated,
-        opencodeAuth: opencodeAuth?.authenticated,
-        ghAuth: ghAuth?.authenticated,
-      })
-      useUIStore.getState().setOnboardingOpen(true)
-    } else {
-      // CLIs already set up — show feature tour if not yet seen
-      const prefs = queryClient.getQueryData<AppPreferences>(['preferences'])
+    if (action === 'close') {
+      onboarding.setOnboardingOpen(false)
       if (prefs && !prefs.has_seen_feature_tour) {
-        useUIStore.getState().setFeatureTourOpen(true)
+        onboarding.setFeatureTourOpen(true)
       }
+      return
     }
+
+    if (isWindows && prefs && !prefs.wsl_mode_chosen) {
+      logger.info('Windows WSL mode not chosen, showing onboarding')
+      onboarding.setOnboardingOpen(true)
+      return
+    }
+
+    logger.info('CLI setup needed, showing onboarding', {
+      claudeInstalled: claudeStatus?.installed,
+      codexInstalled: codexStatus?.installed,
+      opencodeInstalled: opencodeStatus?.installed,
+      ghInstalled: ghStatus?.installed,
+      claudeAuth: claudeAuth?.authenticated,
+      codexAuth: codexAuth?.authenticated,
+      opencodeAuth: opencodeAuth?.authenticated,
+      ghAuth: ghAuth?.authenticated,
+    })
+    onboarding.setOnboardingOpen(true)
   }, [
     claudeStatus,
     codexStatus,

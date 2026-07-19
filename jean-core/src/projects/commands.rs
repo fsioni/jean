@@ -4575,8 +4575,11 @@ pub async fn permanently_delete_worktree(
             }
         }
 
-        // Clean up combined-context files for each session
+        // Delete session data and its pasted attachments, then clean up context files.
         for sid in &session_ids {
+            if let Err(e) = crate::chat::storage::delete_session_data(&app_clone, sid) {
+                log::warn!("Failed to delete session data {sid}: {e}");
+            }
             crate::chat::storage::cleanup_combined_context_files(&app_clone, sid);
         }
 
@@ -11347,7 +11350,6 @@ pub async fn cleanup_old_archives(
             crate::chat::storage::cleanup_orphaned_session_indexes(&app).unwrap_or(0);
         let _ = crate::chat::storage::cleanup_orphaned_session_data(&app);
         let _ = crate::chat::storage::cleanup_orphaned_combined_contexts(&app);
-        let _ = crate::chat::storage::cleanup_orphaned_pasted_files(&app);
         return Ok(CleanupResult {
             deleted_worktrees: 0,
             deleted_sessions: 0,
@@ -11512,9 +11514,6 @@ pub async fn cleanup_old_archives(
     // --- Clean up orphaned combined-context files ---
     let _ = crate::chat::storage::cleanup_orphaned_combined_contexts(&app);
 
-    // --- Clean up orphaned pasted images and text files ---
-    let _ = crate::chat::storage::cleanup_orphaned_pasted_files(&app);
-
     log::trace!(
         "Archive cleanup complete: deleted {} worktrees, {} sessions, {} contexts, and {} orphan indexes",
         deleted_worktrees,
@@ -11678,9 +11677,6 @@ pub async fn delete_all_archives(app: AppHandle) -> Result<CleanupResult, String
 
     // Clean up orphaned combined-context files
     let _ = crate::chat::storage::cleanup_orphaned_combined_contexts(&app);
-
-    // Clean up orphaned pasted images and text files
-    let _ = crate::chat::storage::cleanup_orphaned_pasted_files(&app);
 
     log::trace!(
         "Deleted all archives: {} worktrees, {} sessions, {} contexts, and {} orphan indexes",
