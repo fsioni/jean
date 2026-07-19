@@ -85,6 +85,13 @@ export function parseRemoteConnectionInput(
   return { url: parsed.toString().replace(/\/$/, ''), token }
 }
 
+export function buildRemoteWebAccessUrl(connection: RemoteConnection): string {
+  const url = new URL(connection.url)
+  if (connection.token) url.searchParams.set('token', connection.token)
+  url.searchParams.set('jean_native_shell', '1')
+  return url.toString()
+}
+
 export function getRemoteConnections(): RemoteConnection[] {
   return connectionsSnapshot
 }

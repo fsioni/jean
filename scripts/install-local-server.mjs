@@ -19,11 +19,6 @@ const logPath = resolve(root, 'tmp/install-local-server.log')
 const childFlag = '--install-child'
 
 export function buildInstallPlan({ env = process.env } = {}) {
-  const home = env.HOME
-  if (!home && !env.JEAN_SERVER_INSTALL_PATH) {
-    throw new Error('HOME or JEAN_SERVER_INSTALL_PATH must be set.')
-  }
-
   return {
     buildCommands: [
       ['bun', ['run', 'build']],
@@ -33,8 +28,7 @@ export function buildInstallPlan({ env = process.env } = {}) {
       ],
     ],
     builtBinary: resolve(root, 'src-server/target/release/jean-server'),
-    installPath:
-      env.JEAN_SERVER_INSTALL_PATH ?? resolve(home, '.local/bin/jean-server'),
+    installPath: env.JEAN_SERVER_INSTALL_PATH ?? '/usr/local/bin/jean-server',
     service: env.JEAN_SERVER_SERVICE ?? 'jean-server.service',
   }
 }
@@ -100,7 +94,7 @@ Options:
   --foreground  Run in this terminal instead of detaching
 
 Environment:
-  JEAN_SERVER_INSTALL_PATH  Binary to replace (default: ~/.local/bin/jean-server)
+  JEAN_SERVER_INSTALL_PATH  Binary to replace (default: /usr/local/bin/jean-server)
   JEAN_SERVER_SERVICE       systemd unit to restart (default: jean-server.service)
 `)
 }

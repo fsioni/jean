@@ -22,6 +22,11 @@ export const isNativeApp = (): boolean =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeof (window as any).__TAURI_INTERNALS__?.invoke === 'function'
 
+/** Web Access rendered inside the restricted child WebView of a native shell. */
+export const isNativeRemoteShell = (): boolean =>
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('jean_native_shell') === '1'
+
 /** Whether backend operations target this desktop app's local Jean core. */
 export const isLocalBackend = (): boolean =>
   isNativeApp() && getActiveRemoteConnection() === null

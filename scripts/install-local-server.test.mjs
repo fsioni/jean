@@ -8,7 +8,7 @@ import {
 } from './install-local-server.mjs'
 
 test('buildInstallPlan uses the local server defaults', () => {
-  const plan = buildInstallPlan({ env: { HOME: '/home/jean' } })
+  const plan = buildInstallPlan({ env: {} })
 
   assert.deepEqual(plan.buildCommands, [
     ['bun', ['run', 'build']],
@@ -18,7 +18,7 @@ test('buildInstallPlan uses the local server defaults', () => {
     ],
   ])
   assert.match(plan.builtBinary, /src-server\/target\/release\/jean-server$/)
-  assert.equal(plan.installPath, '/home/jean/.local/bin/jean-server')
+  assert.equal(plan.installPath, '/usr/local/bin/jean-server')
   assert.equal(plan.service, 'jean-server.service')
 })
 

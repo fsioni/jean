@@ -126,7 +126,7 @@ sudo apt-get install -y libssl-dev pkg-config
 ```
 
 On a Linux host where `jean-server.service` already runs the binary at
-`~/.local/bin/jean-server`, use:
+`/usr/local/bin/jean-server`, use:
 
 ```bash
 bun run install:local:server
@@ -289,8 +289,11 @@ Nothing is installed in the background — apply only runs after you click
 In the desktop app, click the server icon in the title bar, choose **Add
 remote**, and enter either the full Web Access URL (including `?token=...`) or
 the server URL and token separately. Selecting the remote switches the entire
-Jean UI to that server. Select **Local** from the same dialog to return to the
-desktop app's local backend.
+Jean UI to the React build served by that server. The native app keeps only a
+small local title bar for connection management and renders Web Access in a
+restricted child WebView with no Jean IPC permissions. UI assets load over
+HTTP(S); commands and events continue over WebSocket. Select **Local** from the
+same dialog to return to the desktop app's bundled UI and local backend.
 
 Native Jean client origins are allowed automatically. HTTP and HTTPS server
 URLs are both supported; keep token authentication enabled on remote servers.

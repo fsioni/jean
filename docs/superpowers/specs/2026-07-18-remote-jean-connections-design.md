@@ -16,7 +16,7 @@ Let the native Jean desktop client switch its entire application backend between
 
 ## Architecture
 
-The native shell remains local and owns connection profiles and instance selection. Shared Jean commands and events route through a switchable backend transport: Tauri core dispatch for Local and authenticated HTTP/WebSocket for remote instances. Switching persists the selection and reloads the frontend, which gives every instance fresh TanStack Query and Zustand state and prevents stale events crossing instance boundaries.
+The native shell remains local and owns connection profiles and instance selection. Local mode uses the bundled React UI and Tauri core dispatch. Remote mode keeps a minimal local title bar and loads the selected server's Web Access React build in a restricted `browser-*` child WebView. HTTP(S) serves remote UI assets while authenticated WebSocket carries commands and events. Switching persists the selection and reloads the local shell, which gives every instance fresh browser state and prevents stale events crossing instance boundaries.
 
 Connection profiles contain an id, display name, normalized HTTP(S) base URL, and token. Local is an immutable built-in profile. The desktop WebView stores profiles in its private local storage; tokens are removed from pasted URLs before persistence and never displayed after saving.
 
@@ -26,7 +26,7 @@ The title-bar icon opens a dialog listing Local and saved remotes with connectio
 
 ## Transport and capabilities
 
-Remote HTTP bootstrap, file URLs, authentication, and WebSocket URLs use the selected absolute base URL. The server allows the standard Tauri desktop origins through CORS. Tauri CSP allows outbound HTTP(S) and WS(S). Native window and clipboard capabilities remain local; backend-side desktop operations are unavailable while a remote is active.
+Remote HTTP bootstrap, file URLs, authentication, and WebSocket URLs use the selected absolute base URL. The remote WebView uses the empty `browser-pane` capability and receives no Jean Tauri IPC permissions. A local title bar remains available above it for connection management and native window controls. Backend-side desktop operations are unavailable while a remote is active.
 
 ## Error handling
 
