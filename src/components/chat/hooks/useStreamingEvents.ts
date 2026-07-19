@@ -524,6 +524,13 @@ export default function useStreamingEvents({
       text: string
     }>('chat:steered', event => {
       const { session_id, text } = event.payload
+      if (
+        useChatStore
+          .getState()
+          .consumeStreamingReplayUserInput(session_id, text)
+      ) {
+        return
+      }
       addUserInputBlock(session_id, text)
     })
 

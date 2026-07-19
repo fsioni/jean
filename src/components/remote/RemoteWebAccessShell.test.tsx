@@ -7,6 +7,7 @@ const browserBackend = vi.hoisted(() => ({
   create: vi.fn(),
   setBounds: vi.fn(),
   setVisible: vi.fn(),
+  eval: vi.fn(),
   hasActive: vi.fn(),
   close: vi.fn(),
 }))
@@ -28,6 +29,7 @@ describe('RemoteWebAccessShell', () => {
     browserBackend.create.mockResolvedValue(undefined)
     browserBackend.setBounds.mockResolvedValue(undefined)
     browserBackend.setVisible.mockResolvedValue(undefined)
+    browserBackend.eval.mockResolvedValue(undefined)
     browserBackend.hasActive.mockResolvedValue(false)
     browserBackend.close.mockResolvedValue(undefined)
   })
@@ -75,6 +77,33 @@ describe('RemoteWebAccessShell', () => {
       expect(browserBackend.setVisible).toHaveBeenCalledWith(
         'remote-jean-ui',
         false
+      )
+    })
+  })
+
+  it('keeps sidebar and settings controls in the local shell header', async () => {
+    render(
+      <RemoteWebAccessShell
+        connection={{
+          id: 'remote-1',
+          name: 'Build server',
+          url: 'https://jean.example.com',
+          token: 'secret',
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
+
+    await waitFor(() => {
+      expect(browserBackend.eval).toHaveBeenCalledWith(
+        'remote-jean-ui',
+        expect.stringContaining('toggle-sidebar')
+      )
+      expect(browserBackend.eval).toHaveBeenCalledWith(
+        'remote-jean-ui',
+        expect.stringContaining('open-preferences')
       )
     })
   })

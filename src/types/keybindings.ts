@@ -1,5 +1,6 @@
 // Keybinding action identifiers - extensible for future shortcuts
 import { isClientMacOS } from '@/lib/platform'
+import { isNativeRemoteShell } from '@/lib/environment'
 
 export type KeybindingAction =
   | 'focus_chat_input'
@@ -414,10 +415,13 @@ export function formatShortcutDisplay(
 ): string {
   if (!shortcut) return ''
 
-  // On macOS web, Cmd shortcuts are intercepted by the browser.
-  // Ctrl+key already works (both map to "mod"), so show ⌃ instead of ⌘.
+  // On regular macOS web access, Cmd shortcuts are intercepted by the browser.
+  // The native remote shell is a restricted WebView and receives Cmd events,
+  // so it should use the native ⌘ labels.
   const isWeb =
-    typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)
+    typeof window !== 'undefined' &&
+    !('__TAURI_INTERNALS__' in window) &&
+    !isNativeRemoteShell()
   const useMacCtrl = isClientMacOS && isWeb
 
   return shortcut

@@ -68,6 +68,7 @@ function compactReplayBlocks(blocks: ContentBlock[]): ContentBlock[] {
   return blocks.filter(block => {
     if (block.type === 'text') return block.text.length > 0
     if (block.type === 'thinking') return block.thinking.length > 0
+    if (block.type === 'user_input') return block.text.length > 0
     return block.type === 'tool_use'
   })
 }
@@ -434,6 +435,10 @@ interface ChatUIState {
   consumeStreamingReplayToolBlock: (
     sessionId: string,
     toolCallId: string
+  ) => boolean
+  consumeStreamingReplayUserInput: (
+    sessionId: string,
+    text: string
   ) => boolean
   clearStreamingReplayContentBlocks: (sessionId: string) => void
 
@@ -1807,6 +1812,25 @@ export const useChatStore = create<ChatUIState>()(
 
         get().clearStreamingReplayContentBlocks(sessionId)
         return false
+      },
+
+      consumeStreamingReplayUserInput: (sessionId, text) => {
+        const blocks = get().streamingReplayContentBlocks[sessionId]
+        if (!blocks?.length) return false
+
+        const matchingIndex = blocks.findIndex(
+          block => block.type === 'user_input' && block.text === text
+        )
+        if (matchingIndex < 0) {
+          get().clearStreamingReplayContentBlocks(sessionId)
+          return false
+        }
+
+        get().setStreamingReplayContentBlocks(
+          sessionId,
+          blocks.slice(matchingIndex + 1)
+        )
+        return true
       },
 
       clearStreamingReplayContentBlocks: sessionId =>

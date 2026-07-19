@@ -124,4 +124,22 @@ describe('server platform detection', () => {
     expect(formatShortcutDisplay('mod+period')).toBe('⌘ + .')
     expect(platform.getModifierSymbol()).toBe('⌘')
   })
+
+  it('formats shortcuts for the native remote shell on Mac', async () => {
+    vi.stubGlobal('window', {
+      location: { search: '?jean_native_shell=1' },
+    })
+    vi.stubGlobal('navigator', {
+      platform: 'MacIntel',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+
+    const platform = await import('./platform')
+    const { isNativeRemoteShell } = await import('./environment')
+    const { formatShortcutDisplay } = await import('@/types/keybindings')
+
+    expect(isNativeRemoteShell()).toBe(true)
+    expect(formatShortcutDisplay('mod+period')).toBe('⌘ + .')
+    expect(platform.getModifierSymbol()).toBe('⌘')
+  })
 })

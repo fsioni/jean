@@ -17,7 +17,9 @@ import { getActiveRemoteConnection } from './remote-connections'
 /** Web Access rendered inside the restricted child WebView of a native shell. */
 export const isNativeRemoteShell = (): boolean =>
   typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).get('jean_native_shell') === '1'
+  new URLSearchParams(window.location?.search ?? '').get(
+    'jean_native_shell'
+  ) === '1'
 
 /** Running inside the native Tauri desktop app with usable IPC.
  * Some mobile/web shells can expose a partial `__TAURI_INTERNALS__` object

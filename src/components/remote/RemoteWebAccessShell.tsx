@@ -1,10 +1,12 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { Github, Heart, PanelLeft, Settings } from 'lucide-react'
 import { browserBackend } from '@/hooks/useBrowserPane'
 import {
   buildRemoteWebAccessUrl,
   type RemoteConnection,
 } from '@/lib/remote-connections'
-import { isClientLinux, isClientMacOS } from '@/lib/platform'
+import { isClientLinux, isClientMacOS, openExternal } from '@/lib/platform'
+import { Button } from '@/components/ui/button'
 import { LinuxWindowControls } from '@/components/titlebar/LinuxWindowControls'
 import { WindowResizeHandles } from '@/components/layout/WindowResizeHandles'
 import { RemoteConnectionsDialog } from './RemoteConnectionsDialog'
@@ -19,6 +21,15 @@ export function RemoteWebAccessShell({
   const contentRef = useRef<HTMLDivElement>(null)
   const connectionDialogOpenRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+
+  const sendShellAction = (eventName: string) => {
+    void browserBackend
+      .eval(
+        REMOTE_WEBVIEW_ID,
+        `window.dispatchEvent(new CustomEvent('jean-shell-action',{detail:${JSON.stringify(eventName.replace('jean-shell-', ''))}}))`
+      )
+      .catch(() => undefined)
+  }
 
   useLayoutEffect(() => {
     let cancelled = false
@@ -81,9 +92,39 @@ export function RemoteWebAccessShell({
         className="relative z-[60] flex h-8 shrink-0 items-center justify-between bg-background/80 px-2"
       >
         <div
-          className={isClientMacOS ? 'pl-[72px]' : undefined}
+          className={`flex items-center gap-1 pt-1 ${isClientMacOS ? 'pl-[80px]' : 'pl-2'}`}
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
+          <Button
+            aria-label="Toggle sidebar"
+            title="Toggle sidebar"
+            onClick={() => sendShellAction('jean-shell-toggle-sidebar')}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 rounded-none text-foreground/70 hover:text-foreground"
+          >
+            <PanelLeft className="size-3.5" />
+          </Button>
+          <Button
+            aria-label="Open settings"
+            title="Open settings"
+            onClick={() => sendShellAction('jean-shell-open-preferences')}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 rounded-none text-foreground/70 hover:text-foreground"
+          >
+            <Settings className="size-3.5" />
+          </Button>
+          <Button
+            aria-label="Open GitHub"
+            title="GitHub"
+            onClick={() => openExternal('https://github.com/coollabsio/jean')}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 rounded-none text-foreground/70 hover:text-foreground"
+          >
+            <Github className="size-3.5" />
+          </Button>
           <RemoteConnectionsDialog
             onOpenChange={open => {
               connectionDialogOpenRef.current = open
@@ -92,6 +133,16 @@ export function RemoteWebAccessShell({
                 .catch(() => undefined)
             }}
           />
+          <Button
+            aria-label="Open sponsorships"
+            title="Sponsor"
+            onClick={() => openExternal('https://jean.build/sponsorships/')}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 rounded-none text-pink-500 hover:text-pink-400"
+          >
+            <Heart className="size-3.5" />
+          </Button>
         </div>
         <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 truncate text-xs text-foreground/60">
           {connection.name}

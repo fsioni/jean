@@ -213,6 +213,24 @@ function useRetainedMount(active: boolean) {
 
 export function MainWindow() {
   const nativeRemoteShell = isNativeRemoteShell()
+
+  useEffect(() => {
+    if (!nativeRemoteShell) return
+
+    const handleShellAction = (event: Event) => {
+      const action = (event as CustomEvent).detail
+      if (action === 'toggle-sidebar') {
+        useUIStore.getState().toggleLeftSidebar()
+      } else if (action === 'open-preferences') {
+        useUIStore.getState().setPreferencesOpen(true)
+      }
+    }
+
+    window.addEventListener('jean-shell-action', handleShellAction)
+    return () =>
+      window.removeEventListener('jean-shell-action', handleShellAction)
+  }, [nativeRemoteShell])
+
   useTerminalThemeSync()
   const isMaximized = useWindowMaximized()
   const toasterOffset = useToasterOffset()

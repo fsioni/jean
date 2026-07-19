@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { isNativeApp } from './environment'
+import { isNativeApp, isNativeRemoteShell } from './environment'
 
 export type PlatformName = 'mac' | 'windows' | 'linux'
 
@@ -66,11 +66,12 @@ export async function openExternal(
 
 /**
  * Returns the correct modifier key symbol based on platform and environment.
- * Mac native app uses ⌘, Mac web uses ⌃ (Ctrl works in browser, Cmd is intercepted).
+ * Mac native app and the restricted native remote shell use ⌘. Regular Mac web
+ * access uses ⌃ because browsers intercept many Cmd shortcuts before React sees them.
  */
 export const getModifierSymbol = (): string => {
   if (!isClientMacOS) return 'Ctrl'
-  return isNativeApp() ? '⌘' : '⌃'
+  return isNativeApp() || isNativeRemoteShell() ? '⌘' : '⌃'
 }
 
 /**

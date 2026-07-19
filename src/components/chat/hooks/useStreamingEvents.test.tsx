@@ -1339,4 +1339,63 @@ describe('useStreamingEvents replay dedupe', () => {
       useChatStore.getState().streamingReplayContentBlocks['session-1']
     ).toBeUndefined()
   })
+
+  it('does not duplicate a steered prompt already present in the running snapshot', async () => {
+    const queryClient = createQueryClient()
+    const wrapper = createWrapper(queryClient)
+
+    useChatStore.setState({
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Before steering.' },
+          { type: 'user_input', text: 'Also fix the header.' },
+          { type: 'text', text: 'After steering.' },
+        ],
+      },
+      streamingReplayContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Before steering.' },
+          { type: 'user_input', text: 'Also fix the header.' },
+          { type: 'text', text: 'After steering.' },
+        ],
+      },
+    })
+
+    renderHook(() => useStreamingEvents({ queryClient }), { wrapper })
+
+    await waitFor(() =>
+      expect(registeredListeners.has('chat:steered')).toBe(true)
+    )
+
+    registeredListeners.get('chat:chunk')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        content: 'Before steering.',
+      },
+    })
+    registeredListeners.get('chat:steered')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        text: 'Also fix the header.',
+      },
+    })
+    registeredListeners.get('chat:chunk')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        content: 'After steering.',
+      },
+    })
+
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual([
+      { type: 'text', text: 'Before steering.' },
+      { type: 'user_input', text: 'Also fix the header.' },
+      { type: 'text', text: 'After steering.' },
+    ])
+    expect(
+      useChatStore.getState().streamingReplayContentBlocks['session-1']
+    ).toBeUndefined()
+  })
 })
