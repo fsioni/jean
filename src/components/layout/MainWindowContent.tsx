@@ -19,6 +19,7 @@ import {
 } from '@/lib/terminal-gesture'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
+import { SidebarWidthProvider } from './SidebarWidthContext'
 
 const ChatWindow = lazy(() =>
   import('@/components/chat/ChatWindow').then(mod => ({
@@ -29,6 +30,12 @@ const ChatWindow = lazy(() =>
 const ProjectCanvasView = lazy(() =>
   import('@/components/dashboard/ProjectCanvasView').then(mod => ({
     default: mod.ProjectCanvasView,
+  }))
+)
+
+const LeftSideBar = lazy(() =>
+  import('./LeftSideBar').then(mod => ({
+    default: mod.LeftSideBar,
   }))
 )
 
@@ -45,6 +52,7 @@ export function MainWindowContent({
   const activeWorktreeId = useChatStore(state => state.activeWorktreeId)
   const isMobile = useIsMobile()
   const leftSidebarVisible = useUIStore(state => state.leftSidebarVisible)
+  const leftSidebarSize = useUIStore(state => state.leftSidebarSize)
   // SessionChatModal is nested inside ProjectCanvasView; disable open-sidebar
   // while it is open so only the modal's swipe-to-close runs.
   const sessionChatModalOpen = useUIStore(state => state.sessionChatModalOpen)
@@ -294,32 +302,47 @@ export function MainWindowContent({
           </div>
         </div>
       ) : (
-        <div
-          ref={isMobile ? swipeOpenSidebar.containerRef : undefined}
-          className="relative flex h-full w-full min-w-0 flex-col"
-          data-testid="mobile-swipe-open-sidebar"
-          style={
-            isMobile &&
-            (swipeOpenSidebar.isSwiping || swipeOpenSidebar.translateX !== 0)
-              ? {
-                  transform: `translateX(${swipeOpenSidebar.translateX}px)`,
-                  transition: swipeOpenSidebar.transitionStyle || undefined,
-                  willChange: swipeOpenSidebar.isSwiping
-                    ? 'transform'
-                    : undefined,
-                }
-              : undefined
-          }
-        >
-          {/* Edge affordance fades into direct, finger-tracked content motion. */}
-          {canSwipeOpenSidebar && (
+        <>
+          {isMobile && canSwipeOpenSidebar && (
             <div
-              className="pointer-events-none absolute left-0 top-1/2 z-50 h-10 w-1 -translate-y-1/2 rounded-r-full bg-muted-foreground/20"
+              className="pointer-events-none absolute inset-y-0 left-0 z-0 overflow-hidden bg-sidebar"
+              style={{ width: `min(85vw, ${leftSidebarSize}px)` }}
+              data-testid="mobile-swipe-sidebar-underlay"
               aria-hidden
-            />
+            >
+              <SidebarWidthProvider value={leftSidebarSize}>
+                <Suspense fallback={null}>
+                  <LeftSideBar />
+                </Suspense>
+              </SidebarWidthProvider>
+            </div>
           )}
-          {nonChatContent}
-        </div>
+          <div
+            ref={isMobile ? swipeOpenSidebar.containerRef : undefined}
+            className="relative z-10 flex h-full w-full min-w-0 flex-col bg-background"
+            data-testid="mobile-swipe-open-sidebar"
+            style={
+              isMobile &&
+              (swipeOpenSidebar.isSwiping || swipeOpenSidebar.translateX !== 0)
+                ? {
+                    transform: `translateX(${swipeOpenSidebar.translateX}px)`,
+                    transition: swipeOpenSidebar.transitionStyle || undefined,
+                    willChange: swipeOpenSidebar.isSwiping
+                      ? 'transform'
+                      : undefined,
+                  }
+                : undefined
+            }
+          >
+            {canSwipeOpenSidebar && (
+              <div
+                className="pointer-events-none absolute left-0 top-1/2 z-50 h-10 w-1 -translate-y-1/2 rounded-r-full bg-muted-foreground/20"
+                aria-hidden
+              />
+            )}
+            {nonChatContent}
+          </div>
+        </>
       )}
     </div>
   )

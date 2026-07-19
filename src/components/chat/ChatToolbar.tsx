@@ -427,10 +427,7 @@ export const ChatToolbar = memo(function ChatToolbar({
 
       <div className="@container flex justify-start px-4 py-2 md:px-6">
         <div className="inline-flex max-w-full flex-nowrap items-center overflow-x-auto whitespace-nowrap bg-transparent scrollbar-hide">
-          <DockBurgerButton
-            activeMcpCount={activeMcpCount}
-            className="flex @xl:hidden"
-          />
+          <DockBurgerButton className="flex @xl:hidden" />
 
           <MobileToolbarMenu
             isDisabled={false}
@@ -485,7 +482,6 @@ export const ChatToolbar = memo(function ChatToolbar({
             handleViewSavedContext={handleViewSavedContext}
             availableMcpServers={availableMcpServers}
             enabledMcpServers={enabledMcpServers}
-            activeMcpCount={activeMcpCount}
             onToggleMcpServer={onToggleMcpServer}
             prUrl={prUrl}
             prNumber={prNumber}

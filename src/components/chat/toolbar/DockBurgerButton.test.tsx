@@ -37,21 +37,19 @@ describe('DockBurgerButton', () => {
   it('hides MCP Servers on mobile', async () => {
     environment.mobile = true
     const user = userEvent.setup()
-    render(<DockBurgerButton activeMcpCount={2} />)
+    render(<DockBurgerButton />)
 
     await user.click(screen.getByRole('button', { name: /menu/i }))
 
     expect(screen.queryByRole('menuitem', { name: /mcp servers/i })).toBeNull()
   })
 
-  it('keeps MCP Servers on desktop', async () => {
+  it('hides MCP Servers on desktop', async () => {
     const user = userEvent.setup()
-    render(<DockBurgerButton activeMcpCount={2} />)
+    render(<DockBurgerButton />)
 
     await user.click(screen.getByRole('button', { name: /menu/i }))
 
-    expect(
-      screen.getByRole('menuitem', { name: /mcp servers/i })
-    ).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: /mcp servers/i })).toBeNull()
   })
 })

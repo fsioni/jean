@@ -5,7 +5,6 @@ import {
   Command,
   LayoutDashboard,
   Menu,
-  Plug,
   Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -47,8 +46,6 @@ import { CodexIcon } from '@/components/icons/CodexIcon'
 import { GrokIcon } from '@/components/icons/GrokIcon'
 
 interface DockBurgerButtonProps {
-  /** Number of enabled MCP servers; shown as a badge next to the MCP item. */
-  activeMcpCount?: number
   /** Extra classes merged onto the trigger button (e.g. responsive visibility). */
   className?: string
 }
@@ -63,7 +60,6 @@ function formatUsagePair(
 }
 
 export function DockBurgerButton({
-  activeMcpCount = 0,
   className,
 }: DockBurgerButtonProps = {}) {
   const isMobile = useIsMobile()
@@ -232,29 +228,6 @@ export function DockBurgerButton({
             <DropdownMenuShortcut>{githubShortcut}</DropdownMenuShortcut>
           )}
         </DropdownMenuItem>
-
-        {!isMobile && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() =>
-                useUIStore.getState().openPreferencesPane('mcp-servers')
-              }
-            >
-              <Plug
-                className={
-                  activeMcpCount > 0
-                    ? 'mr-2 h-4 w-4 text-emerald-600 dark:text-emerald-400'
-                    : 'mr-2 h-4 w-4'
-                }
-              />
-              MCP Servers
-              {activeMcpCount > 0 && (
-                <DropdownMenuShortcut>{activeMcpCount}</DropdownMenuShortcut>
-              )}
-            </DropdownMenuItem>
-          </>
-        )}
 
         {showUsageSection && (
           <>

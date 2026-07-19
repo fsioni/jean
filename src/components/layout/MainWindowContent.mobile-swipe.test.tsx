@@ -39,6 +39,10 @@ vi.mock('@/components/dashboard/ProjectCanvasView', () => ({
   ),
 }))
 
+vi.mock('./LeftSideBar', () => ({
+  LeftSideBar: () => <div data-testid="left-sidebar-content">Worktrees</div>,
+}))
+
 function fireTouch(
   el: Element,
   type: 'touchstart' | 'touchmove' | 'touchend',
@@ -113,12 +117,17 @@ describe('MainWindowContent mobile swipe open sidebar', () => {
       configurable: true,
     })
 
+    expect(
+      screen.getByTestId('mobile-swipe-sidebar-underlay')
+    ).toContainElement(await screen.findByTestId('left-sidebar-content'))
+
     act(() => {
       fireTouch(target, 'touchstart', 8)
       fireTouch(target, 'touchmove', 120)
     })
 
     expect(target).toHaveStyle({ transform: 'translateX(112px)' })
+    expect(screen.getByTestId('mobile-swipe-sidebar-underlay')).toBeVisible()
     expect(useUIStore.getState().leftSidebarVisible).toBe(false)
   })
 
