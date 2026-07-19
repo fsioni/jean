@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderHook, waitFor } from '@testing-library/react'
 
 const setWsConnectedMock = vi.fn()
 
@@ -107,6 +108,7 @@ describe('transport bootstrap', () => {
     vi.unstubAllGlobals()
     vi.doUnmock('./environment')
     vi.doUnmock('@tauri-apps/api/core')
+    vi.doUnmock('@tauri-apps/api/event')
     vi.doUnmock('./remote-connections')
   })
 
@@ -130,6 +132,35 @@ describe('transport bootstrap', () => {
     const sent = JSON.parse(String(ws.send.mock.calls.at(-1)?.[0]))
     ws.receive({ type: 'response', id: sent.id, data: [] })
     await request
+  })
+
+  it('keeps native menu listeners on the local shell for remote connections', async () => {
+    const tauriListen = vi.fn().mockResolvedValue(() => {
+      /* noop cleanup */
+    })
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: tauriListen }))
+    const transport = await loadRemoteNativeTransportModule()
+    const handler = vi.fn()
+
+    await transport.listenLocal('menu-quick-menu', handler)
+
+    expect(tauriListen).toHaveBeenCalledWith('menu-quick-menu', handler)
+    expect(MockWebSocket.instances).toHaveLength(0)
+  })
+
+  it('explains how to troubleshoot a reachable remote rejected by the desktop client', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Load failed'))
+    const transport = await loadRemoteNativeTransportModule()
+    const { result } = renderHook(() => transport.useWsAuthError())
+
+    transport.connectTransport()
+
+    await waitFor(() =>
+      expect(result.current).toBe(
+        "Jean could not reach the server's authentication endpoint. Check that the server is running and the URL and port are correct. If the address opens in a browser, update and restart the remote Jean server so it allows desktop connections (CORS)."
+      )
+    )
+    expect(result.current).not.toContain('secret')
   })
 
   it('routes shared native commands through the jean-core dispatcher', async () => {

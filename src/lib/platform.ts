@@ -69,7 +69,7 @@ export async function openExternal(
  * Mac native app uses ⌘, Mac web uses ⌃ (Ctrl works in browser, Cmd is intercepted).
  */
 export const getModifierSymbol = (): string => {
-  if (!isMacOS) return 'Ctrl'
+  if (!isClientMacOS) return 'Ctrl'
   return isNativeApp() ? '⌘' : '⌃'
 }
 

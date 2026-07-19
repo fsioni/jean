@@ -111,6 +111,11 @@ fn create_app_menu(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
                 .accelerator("CmdOrCtrl+M")
                 .build(app)?,
         )
+        .item(
+            &MenuItemBuilder::with_id("quick-menu", "Quick Menu")
+                .accelerator("CmdOrCtrl+Period")
+                .build(app)?,
+        )
         .separator()
         .item(&PredefinedMenuItem::minimize(app, None)?)
         .item(&PredefinedMenuItem::maximize(app, None)?)
@@ -137,6 +142,7 @@ fn install_menu_events(app: &tauri::App) {
             "toggle-terminal" => Some("menu-toggle-terminal"),
             "toggle-browser" => Some("menu-toggle-browser"),
             "magic-menu" => Some("menu-magic-menu"),
+            "quick-menu" => Some("menu-quick-menu"),
             _ => None,
         };
         if let Some(frontend_event) = frontend_event {

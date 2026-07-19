@@ -288,6 +288,18 @@ We initially tried `react-hotkeys-hook` but encountered issues in the Tauri envi
 - **Better performance** with direct DOM access
 - **Consistent behavior** across platforms
 
+### Native macOS accelerators and remote backends
+
+Some macOS shortcuts, including `Cmd+.`, can be consumed by AppKit before the
+webview receives a DOM keyboard event. Register those shortcuts as native menu
+accelerators and forward them to the frontend with a `menu-*` event.
+
+Native menu events belong to the local desktop shell. Subscribe with
+`listenLocal()` so they keep working when the application data is connected to
+a remote Jean server. Shortcut labels also use the local client platform; the
+remote server platform is only for backend capabilities and filesystem
+behavior.
+
 ## Adding New Keybindings
 
 ### Step 1: Add Action Type

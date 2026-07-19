@@ -248,6 +248,17 @@ export async function listen<T>(
   return wsTransport.listen<T>(event, handler)
 }
 
+/** Listen for events emitted by the local desktop shell, even when connected
+ * to a remote Jean backend. Browser clients have no local shell. */
+export async function listenLocal<T>(
+  event: string,
+  handler: (event: { payload: T }) => void
+): Promise<() => void> {
+  if (!isNativeApp()) return listen(event, handler)
+  const { listen: tauriListen } = await import('@tauri-apps/api/event')
+  return tauriListen<T>(event, handler)
+}
+
 /**
  * Request buffered terminal events from the backend. Used by browser-mode
  * terminal reattachment after a full page refresh, when in-memory sequence
@@ -541,7 +552,9 @@ class WsTransport {
       }
     } catch {
       if (getActiveRemoteConnection()) {
-        this.setAuthError('Unable to connect to the selected Jean server.')
+        this.setAuthError(
+          "Jean could not reach the server's authentication endpoint. Check that the server is running and the URL and port are correct. If the address opens in a browser, update and restart the remote Jean server so it allows desktop connections (CORS)."
+        )
         return
       }
       // The initial page load may race server startup. Retry connecting until
