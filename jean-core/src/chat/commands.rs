@@ -28,7 +28,7 @@ use crate::projects::github_issues::{
     add_issue_reference, add_pr_reference, get_session_issue_refs, get_session_pr_refs,
 };
 use crate::projects::storage::load_projects_data;
-use crate::projects::types::SessionType;
+use crate::projects::types::{SessionType, Worktree};
 
 const QUEUE_DEFAULT_ALLOWED_TOOLS: [&str; 4] = ["Bash(git:*)", "Read", "Glob", "Grep"];
 const IMAGE_ONLY_DEFAULT_PROMPT: &str = "Please check this image and tell me what is wrong.";
@@ -78,6 +78,18 @@ static BACKEND_QUEUE_DRAINING: Lazy<Mutex<HashSet<String>>> =
 /// pass the check and spawn duplicate runs. This claim is taken atomically at
 /// `send_chat_message` entry and held for the whole call.
 static ACTIVE_SENDS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+fn should_auto_name_branch(worktree: Option<&Worktree>) -> bool {
+    worktree
+        .map(|worktree| {
+            worktree.session_type != SessionType::Base
+                && worktree.pr_number.is_none()
+                // Existing-branch worktrees record that branch as their own base.
+                // Its user-selected name must be preserved.
+                && worktree.base_branch.as_deref() != Some(worktree.branch.as_str())
+        })
+        .unwrap_or(true)
+}
 
 /// RAII claim on a session's send slot — released on drop (any return path).
 struct SendClaim(String);
@@ -2464,23 +2476,13 @@ pub async fn send_chat_message(
     // Spawn unified naming task if either condition is met
     if is_first_worktree_message || is_first_session_message {
         if let Ok(prefs) = crate::load_preferences(app.clone()).await {
-            // Check if this is a base session or PR worktree - don't rename the branch
+            // Preserve branches selected by the user, base sessions, and PR worktrees.
             let worktree_record = load_projects_data(&app)
                 .ok()
                 .and_then(|data| data.find_worktree(&worktree_id).cloned());
-            let is_base_session = worktree_record
-                .as_ref()
-                .map(|w| w.session_type == SessionType::Base)
-                .unwrap_or(false);
-            let is_pr_worktree = worktree_record
-                .as_ref()
-                .map(|w| w.pr_number.is_some())
-                .unwrap_or(false);
-
             let generate_branch = is_first_worktree_message
                 && prefs.auto_branch_naming
-                && !is_base_session
-                && !is_pr_worktree;
+                && should_auto_name_branch(worktree_record.as_ref());
             let generate_session = is_first_session_message && prefs.auto_session_naming;
 
             if generate_branch || generate_session {
@@ -9281,6 +9283,35 @@ pub async fn answer_opencode_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn naming_test_worktree(branch: &str, base_branch: Option<&str>) -> Worktree {
+        serde_json::from_value(serde_json::json!({
+            "id": "worktree-id",
+            "project_id": "project-id",
+            "name": branch,
+            "path": "/tmp/worktree",
+            "branch": branch,
+            "base_branch": base_branch,
+            "created_at": 0,
+            "session_type": "worktree",
+            "order": 0
+        }))
+        .expect("deserialize naming test worktree")
+    }
+
+    #[test]
+    fn existing_branch_worktree_is_not_automatically_renamed() {
+        let worktree = naming_test_worktree("existing-feature", Some("existing-feature"));
+
+        assert!(!should_auto_name_branch(Some(&worktree)));
+    }
+
+    #[test]
+    fn newly_created_branch_can_still_be_automatically_named() {
+        let worktree = naming_test_worktree("random-workspace", Some("main"));
+
+        assert!(should_auto_name_branch(Some(&worktree)));
+    }
 
     #[test]
     fn codex_reasoning_effort_preserves_new_model_levels() {
