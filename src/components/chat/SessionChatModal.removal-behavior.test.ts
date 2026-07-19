@@ -72,9 +72,8 @@ describe('SessionChatModal removal behavior', () => {
     const source = readSource('src/components/chat/SessionChatModal.tsx')
 
     expect(source).toMatch(
-      /sessions\.some\(\s*session => session\.id === activeSessionId\s*\)/
+      /resolveModalSessionId\(\s*activeSessionId,\s*sessions\.map\(session => session\.id\)\s*\)/
     )
-    expect(source).toContain('sessions[0]?.id ?? null')
   })
 
   it('keeps a yellow background on waiting session tabs', () => {
