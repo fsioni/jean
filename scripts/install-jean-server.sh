@@ -4,8 +4,10 @@
 # Examples:
 #   curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash
 #   sudo ./scripts/install-jean-server.sh --host 0.0.0.0 --port 3456
+#   sudo ./scripts/install-jean-server.sh --host tailscale --port 3456
 #   ./scripts/install-jean-server.sh --user-install --host 127.0.0.1
 #   sudo ./scripts/install-jean-server.sh --version v0.1.66 --token "$JEAN_TOKEN"
+#   sudo ./scripts/install-jean-server.sh -y   # non-interactive (localhost:3456)
 #   sudo ./scripts/install-jean-server.sh --uninstall
 #
 # Environment overrides (same names as flags when useful):
@@ -17,8 +19,9 @@ set -euo pipefail
 
 REPO="${JEAN_REPO:-coollabsio/jean}"
 VERSION="${JEAN_VERSION:-latest}"
-HOST="${JEAN_HOST:-127.0.0.1}"
-PORT="${JEAN_PORT:-3456}"
+# Empty until flags/env/prompt resolve them; defaults applied later.
+HOST="${JEAN_HOST:-}"
+PORT="${JEAN_PORT:-}"
 TOKEN="${JEAN_TOKEN:-}"
 INSTALL_PATH="${JEAN_SERVER_INSTALL_PATH:-}"
 SERVICE_NAME="${JEAN_SERVER_SERVICE:-jean-server}"
@@ -28,6 +31,9 @@ DATA_DIR="${JEAN_SERVER_DATA_DIR:-}"
 GITHUB_API="${GITHUB_API:-https://api.github.com}"
 GITHUB_DOWNLOAD="${GITHUB_DOWNLOAD:-https://github.com}"
 
+DEFAULT_HOST="127.0.0.1"
+DEFAULT_PORT="3456"
+
 USER_INSTALL=0
 NO_SERVICE=0
 START=1
@@ -36,6 +42,12 @@ ASSUME_YES=0
 UNINSTALL=0
 LOCAL_TARBALL=""
 PRINT_TOKEN=1
+HOST_EXPLICIT=0
+PORT_EXPLICIT=0
+
+# Treat env overrides as explicit (skip interactive prompts for those values).
+if [[ -n "${JEAN_HOST:-}" ]]; then HOST_EXPLICIT=1; fi
+if [[ -n "${JEAN_PORT:-}" ]]; then PORT_EXPLICIT=1; fi
 
 usage() {
   cat <<'EOF'
@@ -44,10 +56,19 @@ Usage: install-jean-server.sh [options]
 Install jean-server (Linux amd64/arm64), write an env file, and register systemd
 (or print an OpenRC unit when systemd is unavailable).
 
+When run interactively (TTY available and not -y), the installer asks which
+interface to bind to (localhost, all interfaces, LAN IP, Tailscale, or custom)
+and which port to use, unless --host / --port / JEAN_HOST / JEAN_PORT are set.
+
 Options:
   --version <tag|latest>   Release tag (default: latest). Example: v0.1.66
-  --host <addr>            Bind address (default: 127.0.0.1)
-  --port <port>            Listen port (default: 3456)
+  --host <addr|preset>     Bind address or preset (skips interface prompt):
+                             127.0.0.1 | localhost  — loopback only (default)
+                             0.0.0.0 | all | public — all interfaces
+                             lan | primary          — primary LAN IPv4
+                             tailscale | ts         — Tailscale IPv4
+                             <ip or hostname>       — exact bind address
+  --port <port>            Listen port (default: 3456; skips port prompt)
   --token <token>          Auth token (default: auto-generate)
   --no-token               Disable token auth (unsafe on public binds)
   --install-path <path>    Binary path (default: /usr/local/bin/jean-server,
@@ -64,7 +85,7 @@ Options:
   --no-start               Do not start the service after install
   --no-enable              Do not enable the service at boot
   --uninstall              Remove binary, env file, and service unit
-  -y, --yes                Non-interactive (assume yes)
+  -y, --yes                Non-interactive (assume yes; use defaults / flags)
   -h, --help               Show this help
 
 Environment:
@@ -338,13 +359,247 @@ confirm() {
   [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" ]]
 }
 
+# Prefer /dev/tty so curl|bash installs can still prompt when a terminal is attached.
+can_prompt() {
+  [[ "$ASSUME_YES" != "1" ]] && [[ -r /dev/tty ]] && [[ -w /dev/tty ]]
+}
+
+prompt_read() {
+  # usage: prompt_read VAR "prompt text"
+  local __var="$1"
+  local __prompt="$2"
+  local __value=""
+  if [[ -r /dev/tty ]]; then
+    # shellcheck disable=SC2162
+    read -r -p "$__prompt" __value </dev/tty || true
+  else
+    # shellcheck disable=SC2162
+    read -r -p "$__prompt" __value || true
+  fi
+  printf -v "$__var" '%s' "$__value"
+}
+
+is_wildcard_bind() {
+  case "$1" in
+    0.0.0.0|::|\*|all|public) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_loopback_bind() {
+  case "$1" in
+    127.0.0.1|::1|localhost) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_port() {
+  local p="$1"
+  [[ "$p" =~ ^[0-9]+$ ]] || return 1
+  ((10#$p >= 1 && 10#$p <= 65535))
+}
+
+# Primary non-loopback IPv4 used for outbound traffic (LAN/public interface).
+detect_lan_ipv4() {
+  local ip=""
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(
+      ip -4 route get 1.1.1.1 2>/dev/null \
+        | awk '{
+            for (i = 1; i <= NF; i++) {
+              if ($i == "src") { print $(i + 1); exit }
+            }
+          }'
+    )"
+  fi
+  if [[ -z "$ip" ]] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  # Reject loopback / empty
+  if [[ -n "$ip" ]] && ! is_loopback_bind "$ip"; then
+    echo "$ip"
+  fi
+}
+
+detect_tailscale_ipv4() {
+  local ip=""
+  if command -v tailscale >/dev/null 2>&1; then
+    ip="$(tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  fi
+  if [[ -z "$ip" ]] && command -v ip >/dev/null 2>&1; then
+    ip="$(
+      ip -4 -o addr show dev tailscale0 2>/dev/null \
+        | awk '{print $4}' \
+        | cut -d/ -f1 \
+        | head -n1
+    )"
+  fi
+  # Tailscale CGNAT is 100.64.0.0/10
+  if [[ -n "$ip" && "$ip" =~ ^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\. ]]; then
+    echo "$ip"
+    return
+  fi
+  if [[ -n "$ip" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "$ip"
+  fi
+}
+
+format_host_for_url() {
+  local h="$1"
+  if [[ "$h" == *:* && "$h" != \[* ]]; then
+    echo "[${h}]"
+  else
+    echo "$h"
+  fi
+}
+
+resolve_host_preset() {
+  # Resolve symbolic presets / aliases to a concrete bind address.
+  # Prints the resolved host on stdout.
+  local raw="$1"
+  local lower resolved
+  lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    ""|localhost|loopback|local-only)
+      echo "127.0.0.1"
+      ;;
+    127.0.0.1|::1)
+      echo "$raw"
+      ;;
+    0.0.0.0|::|\*|all|any|public|everywhere)
+      # Keep IPv6 wildcard if the user typed it; map aliases to IPv4 any.
+      if [[ "$raw" == "::" ]]; then
+        echo "::"
+      else
+        echo "0.0.0.0"
+      fi
+      ;;
+    lan|primary)
+      resolved="$(detect_lan_ipv4 || true)"
+      [[ -n "$resolved" ]] || die "Could not detect a LAN IPv4 address. Pass --host <ip> explicitly."
+      echo "$resolved"
+      ;;
+    tailscale|ts|tailnet)
+      resolved="$(detect_tailscale_ipv4 || true)"
+      [[ -n "$resolved" ]] || die "Could not detect a Tailscale IPv4 address (is Tailscale up?). Pass --host <ip> or install/run tailscale."
+      echo "$resolved"
+      ;;
+    *)
+      # Treat as a literal IP or hostname.
+      echo "$raw"
+      ;;
+  esac
+}
+
+prompt_bind_settings() {
+  # Interactive host/port selection. Only runs when values were not pre-set.
+  local lan_ip ts_ip choice custom default_choice port_in
+  local -a menu_labels=()
+  local -a menu_values=()
+
+  if [[ "$HOST_EXPLICIT" == "1" && "$PORT_EXPLICIT" == "1" ]]; then
+    return
+  fi
+
+  if ! can_prompt; then
+    # Non-interactive path: defaults unless already set.
+    if [[ "$HOST_EXPLICIT" != "1" || -z "$HOST" ]]; then
+      HOST="$DEFAULT_HOST"
+      HOST_EXPLICIT=1
+    fi
+    if [[ "$PORT_EXPLICIT" != "1" || -z "$PORT" ]]; then
+      PORT="$DEFAULT_PORT"
+      PORT_EXPLICIT=1
+    fi
+    return
+  fi
+
+  lan_ip="$(detect_lan_ipv4 || true)"
+  ts_ip="$(detect_tailscale_ipv4 || true)"
+
+  if [[ "$HOST_EXPLICIT" != "1" || -z "$HOST" ]]; then
+    echo
+    log "Choose which interface jean-server should bind to"
+    echo "  Jean will listen only on the address you pick."
+    echo "  Use \"all interfaces\" to accept LAN/public connections (token auth stays on)."
+    echo
+
+    menu_labels+=("Localhost only (127.0.0.1) — this machine only [default]")
+    menu_values+=("127.0.0.1")
+
+    menu_labels+=("All interfaces (0.0.0.0) — LAN / public IP / port-forward")
+    menu_values+=("0.0.0.0")
+
+    if [[ -n "$lan_ip" ]]; then
+      menu_labels+=("Primary LAN address (${lan_ip})")
+      menu_values+=("$lan_ip")
+    fi
+
+    if [[ -n "$ts_ip" ]]; then
+      menu_labels+=("Tailscale (${ts_ip})")
+      menu_values+=("$ts_ip")
+    else
+      menu_labels+=("Tailscale (not detected — pick to retry / error)")
+      menu_values+=("tailscale")
+    fi
+
+    menu_labels+=("Custom IP or hostname")
+    menu_values+=("custom")
+
+    local i
+    for i in "${!menu_labels[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${menu_labels[$i]}"
+    done
+    echo
+
+    default_choice=1
+    prompt_read choice "Bind interface [${default_choice}]: "
+    choice="${choice:-$default_choice}"
+
+    if [[ ! "$choice" =~ ^[0-9]+$ ]] || ((choice < 1 || choice > ${#menu_values[@]})); then
+      die "Invalid choice: ${choice}"
+    fi
+
+    HOST="${menu_values[$((choice - 1))]}"
+    if [[ "$HOST" == "custom" ]]; then
+      prompt_read custom "Enter bind IP or hostname: "
+      custom="$(printf '%s' "$custom" | tr -d '[:space:]')"
+      [[ -n "$custom" ]] || die "Bind address cannot be empty"
+      HOST="$custom"
+    fi
+    HOST="$(resolve_host_preset "$HOST")"
+    HOST_EXPLICIT=1
+    log "Bind address: ${HOST}"
+  fi
+
+  if [[ "$PORT_EXPLICIT" != "1" || -z "$PORT" ]]; then
+    prompt_read port_in "Listen port [${DEFAULT_PORT}]: "
+    port_in="${port_in:-$DEFAULT_PORT}"
+    port_in="$(printf '%s' "$port_in" | tr -d '[:space:]')"
+    validate_port "$port_in" || die "Invalid port: ${port_in} (need 1-65535)"
+    PORT="$port_in"
+    PORT_EXPLICIT=1
+    log "Listen port: ${PORT}"
+  fi
+}
+
 # --- parse args ---
 NO_TOKEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
-    --host) HOST="$2"; shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
+    --host)
+      [[ $# -ge 2 ]] || die "--host requires an address or preset"
+      HOST="$2"
+      HOST_EXPLICIT=1
+      shift 2
+      ;;
+    --port)
+      [[ $# -ge 2 ]] || die "--port requires a port number"
+      PORT="$2"
+      PORT_EXPLICIT=1
+      shift 2
+      ;;
     --token) TOKEN="$2"; shift 2 ;;
     --no-token) NO_TOKEN=1; shift ;;
     --install-path) INSTALL_PATH="$2"; shift 2 ;;
@@ -398,8 +653,17 @@ need_cmd curl
 need_cmd tar
 need_cmd uname
 
+# Resolve bind host/port (interactive menu, presets, or defaults).
+prompt_bind_settings
+if [[ "$HOST_EXPLICIT" == "1" && -n "$HOST" ]]; then
+  HOST="$(resolve_host_preset "$HOST")"
+fi
+HOST="${HOST:-$DEFAULT_HOST}"
+PORT="${PORT:-$DEFAULT_PORT}"
+validate_port "$PORT" || die "Invalid port: ${PORT} (need 1-65535)"
+
 # Validate host/token safety similar to jean-server
-if [[ "$NO_TOKEN" == "1" ]] && [[ "$HOST" == "0.0.0.0" || "$HOST" == "::" ]]; then
+if [[ "$NO_TOKEN" == "1" ]] && is_wildcard_bind "$HOST"; then
   die "Refusing --no-token with public bind host ${HOST}. Use a token or bind to 127.0.0.1."
 fi
 
@@ -526,31 +790,42 @@ fi
 
 # Health probe (best-effort)
 HEALTH_HOST="$HOST"
-if [[ "$HEALTH_HOST" == "0.0.0.0" || "$HEALTH_HOST" == "::" ]]; then
+if is_wildcard_bind "$HEALTH_HOST"; then
   HEALTH_HOST="127.0.0.1"
 fi
+
 if [[ "$START" == "1" && "$NO_SERVICE" != "1" ]]; then
   sleep 1
   if command -v curl >/dev/null 2>&1; then
-    if curl -fsS --max-time 3 "http://${HEALTH_HOST}:${PORT}/healthz" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "http://$(format_host_for_url "$HEALTH_HOST"):${PORT}/healthz" >/dev/null 2>&1; then
       log "Health check OK on port ${PORT}"
     else
-      warn "Health check did not succeed yet (service may still be starting). Try: curl http://${HEALTH_HOST}:${PORT}/readyz"
+      warn "Health check did not succeed yet (service may still be starting). Try: curl http://$(format_host_for_url "$HEALTH_HOST"):${PORT}/readyz"
     fi
   fi
 fi
 
-DISPLAY_HOST="$HOST"
-if [[ "$DISPLAY_HOST" == "0.0.0.0" || "$DISPLAY_HOST" == "::" ]]; then
-  DISPLAY_HOST="<server-ip>"
+# Build a useful list of URLs to print after install.
+DISPLAY_HOSTS=()
+if is_wildcard_bind "$HOST"; then
+  DISPLAY_HOSTS+=("127.0.0.1")
+  lan_display="$(detect_lan_ipv4 || true)"
+  ts_display="$(detect_tailscale_ipv4 || true)"
+  [[ -n "$lan_display" ]] && DISPLAY_HOSTS+=("$lan_display")
+  [[ -n "$ts_display" ]] && DISPLAY_HOSTS+=("$ts_display")
+  # Fallback placeholder if we could not detect any non-loopback address.
+  if [[ ${#DISPLAY_HOSTS[@]} -eq 1 ]]; then
+    DISPLAY_HOSTS+=("<server-ip>")
+  fi
+else
+  DISPLAY_HOSTS+=("$HOST")
 fi
 
 echo
 log "jean-server installed"
 echo "  binary : ${INSTALL_PATH}"
 echo "  env    : ${ENV_FILE}"
-echo "  host   : ${HOST}"
-echo "  port   : ${PORT}"
+echo "  bind   : ${HOST}:${PORT}"
 if [[ "$NO_TOKEN" == "1" ]]; then
   echo "  token  : (disabled)"
 elif [[ "$PRINT_TOKEN" == "1" ]]; then
@@ -561,10 +836,13 @@ else
 fi
 echo
 echo "Open Web Access:"
-echo "  http://${DISPLAY_HOST}:${PORT}/"
-if [[ "$NO_TOKEN" != "1" && "$PRINT_TOKEN" == "1" ]]; then
-  echo "  http://${DISPLAY_HOST}:${PORT}/?token=${TOKEN}"
-fi
+for dh in "${DISPLAY_HOSTS[@]}"; do
+  url_host="$(format_host_for_url "$dh")"
+  echo "  http://${url_host}:${PORT}/"
+  if [[ "$NO_TOKEN" != "1" && "$PRINT_TOKEN" == "1" ]]; then
+    echo "  http://${url_host}:${PORT}/?token=${TOKEN}"
+  fi
+done
 echo
 echo "Useful commands:"
 if [[ "$USER_INSTALL" == "1" ]]; then

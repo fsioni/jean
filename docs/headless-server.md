@@ -41,7 +41,19 @@ server. Re-run `bun run build` before compiling whenever frontend code changes.
 ## Install on a server (release binary + systemd)
 
 Use the production installer to download the latest `jean-server` release,
-install the binary, write an env file, and register a systemd service:
+install the binary, write an env file, and register a systemd service.
+
+**Interactive (recommended on a real terminal):** without `-y` / `--host` /
+`--port`, the installer asks which interface to bind to (localhost, all
+interfaces, primary LAN IP, Tailscale if detected, or a custom address) and
+which port to use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash
+```
+
+**Non-interactive:** pass `-y` and optionally predefine bind settings via flags
+or env (`JEAN_HOST`, `JEAN_PORT`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash -s -- -y
@@ -63,6 +75,12 @@ sudo ./scripts/install-jean-server.sh \
   --token "$(openssl rand -base64 32)" \
   -y
 
+# Bind only on the machine's Tailscale IP (auto-detected)
+sudo ./scripts/install-jean-server.sh --host tailscale --port 3456 -y
+
+# Bind only on the primary LAN IPv4
+sudo ./scripts/install-jean-server.sh --host lan -y
+
 # Install as the current user (user systemd unit under ~/.config/systemd/user)
 ./scripts/install-jean-server.sh --user-install --host 127.0.0.1 -y
 
@@ -73,6 +91,10 @@ sudo ./scripts/install-jean-server.sh --version v0.1.66 -y
 sudo ./scripts/install-jean-server.sh --no-service -y
 ```
 
+`--host` accepts a concrete address or presets: `localhost` / `127.0.0.1`,
+`all` / `public` / `0.0.0.0`, `lan` / `primary`, `tailscale` / `ts`, or any IP
+or hostname.
+
 Defaults:
 
 | Item        | System install                 | `--user-install`                        |
@@ -80,7 +102,7 @@ Defaults:
 | Binary      | `/usr/local/bin/jean-server`   | `~/.local/bin/jean-server`              |
 | Env file    | `/etc/jean-server.env`         | `~/.config/jean-server/jean-server.env` |
 | Service     | `jean-server.service` (system) | `jean-server.service` (user)            |
-| Host / port | `127.0.0.1:3456`               | same                                    |
+| Host / port | `127.0.0.1:3456` (or prompted) | same                                    |
 | Token       | auto-generated (printed once)  | same                                    |
 
 Re-running the installer reuses an existing `JEAN_TOKEN` from the env file unless

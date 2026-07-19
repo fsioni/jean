@@ -86,6 +86,14 @@ no desktop window, GTK, or WebView required. Linux **amd64** and **arm64** only
 
 ### Install (release binary + systemd)
 
+Interactive install (prompts for bind interface + port when a TTY is available):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash
+```
+
+Non-interactive (defaults to `127.0.0.1:3456`, or pass `--host` / `--port`):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coollabsio/jean/main/scripts/install-jean-server.sh | sudo bash -s -- -y
 ```
@@ -110,6 +118,9 @@ sudo ./scripts/install-jean-server.sh \
   --token "$(openssl rand -base64 32)" \
   -y
 
+# Tailscale-only bind (auto-detect Tailscale IPv4)
+sudo ./scripts/install-jean-server.sh --host tailscale -y
+
 # Current user only (user systemd unit)
 ./scripts/install-jean-server.sh --user-install --host 127.0.0.1 -y
 ```
@@ -128,10 +139,6 @@ bind only that interface. Docker images are also published as
 
 See [docs/headless-server.md](docs/headless-server.md) for systemd details,
 reverse proxies, updates, and security notes.
-
-## Roadmap
-
-- Enhance remote web access
 
 ## Contributing
 
