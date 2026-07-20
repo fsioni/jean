@@ -139,6 +139,11 @@ jobs:
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.version != '')
     runs-on: ubuntu-latest
     steps:
+      # gh release upload needs repo context; without checkout it fails with
+      # "fatal: not a git repository" even when GH_TOKEN is set.
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download amd64 artifact
         uses: actions/download-artifact@v4
         with:
@@ -154,6 +159,7 @@ jobs:
       - name: Build and upload server-latest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
           VERSION: ${{ needs.metadata.outputs.version }}
           REPO: ${{ github.repository }}
