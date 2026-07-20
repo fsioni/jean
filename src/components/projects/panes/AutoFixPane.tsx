@@ -29,7 +29,6 @@ import {
 import { useProjects, useUpdateProjectSettings } from '@/services/projects'
 import type { ProjectAutoFixSettings } from '@/types/projects'
 import {
-  backendOptions,
   codexDefaultModelOptions,
   type CliBackend,
   modelOptions,
@@ -43,14 +42,12 @@ import {
   OPENCODE_MODEL_OPTIONS,
   PI_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
+import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { useGitHubLabels } from '@/services/github'
 import type { GitHubLabel } from '@/types/github'
 
 export const MR_ROBOT_SETTINGS_BADGE = 'Beta'
 const BACKEND_DEFAULT_MODEL_VALUE = '__backend_default__'
-const ALL_CLI_BACKENDS = backendOptions.map(
-  option => option.value
-) as CliBackend[]
 
 const DEFAULT_AUTO_FIX_SETTINGS: ProjectAutoFixSettings = {
   enabled: false,
@@ -276,6 +273,7 @@ function AutoFixBackendModelPicker({
   onChange: (backend: string, model: string | null) => void
 }) {
   const [open, setOpen] = useState(false)
+  const { installedBackends } = useInstalledBackends()
   const selectedBackend = backend as CliBackend
   const selectedModel = model ?? BACKEND_DEFAULT_MODEL_VALUE
   const modelLabel = getModelLabel(backend, model)
@@ -326,7 +324,7 @@ function AutoFixBackendModelPicker({
           selectedBackend={selectedBackend}
           selectedModel={selectedModel}
           selectedProvider={null}
-          installedBackends={ALL_CLI_BACKENDS}
+          installedBackends={installedBackends}
           customCliProfiles={[]}
           onModelChange={handleModelChange}
           onBackendModelChange={handleBackendModelChange}

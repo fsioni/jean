@@ -54,6 +54,14 @@ vi.mock('@/services/preferences', () => ({
   usePatchPreferences: () => ({ mutate: vi.fn() }),
 }))
 
+vi.mock('@/hooks/useInstalledBackends', () => ({
+  useInstalledBackends: () => ({
+    // Subset of CLI backends — uninstalled ones must not appear in the picker
+    installedBackends: ['claude', 'codex', 'cursor'],
+    isLoading: false,
+  }),
+}))
+
 vi.mock('@/services/opencode-cli', () => ({
   useAvailableOpencodeModels: () => ({ data: undefined }),
 }))
@@ -350,18 +358,18 @@ describe('AutoFixPane', () => {
     ).toHaveTextContent('Backend default')
   })
 
-  it('offers every CLI backend for planning and yolo execution', async () => {
+  it('only offers installed backends for planning and yolo execution', async () => {
     const user = userEvent.setup()
     projectsMock = [project({ auto_yolo_enabled: true })]
     renderPane()
 
-    const expectedBackends = [
-      'Claude',
-      'Codex',
+    const expectedBackends = ['Claude', 'Codex', 'Cursor']
+    const hiddenBackends = [
       'OpenCode',
-      'Cursor',
       'PI (Beta)',
       'Command Code (Beta)',
+      'Grok (Beta)',
+      'Kimi Code (Beta)',
     ]
 
     await user.click(
@@ -373,6 +381,11 @@ describe('AutoFixPane', () => {
         within(planningTabs).getByRole('tab', { name: backend })
       ).toBeInTheDocument()
     }
+    for (const backend of hiddenBackends) {
+      expect(
+        within(planningTabs).queryByRole('tab', { name: backend })
+      ).not.toBeInTheDocument()
+    }
     await user.keyboard('{Escape}')
 
     await user.click(
@@ -383,6 +396,11 @@ describe('AutoFixPane', () => {
       expect(
         within(yoloTabs).getByRole('tab', { name: backend })
       ).toBeInTheDocument()
+    }
+    for (const backend of hiddenBackends) {
+      expect(
+        within(yoloTabs).queryByRole('tab', { name: backend })
+      ).not.toBeInTheDocument()
     }
   })
 
