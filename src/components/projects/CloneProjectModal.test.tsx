@@ -17,8 +17,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 }))
 
 vi.mock('@/lib/transport', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/transport')>('@/lib/transport')
+  const actual = (await vi.importActual('@/lib/transport')) as {
+    invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+  } & Record<string, unknown>
   return {
     ...actual,
     invoke: (cmd: string, args?: Record<string, unknown>) => {
