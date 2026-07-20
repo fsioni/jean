@@ -34,6 +34,7 @@ import { isNativeApp } from '@/lib/environment'
 import { UnreadBell } from '@/components/unread/UnreadBell'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { FALLBACK_APP_VERSION } from '@/lib/app-version'
+import { applyServerUpdate } from '@/hooks/useServerUpdateCheck'
 import { LinuxWindowControls } from './LinuxWindowControls'
 import { RemoteConnectionsDialog } from '@/components/remote/RemoteConnectionsDialog'
 
@@ -199,6 +200,7 @@ export function TitleBar({
           </Tooltip>
         )}
         <CliUpdatesIndicator />
+        <ServerUpdateIndicator />
         {appVersion && <UpdateIndicator />}
         {appVersion && (
           <button
@@ -308,6 +310,44 @@ function CliUpdatesIndicator() {
         </div>
       </PopoverContent>
     </Popover>
+  )
+}
+
+function ServerUpdateIndicator() {
+  const pending = useUIStore(state => state.pendingServerUpdate)
+  if (!pending) return null
+
+  const handleClick = () => {
+    if (!pending.canUpdate) {
+      toast.info(`jean-server ${pending.latestVersion} is available`, {
+        id: 'server-update-available',
+        description:
+          pending.reason ||
+          'This host cannot self-update. Replace the binary or image manually.',
+        duration: 12_000,
+      })
+      return
+    }
+    void applyServerUpdate(pending.latestVersion)
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={handleClick}
+          className="mr-1.5 flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary hover:bg-primary/25 transition-colors cursor-pointer"
+        >
+          <ArrowUpCircle className="size-3.5" />
+          Server update
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {pending.canUpdate
+          ? `Update jean-server to v${pending.latestVersion} (currently v${pending.currentVersion})`
+          : `jean-server v${pending.latestVersion} available — ${pending.reason || 'manual update required'}`}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

@@ -60,6 +60,14 @@ export interface PendingCliUpdate {
   packageManager?: string | null
 }
 
+/** Sticky jean-server update offer for remote / Web Access clients. */
+export interface PendingServerUpdate {
+  latestVersion: string
+  currentVersion: string
+  canUpdate: boolean
+  reason?: string | null
+}
+
 export type CliLoginModalType =
   | 'claude'
   | 'gh'
@@ -164,6 +172,11 @@ interface UIState {
   pendingUpdateVersion: string | null
   /** When non-null, shows the update available modal */
   updateModalVersion: string | null
+  /**
+   * Pending jean-server update (remote / Web Access) — sticky title-bar
+   * indicator so dismissing the toast does not lose the offer.
+   */
+  pendingServerUpdate: PendingServerUpdate | null
   /** CLI updates detected — shown as badge+popover in title bar */
   availableCliUpdates: PendingCliUpdate[]
   toggleLeftSidebar: () => void
@@ -261,6 +274,7 @@ interface UIState {
   setUIStateInitialized: (initialized: boolean) => void
   setPendingUpdateVersion: (version: string | null) => void
   setUpdateModalVersion: (version: string | null) => void
+  setPendingServerUpdate: (update: PendingServerUpdate | null) => void
   setAvailableCliUpdates: (updates: PendingCliUpdate[]) => void
   dismissCliUpdateNotice: (type: PendingCliUpdate['type']) => void
   chatSearchOpen: boolean
@@ -337,6 +351,7 @@ export const useUIStore = create<UIState>()(
       uiStateInitialized: false,
       pendingUpdateVersion: null,
       updateModalVersion: null,
+      pendingServerUpdate: null,
       availableCliUpdates: [],
       chatSearchOpen: false,
       githubDashboardOpen: false,
@@ -1073,6 +1088,28 @@ export const useUIStore = create<UIState>()(
               : { updateModalVersion: version },
           undefined,
           'setUpdateModalVersion'
+        ),
+
+      setPendingServerUpdate: (update: PendingServerUpdate | null) =>
+        set(
+          state => {
+            const prev = state.pendingServerUpdate
+            if (prev === update) return state
+            if (
+              prev &&
+              update &&
+              prev.latestVersion === update.latestVersion &&
+              prev.currentVersion === update.currentVersion &&
+              prev.canUpdate === update.canUpdate &&
+              prev.reason === update.reason
+            ) {
+              return state
+            }
+            if (!prev && !update) return state
+            return { pendingServerUpdate: update }
+          },
+          undefined,
+          'setPendingServerUpdate'
         ),
 
       setAvailableCliUpdates: (updates: PendingCliUpdate[]) =>
