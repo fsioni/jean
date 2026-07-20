@@ -13,7 +13,6 @@ import {
   type ShortcutString,
 } from '@/types/keybindings'
 import { isClientMacOS } from '@/lib/platform'
-import { isNativeRemoteShell } from '@/lib/environment'
 
 // Format currently held modifiers for display
 function formatModifiersDisplay(modifiers: {
@@ -23,9 +22,7 @@ function formatModifiersDisplay(modifiers: {
   alt: boolean
 }): string {
   const isWeb =
-    typeof window !== 'undefined' &&
-    !('__TAURI_INTERNALS__' in window) &&
-    !isNativeRemoteShell()
+    typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)
   const useMacCtrl = isClientMacOS && isWeb
 
   const parts: string[] = []

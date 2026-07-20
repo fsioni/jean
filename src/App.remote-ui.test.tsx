@@ -2,9 +2,12 @@ import { screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from '@/test/test-utils'
 import type * as Environment from '@/lib/environment'
+import type * as RemoteConnections from '@/lib/remote-connections'
+import type * as Transport from '@/lib/transport'
 import App from './App'
 
-vi.mock('@/lib/remote-connections', () => ({
+vi.mock('@/lib/remote-connections', async importOriginal => ({
+  ...(await importOriginal<typeof RemoteConnections>()),
   getActiveRemoteConnection: () => ({
     id: 'remote-1',
     name: 'Build server',
@@ -23,16 +26,26 @@ vi.mock('@/lib/environment', async importOriginal => ({
   isNativeApp: () => true,
 }))
 
-vi.mock('./components/remote/RemoteWebAccessShell', () => ({
-  RemoteWebAccessShell: ({ connection }: { connection: { name: string } }) => (
-    <div>Remote UI: {connection.name}</div>
+vi.mock('@/lib/transport', async importOriginal => ({
+  ...(await importOriginal<typeof Transport>()),
+  connectTransport: vi.fn(),
+  invoke: vi.fn(async (command: string) =>
+    command === 'get_server_platform' ? 'linux' : null
   ),
+  listen: vi.fn(async () => () => undefined),
+  preloadInitialData: vi.fn(async () => null),
 }))
 
+vi.mock('./components/layout/MainWindow', () => ({
+  default: () => <div>Local Jean UI</div>,
+}))
+
+vi.mock('./hooks/use-zoom', () => ({ useZoom: vi.fn() }))
+
 describe('App remote UI', () => {
-  it('uses the server-hosted React UI for an active native remote', () => {
+  it('keeps the bundled local React UI for an active native remote', async () => {
     render(<App />)
 
-    expect(screen.getByText('Remote UI: Build server')).toBeInTheDocument()
+    expect(await screen.findByText('Local Jean UI')).toBeInTheDocument()
   })
 })

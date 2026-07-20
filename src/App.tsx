@@ -77,7 +77,6 @@ import {
   isConnectionSwitchPending,
 } from './lib/remote-connections'
 import { RemoteConnectionRecovery } from './components/remote/RemoteConnectionRecovery'
-import { RemoteWebAccessShell } from './components/remote/RemoteWebAccessShell'
 import { getStartupOnboardingAction } from './lib/startup-onboarding'
 
 interface AutoFixStoppedEvent {
@@ -129,7 +128,7 @@ function WsAuthErrorOverlay() {
   )
 }
 
-function LocalApp() {
+function App() {
   const webBackend = usesWebSocketBackend()
   const wsAuthError = useWsAuthError()
   // Track preloading state for web view
@@ -1257,22 +1256,6 @@ function LocalApp() {
       </ThemeProvider>
     </ErrorBoundary>
   )
-}
-
-function App() {
-  const remoteConnection = isNativeApp() ? getActiveRemoteConnection() : null
-
-  if (remoteConnection) {
-    return (
-      <ErrorBoundary>
-        <ThemeProvider>
-          <RemoteWebAccessShell connection={remoteConnection} />
-        </ThemeProvider>
-      </ErrorBoundary>
-    )
-  }
-
-  return <LocalApp />
 }
 
 export default App

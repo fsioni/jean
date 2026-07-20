@@ -395,7 +395,6 @@ pub fn run() {
             browser::browser_get_url,
             browser::browser_close,
             browser::browser_report_title,
-            browser::browser_eval,
             browser::browser_enable_grab,
             browser::browser_report_grab_context,
             browser::get_active_browser_tabs,

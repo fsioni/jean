@@ -142,13 +142,11 @@ Additional systems (no dedicated docs yet):
   panel/side/drawer and modal terminals survive a full browser refresh. Three
   pieces cooperate:
 
-  **Native remote UI.** When the desktop shell selects a remote Jean, it keeps
-  a minimal local title bar for connection recovery and loads that server's Web
-  Access React build in a `browser-*` child WebView. The child WebView is covered
-  by the empty `browser-pane` capability, so remote content receives no Jean
-  Tauri IPC permissions. HTTP(S) serves the UI assets and WebSocket carries
-  backend commands and events. The `jean_native_shell=1` query marker hides the
-  redundant Web Access title bar inside the child view.
+  **Native remote UI.** When the desktop app selects a remote Jean, it keeps
+  running its bundled React UI and routes shared backend commands and events to
+  that server over authenticated HTTP/WebSocket transport. Local shell
+  operations such as clipboard access, external URL opening, native menus, and
+  notifications continue to use the local Tauri runtime.
 
   When an established WebSocket disconnects, the frontend reloads the page
   instead of repairing stale in-memory state. The normal

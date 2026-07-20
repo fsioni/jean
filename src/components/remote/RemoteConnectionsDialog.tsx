@@ -28,10 +28,8 @@ const EMPTY_FORM = { name: '', url: '', token: '' }
 
 export function RemoteConnectionsDialog({
   reloadApp = () => window.location.reload(),
-  onOpenChange,
 }: {
   reloadApp?: () => void
-  onOpenChange?: (open: boolean) => void
 }) {
   const connections = useRemoteConnections()
   const activeId = getActiveConnectionId()
@@ -44,7 +42,6 @@ export function RemoteConnectionsDialog({
   useEffect(() => {
     const handleOpen = (event: Event) => {
       setOpen(true)
-      onOpenChange?.(true)
       const id = (event as CustomEvent<{ id?: string }>).detail?.id
       const connection = connections.find(item => item.id === id)
       if (connection) {
@@ -60,7 +57,7 @@ export function RemoteConnectionsDialog({
     window.addEventListener('open-remote-connections', handleOpen)
     return () =>
       window.removeEventListener('open-remote-connections', handleOpen)
-  }, [connections, onOpenChange])
+  }, [connections])
 
   const beginAdd = () => {
     setEditingId('new')
@@ -120,13 +117,7 @@ export function RemoteConnectionsDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={nextOpen => {
-        setOpen(nextOpen)
-        onOpenChange?.(nextOpen)
-      }}
-    >
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           aria-label="Jean connections"

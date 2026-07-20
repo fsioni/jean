@@ -14,18 +14,10 @@ import { getActiveRemoteConnection } from './remote-connections'
  * for backend-side desktop features (Finder, external editors, etc.).
  */
 
-/** Web Access rendered inside the restricted child WebView of a native shell. */
-export const isNativeRemoteShell = (): boolean =>
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location?.search ?? '').get(
-    'jean_native_shell'
-  ) === '1'
-
 /** Running inside the native Tauri desktop app with usable IPC.
  * Some mobile/web shells can expose a partial `__TAURI_INTERNALS__` object
  * without `invoke`; those must use the WebSocket transport instead. */
 export const isNativeApp = (): boolean =>
-  !isNativeRemoteShell() &&
   typeof window !== 'undefined' &&
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeof (window as any).__TAURI_INTERNALS__?.invoke === 'function'

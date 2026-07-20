@@ -289,11 +289,10 @@ Nothing is installed in the background — apply only runs after you click
 In the desktop app, click the server icon in the title bar, choose **Add
 remote**, and enter either the full Web Access URL (including `?token=...`) or
 the server URL and token separately. Selecting the remote switches the entire
-Jean UI to the React build served by that server. The native app keeps only a
-small local title bar for connection management and renders Web Access in a
-restricted child WebView with no Jean IPC permissions. UI assets load over
-HTTP(S); commands and events continue over WebSocket. Select **Local** from the
-same dialog to return to the desktop app's bundled UI and local backend.
+Jean backend while keeping the desktop app's bundled React UI and local native
+shell capabilities. Commands and events for the selected instance travel over
+HTTP/WebSocket. Select **Local** from the same dialog to return to the desktop
+app's local backend.
 
 Native Jean client origins are allowed automatically. HTTP and HTTPS server
 URLs are both supported; keep token authentication enabled on remote servers.

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   addRemoteConnection,
-  buildRemoteWebAccessUrl,
   clearConnectionSwitch,
   getActiveConnectionId,
   getActiveRemoteConnection,
@@ -30,19 +29,6 @@ describe('remote connections', () => {
     expect(
       parseRemoteConnectionInput('http://server.local:3456///', ' token ')
     ).toEqual({ url: 'http://server.local:3456', token: 'token' })
-  })
-
-  it('builds a remote Web Access URL for the native shell', () => {
-    expect(
-      buildRemoteWebAccessUrl({
-        id: 'remote-1',
-        name: 'Build server',
-        url: 'https://jean.example.com/base',
-        token: 'secret token',
-      })
-    ).toBe(
-      'https://jean.example.com/base?token=secret+token&jean_native_shell=1'
-    )
   })
 
   it('rejects unsupported URL schemes', () => {

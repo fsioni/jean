@@ -4,7 +4,6 @@ import {
   hasBackendTransport,
   isLocalBackend,
   isNativeApp,
-  isNativeRemoteShell,
   setWebAccessEnabled,
   setWsConnected,
 } from './environment'
@@ -21,28 +20,10 @@ const clearInternals = () => {
 
 describe('environment detection', () => {
   afterEach(() => {
-    window.history.replaceState({}, '', '/')
     clearInternals()
     setWsConnected(false)
     setWebAccessEnabled(false)
     selectConnection(LOCAL_CONNECTION_ID)
-  })
-
-  it('detects Web Access hosted inside the native remote shell', () => {
-    window.history.replaceState({}, '', '/?jean_native_shell=1')
-
-    expect(isNativeRemoteShell()).toBe(true)
-  })
-
-  it('does not treat remote Web Access as native when Tauri internals are injected', () => {
-    window.history.replaceState({}, '', '/?jean_native_shell=1')
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: { invoke: vi.fn() },
-    })
-
-    expect(isNativeApp()).toBe(false)
-    expect(isLocalBackend()).toBe(false)
   })
 
   it('does not treat partial Tauri internals as native', () => {

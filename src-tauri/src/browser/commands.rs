@@ -446,16 +446,6 @@ pub async fn browser_report_title(
     app.emit_all("browser:title", &BrowserTitleEvent { tab_id, title })
 }
 
-/// Evaluate a shell-controlled action in the restricted remote Jean WebView.
-#[tauri::command]
-pub async fn browser_eval(app: AppHandle, tab_id: String, script: String) -> Result<(), String> {
-    let label = get_label(&tab_id).ok_or_else(|| format!("tab '{tab_id}' not found"))?;
-    let webview = app
-        .get_webview(&label)
-        .ok_or_else(|| format!("webview '{label}' not found"))?;
-    webview.eval(script).map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub async fn browser_enable_grab(
     app: AppHandle,

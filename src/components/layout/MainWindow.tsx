@@ -192,7 +192,7 @@ import {
   useCreateWorktreeKeybinding,
   useWorktreeEvents,
 } from '@/services/projects'
-import { isNativeApp, isNativeRemoteShell } from '@/lib/environment'
+import { isNativeApp } from '@/lib/environment'
 import { isLinux, isWindows } from '@/lib/platform'
 
 // Left sidebar resize constraints (pixels)
@@ -212,25 +212,6 @@ function useRetainedMount(active: boolean) {
 }
 
 export function MainWindow() {
-  const nativeRemoteShell = isNativeRemoteShell()
-
-  useEffect(() => {
-    if (!nativeRemoteShell) return
-
-    const handleShellAction = (event: Event) => {
-      const action = (event as CustomEvent).detail
-      if (action === 'toggle-sidebar') {
-        useUIStore.getState().toggleLeftSidebar()
-      } else if (action === 'open-preferences') {
-        useUIStore.getState().setPreferencesOpen(true)
-      }
-    }
-
-    window.addEventListener('jean-shell-action', handleShellAction)
-    return () =>
-      window.removeEventListener('jean-shell-action', handleShellAction)
-  }, [nativeRemoteShell])
-
   useTerminalThemeSync()
   const isMaximized = useWindowMaximized()
   const toasterOffset = useToasterOffset()
@@ -517,23 +498,13 @@ export function MainWindow() {
       )}
 
       {/* Title Bar - semi-transparent overlay */}
-      {!nativeRemoteShell && (
-        <TitleBar
-          title={windowTitle}
-          className="absolute top-0 left-0 right-0"
-        />
-      )}
+      <TitleBar title={windowTitle} className="absolute top-0 left-0 right-0" />
 
       {/* Dev Mode Banner */}
       <DevModeBanner />
 
       {/* Main Content Area */}
-      <div
-        className={cn(
-          'flex flex-1 overflow-hidden',
-          !nativeRemoteShell && 'pt-8'
-        )}
-      >
+      <div className="flex flex-1 overflow-hidden pt-8">
         {/* Desktop: in-flow left sidebar (shifts layout). Only after UI state init. */}
         {!isMobile && leftSidebarVisible && isInitialized && (
           <SidebarWidthProvider value={leftSidebarSize}>
