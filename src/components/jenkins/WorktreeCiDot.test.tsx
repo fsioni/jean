@@ -22,6 +22,7 @@ function statusWith(
     previewFreshness: null,
     queue: null,
     overallStatus: 'UNKNOWN',
+    verdictSource: 'jenkins',
     checkedAt: 0,
     ...partial,
   }

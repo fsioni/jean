@@ -16,7 +16,8 @@ use tokio::sync::Notify;
 
 use super::client::JenkinsClient;
 use super::commands::{
-    assemble_status, resolve_preview_freshness, INTEGRATION_JOB, PIPELINE_JOB, PREVIEW_JOB,
+    assemble_status, fetch_pr_checks_for, resolve_preview_freshness, INTEGRATION_JOB, PIPELINE_JOB,
+    PREVIEW_JOB,
 };
 use super::parse::{self, Transition, STATUS_FAILURE, STATUS_SUCCESS};
 use super::{config, types::JenkinsWorktreeStatus};
@@ -123,8 +124,16 @@ async fn poll_cycle(
             .await
             .unwrap_or_default();
         let queue_json = client.fetch_queue().await.unwrap_or_default();
+        // One `gh` call for the whole project: the GitHub verdict that survives
+        // Jenkins' build rotation, plus each PR head (reused by the freshness
+        // probe instead of a `gh pr view` per worktree).
+        let gh_checks = fetch_pr_checks_for(app, &project.path).await;
 
-        for worktree in data.worktrees.iter().filter(|w| w.project_id == project.id) {
+        for worktree in data
+            .worktrees
+            .iter()
+            .filter(|w| w.project_id == project.id && w.archived_at.is_none())
+        {
             // v1: only track worktrees linked to a PR.
             let Some(pr_number) = worktree.pr_number else {
                 log::debug!(
@@ -135,6 +144,8 @@ async fn poll_cycle(
             };
             polled_worktrees += 1;
             let pr_id = pr_number.to_string();
+            // Cloned, not removed: two worktrees may point at the same PR.
+            let gh_check = gh_checks.get(&pr_number).cloned().unwrap_or_default();
 
             let mut status = assemble_status(
                 &client,
@@ -146,6 +157,7 @@ async fn poll_cycle(
                 Some(&pr_id),
                 Some(&worktree.branch),
                 cfg.preview_url_template.as_deref(),
+                gh_check.verdict.as_deref(),
             )
             .await;
 
@@ -155,6 +167,7 @@ async fn poll_cycle(
                 status.pr_id.as_deref(),
                 worktree.pr_number,
                 cfg.preview_url_template.as_deref(),
+                gh_check.head_sha,
             )
             .await;
 
