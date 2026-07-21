@@ -53,14 +53,14 @@ interface JeanMcpInstallResult {
 type InstallState = 'idle' | 'installing' | 'waiting' | 'success' | 'error'
 
 /** Backends that support persistent Jean MCP config install. */
-const INSTALLABLE_BACKENDS: CliBackend[] = [
+const INSTALLABLE_BACKENDS = [
   'claude',
   'codex',
   'opencode',
   'cursor',
   'grok',
   'kimi',
-]
+] as const satisfies readonly CliBackend[]
 
 const BACKEND_LABELS: Record<(typeof INSTALLABLE_BACKENDS)[number], string> = {
   claude: 'Claude',

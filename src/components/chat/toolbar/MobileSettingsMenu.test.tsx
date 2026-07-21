@@ -24,11 +24,11 @@ vi.mock('@/services/projects', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/projects')>()
   return {
     ...actual,
-    useWorktree: (...args: unknown[]) => useWorktreeMock(...args),
+    useWorktree: useWorktreeMock as typeof actual.useWorktree,
     useProjects: () => ({
       data: [{ id: 'project-1', path: '/repo', name: 'app', default_branch: 'main' }],
     }),
-    usePorts: (...args: unknown[]) => usePortsMock(...args),
+    usePorts: usePortsMock as typeof actual.usePorts,
   }
 })
 
