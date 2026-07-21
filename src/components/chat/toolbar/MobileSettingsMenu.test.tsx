@@ -4,24 +4,33 @@ import { Zap } from 'lucide-react'
 import { fireEvent, render, screen, within } from '@/test/test-utils'
 import { MobileSettingsMenu } from './MobileSettingsMenu'
 import * as platform from '@/lib/platform'
+import type * as ProjectsService from '@/services/projects'
+import type * as GitHubService from '@/services/github'
 
-const usePortsMock = vi.fn(() => ({ data: [] as Array<{
+interface PortEntry {
   port: number
   label: string
   host?: string | null
-}> }))
-const useWorktreeMock = vi.fn(() => ({
-  data: {
-    id: 'worktree-1',
-    path: '/repo/worktree',
-    branch: 'feature',
-    project_id: 'project-1',
-    base_branch: 'main',
-  },
+}
+
+// Hoisted: `vi.mock` factories are lifted above module-level consts, and
+// `@/services/projects` is imported early enough by the component graph that
+// plain consts would still be in their temporal dead zone.
+const { usePortsMock, useWorktreeMock } = vi.hoisted(() => ({
+  usePortsMock: vi.fn(() => ({ data: [] as PortEntry[] })),
+  useWorktreeMock: vi.fn(() => ({
+    data: {
+      id: 'worktree-1',
+      path: '/repo/worktree',
+      branch: 'feature',
+      project_id: 'project-1',
+      base_branch: 'main',
+    },
+  })),
 }))
 
 vi.mock('@/services/projects', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/services/projects')>()
+  const actual = await importOriginal<typeof ProjectsService>()
   return {
     ...actual,
     useWorktree: useWorktreeMock as unknown as typeof actual.useWorktree,
@@ -33,7 +42,7 @@ vi.mock('@/services/projects', async importOriginal => {
 })
 
 vi.mock('@/services/github', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/services/github')>()
+  const actual = await importOriginal<typeof GitHubService>()
   return {
     ...actual,
     useGitHubPRs: () => ({ data: [] }),
