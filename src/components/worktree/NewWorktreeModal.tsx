@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { getModifierSymbol } from '@/lib/platform'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { Zap, CircleDot, GitPullRequest, Shield, GitBranch } from 'lucide-react'
+import {
+  Zap,
+  CircleDot,
+  GitPullRequest,
+  Shield,
+  GitBranch,
+  Bot,
+} from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { LucideIcon } from 'lucide-react'
 import { useGhLogin } from '@/hooks/useGhLogin'
@@ -23,6 +30,9 @@ import { SecurityAlertsTab } from './SecurityAlertsTab'
 import { BranchesTab } from './BranchesTab'
 import { LinearIssuesTab } from './LinearIssuesTab'
 import { IssuePreviewModal } from './IssuePreviewModal'
+// --- perso/ai-pipeline ---
+import { AiPipelineTab } from './AiPipelineTab'
+// --- /perso/ai-pipeline ---
 
 export type TabId =
   | 'quick'
@@ -31,6 +41,9 @@ export type TabId =
   | 'security'
   | 'branches'
   | 'linear'
+  // --- perso/ai-pipeline ---
+  | 'pipeline'
+// --- /perso/ai-pipeline ---
 
 export interface Tab {
   id: TabId
@@ -47,6 +60,9 @@ export const TABS: Tab[] = [
   { id: 'security', label: 'Security', key: '4', icon: Shield },
   { id: 'branches', label: 'Branches', key: '5', icon: GitBranch },
   { id: 'linear', label: 'Linear', key: '6', icon: LinearIcon },
+  // --- perso/ai-pipeline ---
+  { id: 'pipeline', label: 'Pipeline IA', key: '7', icon: Bot },
+  // --- /perso/ai-pipeline ---
 ]
 
 export function NewWorktreeModal() {
@@ -353,6 +369,12 @@ export function NewWorktreeModal() {
                 searchInputRef={searchInputRef}
               />
             )}
+
+            {/* --- perso/ai-pipeline --- */}
+            {activeTab === 'pipeline' && (
+              <AiPipelineTab isActive={newWorktreeModalOpen} />
+            )}
+            {/* --- /perso/ai-pipeline --- */}
 
             {activeTab === 'branches' && (
               <BranchesTab

@@ -134,6 +134,13 @@ export function useNewWorktreeKeyboard({
           setActiveTab('linear')
           return
         }
+        // --- perso/ai-pipeline ---
+        if (key === '7') {
+          e.preventDefault()
+          setActiveTab('pipeline')
+          return
+        }
+        // --- /perso/ai-pipeline ---
       }
 
       // Quick actions shortcuts

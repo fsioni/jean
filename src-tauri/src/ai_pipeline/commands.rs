@@ -24,8 +24,8 @@ use crate::projects::git::get_github_url;
 use crate::projects::storage::load_projects_data;
 use crate::projects::types::Worktree;
 use crate::projects::{
-    assign_clickup_task_to_me, checkout_pr, get_clickup_me, get_clickup_task, load_clickup_config,
-    merge_github_pr, parse_clickup_task_id_from_branch, resolve_clickup_token,
+    assign_clickup_task_to_me, checkout_pr, create_worktree, get_clickup_me, get_clickup_task,
+    load_clickup_config, merge_github_pr, parse_clickup_task_id_from_branch, resolve_clickup_token,
     update_clickup_task_status, ClickUpTask,
 };
 
@@ -33,11 +33,23 @@ use crate::projects::{
 /// Both the queued (`to review`) and active (`in review`) review columns count.
 const REVIEW_STATUSES: &[&str] = &["to review", "in review"];
 
-/// ClickUp status the "resume" action moves a picked-up ticket to.
+/// ClickUp status marking a ticket the pipeline could not finish on its own.
+/// Such a ticket may or may not have a PR (the pipeline sometimes gives up
+/// before pushing one), so its PR is optional everywhere below.
+const STUCK_STATUS: &str = "stuck";
+
+/// ClickUp status the "resume" action moves a picked-up review ticket to.
 const IN_REVIEW_STATUS: &str = "in review";
+
+/// ClickUp status the "resume" action moves a picked-up STUCK ticket to — a
+/// human takes over where the pipeline stopped.
+const IN_PROGRESS_STATUS: &str = "in progress";
 
 /// ClickUp status the "finish" action moves the task to.
 const TO_DEPLOY_STATUS: &str = "to deploy";
+
+/// Longest branch-name suffix generated from a ticket title.
+const MAX_BRANCH_SLUG_LEN: usize = 40;
 
 // =============================================================================
 // Types (camelCase for the frontend)
@@ -67,14 +79,16 @@ pub struct AiPipelinePr {
     pub clickup_task_id: Option<String>,
 }
 
-/// A ClickUp `TO REVIEW` ticket ready to pick up (unassigned or mine), joined
-/// with its GitHub PR in the current project's repo. ClickUp drives the list
-/// (source of truth for status + assignment); the PR carries the resume target
-/// and its CI/mergeable state (CI may legitimately be red). Draft PRs are
-/// filtered out upstream (a draft means the pipeline hasn't finished).
+/// A pickable ClickUp ticket (unassigned or mine), joined with its GitHub PR in
+/// the current project's repo when there is one. ClickUp drives the list (source
+/// of truth for status + assignment); the PR carries the resume target and its
+/// CI/mergeable state (CI may legitimately be red).
+///
+/// `pr` is `None` only in the STUCK bucket: the pipeline sometimes gives up
+/// before pushing anything, and those tickets are still worth picking up.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct AiPipelineReviewTask {
+pub struct AiPipelineTask {
     pub task_id: String,
     pub name: String,
     /// ClickUp status name (e.g. `to review`).
@@ -86,8 +100,29 @@ pub struct AiPipelineReviewTask {
     /// ClickUp task URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// The matching pipeline PR in this repo (resume target).
-    pub pr: AiPipelinePr,
+    /// ClickUp tag names (`ai-done`, `ai-escalade`, …) — they say a lot about
+    /// why a ticket is where it is, so the list surfaces them.
+    pub tags: Vec<String>,
+    /// ClickUp priority (`urgent` | `high` | `normal` | `low`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Last ClickUp update, epoch milliseconds as a string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    /// The matching pipeline PR in this repo, when the pipeline pushed one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<AiPipelinePr>,
+}
+
+/// The two pickable buckets, fetched together (one `gh` call + one ClickUp
+/// round-trip serve both).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPipelineTaskLists {
+    /// `to review` / `in review` tickets whose PR is ready (non-draft).
+    pub review: Vec<AiPipelineTask>,
+    /// `stuck` tickets, with or without a PR.
+    pub stuck: Vec<AiPipelineTask>,
 }
 
 /// Outcome of one best-effort sub-step (so a partial success is still reported).
@@ -271,33 +306,102 @@ fn parse_gh_prs(value: &serde_json::Value, repo_slug: &str, label: &str) -> Vec<
     out
 }
 
-/// Build the `task_id -> PR` join map for the review list. Pure so it is
-/// unit-tested. **Draft PRs are excluded**: a draft means the pipeline hasn't
-/// finished processing the ticket, so it isn't ready to pick up. PRs without a
-/// `CU-<id>` task id can't be joined and are dropped too.
-fn pr_by_task_for_review(prs: Vec<AiPipelinePr>) -> HashMap<String, AiPipelinePr> {
-    prs.into_iter()
-        .filter(|pr| !pr.is_draft)
-        .filter_map(|pr| pr.clickup_task_id.clone().map(|id| (id, pr)))
+/// Build the `task_id -> PR` join map. Pure so it is unit-tested. PRs without a
+/// `CU-<id>` task id can't be joined and are always dropped.
+///
+/// `include_drafts` splits the two buckets: a review ticket needs a **ready**
+/// PR (a draft means the pipeline hasn't finished), while a STUCK ticket is
+/// precisely the case where the draft PR is what you want to pick up.
+fn pr_by_task(prs: &[AiPipelinePr], include_drafts: bool) -> HashMap<String, AiPipelinePr> {
+    prs.iter()
+        .filter(|pr| include_drafts || !pr.is_draft)
+        .filter_map(|pr| pr.clickup_task_id.clone().map(|id| (id, pr.clone())))
         .collect()
 }
 
-/// Review-status + (unassigned OR mine) inclusion filter. Pure so it is
-/// unit-tested. Returns `Some(assigned_to_me)` when the ticket should be shown,
-/// `None` when it must be excluded (wrong status or owned by someone else).
-fn review_inclusion(status: Option<&str>, assignee_ids: &[i64], me_id: i64) -> Option<bool> {
-    let is_review = status
-        .map(|s| REVIEW_STATUSES.iter().any(|r| s.eq_ignore_ascii_case(r)))
-        .unwrap_or(false);
-    if !is_review {
+/// Which list a pickable ticket belongs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TaskBucket {
+    /// `to review` / `in review` — the pipeline is done, waiting on a human.
+    Review,
+    /// `stuck` — the pipeline gave up; a human takes over.
+    Stuck,
+}
+
+/// Status + (unassigned OR mine) inclusion filter. Pure so it is unit-tested.
+/// Returns the bucket and whether the ticket is already mine, or `None` when it
+/// must be excluded (status we don't care about, or owned by someone else).
+fn task_inclusion(
+    status: Option<&str>,
+    assignee_ids: &[i64],
+    me_id: i64,
+) -> Option<(TaskBucket, bool)> {
+    let status = status?;
+    let bucket = if REVIEW_STATUSES
+        .iter()
+        .any(|r| status.eq_ignore_ascii_case(r))
+    {
+        TaskBucket::Review
+    } else if status.eq_ignore_ascii_case(STUCK_STATUS) {
+        TaskBucket::Stuck
+    } else {
         return None;
-    }
+    };
+
     let assigned_to_me = assignee_ids.contains(&me_id);
     let unassigned = assignee_ids.is_empty();
     if assigned_to_me || unassigned {
-        Some(assigned_to_me)
+        Some((bucket, assigned_to_me))
     } else {
         None
+    }
+}
+
+/// Slugify a ClickUp ticket name into a branch-safe suffix: lowercase ASCII
+/// words joined by `-`, truncated on a word boundary. Emojis and accents (both
+/// common in the tickets) are dropped rather than transliterated — the id in
+/// front of it is what carries the meaning. Pure so it is unit-tested.
+fn slugify_branch_suffix(name: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+
+    let mut slug = String::new();
+    for word in words {
+        if slug.is_empty() {
+            if word.len() > MAX_BRANCH_SLUG_LEN {
+                return word[..MAX_BRANCH_SLUG_LEN].to_string();
+            }
+            slug = word;
+        } else if slug.len() + 1 + word.len() <= MAX_BRANCH_SLUG_LEN {
+            slug.push('-');
+            slug.push_str(&word);
+        } else {
+            break;
+        }
+    }
+    slug
+}
+
+/// Branch name for a ticket the pipeline never pushed a PR for. Follows the
+/// same `CU-<id>-<slug>` convention as the pipeline, so every ClickUp link in
+/// Jean (worktree → task resolution, `finish`) keeps working. Pure so it is
+/// unit-tested.
+fn pipeline_branch_name(task_id: &str, task_name: &str) -> String {
+    let slug = slugify_branch_suffix(task_name);
+    if slug.is_empty() {
+        format!("CU-{task_id}")
+    } else {
+        format!("CU-{task_id}-{slug}")
     }
 }
 
@@ -489,34 +593,43 @@ async fn assign_clickup_guarded(
     Ok("Tâche auto-assignée".to_string())
 }
 
-/// Claim a ClickUp task for review when resuming a PR: self-assign (guarded),
-/// then move it to `IN REVIEW`. Returned as a single combined step. The status
-/// is only changed once the task is ours — a task owned by someone else is left
+/// Claim a ClickUp task when resuming it: self-assign (guarded), then move it to
+/// `target_status`. Returned as a single combined step. The status is only
+/// changed once the task is ours — a task owned by someone else is left
 /// untouched (the guard fails first, so we never move someone else's ticket).
-async fn claim_clickup_for_review(app: &AppHandle, task_id: &str, project_id: &str) -> StepResult {
+async fn claim_clickup_task(
+    app: &AppHandle,
+    task_id: &str,
+    project_id: &str,
+    target_status: &str,
+) -> StepResult {
     // Self-assign first; bail out (without touching the status) if it is not ours.
     let assigned = match assign_clickup_guarded(app, task_id, project_id).await {
         Ok(m) => m,
         Err(e) => return StepResult::fail(e),
     };
 
-    // Now we own it: move it into the active review column.
+    // Now we own it: move it into the target column.
     match update_clickup_task_status(
         app.clone(),
         task_id.to_string(),
-        IN_REVIEW_STATUS.to_string(),
+        target_status.to_string(),
         Some(project_id.to_string()),
     )
     .await
     {
-        Ok(_) => StepResult::ok(format!("{assigned} → IN REVIEW")),
+        Ok(_) => StepResult::ok(format!("{assigned} → {}", target_status.to_uppercase())),
         Err(e) => StepResult::fail(format!("{assigned}, mais statut non changé : {e}")),
     }
 }
 
-/// Fetch the `TO REVIEW` ClickUp tickets from every configured list (Planexpo +
-/// Sprint), deduped by id. Uses the API status filter and a client-side guard.
-async fn fetch_review_tasks(app: &AppHandle, project_id: &str) -> Result<Vec<ClickUpTask>, String> {
+/// Fetch the pickable ClickUp tickets (review columns + `stuck`) from every
+/// configured list (Planexpo + Sprint), deduped by id. Uses the API status
+/// filter and a client-side guard.
+async fn fetch_pickable_tasks(
+    app: &AppHandle,
+    project_id: &str,
+) -> Result<Vec<ClickUpTask>, String> {
     let token = resolve_clickup_token(app, Some(project_id))?;
     let config = load_clickup_config(app)?;
 
@@ -531,6 +644,14 @@ async fn fetch_review_tasks(app: &AppHandle, project_id: &str) -> Result<Vec<Cli
         );
     }
 
+    // Statuses we ask the API for, url-encoded (`statuses[]=…`).
+    let status_query: String = REVIEW_STATUSES
+        .iter()
+        .chain(std::iter::once(&STUCK_STATUS))
+        .map(|s| format!("statuses%5B%5D={}", s.replace(' ', "%20")))
+        .collect::<Vec<_>>()
+        .join("&");
+
     // Resilient: a misconfigured list (e.g. a workspace id pasted as a list id →
     // 404) must not blank the whole feature. Skip failing lists and continue;
     // only surface an error when *every* configured list failed (e.g. bad token).
@@ -539,10 +660,7 @@ async fn fetch_review_tasks(app: &AppHandle, project_id: &str) -> Result<Vec<Cli
     let mut any_ok = false;
     let mut last_err: Option<String> = None;
     for list_id in lists {
-        // Narrow the payload to the review columns; brackets/space url-encoded.
-        let path = format!(
-            "/list/{list_id}/task?statuses%5B%5D=to%20review&statuses%5B%5D=in%20review&include_closed=false"
-        );
+        let path = format!("/list/{list_id}/task?{status_query}&include_closed=false");
         match clickup_get(&token, &path).await {
             Ok(value) => {
                 any_ok = true;
@@ -590,58 +708,100 @@ pub async fn list_ai_pipeline_prs(
     Ok(parse_gh_prs(&value, &slug, &label))
 }
 
-/// List the ClickUp `TO REVIEW` tickets ready to pick up (unassigned or mine),
-/// joined with their PR in this project's repo.
+/// List the pickable ClickUp tickets (unassigned or mine) for a project, in two
+/// buckets: the review columns and the `stuck` column.
 ///
-/// ClickUp is the source of truth, but PRs still in **draft** are excluded — a
-/// draft means the pipeline hasn't finished processing the ticket, so it isn't
-/// ready to pick up. Red CI is still shown (review can act on it). Tickets whose
-/// PR is in another repo — or that have no (non-draft) PR yet — are not shown.
+/// ClickUp is the source of truth. A **review** ticket needs a ready PR in this
+/// repo — a draft means the pipeline hasn't finished, and a ticket whose PR
+/// lives in another repo isn't ours to show. Red CI is still shown (review can
+/// act on it). A **stuck** ticket is listed with or without a PR: the pipeline
+/// sometimes gives up before pushing anything, and picking those up is exactly
+/// what the bucket is for.
 #[tauri::command]
-pub async fn list_ai_pipeline_review_tasks(
+pub async fn list_ai_pipeline_tasks(
     app: AppHandle,
     project_id: String,
-) -> Result<Vec<AiPipelineReviewTask>, String> {
+) -> Result<AiPipelineTaskLists, String> {
     // This repo's pipeline PRs, keyed by their ClickUp task id (for the join).
     let config = load_ai_pipeline_config(&app)?;
     let label = config.effective_label();
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
     let value = fetch_repo_prs_json(&app, &slug)?;
-    let pr_by_task = pr_by_task_for_review(parse_gh_prs(&value, &slug, &label));
+    let prs = parse_gh_prs(&value, &slug, &label);
+    let ready_pr_by_task = pr_by_task(&prs, false);
+    let any_pr_by_task = pr_by_task(&prs, true);
 
-    // ClickUp TO-REVIEW tickets + the current user (assignment filter).
+    // Pickable ClickUp tickets + the current user (assignment filter).
     let me = get_clickup_me(app.clone(), Some(project_id.clone())).await?;
-    let tasks = fetch_review_tasks(&app, &project_id).await?;
+    let tasks = fetch_pickable_tasks(&app, &project_id).await?;
 
-    let mut items: Vec<AiPipelineReviewTask> = Vec::new();
+    let mut review: Vec<AiPipelineTask> = Vec::new();
+    let mut stuck: Vec<AiPipelineTask> = Vec::new();
     for task in tasks {
         let assignee_ids: Vec<i64> = task.assignees.iter().map(|a| a.id).collect();
         let status = task.status.as_ref().map(|s| s.status.as_str());
-        let Some(assigned_to_me) = review_inclusion(status, &assignee_ids, me.id) else {
+        let Some((bucket, assigned_to_me)) = task_inclusion(status, &assignee_ids, me.id) else {
             continue;
         };
-        // Repo scoping + resume target: keep only tickets whose PR is in this repo.
-        let Some(pr) = pr_by_task.get(&task.id).cloned() else {
-            continue;
+
+        let pr = match bucket {
+            // Repo scoping + resume target: a review ticket without a ready PR
+            // in this repo has nothing to pick up.
+            TaskBucket::Review => match ready_pr_by_task.get(&task.id) {
+                Some(pr) => Some(pr.clone()),
+                None => continue,
+            },
+            TaskBucket::Stuck => any_pr_by_task.get(&task.id).cloned(),
         };
-        items.push(AiPipelineReviewTask {
+
+        let item = AiPipelineTask {
             task_id: task.id.clone(),
             name: task.name.clone(),
             status: task.status.as_ref().map(|s| s.status.clone()),
             assigned_to_me,
             url: task.url.clone(),
+            tags: task.tags.iter().map(|t| t.name.clone()).collect(),
+            priority: task.priority.as_ref().map(|p| p.priority.clone()),
+            updated_at: task.date_updated.clone(),
             pr,
-        });
+        };
+        match bucket {
+            TaskBucket::Review => review.push(item),
+            TaskBucket::Stuck => stuck.push(item),
+        }
     }
 
-    // Mine first, then newest PR first.
-    items.sort_by(|a, b| {
+    // Mine first, then newest PR first — every review item has a PR.
+    review.sort_by(|a, b| {
         b.assigned_to_me
             .cmp(&a.assigned_to_me)
-            .then(b.pr.created_at.cmp(&a.pr.created_at))
+            .then_with(|| pr_created_at(b).cmp(pr_created_at(a)))
     });
-    Ok(items)
+    // Stuck items may have no PR, so recency comes from ClickUp (epoch ms).
+    stuck.sort_by(|a, b| {
+        b.assigned_to_me
+            .cmp(&a.assigned_to_me)
+            .then_with(|| updated_ms(b).cmp(&updated_ms(a)))
+    });
+    Ok(AiPipelineTaskLists { review, stuck })
+}
+
+/// PR creation timestamp (ISO-8601, sorts lexicographically), empty when the
+/// ticket has no PR.
+fn pr_created_at(task: &AiPipelineTask) -> &str {
+    task.pr
+        .as_ref()
+        .map(|pr| pr.created_at.as_str())
+        .unwrap_or("")
+}
+
+/// ClickUp `date_updated` as a number (the API sends epoch ms as a string).
+fn updated_ms(task: &AiPipelineTask) -> i64 {
+    task.updated_at
+        .as_deref()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
 }
 
 /// Self-assign the GitHub PR to the current user (guarded). Standalone command;
@@ -660,33 +820,80 @@ pub async fn assign_pr_to_me(
     })
 }
 
-/// Resume a pipeline PR: create a worktree from it, self-assign the GitHub PR,
-/// and claim the linked ClickUp task (self-assign + move to `IN REVIEW`). The
-/// worktree creation must succeed; the GitHub and ClickUp steps are best-effort
-/// and reported individually.
+/// Resume a pipeline ticket: get a worktree for it, self-assign the GitHub PR
+/// when there is one, and claim the linked ClickUp task (self-assign + status
+/// move). The worktree creation must succeed; the GitHub and ClickUp steps are
+/// best-effort and reported individually.
+///
+/// Two shapes, one action:
+/// - **with a PR** (`pr_number`) → `checkout_pr`, then self-assign that PR;
+/// - **without a PR** (a `stuck` ticket the pipeline never pushed) → a fresh
+///   worktree on a `CU-<id>-<slug>` branch off the project's default branch, so
+///   the ClickUp link still resolves from the branch name.
+///
+/// `target_status` defaults to `in review` with a PR (a human is reviewing the
+/// pipeline's work) and `in progress` without one (a human is doing the work).
 #[tauri::command]
-pub async fn resume_ai_pipeline_pr(
+pub async fn resume_ai_pipeline_task(
     app: AppHandle,
     project_id: String,
-    pr_number: u32,
+    task_id: String,
+    pr_number: Option<u32>,
+    target_status: Option<String>,
 ) -> Result<ResumeResult, String> {
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
 
-    // 1. Worktree from the PR (hard requirement).
-    let worktree = checkout_pr(app.clone(), project_id.clone(), pr_number).await?;
-
-    // 2. GitHub self-assign (best effort).
-    let github = match assign_pr_guarded(&app, &slug, pr_number) {
-        Ok(m) => StepResult::ok(m),
-        Err(e) => StepResult::fail(e),
+    // 1. Worktree (hard requirement) + 2. GitHub side (best effort).
+    let (worktree, github) = match pr_number {
+        Some(number) => {
+            let worktree = checkout_pr(app.clone(), project_id.clone(), number).await?;
+            let github = match assign_pr_guarded(&app, &slug, number) {
+                Ok(m) => StepResult::ok(m),
+                Err(e) => StepResult::fail(e),
+            };
+            (worktree, github)
+        }
+        None => {
+            // No PR: name the branch after the ticket so Jean's ClickUp link
+            // (and the pipeline's own convention) still resolves.
+            let task =
+                get_clickup_task(app.clone(), task_id.clone(), Some(project_id.clone())).await?;
+            let branch = pipeline_branch_name(&task_id, &task.name);
+            let worktree = create_worktree(
+                app.clone(),
+                project_id.clone(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(branch.clone()),
+                Some(true),
+                None,
+            )
+            .await?;
+            (
+                worktree,
+                StepResult::ok(format!("Aucune PR — branche {branch}")),
+            )
+        }
     };
 
-    // 3. ClickUp claim (best effort): self-assign + move to IN REVIEW, task id
-    //    from the branch convention.
-    let clickup_task_id = parse_clickup_task_id_from_branch(&worktree.branch);
+    // 3. ClickUp claim (best effort): self-assign + status move. The id comes
+    //    from the branch when there is one (the PR may belong to another
+    //    ticket than the one clicked), else from the caller.
+    let clickup_task_id = parse_clickup_task_id_from_branch(&worktree.branch).or(Some(task_id));
+    let status = target_status.unwrap_or_else(|| {
+        if pr_number.is_some() {
+            IN_REVIEW_STATUS.to_string()
+        } else {
+            IN_PROGRESS_STATUS.to_string()
+        }
+    });
     let clickup = match &clickup_task_id {
-        Some(id) => claim_clickup_for_review(&app, id, &project_id).await,
+        Some(id) => claim_clickup_task(&app, id, &project_id, &status).await,
         None => StepResult::fail("Aucune tâche ClickUp liée à la branche"),
     };
 
@@ -858,6 +1065,100 @@ mod tests {
     }
 
     #[test]
+    fn stuck_join_keeps_draft_prs() {
+        // A stuck ticket's PR is typically still a draft — that's the point.
+        let payload = serde_json::json!([
+            {
+                "number": 1,
+                "title": "draft",
+                "headRefName": "CU-aaa-draft",
+                "url": "https://github.com/Spottt/planexpo/pull/1",
+                "statusCheckRollup": [],
+                "isDraft": true,
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": []
+            }
+        ]);
+        let prs = parse_gh_prs(&payload, "Spottt/planexpo", "ai-full-flow");
+        assert!(pr_by_task(&prs, true).contains_key("aaa"));
+        assert!(!pr_by_task(&prs, false).contains_key("aaa"));
+    }
+
+    #[test]
+    fn stuck_bucket_detected_and_scoped_to_free_or_mine() {
+        assert_eq!(
+            task_inclusion(Some("stuck"), &[], 7),
+            Some((TaskBucket::Stuck, false))
+        );
+        assert_eq!(
+            task_inclusion(Some("STUCK"), &[7], 7),
+            Some((TaskBucket::Stuck, true))
+        );
+        // Someone else's stuck ticket is not ours to grab.
+        assert_eq!(task_inclusion(Some("stuck"), &[3], 7), None);
+    }
+
+    #[test]
+    fn review_and_stuck_land_in_distinct_buckets() {
+        assert_eq!(
+            task_inclusion(Some("to review"), &[], 7),
+            Some((TaskBucket::Review, false))
+        );
+        assert_eq!(
+            task_inclusion(Some("in review"), &[], 7),
+            Some((TaskBucket::Review, false))
+        );
+        assert_eq!(
+            task_inclusion(Some("stuck"), &[], 7),
+            Some((TaskBucket::Stuck, false))
+        );
+    }
+
+    #[test]
+    fn branch_name_follows_the_pipeline_convention() {
+        assert_eq!(
+            pipeline_branch_name("86canbg67", "Arrondis TTC incorrects sur les factures"),
+            "CU-86canbg67-arrondis-ttc-incorrects-sur-les-factures"
+        );
+        // The next word would blow the budget, so it is dropped whole.
+        assert_eq!(
+            pipeline_branch_name(
+                "86canbg67",
+                "Arrondis TTC incorrects sur les factures groupe"
+            ),
+            "CU-86canbg67-arrondis-ttc-incorrects-sur-les-factures"
+        );
+    }
+
+    #[test]
+    fn branch_slug_drops_emojis_and_accents() {
+        // Real ticket titles start with an emoji and are full of accents.
+        assert_eq!(
+            slugify_branch_suffix("💡 ETO je peux activer les exports"),
+            "eto-je-peux-activer-les-exports"
+        );
+        assert_eq!(slugify_branch_suffix("Événement à créer"), "v-nement-cr-er");
+    }
+
+    #[test]
+    fn branch_slug_is_bounded_and_never_ends_on_a_dash() {
+        let slug = slugify_branch_suffix(
+            "un titre vraiment tres long qui depasse largement la limite autorisee",
+        );
+        assert!(slug.len() <= MAX_BRANCH_SLUG_LEN, "slug too long: {slug}");
+        assert!(!slug.ends_with('-'));
+        // A single oversized word is truncated rather than dropped.
+        let long_word = slugify_branch_suffix(&"a".repeat(80));
+        assert_eq!(long_word.len(), MAX_BRANCH_SLUG_LEN);
+    }
+
+    #[test]
+    fn branch_name_falls_back_to_the_bare_id() {
+        // A title with nothing ASCII left must still yield a valid branch.
+        assert_eq!(pipeline_branch_name("86canbg67", "🛑 —"), "CU-86canbg67");
+    }
+
+    #[test]
     fn review_join_excludes_draft_prs() {
         // Two CU PRs in the same repo: one draft, one ready.
         let payload = serde_json::json!([
@@ -883,7 +1184,7 @@ mod tests {
             }
         ]);
         let prs = parse_gh_prs(&payload, "Spottt/planexpo", "ai-full-flow");
-        let by_task = pr_by_task_for_review(prs);
+        let by_task = pr_by_task(&prs, false);
         assert!(by_task.contains_key("bbb"), "non-draft CU PR is pickable");
         assert!(!by_task.contains_key("aaa"), "draft CU PR is hidden");
         assert_eq!(by_task.len(), 1);
@@ -980,35 +1281,40 @@ mod tests {
     }
 
     #[test]
-    fn review_includes_unassigned_review_columns() {
-        assert_eq!(review_inclusion(Some("to review"), &[], 7), Some(false));
-        assert_eq!(review_inclusion(Some("in review"), &[], 7), Some(false));
-    }
-
-    #[test]
     fn review_includes_when_assigned_to_me() {
-        assert_eq!(review_inclusion(Some("to review"), &[7], 7), Some(true));
-        assert_eq!(review_inclusion(Some("in review"), &[7], 7), Some(true));
+        assert_eq!(
+            task_inclusion(Some("to review"), &[7], 7),
+            Some((TaskBucket::Review, true))
+        );
         // mine among others
-        assert_eq!(review_inclusion(Some("to review"), &[3, 7], 7), Some(true));
+        assert_eq!(
+            task_inclusion(Some("to review"), &[3, 7], 7),
+            Some((TaskBucket::Review, true))
+        );
     }
 
     #[test]
     fn review_excludes_when_assigned_to_other() {
-        assert_eq!(review_inclusion(Some("to review"), &[3], 7), None);
-        assert_eq!(review_inclusion(Some("in review"), &[3], 7), None);
+        assert_eq!(task_inclusion(Some("to review"), &[3], 7), None);
+        assert_eq!(task_inclusion(Some("in review"), &[3], 7), None);
     }
 
     #[test]
-    fn review_excludes_non_review_status() {
-        assert_eq!(review_inclusion(Some("in progress"), &[7], 7), None);
-        assert_eq!(review_inclusion(Some("to deploy"), &[], 7), None);
-        assert_eq!(review_inclusion(None, &[], 7), None);
+    fn excludes_statuses_outside_the_pickable_columns() {
+        assert_eq!(task_inclusion(Some("in progress"), &[7], 7), None);
+        assert_eq!(task_inclusion(Some("to deploy"), &[], 7), None);
+        assert_eq!(task_inclusion(None, &[], 7), None);
     }
 
     #[test]
-    fn review_status_is_case_insensitive() {
-        assert_eq!(review_inclusion(Some("TO REVIEW"), &[], 7), Some(false));
-        assert_eq!(review_inclusion(Some("In Review"), &[], 7), Some(false));
+    fn status_matching_is_case_insensitive() {
+        assert_eq!(
+            task_inclusion(Some("TO REVIEW"), &[], 7),
+            Some((TaskBucket::Review, false))
+        );
+        assert_eq!(
+            task_inclusion(Some("In Review"), &[], 7),
+            Some((TaskBucket::Review, false))
+        );
     }
 }

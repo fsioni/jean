@@ -1,5 +1,29 @@
 # AI Pipeline PR Lifecycle — Design
 
+> **Révision 2026-07-21** — La liste devient **multi-surface et multi-colonnes** :
+>
+> - une commande unique `list_ai_pipeline_tasks` renvoie **deux buckets** :
+>   `review` (`to review`/`in review`, PR **non-draft obligatoire**) et `stuck`
+>   (statut ClickUp `stuck`, **PR optionnelle** — sur les 16 tickets STUCK
+>   observés le 2026-07-21, 6 n'avaient aucune PR et les 10 autres n'avaient
+>   qu'une PR **draft**, d'où le join distinct par bucket) ;
+> - `resume_ai_pipeline_task(project_id, task_id, pr_number?, target_status?)`
+>   remplace `resume_ai_pipeline_pr` : **avec** PR → `checkout_pr` + assignation
+>   PR + claim ClickUp (`in review`) ; **sans** PR → `create_worktree` sur une
+>   branche `CU-<id>-<slug>` (la convention pipeline, donc le lien ClickUp
+>   continue de se résoudre depuis la branche) + claim ClickUp (`in progress`) ;
+> - le **projet est épinglé** dans le sidecar (`project_id`) via
+>   `set_ai_pipeline_project`, donc les mêmes tickets s'affichent quel que soit
+>   le point d'entrée (sidebar sous Mission Control, onglet « Pipeline IA » ⌘7
+>   de New Session, palette, menu worktree) ;
+> - la reprise **ne ferme plus** la surface hôte : la ligne passe « Repris ✓ »
+>   et l'enchaînement de tickets est possible ;
+> - `stuck` est ajouté à `PLANEXPO_STATUSES`, et `ClickUpTask` porte désormais
+>   `tags` / `priority` / `date_updated` (utilisés pour le scan visuel).
+>
+> UI partagée : `AiPipelineTaskList` (modale + onglet), état par ligne rendu par
+> **icône + mot** (jamais la couleur seule).
+
 > **Révision 2026-06-23** — La Phase 1 a pivoté : **ClickUp est la source de
 > vérité**, pas l'état GitHub. Le listing montre les **tickets ClickUp en
 > `to review` OU `in review`** (les deux colonnes de review existent),
@@ -10,7 +34,6 @@
 > `CU-` (ex. self-improve `fixes`/`fix-logs`) n'est pas listé (rien à lier).
 > Vérifié sur données prod le 2026-06-23. Le reste du doc ci-dessous décrit le
 > design initial (listing PR-driven), conservé pour l'historique.
-
 
 > Feature **perso** (fork `fsioni/jean`). Ne remonte PAS chez coollabsio.
 > Worktree `feature-lifecycle`. Fork **public** → aucune URL/donnée interne en dur.
@@ -71,6 +94,7 @@ Ma surface = une **modal dédiée** + des edits minimes dans `ChatWindow`.
 ```
 
 Faits exploités :
+
 - **Les PR de la pipeline portent le label `ai-full-flow`** (autres labels vus :
   `ai-review`, `approve`, `comment`, `workflow-fail`).
 - **`branch` suit la convention `CU-<taskId>-…`** → lie déjà chaque PR à sa
@@ -97,35 +121,41 @@ Faits exploités :
 ## Réutilisé vs Ajouté
 
 ### Réutilisé tel quel (zéro modif)
-| Brique | Emplacement |
-|---|---|
-| `assign_clickup_task_to_me(task_id, project_id)` | `projects/clickup_tasks.rs` |
-| `update_clickup_task_status(task_id, status, project_id)` | `projects/clickup_tasks.rs` |
-| `resolve_clickup_task_for_worktree(worktree_id)` + `parse_clickup_task_id_from_branch` | `projects/clickup_link.rs` |
-| `get_clickup_task` / `get_clickup_me` (vérif assignation) | `projects/clickup_tasks.rs` |
-| `checkout_pr(project_id, pr_number)` → crée worktree depuis PR | `projects/commands.rs` |
-| `merge_github_pr(worktree_path)` (`gh pr merge --merge`) | `projects/commands.rs` |
-| `get_github_pr(project_path, pr_number)` (détail PR, dont `author`/`assignees`) | `projects/github_issues.rs` |
-| `resolve_gh_binary` + `silent_command` (invocation `gh`) | `gh_cli/config.rs`, `platform/process.rs` |
-| Pattern sidecar `load_sidecar`/`save_sidecar` | `projects/clickup_config.rs` |
-| Patterns UI : Dialog shadcn, `useQuery`/`useMutation`, `toast.*`, `openUrl` | `services/*`, `components/*` |
+
+| Brique                                                                                 | Emplacement                               |
+| -------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `assign_clickup_task_to_me(task_id, project_id)`                                       | `projects/clickup_tasks.rs`               |
+| `update_clickup_task_status(task_id, status, project_id)`                              | `projects/clickup_tasks.rs`               |
+| `resolve_clickup_task_for_worktree(worktree_id)` + `parse_clickup_task_id_from_branch` | `projects/clickup_link.rs`                |
+| `get_clickup_task` / `get_clickup_me` (vérif assignation)                              | `projects/clickup_tasks.rs`               |
+| `checkout_pr(project_id, pr_number)` → crée worktree depuis PR                         | `projects/commands.rs`                    |
+| `merge_github_pr(worktree_path)` (`gh pr merge --merge`)                               | `projects/commands.rs`                    |
+| `get_github_pr(project_path, pr_number)` (détail PR, dont `author`/`assignees`)        | `projects/github_issues.rs`               |
+| `resolve_gh_binary` + `silent_command` (invocation `gh`)                               | `gh_cli/config.rs`, `platform/process.rs` |
+| Pattern sidecar `load_sidecar`/`save_sidecar`                                          | `projects/clickup_config.rs`              |
+| Patterns UI : Dialog shadcn, `useQuery`/`useMutation`, `toast.*`, `openUrl`            | `services/*`, `components/*`              |
 
 ### Ajouté
+
 **Backend (Rust)** — nouveau module `src-tauri/src/ai_pipeline/` :
+
 - `config.rs` — sidecar `<app_data>/ai_pipeline/config.json` :
+
   ```rust
   struct AiPipelineConfig {
     dashboard_url: Option<String>,   // ex "https://ai-agents.planexpo"
     pipeline_label: Option<String>,  // default "ai-full-flow"
   }
   ```
-  + commandes `get_ai_pipeline_config` / `set_ai_pipeline_config`.
+
+  - commandes `get_ai_pipeline_config` / `set_ai_pipeline_config`.
+
 - `client.rs` — `reqwest` (accept invalid certs), `GET {dashboard_url}/prs`.
 - `commands.rs` :
   - `list_ai_pipeline_prs(project_id) -> Vec<AiPipelinePr>` : appelle `/prs`,
     aplatit `repos`, **filtre au repo du projet** (match `slug` ↔ remote du
     projet) et au label pipeline ; renvoie `{number,title,branch,url,ci,isDraft,
-    mergeable,labels,clickupTaskId,repoSlug}`.
+mergeable,labels,clickupTaskId,repoSlug}`.
   - `assign_pr_to_me(worktree_path) -> ()` : **NOUVEAU** —
     `gh pr edit --add-assignee @me` via `silent_command`, après avoir vérifié
     via `gh pr view --json assignees,author` que la PR n'est **pas déjà
@@ -144,6 +174,7 @@ Faits exploités :
   mutations.
 
 **Frontend (TS/React)** :
+
 - `src/types/ai-pipeline.ts` — types miroir camelCase.
 - `src/services/ai-pipeline.ts` — `useAiPipelineConfig`, `useAiPipelinePrs(projectId)`,
   `useResumeAiPipelinePr()`, `useFinishAiPipelinePr()` (mutations + invalidation
