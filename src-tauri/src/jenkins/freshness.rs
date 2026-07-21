@@ -114,16 +114,18 @@ fn sha_matches(a: &str, b: &str) -> bool {
     n >= 7 && a[..n].eq_ignore_ascii_case(&b[..n])
 }
 
-/// Resolve freshness for a PR's preview: probe `/version`, fetch the PR head,
+/// Resolve freshness for a PR's preview: probe `/version`, resolve the PR head,
 /// compare, and (only when stale) count how many commits behind.
+///
+/// `known_head_sha` is the `headRefOid` already fetched project-wide by
+/// `gh_checks`; passing it skips the per-worktree `gh pr view` subprocess. Only
+/// when it is `None` do we shell out for a single PR.
 pub async fn resolve_freshness(
     repo_path: &str,
-    // Kept for call-site symmetry with the Jenkins status pipeline; freshness is
-    // computed from `pr_number` + `/version`, so the id itself is unused here.
-    _pr_id: &str,
     pr_number: Option<u32>,
     gh_binary: PathBuf,
     version_url: &str,
+    known_head_sha: Option<String>,
 ) -> PreviewFreshness {
     let (reachable, preview_sha) = probe_preview(version_url).await;
     if !reachable {
@@ -134,7 +136,7 @@ pub async fn resolve_freshness(
     let repo = repo_path.to_string();
     let probe_sha = preview_sha.clone();
     let (head, behind_by) = tokio::task::spawn_blocking(move || {
-        let head = fetch_pr_head_sha(&repo, pr_number, &gh_binary);
+        let head = known_head_sha.or_else(|| fetch_pr_head_sha(&repo, pr_number, &gh_binary));
         let behind = match (probe_sha.as_deref(), head.as_deref()) {
             (Some(p), Some(h)) if !sha_matches(p, h) => fetch_behind_by(&repo, p, h, &gh_binary),
             _ => None,
