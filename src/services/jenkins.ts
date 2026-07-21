@@ -23,6 +23,7 @@ import {
   type UnlistenFn,
 } from '@/lib/transport'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notifications'
 import { isTauri } from '@/services/projects'
 import type {
   JenkinsFailureReport,
@@ -237,6 +238,16 @@ export function useJenkinsStatusEvents() {
           jenkinsQueryKeys.status(status.worktreeId),
           status
         )
+      })
+    )
+
+    // The core runtime is Tauri-free and cannot raise an OS banner itself, so
+    // the poller asks us to do it (build broke/recovered, preview fresh, queue).
+    unlistenPromises.push(
+      listen<{ title?: string; body?: string }>('jenkins:notify', event => {
+        const { title, body } = event.payload ?? {}
+        if (!title) return
+        void notify(title, body, { native: true })
       })
     )
 

@@ -28,10 +28,15 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat-store'
+import { convertFileSrc } from '@/lib/transport'
 
 interface MarkdownProps {
   children: string
-  /** Enable streaming mode with incomplete markdown handling */
+  /**
+   * Enable streaming mode: auto-closes incomplete markdown and skips the
+   * expensive rehype-raw HTML pass (raw HTML shows as literal text until the
+   * completed message re-renders without `streaming`).
+   */
   streaming?: boolean
   className?: string
   /** Rendering context; tool-call markdown needs a wider ordered-list gutter. */
@@ -132,6 +137,12 @@ function tableToMarkdown(data: string[][]): string {
   const separator = `| ${header.map(() => '---').join(' | ')} |`
   const bodyLines = rows.map(row => `| ${row.join(' | ')} |`)
   return [headerLine, separator, ...bodyLines].join('\n')
+}
+
+function markdownImageSrc(src: string | undefined): string | undefined {
+  if (!src) return src
+  if (/^(https?:|data:|blob:|asset:|\/api\/|#)/i.test(src)) return src
+  return convertFileSrc(src)
 }
 
 /**
@@ -386,7 +397,7 @@ const components: Components = {
   // Images
   img: ({ src, alt }) => (
     <img
-      src={src}
+      src={markdownImageSrc(src)}
       alt={alt || ''}
       className="max-w-full h-auto rounded-md my-4"
     />
@@ -434,9 +445,13 @@ const components: Components = {
     </blockquote>
   ),
 
-  // Paragraphs - more breathing room
+  // Paragraphs - more breathing room. whitespace-pre-wrap keeps single spaces
+  // visible if a stream left odd mid-token spacing; ligatures off avoids fonts
+  // visually merging fragments (Grok ACP emits many tiny word pieces).
   p: ({ children }) => (
-    <p className="my-3 leading-relaxed first:mt-0 last:mb-0">{children}</p>
+    <p className="my-3 leading-relaxed first:mt-0 last:mb-0 whitespace-pre-wrap [font-variant-ligatures:none]">
+      {children}
+    </p>
   ),
 
   // Task list checkboxes (from remark-gfm) → shadcn Checkbox for theme-aware styling
@@ -474,8 +489,13 @@ const components: Components = {
 
 const streamingComponents: Components = {
   ...components,
+  // whitespace-pre-wrap keeps mid-stream spaces visible under rapid reparse
+  // (Grok emits many tiny word fragments per frame). Ligatures off avoids
+  // fonts collapsing adjacent tokens visually while text is still settling.
   p: ({ children }) => (
-    <p className="my-0 leading-relaxed first:mt-0 last:mb-0">{children}</p>
+    <p className="my-0 leading-relaxed first:mt-0 last:mb-0 whitespace-pre-wrap [font-variant-ligatures:none]">
+      {children}
+    </p>
   ),
 }
 
@@ -494,7 +514,9 @@ const toolCallComponents: Components = {
 const toolCallStreamingComponents: Components = {
   ...toolCallComponents,
   p: ({ children }) => (
-    <p className="my-0 leading-relaxed first:mt-0 last:mb-0">{children}</p>
+    <p className="my-0 leading-relaxed first:mt-0 last:mb-0 whitespace-pre-wrap [font-variant-ligatures:none]">
+      {children}
+    </p>
   ),
 }
 
@@ -532,6 +554,13 @@ const compactComponents: Components = {
   ),
 }
 
+// Module-level plugin arrays keep references stable across renders.
+const remarkPlugins = [remarkGfm]
+// rehype-raw re-parses the full accumulated text as HTML on every render —
+// the dominant per-frame cost while streaming — so streaming mode skips it
+// and only completed (non-streaming) renders apply it.
+const rehypePlugins = [rehypeRaw]
+
 /**
  * Memoized markdown renderer to prevent expensive re-parsing
  * ReactMarkdown is expensive, so we avoid re-renders when content hasn't changed
@@ -545,8 +574,20 @@ const Markdown = memo(function Markdown({
   sessionId,
   compact = false,
 }: MarkdownProps) {
-  // Apply remend preprocessing for streaming content to auto-close incomplete markdown
-  const content = streaming ? remend(children) : children
+  // Apply remend preprocessing for streaming content to auto-close incomplete
+  // markdown. remend strips a single trailing space (incomplete-markdown
+  // heuristic) — restore it so space-bearing stream tails don't disappear
+  // mid-token when the next delta is delayed.
+  const content = streaming
+    ? (() => {
+        const hadTrailingSpace =
+          children.endsWith(' ') && !children.endsWith('  ')
+        const repaired = remend(children)
+        return hadTrailingSpace && !repaired.endsWith(' ')
+          ? `${repaired} `
+          : repaired
+      })()
+    : children
 
   const contextValue = useMemo(
     () => ({ messageId: messageId ?? null, sessionId: sessionId ?? null }),
@@ -568,8 +609,8 @@ const Markdown = memo(function Markdown({
       <MarkdownTableContext.Provider value={contextValue}>
         <ReactMarkdown
           components={componentsToUse}
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={streaming ? undefined : rehypePlugins}
         >
           {content}
         </ReactMarkdown>

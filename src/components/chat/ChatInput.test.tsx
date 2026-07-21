@@ -165,6 +165,17 @@ describe('ChatInput attachments', () => {
     expect(textarea.parentElement).toHaveClass('min-w-0')
   })
 
+  it('updates the session draft store immediately so disk saves can be debounced', () => {
+    const textarea = renderInput()
+
+    fireEvent.change(textarea, { target: { value: 'not sent yet' } })
+
+    expect(storeState.setInputDraft).toHaveBeenCalledWith(
+      'session-1',
+      'not sent yet'
+    )
+  })
+
   it('restores attachments from rich copied prompt metadata', async () => {
     const textarea = renderInput()
     const metadata: PromptAttachmentMetadata = {

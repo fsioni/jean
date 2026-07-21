@@ -29,6 +29,7 @@ import { usePiCliSetup } from '@/services/pi-cli'
 import { useCodeRabbitCliSetup } from '@/services/coderabbit-cli'
 import { useCommandCodeCliSetup } from '@/services/commandcode-cli'
 import { useGrokCliSetup } from '@/services/grok-cli'
+import { useKimiCliSetup } from '@/services/kimi-cli'
 import { logger } from '@/lib/logger'
 import {
   SetupState,
@@ -50,6 +51,7 @@ interface CliSetupInterface {
     version: string,
     options?: { onSuccess?: () => void; onError?: (error: Error) => void }
   ) => void
+  checkManualVersion?: (version: string) => Promise<boolean>
   refetchStatus: () => void
 }
 
@@ -214,6 +216,25 @@ function GrokCliReinstallModalContent({ open, onOpenChange }: ModalProps) {
   )
 }
 
+export function KimiCliReinstallModal({ open, onOpenChange }: ModalProps) {
+  if (!open) return null
+  return (
+    <KimiCliReinstallModalContent open={open} onOpenChange={onOpenChange} />
+  )
+}
+
+function KimiCliReinstallModalContent({ open, onOpenChange }: ModalProps) {
+  const setup = useKimiCliSetup()
+  return (
+    <CliReinstallModalUI
+      setup={setup}
+      cliType="kimi"
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  )
+}
+
 export function CommandCodeCliReinstallModal({
   open,
   onOpenChange,
@@ -256,6 +277,7 @@ interface CliReinstallModalUIProps {
     | 'coderabbit'
     | 'commandcode'
     | 'grok'
+    | 'kimi'
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -281,7 +303,9 @@ function CliReinstallModalUI({
                 ? 'Command Code CLI'
                 : cliType === 'grok'
                   ? 'Grok CLI'
-                  : 'GitHub CLI'
+                  : cliType === 'kimi'
+                    ? 'Kimi Code CLI'
+                    : 'GitHub CLI'
 
   // Store setup in ref for stable callback reference
   const setupRef = useRef(setup)
@@ -443,6 +467,7 @@ function CliReinstallModalUI({
               currentVersion={isReinstall ? setup.status?.version : null}
               isLoading={setup.isVersionsLoading}
               onVersionChange={setSelectedVersion}
+              onCheckManualVersion={setup.checkManualVersion}
               onInstall={handleInstall}
             />
           )}

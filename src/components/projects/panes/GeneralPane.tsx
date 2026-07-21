@@ -1,23 +1,17 @@
 import React, { useState, useCallback } from 'react'
 import {
-  Bell,
   Check,
   ChevronsUpDown,
   FolderOpen,
   GitBranch,
   ImageIcon,
   Loader2,
-  RefreshCw,
   RotateCcw,
   X,
 } from 'lucide-react'
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification'
-import { convertFileSrc, convertProjectFileSrc, invoke } from '@/lib/transport'
-import { toast } from 'sonner'
+import { isLocalBackend } from '@/lib/environment'
+import { convertFileSrc, convertProjectFileSrc } from '@/lib/transport'
+import { DirectoryBrowser } from '@/components/projects/DirectoryBrowser'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -44,12 +38,8 @@ import {
   useAppDataDir,
   useSetProjectAvatar,
   useRemoveProjectAvatar,
-  projectsQueryKeys,
-  isTauri,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
-import { useLinearTeams, linearQueryKeys } from '@/services/linear'
-import { useQueryClient } from '@tanstack/react-query'
 import {
   Select,
   SelectContent,
@@ -117,36 +107,7 @@ export function GeneralPane({
   const [localWorktreesDir, setLocalWorktreesDir] = useState<string | null>(
     null
   )
-  const [localLinearApiKey, setLocalLinearApiKey] = useState<string | null>(
-    null
-  )
-  const [showLinearApiKey, setShowLinearApiKey] = useState(false)
-  const [localJenkinsUrl, setLocalJenkinsUrl] = useState<string | null>(null)
-  const [localJenkinsUser, setLocalJenkinsUser] = useState<string | null>(null)
-  const [localJenkinsToken, setLocalJenkinsToken] = useState<string | null>(
-    null
-  )
-  const [showJenkinsToken, setShowJenkinsToken] = useState(false)
-  const [localJenkinsPreviewTemplate, setLocalJenkinsPreviewTemplate] =
-    useState<string | null>(null)
-  const [savingJenkins, setSavingJenkins] = useState(false)
-
-  // Linear has access if either project key or global key is set
-  const hasLinearAccess =
-    !!project?.linear_api_key || !!preferences?.linear_api_key
-
-  const queryClient = useQueryClient()
-  const { data: linearTeams = [], isLoading: teamsLoading } = useLinearTeams(
-    projectId,
-    { enabled: hasLinearAccess }
-  )
-
-  const handleRefreshTeams = useCallback(() => {
-    queryClient.invalidateQueries({
-      queryKey: linearQueryKeys.teams(projectId),
-    })
-  }, [projectId, queryClient])
-
+  const [worktreesBrowserOpen, setWorktreesBrowserOpen] = useState(false)
   // Track image load errors
   const avatarKey = project?.avatar_path ?? project?.default_avatar_path ?? null
   const [imgErrorKey, setImgErrorKey] = useState<string | null>(null)
@@ -239,161 +200,14 @@ export function GeneralPane({
     )
   }, [projectId, updateSettings])
 
-  const displayedLinearApiKey =
-    localLinearApiKey ?? project?.linear_api_key ?? ''
-
-  const linearApiKeyChanged =
-    localLinearApiKey !== null &&
-    localLinearApiKey !== (project?.linear_api_key ?? '')
-
-  const handleSaveLinearApiKey = useCallback(() => {
-    if (localLinearApiKey === null) return
-    updateSettings.mutate(
-      { projectId, linearApiKey: localLinearApiKey.trim() },
-      { onSuccess: () => setLocalLinearApiKey(null) }
-    )
-  }, [localLinearApiKey, projectId, updateSettings])
-
-  const handleClearLinearApiKey = useCallback(() => {
-    updateSettings.mutate(
-      { projectId, linearApiKey: '' },
-      { onSuccess: () => setLocalLinearApiKey(null) }
-    )
-  }, [projectId, updateSettings])
-
-  // --- Jenkins integration ---
-  const displayedJenkinsUrl = localJenkinsUrl ?? project?.jenkins_url ?? ''
-  const displayedJenkinsUser = localJenkinsUser ?? project?.jenkins_user ?? ''
-  const displayedJenkinsToken =
-    localJenkinsToken ?? project?.jenkins_token ?? ''
-  const displayedJenkinsPreviewTemplate =
-    localJenkinsPreviewTemplate ?? project?.jenkins_preview_url_template ?? ''
-
-  const jenkinsChanged =
-    (localJenkinsUrl !== null &&
-      localJenkinsUrl !== (project?.jenkins_url ?? '')) ||
-    (localJenkinsUser !== null &&
-      localJenkinsUser !== (project?.jenkins_user ?? '')) ||
-    (localJenkinsToken !== null &&
-      localJenkinsToken !== (project?.jenkins_token ?? '')) ||
-    (localJenkinsPreviewTemplate !== null &&
-      localJenkinsPreviewTemplate !==
-        (project?.jenkins_preview_url_template ?? ''))
-
-  const jenkinsConfigured =
-    !!project?.jenkins_url ||
-    !!project?.jenkins_user ||
-    !!project?.jenkins_token ||
-    !!project?.jenkins_preview_url_template
-
-  const saveJenkinsConfig = useCallback(
-    async (
-      url: string,
-      user: string,
-      token: string,
-      previewUrlTemplate: string
-    ) => {
-      setSavingJenkins(true)
-      try {
-        await invoke('save_jenkins_config', {
-          projectId,
-          url,
-          user,
-          token,
-          previewUrlTemplate: previewUrlTemplate || null,
-        })
-        await queryClient.invalidateQueries({
-          queryKey: projectsQueryKeys.list(),
-        })
-        setLocalJenkinsUrl(null)
-        setLocalJenkinsUser(null)
-        setLocalJenkinsToken(null)
-        setLocalJenkinsPreviewTemplate(null)
-        toast.success('Jenkins settings saved')
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        toast.error('Failed to save Jenkins settings', { description: message })
-      } finally {
-        setSavingJenkins(false)
-      }
-    },
-    [projectId, queryClient]
-  )
-
-  const handleSaveJenkins = useCallback(() => {
-    saveJenkinsConfig(
-      displayedJenkinsUrl.trim(),
-      displayedJenkinsUser.trim(),
-      displayedJenkinsToken.trim(),
-      displayedJenkinsPreviewTemplate.trim()
-    )
-  }, [
-    saveJenkinsConfig,
-    displayedJenkinsUrl,
-    displayedJenkinsUser,
-    displayedJenkinsToken,
-    displayedJenkinsPreviewTemplate,
-  ])
-
-  const handleRemoveJenkins = useCallback(() => {
-    saveJenkinsConfig('', '', '', '')
-  }, [saveJenkinsConfig])
-
-  // Isolate the OS notification channel from the Jenkins pipeline: fire a test
-  // notification on demand so it's clear whether a missing pipeline notif is a
-  // permission/OS problem or a poller/transition one (notif-diagnostic cause E).
-  const [testingNotif, setTestingNotif] = useState(false)
-  const handleTestNotification = useCallback(async () => {
-    if (!isTauri()) {
-      toast.error('Notifications indisponibles dans ce contexte')
+  const handleBrowseWorktreesDir = useCallback(async () => {
+    // Remote backends must browse the server filesystem — the native OS
+    // picker only sees the local machine.
+    if (!isLocalBackend()) {
+      setWorktreesBrowserOpen(true)
       return
     }
-    setTestingNotif(true)
-    try {
-      let granted = await isPermissionGranted()
-      if (!granted) {
-        granted = (await requestPermission()) === 'granted'
-      }
-      if (!granted) {
-        toast.error('Permission de notification refusée', {
-          description:
-            "Autorisez les notifications pour Jean dans les réglages de l'OS.",
-        })
-        return
-      }
-      await sendNotification({
-        title: '🔔 Test de notification Jean',
-        body: 'Si vous voyez ceci, le canal de notifications OS fonctionne.',
-      })
-      toast.success('Notification test envoyée')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      toast.error('Échec de la notification test', { description: message })
-    } finally {
-      setTestingNotif(false)
-    }
-  }, [])
 
-  const handleTeamChange = useCallback(
-    (value: string) => {
-      updateSettings.mutate(
-        { projectId, linearTeamId: value === 'all' ? '' : value },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({
-              queryKey: linearQueryKeys.issues(projectId),
-            })
-            queryClient.invalidateQueries({
-              queryKey: ['linear', 'issue-search', projectId],
-            })
-          },
-        }
-      )
-    },
-    [projectId, updateSettings, queryClient]
-  )
-
-  const handleBrowseWorktreesDir = useCallback(async () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const selected = await open({
       directory: true,
@@ -406,170 +220,197 @@ export function GeneralPane({
   }, [])
 
   return (
-    <div className="space-y-6">
-      <SettingsSection title="Project Name">
-        <InlineField
-          label="Display Name"
-          description="Rename the project without changing the underlying folder"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              value={displayedName}
-              onChange={e => setLocalName(e.target.value)}
-              className="flex-1 text-base md:text-sm"
-            />
-            <Button
-              size="sm"
-              onClick={handleSaveName}
-              disabled={!nameChanged || updateSettings.isPending}
-            >
-              {updateSettings.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Save
-            </Button>
-          </div>
-        </InlineField>
-      </SettingsSection>
-
-      <SettingsSection title="Avatar">
-        <InlineField
-          label="Project Avatar"
-          description="Custom image displayed in the sidebar"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted-foreground/20 overflow-hidden">
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={project?.name ?? 'Project avatar'}
-                  className="size-full object-cover"
-                  onError={() => setImgErrorKey(avatarKey)}
-                />
-              ) : (
-                <span className="text-lg font-medium uppercase text-muted-foreground">
-                  {project?.name?.[0] ?? '?'}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2">
+    <>
+      <div className="space-y-6">
+        <SettingsSection title="Project Name">
+          <InlineField
+            label="Display Name"
+            description="Rename the project without changing the underlying folder"
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                value={displayedName}
+                onChange={e => setLocalName(e.target.value)}
+                className="flex-1 text-base md:text-sm"
+              />
               <Button
-                variant="outline"
                 size="sm"
-                onClick={() => setProjectAvatar.mutate(projectId)}
-                disabled={setProjectAvatar.isPending}
+                onClick={handleSaveName}
+                disabled={!nameChanged || updateSettings.isPending}
               >
-                {setProjectAvatar.isPending ? (
+                {updateSettings.isPending && (
                   <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ImageIcon className="h-4 w-4" />
                 )}
-                {project?.avatar_path || project?.default_avatar_path
-                  ? 'Change'
-                  : 'Add Image'}
+                Save
               </Button>
-              {project?.avatar_path && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeProjectAvatar.mutate(projectId)}
-                  disabled={removeProjectAvatar.isPending}
-                >
-                  {removeProjectAvatar.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <X className="h-4 w-4" />
-                  )}
-                  Remove
-                </Button>
-              )}
             </div>
-          </div>
-        </InlineField>
-      </SettingsSection>
+          </InlineField>
+        </SettingsSection>
 
-      <SettingsSection title="Defaults">
-        <InlineField
-          label="Default Branch"
-          description="New worktrees will be created from this branch"
-        >
-          {branchesLoading ? (
-            <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Fetching branches...
-            </div>
-          ) : branchesError ? (
-            <div className="py-2 text-sm text-destructive">
-              Failed to load branches
-            </div>
-          ) : branches.length === 0 ? (
-            <div className="py-2 text-sm text-muted-foreground">
-              No branches found
-            </div>
-          ) : (
-            <Popover
-              open={branchPopoverOpen}
-              onOpenChange={setBranchPopoverOpen}
-            >
-              <PopoverTrigger asChild>
+        <SettingsSection title="Avatar">
+          <InlineField
+            label="Project Avatar"
+            description="Custom image displayed in the sidebar"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted-foreground/20 overflow-hidden">
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt={project?.name ?? 'Project avatar'}
+                    className="size-full object-cover"
+                    onError={() => setImgErrorKey(avatarKey)}
+                  />
+                ) : (
+                  <span className="text-lg font-medium uppercase text-muted-foreground">
+                    {project?.name?.[0] ?? '?'}
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
                 <Button
                   variant="outline"
-                  role="combobox"
-                  aria-expanded={branchPopoverOpen}
-                  aria-controls="default-branch-selector"
-                  className="w-full justify-between"
+                  size="sm"
+                  onClick={() => setProjectAvatar.mutate(projectId)}
+                  disabled={setProjectAvatar.isPending}
                 >
-                  <span className="flex items-center gap-2 truncate">
-                    <GitBranch className="h-4 w-4 shrink-0" />
-                    {selectedBranch || 'Select a branch'}
-                  </span>
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                  {setProjectAvatar.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ImageIcon className="h-4 w-4" />
+                  )}
+                  {project?.avatar_path || project?.default_avatar_path
+                    ? 'Change'
+                    : 'Add Image'}
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                id="default-branch-selector"
-                align="start"
-                className="!w-[var(--radix-popover-trigger-width)] p-0"
-              >
-                <Command>
-                  <CommandInput placeholder="Search branches..." />
-                  <CommandList>
-                    <CommandEmpty>No branch found.</CommandEmpty>
-                    <CommandGroup>
-                      {branches.map(branch => (
-                        <CommandItem
-                          key={branch}
-                          value={branch}
-                          onSelect={handleSelectBranch}
-                        >
-                          <GitBranch className="h-4 w-4" />
-                          {branch}
-                          <Check
-                            className={cn(
-                              'ml-auto h-4 w-4',
-                              selectedBranch === branch
-                                ? 'opacity-100'
-                                : 'opacity-0'
-                            )}
-                          />
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          )}
-        </InlineField>
+                {project?.avatar_path && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeProjectAvatar.mutate(projectId)}
+                    disabled={removeProjectAvatar.isPending}
+                  >
+                    {removeProjectAvatar.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <X className="h-4 w-4" />
+                    )}
+                    Remove
+                  </Button>
+                )}
+              </div>
+            </div>
+          </InlineField>
+        </SettingsSection>
 
-        {profiles.length > 0 && (
+        <SettingsSection title="Defaults">
           <InlineField
-            label="Default Provider"
-            description="Default provider for new sessions in this project"
+            label="Default Branch"
+            description="New worktrees will be created from this branch"
+          >
+            {branchesLoading ? (
+              <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Fetching branches...
+              </div>
+            ) : branchesError ? (
+              <div className="py-2 text-sm text-destructive">
+                Failed to load branches
+              </div>
+            ) : branches.length === 0 ? (
+              <div className="py-2 text-sm text-muted-foreground">
+                No branches found
+              </div>
+            ) : (
+              <Popover
+                open={branchPopoverOpen}
+                onOpenChange={setBranchPopoverOpen}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={branchPopoverOpen}
+                    aria-controls="default-branch-selector"
+                    className="w-full justify-between"
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <GitBranch className="h-4 w-4 shrink-0" />
+                      {selectedBranch || 'Select a branch'}
+                    </span>
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  id="default-branch-selector"
+                  align="start"
+                  className="!w-[var(--radix-popover-trigger-width)] p-0"
+                >
+                  <Command>
+                    <CommandInput placeholder="Search branches..." />
+                    <CommandList>
+                      <CommandEmpty>No branch found.</CommandEmpty>
+                      <CommandGroup>
+                        {branches.map(branch => (
+                          <CommandItem
+                            key={branch}
+                            value={branch}
+                            onSelect={handleSelectBranch}
+                          >
+                            <GitBranch className="h-4 w-4" />
+                            {branch}
+                            <Check
+                              className={cn(
+                                'ml-auto h-4 w-4',
+                                selectedBranch === branch
+                                  ? 'opacity-100'
+                                  : 'opacity-0'
+                              )}
+                            />
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            )}
+          </InlineField>
+
+          {profiles.length > 0 && (
+            <InlineField
+              label="Default Provider"
+              description="Default provider for new sessions in this project"
+            >
+              <Select
+                value={project?.default_provider ?? 'global-default'}
+                onValueChange={handleProviderChange}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="global-default">
+                    Use global default
+                  </SelectItem>
+                  <SelectItem value="__anthropic__">Anthropic</SelectItem>
+                  {profiles.map(p => (
+                    <SelectItem key={p.name} value={p.name}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </InlineField>
+          )}
+
+          <InlineField
+            label="Default Backend"
+            description="CLI to use for new sessions in this project"
           >
             <Select
-              value={project?.default_provider ?? 'global-default'}
-              onValueChange={handleProviderChange}
+              value={project?.default_backend ?? 'global-default'}
+              onValueChange={handleBackendChange}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -578,304 +419,105 @@ export function GeneralPane({
                 <SelectItem value="global-default">
                   Use global default
                 </SelectItem>
-                <SelectItem value="__anthropic__">Anthropic</SelectItem>
-                {profiles.map(p => (
-                  <SelectItem key={p.name} value={p.name}>
-                    {p.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="claude">Claude</SelectItem>
+                <SelectItem value="codex">Codex</SelectItem>
+                <SelectItem value="opencode">OpenCode</SelectItem>
+                <SelectItem value="cursor">
+                  <BackendLabel backend="cursor" />
+                </SelectItem>
               </SelectContent>
             </Select>
           </InlineField>
-        )}
+        </SettingsSection>
 
-        <InlineField
-          label="Default Backend"
-          description="CLI to use for new sessions in this project"
-        >
-          <Select
-            value={project?.default_backend ?? 'global-default'}
-            onValueChange={handleBackendChange}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="global-default">Use global default</SelectItem>
-              <SelectItem value="claude">Claude</SelectItem>
-              <SelectItem value="codex">Codex</SelectItem>
-              <SelectItem value="opencode">OpenCode</SelectItem>
-              <SelectItem value="cursor">
-                <BackendLabel backend="cursor" />
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </InlineField>
-      </SettingsSection>
-
-      <SettingsSection title="Worktrees Location">
-        <InlineField
-          label="Base Directory"
-          description={
-            <>
-              Where new worktrees are created. Defaults to{' '}
-              <code className="text-[11px] bg-muted px-1 py-0.5 rounded">
-                ~/jean
-              </code>
-            </>
-          }
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="~/jean (default)"
-              value={displayedWorktreesDir}
-              onChange={e => setLocalWorktreesDir(e.target.value)}
-              className="flex-1 text-base md:text-sm"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBrowseWorktreesDir}
-            >
-              <FolderOpen className="h-4 w-4" />
-              Browse
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleSaveWorktreesDir}
-              disabled={!worktreesDirChanged || updateSettings.isPending}
-            >
-              {updateSettings.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Save
-            </Button>
-            {project?.worktrees_dir && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetWorktreesDir}
-                disabled={updateSettings.isPending}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Reset to default
-              </Button>
-            )}
-          </div>
-        </InlineField>
-      </SettingsSection>
-
-      <SettingsSection title="Linear Integration">
-        <InlineField
-          label="Project API Key Override"
-          description="Overrides the global key from Settings → Integrations for this project only. Leave empty to use the global key."
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type={showLinearApiKey ? 'text' : 'password'}
-              placeholder="lin_api_..."
-              value={displayedLinearApiKey}
-              onChange={e => setLocalLinearApiKey(e.target.value)}
-              className="flex-1 text-base md:text-sm font-mono"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowLinearApiKey(!showLinearApiKey)}
-            >
-              {showLinearApiKey ? 'Hide' : 'Show'}
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleSaveLinearApiKey}
-              disabled={!linearApiKeyChanged || updateSettings.isPending}
-            >
-              {updateSettings.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Save
-            </Button>
-            {project?.linear_api_key && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleClearLinearApiKey}
-                disabled={updateSettings.isPending}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Remove
-              </Button>
-            )}
-          </div>
-        </InlineField>
-
-        {hasLinearAccess && (
+        <SettingsSection title="Worktrees Location">
           <InlineField
-            label="Team Filter"
-            description="Restrict Linear issues to a specific team. Leave as 'All teams' to see everything."
+            label="Base Directory"
+            description={
+              <>
+                Where new worktrees are created. Defaults to{' '}
+                <code className="text-[11px] bg-muted px-1 py-0.5 rounded">
+                  ~/jean
+                </code>
+              </>
+            }
           >
             <div className="flex items-center gap-2">
-              <Select
-                value={project?.linear_team_id ?? 'all'}
-                onValueChange={handleTeamChange}
-                disabled={teamsLoading}
-              >
-                <SelectTrigger className="flex-1">
-                  <SelectValue
-                    placeholder={
-                      teamsLoading ? 'Loading teams...' : 'All teams'
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All teams</SelectItem>
-                  {linearTeams.map(team => (
-                    <SelectItem key={team.id} value={team.id}>
-                      {team.key} — {team.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                placeholder="~/jean (default)"
+                value={displayedWorktreesDir}
+                onChange={e => setLocalWorktreesDir(e.target.value)}
+                className="flex-1 text-base md:text-sm"
+              />
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleRefreshTeams}
-                disabled={teamsLoading}
+                onClick={handleBrowseWorktreesDir}
               >
-                <RefreshCw
-                  className={cn('h-4 w-4', teamsLoading && 'animate-spin')}
-                />
+                <FolderOpen className="h-4 w-4" />
+                Browse
               </Button>
             </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={handleSaveWorktreesDir}
+                disabled={!worktreesDirChanged || updateSettings.isPending}
+              >
+                {updateSettings.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Save
+              </Button>
+              {project?.worktrees_dir && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleResetWorktreesDir}
+                  disabled={updateSettings.isPending}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reset to default
+                </Button>
+              )}
+            </div>
           </InlineField>
-        )}
-      </SettingsSection>
+        </SettingsSection>
 
-      <SettingsSection title="Jenkins Integration">
-        <InlineField
-          label="Server URL"
-          description="Base URL of your Jenkins server used to fetch pipeline and preview status."
-        >
-          <Input
-            placeholder="https://jenkins.example.com"
-            value={displayedJenkinsUrl}
-            onChange={e => setLocalJenkinsUrl(e.target.value)}
-            className="flex-1 text-base md:text-sm"
-          />
-        </InlineField>
-
-        <InlineField label="User">
-          <Input
-            placeholder="ci-user"
-            value={displayedJenkinsUser}
-            onChange={e => setLocalJenkinsUser(e.target.value)}
-            className="flex-1 text-base md:text-sm"
-          />
-        </InlineField>
-
-        <InlineField
-          label="Preview URL template"
-          description="Base URL of a PR preview (use {pr} for the PR id). The admin link and the freshness check derive /admin and /version from it — a trailing /admin is tolerated. Stored per project; leave empty to disable."
-        >
-          <Input
-            placeholder="https://{pr}.preview.example.com"
-            value={displayedJenkinsPreviewTemplate}
-            onChange={e => setLocalJenkinsPreviewTemplate(e.target.value)}
-            className="flex-1 text-base md:text-sm font-mono"
-          />
-        </InlineField>
-
-        <InlineField
-          label="API Token"
-          description="Jenkins API token for this user. Stored per project."
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type={showJenkinsToken ? 'text' : 'password'}
-              placeholder="•••••••••••••••"
-              value={displayedJenkinsToken}
-              onChange={e => setLocalJenkinsToken(e.target.value)}
-              className="flex-1 text-base md:text-sm font-mono"
+        <SettingsSection title="System Prompt">
+          <InlineField
+            label="Custom System Prompt"
+            description="Appended to every session's system prompt in this project"
+          >
+            <Textarea
+              placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
+              value={displayedSystemPrompt}
+              onChange={e => setLocalSystemPrompt(e.target.value)}
+              rows={4}
+              className="resize-y text-base md:text-sm"
             />
             <Button
-              variant="outline"
               size="sm"
-              onClick={() => setShowJenkinsToken(!showJenkinsToken)}
+              onClick={handleSaveSystemPrompt}
+              disabled={!systemPromptChanged || updateSettings.isPending}
             >
-              {showJenkinsToken ? 'Hide' : 'Show'}
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleSaveJenkins}
-              disabled={!jenkinsChanged || savingJenkins}
-            >
-              {savingJenkins && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateSettings.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
-            {jenkinsConfigured && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRemoveJenkins}
-                disabled={savingJenkins}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Remove
-              </Button>
-            )}
-          </div>
-        </InlineField>
+          </InlineField>
+        </SettingsSection>
+      </div>
 
-        <InlineField
-          label="Notifications"
-          description="Le poller notifie au passage rouge↔vert du pipeline. Ce bouton teste le canal de notifications de l'OS, indépendamment de Jenkins."
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTestNotification}
-            disabled={testingNotif}
-          >
-            {testingNotif ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Bell className="h-4 w-4" />
-            )}
-            Envoyer une notif test
-          </Button>
-        </InlineField>
-      </SettingsSection>
-
-      <SettingsSection title="System Prompt">
-        <InlineField
-          label="Custom System Prompt"
-          description="Appended to every session's system prompt in this project"
-        >
-          <Textarea
-            placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
-            value={displayedSystemPrompt}
-            onChange={e => setLocalSystemPrompt(e.target.value)}
-            rows={4}
-            className="resize-y text-base md:text-sm"
-          />
-          <Button
-            size="sm"
-            onClick={handleSaveSystemPrompt}
-            disabled={!systemPromptChanged || updateSettings.isPending}
-          >
-            {updateSettings.isPending && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            Save
-          </Button>
-        </InlineField>
-      </SettingsSection>
-    </div>
+      <DirectoryBrowser
+        open={worktreesBrowserOpen}
+        onOpenChange={setWorktreesBrowserOpen}
+        onSelect={setLocalWorktreesDir}
+        mode="select"
+        title="Select worktrees base directory"
+        description="Choose the parent directory where new worktrees will be created."
+      />
+    </>
   )
 }

@@ -1,22 +1,29 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { isNativeApp } from './environment'
 
-export const isMacOS = navigator.platform.includes('Mac')
-export const isWindows = navigator.platform.includes('Win')
-export const isLinux = navigator.platform.includes('Linux')
-
 export type PlatformName = 'mac' | 'windows' | 'linux'
 
-function browserPlatform(): PlatformName {
-  if (isMacOS) return 'mac'
-  if (isWindows) return 'windows'
-  return 'linux'
-}
+let serverPlatform: PlatformName = 'linux'
 
-let serverPlatform: PlatformName = browserPlatform()
+// Window chrome belongs to the local client, even when commands target a
+// remote Jean server running on a different operating system.
+const clientPlatform =
+  typeof navigator === 'undefined'
+    ? ''
+    : (navigator.platform || navigator.userAgent).toLowerCase()
+
+export const isClientMacOS = clientPlatform.includes('mac')
+export const isClientLinux = clientPlatform.includes('linux')
+
+export let isMacOS = false
+export let isWindows = false
+export let isLinux = true
 
 export function setServerPlatform(platform: PlatformName): void {
   serverPlatform = platform
+  isMacOS = platform === 'mac'
+  isWindows = platform === 'windows'
+  isLinux = platform === 'linux'
 }
 
 export function getServerPlatform(): PlatformName {
@@ -62,7 +69,7 @@ export async function openExternal(
  * Mac native app uses ⌘, Mac web uses ⌃ (Ctrl works in browser, Cmd is intercepted).
  */
 export const getModifierSymbol = (): string => {
-  if (!isMacOS) return 'Ctrl'
+  if (!isClientMacOS) return 'Ctrl'
   return isNativeApp() ? '⌘' : '⌃'
 }
 

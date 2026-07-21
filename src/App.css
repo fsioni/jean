@@ -56,6 +56,7 @@
   --ui-line-height: 1.6;
   --chat-font-size: 16px;
   --chat-line-height: 1.5;
+  --app-zoom: 1;
   /* Chat font family (can be monospace or sans-serif) */
   --font-family-chat:
     'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
@@ -641,6 +642,9 @@ body:not(.native-app) kbd {
   .animate-border-spin,
   .animate-icon-glow,
   .animate-dots,
+  .animate-spin,
+  .animate-pulse,
+  [class*='bell-ring'],
   .square-spinner::before,
   .card-border-spin::before {
     animation: none !important;
@@ -652,6 +656,9 @@ body:not(.native-app) kbd {
 .window-blurred .animate-border-spin,
 .window-blurred .animate-icon-glow,
 .window-blurred .animate-dots,
+.window-blurred .animate-spin,
+.window-blurred .animate-pulse,
+.window-blurred [class*='bell-ring'],
 .window-blurred .card-border-spin::before,
 .window-blurred .square-spinner::before {
   animation-play-state: paused !important;

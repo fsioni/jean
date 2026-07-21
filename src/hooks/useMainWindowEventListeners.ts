@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { listen, invoke } from '@/lib/transport'
+import { listen, listenLocal, invoke } from '@/lib/transport'
 import { isNativeApp, hasBackend } from '@/lib/environment'
 import { notify } from '@/lib/notifications'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
@@ -882,7 +882,7 @@ export function useMainWindowEventListeners() {
     const setupMenuListeners = async () => {
       logger.debug('Setting up menu event listeners')
       const unlisteners = await Promise.all([
-        listen('menu-about', async () => {
+        listenLocal('menu-about', async () => {
           logger.debug('About menu event received')
           if (!isNativeApp()) return
           const { getVersion } = await import('@tauri-apps/api/app')
@@ -895,7 +895,7 @@ export function useMainWindowEventListeners() {
           )
         }),
 
-        listen('menu-check-updates', async () => {
+        listenLocal('menu-check-updates', async () => {
           logger.debug('Check for updates menu event received')
           if (!isNativeApp()) return
           try {
@@ -920,19 +920,19 @@ export function useMainWindowEventListeners() {
           }
         }),
 
-        listen('menu-preferences', () => {
+        listenLocal('menu-preferences', () => {
           logger.debug('Preferences menu event received')
           commandContext.openPreferences()
         }),
 
-        listen('menu-toggle-left-sidebar', () => {
+        listenLocal('menu-toggle-left-sidebar', () => {
           logger.debug('Toggle left sidebar menu event received')
           const { leftSidebarVisible, setLeftSidebarVisible } =
             useUIStore.getState()
           setLeftSidebarVisible(!leftSidebarVisible)
         }),
 
-        listen('menu-toggle-right-sidebar', () => {
+        listenLocal('menu-toggle-right-sidebar', () => {
           logger.debug('Toggle right sidebar menu event received')
           const { selectedWorktreeId } = useProjectsStore.getState()
           if (selectedWorktreeId) {
@@ -942,7 +942,7 @@ export function useMainWindowEventListeners() {
           }
         }),
 
-        listen('menu-magic-menu', () => {
+        listenLocal('menu-magic-menu', () => {
           logger.debug('Magic menu event received from native menu')
           executeKeybindingAction(
             'open_magic_modal',
@@ -951,7 +951,7 @@ export function useMainWindowEventListeners() {
           )
         }),
 
-        listen('menu-toggle-terminal', () => {
+        listenLocal('menu-toggle-terminal', () => {
           logger.debug('Toggle terminal menu event received from native menu')
           executeKeybindingAction(
             'toggle_terminal',
@@ -960,9 +960,18 @@ export function useMainWindowEventListeners() {
           )
         }),
 
-        listen('menu-toggle-browser', () => {
+        listenLocal('menu-toggle-browser', () => {
           logger.debug('Toggle browser menu event received from native menu')
           executeKeybindingAction('toggle_browser', commandContext, queryClient)
+        }),
+
+        listenLocal('menu-quick-menu', () => {
+          logger.debug('Quick menu event received from native menu')
+          executeKeybindingAction(
+            'open_quick_menu',
+            commandContext,
+            queryClient
+          )
         }),
 
         // Branch naming events (automatic branch renaming based on first message)
@@ -1036,11 +1045,7 @@ export function useMainWindowEventListeners() {
             const currentQueue =
               useChatStore.getState().messageQueues[sessionId] ?? []
             // Skip if the queue already matches (this client caused the event)
-            if (
-              currentQueue.length === queue.length &&
-              currentQueue[0]?.id === queue[0]?.id
-            )
-              return
+            if (JSON.stringify(currentQueue) === JSON.stringify(queue)) return
             useChatStore.setState(state => ({
               messageQueues: {
                 ...state.messageQueues,

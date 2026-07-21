@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  TOAST_ACTION_SHORTCUT,
+  getToastActionShortcutLabel,
   ToastActionLabel,
 } from '@/lib/toast-action-label'
 
@@ -28,7 +28,7 @@ describe('ToastActionLabel', () => {
     render(<ToastActionLabel>Resolve Conflicts</ToastActionLabel>)
 
     expect(screen.getByText('Resolve Conflicts')).toBeInTheDocument()
-    expect(screen.getByText(TOAST_ACTION_SHORTCUT.label)).toBeInTheDocument()
+    expect(screen.getByText(getToastActionShortcutLabel())).toBeInTheDocument()
   })
 
   it('hides the shortcut hint in web access', () => {
@@ -40,7 +40,7 @@ describe('ToastActionLabel', () => {
 
     expect(screen.getByText('Resolve Conflicts')).toBeInTheDocument()
     expect(
-      screen.queryByText(TOAST_ACTION_SHORTCUT.label)
+      screen.queryByText(getToastActionShortcutLabel())
     ).not.toBeInTheDocument()
   })
 
@@ -54,7 +54,7 @@ describe('ToastActionLabel', () => {
 
     expect(screen.getByText('Resolve Conflicts')).toBeInTheDocument()
     expect(
-      screen.queryByText(TOAST_ACTION_SHORTCUT.label)
+      screen.queryByText(getToastActionShortcutLabel())
     ).not.toBeInTheDocument()
   })
 })

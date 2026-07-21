@@ -30,8 +30,8 @@ import type {
   LabelData,
   QueuedMessage,
 } from '@/types/chat'
-
 import { isTauri, projectsQueryKeys } from '@/services/projects'
+import { hasBackendTransport } from '@/lib/environment'
 import { preferencesQueryKeys } from '@/services/preferences'
 import type { AppPreferences } from '@/types/preferences'
 import { useChatStore } from '@/store/chat-store'
@@ -39,14 +39,18 @@ import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { isNativeTerminalBackend } from '@/lib/native-cli-session'
 import { getResumeArgs } from '@/components/chat/session-card-utils'
-import type { ReviewResponse, Worktree } from '@/types/projects'
+import type {
+  StoredReviewResults,
+  Worktree,
+} from '@/types/projects'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 
 /** Default number of recent runs loaded on initial session fetch. */
 export const INITIAL_RUN_LIMIT = 10
 /** Number of older runs to load per scroll-up batch. */
 export const OLDER_RUN_BATCH = 10
 
-/** Check if an error is from a WebSocket disconnect (suppress toasts during reconnect). */
+/** Check if an error is from a WebSocket disconnect (suppress toasts before reload). */
 function isWsDisconnectError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error)
   return msg.includes('WebSocket disconnected')
@@ -91,6 +95,43 @@ export function removeSessionFromAllSessionsCache(
       })),
     }
   })
+}
+
+/**
+ * Refresh one worktree's session list and mirror it into the cross-project
+ * ['all-sessions'] cache. This keeps the finished-session bell in sync when a
+ * background operation (like review) completes outside normal session polling.
+ */
+export async function refreshWorktreeSessionsCaches(
+  queryClient: QueryClient,
+  worktreeId: string,
+  worktreePath: string
+): Promise<WorktreeSessions | null> {
+  try {
+    const sessions = await invoke<WorktreeSessions>('get_sessions', {
+      worktreeId,
+      worktreePath,
+    })
+    queryClient.setQueryData(chatQueryKeys.sessions(worktreeId), sessions)
+    queryClient.setQueryData<AllSessionsResponse>(['all-sessions'], old => {
+      if (!old?.entries) return old
+      return {
+        ...old,
+        entries: old.entries.map(entry =>
+          entry.worktree_id === worktreeId
+            ? { ...entry, sessions: sessions.sessions }
+            : entry
+        ),
+      }
+    })
+    return sessions
+  } catch (error) {
+    logger.warn('Failed to refresh worktree sessions caches', {
+      error,
+      worktreeId,
+    })
+    return null
+  }
 }
 
 /**
@@ -280,7 +321,7 @@ export function useSessions(
       ? [...chatQueryKeys.sessions(worktreeId ?? ''), 'with-counts']
       : chatQueryKeys.sessions(worktreeId ?? ''),
     queryFn: async (): Promise<WorktreeSessions> => {
-      if (!isTauri() || !worktreeId || !worktreePath) {
+      if (!hasBackendTransport() || !worktreeId || !worktreePath) {
         return {
           worktree_id: '',
           sessions: [],
@@ -300,12 +341,7 @@ export function useSessions(
         return sessions
       } catch (error) {
         logger.error('Failed to load sessions', { error, worktreeId })
-        return {
-          worktree_id: worktreeId,
-          sessions: [],
-          active_session_id: null,
-          version: 2,
-        }
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!worktreeId && !!worktreePath,
@@ -384,7 +420,7 @@ export async function prefetchSessions(
     const executionModeUpdates: Record<string, ExecutionMode> = {}
     const primarySurfaceUpdates: Record<string, 'chat' | 'terminal'> = {}
     const labelUpdates: Record<string, LabelData> = {}
-    const reviewResultsUpdates: Record<string, ReviewResponse> = {}
+    const reviewResultsUpdates: Record<string, StoredReviewResults> = {}
     const answeredQuestionsUpdates: Record<string, Set<string>> = {}
     const submittedAnswersUpdates: Record<
       string,
@@ -571,7 +607,12 @@ export function useSession(
   return useQuery({
     queryKey: chatQueryKeys.session(sessionId ?? ''),
     queryFn: async (): Promise<Session | null> => {
-      if (!isTauri() || !sessionId || !worktreeId || !worktreePath) {
+      if (
+        !hasBackendTransport() ||
+        !sessionId ||
+        !worktreeId ||
+        !worktreePath
+      ) {
         return null
       }
 
@@ -636,7 +677,7 @@ export function useSession(
         return session
       } catch (error) {
         logger.warn('[useSession] FAILED to load session', { error, sessionId })
-        return null
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!sessionId && !!worktreeId && !!worktreePath,
@@ -2666,6 +2707,26 @@ export function persistRemoveQueued(
 }
 
 /**
+ * Persist a queued message text edit.
+ * Returns false when the message is no longer queued.
+ */
+export async function persistUpdateQueued(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  messageId: string,
+  message: string
+): Promise<boolean> {
+  return invoke<boolean>('update_queued_message', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    messageId,
+    message,
+  })
+}
+
+/**
  * Atomically move a specific queued message to the front of the persisted queue.
  * Returns false when the message is no longer queued (another client dequeued
  * or removed it) — callers must abort their send-now flow in that case.
@@ -2734,6 +2795,19 @@ export async function steerPiTurn(
   message: string
 ): Promise<void> {
   await invoke('steer_pi_turn', { worktreeId, sessionId, message })
+}
+
+/**
+ * Inject a text-only user message into a running Grok ACP turn via
+ * `_x.ai/interject`. Throws when no active Grok turn/connection is available —
+ * callers fall back to queue/cancel+send.
+ */
+export async function steerGrokTurn(
+  worktreeId: string,
+  sessionId: string,
+  message: string
+): Promise<void> {
+  await invoke('steer_grok_turn', { worktreeId, sessionId, message })
 }
 
 /**

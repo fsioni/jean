@@ -12,7 +12,11 @@ import {
   type PermissionDenial,
   type LabelData,
 } from '@/types/chat'
-import { getNativeTerminalResumeLaunch } from '@/lib/native-cli-session'
+import {
+  buildNativeResumeArgs,
+  getNativeTerminalResumeLaunch,
+  isNativeTerminalBackend,
+} from '@/lib/native-cli-session'
 import { findPlanFilePath, resolvePlanContent } from './tool-call-utils'
 
 export type SessionStatus =
@@ -20,6 +24,7 @@ export type SessionStatus =
   | 'planning'
   | 'vibing'
   | 'yoloing'
+  | 'reviewing'
   | 'waiting'
   | 'review'
   | 'permission'
@@ -91,6 +96,11 @@ export const statusConfig: Record<
     indicatorStatus: 'running',
     indicatorVariant: 'destructive',
   },
+  reviewing: {
+    label: 'Reviewing',
+    indicatorStatus: 'running',
+    indicatorVariant: 'loading',
+  },
   waiting: {
     label: 'Waiting',
     indicatorStatus: 'waiting',
@@ -114,8 +124,17 @@ export interface ChatStoreState {
   executingModes: Record<string, ExecutionMode>
   executionModes: Record<string, ExecutionMode>
   activeToolCalls: Record<string, ToolCall[]>
-  streamingContents: Record<string, string>
-  streamingContentBlocks: Record<string, ContentBlock[]>
+  /**
+   * Lazy accessor for a session's live streaming text. Streaming text changes
+   * every animation frame during a run; exposing it as a getter instead of
+   * subscribed maps keeps card recomputation off the per-frame hot path —
+   * cards re-read it whenever any subscribed field (tool calls, sending
+   * state, …) changes.
+   */
+  getStreamingText: (sessionId: string) => {
+    content: string
+    blocks: ContentBlock[]
+  }
   answeredQuestions: Record<string, Set<string>>
   waitingForInputSessionIds: Record<string, boolean>
   reviewingSessions: Record<string, boolean>
@@ -165,6 +184,51 @@ export function getEffectiveSessionWaiting(
   return storeState.waitingForInputSessionIds[session.id] ?? false
 }
 
+/** Backend-created Code Review tabs have no chat transcript (background job). */
+export function isDedicatedEmptyCodeReviewSession(
+  session: Session | null | undefined
+): boolean {
+  return (
+    !!session &&
+    session.name.startsWith('Code Review') &&
+    session.messages.length === 0
+  )
+}
+
+export function shouldShowCodeReviewLoadingPanel({
+  session,
+  isSessionReviewing,
+  hasReviewResults,
+}: {
+  session: Session | null | undefined
+  isSessionReviewing: boolean
+  hasReviewResults: boolean
+}): boolean {
+  if (!session || !isSessionReviewing || hasReviewResults) return false
+  return isDedicatedEmptyCodeReviewSession(session)
+}
+
+/**
+ * When true, ChatWindow replaces the chat surface with ReviewResultsPanel.
+ * Desktop: any open review panel. Mobile: only dedicated empty Code Review
+ * sessions (empty left chat + loading split is useless there).
+ */
+export function shouldShowReviewFullWidth({
+  hasReviewPanel,
+  reviewSidebarVisible,
+  isMobile,
+  session,
+}: {
+  hasReviewPanel: boolean
+  reviewSidebarVisible: boolean
+  isMobile: boolean
+  session: Session | null | undefined
+}): boolean {
+  if (!hasReviewPanel || !reviewSidebarVisible) return false
+  if (!isMobile) return true
+  return isDedicatedEmptyCodeReviewSession(session)
+}
+
 export function computeSessionCardData(
   session: Session,
   storeState: ChatStoreState
@@ -174,8 +238,7 @@ export function computeSessionCardData(
     executingModes,
     executionModes,
     activeToolCalls,
-    streamingContents,
-    streamingContentBlocks,
+    getStreamingText,
     answeredQuestions,
     waitingForInputSessionIds,
     reviewingSessions,
@@ -185,8 +248,6 @@ export function computeSessionCardData(
 
   const sessionSending = sendingSessionIds[session.id] ?? false
   const toolCalls = activeToolCalls[session.id] ?? []
-  const streamingContent = streamingContents[session.id] ?? ''
-  const currentStreamingContentBlocks = streamingContentBlocks[session.id] ?? []
   const answeredSet = answeredQuestions[session.id]
 
   // Check streaming tool calls for waiting state
@@ -209,12 +270,14 @@ export function computeSessionCardData(
     session.pending_plan_message_id ?? null
 
   // Helper to extract inline plan from any plan tool call
-  const getInlinePlan = (tcs: typeof toolCalls): string | null =>
-    resolvePlanContent({
+  const getInlinePlan = (tcs: typeof toolCalls): string | null => {
+    const streaming = getStreamingText(session.id)
+    return resolvePlanContent({
       toolCalls: tcs,
-      messageContent: streamingContent,
-      contentBlocks: currentStreamingContentBlocks,
+      messageContent: streaming.content,
+      contentBlocks: streaming.blocks,
     }).content
+  }
 
   // Mirrors `canBeWaiting` filter in prefetchSessions (src/services/chat.ts).
   // A session's waiting flag is only meaningful while the run is active, resumable,
@@ -354,7 +417,17 @@ export function computeSessionCardData(
     status = 'vibing'
   } else if (sessionSending && executionMode === 'yolo') {
     status = 'yoloing'
-  } else if (reviewingSessions[session.id] || session.review_results) {
+  } else if (
+    session.name.startsWith('Code Review') &&
+    session.is_reviewing &&
+    !session.review_results
+  ) {
+    status = 'reviewing'
+  } else if (
+    session.is_reviewing ||
+    reviewingSessions[session.id] ||
+    session.review_results
+  ) {
     status = 'review'
   } else if (
     !sessionSending &&
@@ -408,8 +481,22 @@ export function getResumeCommand(session: Session): string | null {
     return `pi --session ${session.pi_session_id}`
   }
   if (session.backend === 'grok' && session.grok_session_id) {
-    return `grok -s ${session.grok_session_id}`
+    return `grok --resume ${session.grok_session_id}`
   }
+  if (session.backend === 'kimi' && session.kimi_session_id) {
+    return `kimi --session ${session.kimi_session_id}`
+  }
+  return null
+}
+
+export function getResumeSessionId(session: Session): string | null {
+  if (session.backend === 'claude') return session.claude_session_id ?? null
+  if (session.backend === 'codex') return session.codex_thread_id ?? null
+  if (session.backend === 'opencode') return session.opencode_session_id ?? null
+  if (session.backend === 'cursor') return session.cursor_chat_id ?? null
+  if (session.backend === 'pi') return session.pi_session_id ?? null
+  if (session.backend === 'grok') return session.grok_session_id ?? null
+  if (session.backend === 'kimi') return session.kimi_session_id ?? null
   return null
 }
 
@@ -424,6 +511,17 @@ export function getResumeArgs(
   const cmd = session.terminal_command || ''
   const nativeLaunch = getNativeTerminalResumeLaunch(session)
   if (nativeLaunch) return nativeLaunch
+  const nativeSessionId = getResumeSessionId(session)
+  if (isNativeTerminalBackend(session.backend) && nativeSessionId) {
+    return {
+      command: cmd || session.backend,
+      args: buildNativeResumeArgs(
+        session.backend,
+        nativeSessionId,
+        session.terminal_command_args ?? []
+      ),
+    }
+  }
   if (session.backend === 'cursor' && session.cursor_chat_id) {
     return {
       command: cmd || 'cursor-agent',
@@ -439,10 +537,39 @@ export function getResumeArgs(
   if (session.backend === 'grok' && session.grok_session_id) {
     return {
       command: cmd || 'grok',
-      args: ['-s', session.grok_session_id],
+      args: ['--resume', session.grok_session_id],
+    }
+  }
+  if (session.backend === 'kimi' && session.kimi_session_id) {
+    return {
+      command: cmd || 'kimi',
+      args: ['--session', session.kimi_session_id],
     }
   }
   return null
+}
+
+export function buildNativeClientSessionInput(
+  session: Session,
+  worktreeId: string,
+  worktreePath: string
+) {
+  const launch = getResumeArgs(session)
+  const nativeSessionId = getResumeSessionId(session)
+  if (!launch || !nativeSessionId || !session.backend) return null
+
+  const name = `${session.name} (Native)`
+  return {
+    worktreeId,
+    worktreePath,
+    name,
+    backend: session.backend,
+    primarySurface: 'terminal' as const,
+    terminalCommand: launch.command,
+    terminalCommandArgs: launch.args,
+    terminalLabel: name,
+    nativeSessionId,
+  }
 }
 
 // --- Status grouping ---
@@ -462,7 +589,7 @@ const STATUS_GROUP_ORDER: {
   {
     key: 'inProgress',
     title: 'In Progress',
-    statuses: ['planning', 'vibing', 'yoloing'],
+    statuses: ['planning', 'vibing', 'yoloing', 'reviewing'],
   },
   { key: 'review', title: 'Review', statuses: ['review', 'completed'] },
   { key: 'idle', title: 'Idle', statuses: ['idle'] },

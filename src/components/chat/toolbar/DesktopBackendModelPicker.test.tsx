@@ -286,6 +286,41 @@ describe('DesktopBackendModelPicker', () => {
     expect(screen.queryByText('Tab')).toBeNull()
   })
 
+  it('closes on Escape without bubbling to worktree Escape handlers', async () => {
+    const user = userEvent.setup()
+    const parentEscapeHandler = vi.fn()
+
+    window.addEventListener('keydown', parentEscapeHandler)
+
+    try {
+      render(
+        <DesktopBackendModelPicker
+          selectedBackend="codex"
+          selectedModel="gpt-5.4"
+          selectedProvider={null}
+          installedBackends={['claude', 'codex', 'opencode']}
+          customCliProfiles={[]}
+          onModelChange={vi.fn()}
+          onBackendModelChange={vi.fn()}
+        />
+      )
+
+      await user.click(
+        screen.getByRole('button', { name: /choose backend and model/i })
+      )
+      expect(
+        await screen.findByPlaceholderText(/search codex models/i)
+      ).toBeInTheDocument()
+
+      await user.keyboard('{Escape}')
+
+      expect(screen.queryByPlaceholderText(/search codex models/i)).toBeNull()
+      expect(parentEscapeHandler).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('keydown', parentEscapeHandler)
+    }
+  })
+
   it('uses active PI provider models in the picker and trigger label', async () => {
     const user = userEvent.setup()
     const onModelChange = vi.fn()

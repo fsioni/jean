@@ -147,9 +147,10 @@ describe('PreferencesDialog', () => {
       'Codex',
       'OpenCode',
       'Cursor',
-      'PI',
-      'Command Code',
-      'Grok (Beta)',
+      'PIBeta',
+      'Command CodeBeta',
+      'GrokBeta',
+      'Kimi CodeBeta',
       'GitHub CLI',
       'CodeRabbit CLI',
       'Terminal',
@@ -165,6 +166,35 @@ describe('PreferencesDialog', () => {
     expect(
       navigationMenu.querySelectorAll('[data-sidebar="separator"]')
     ).toHaveLength(5)
+
+    for (const label of ['PI', 'Command Code']) {
+      const button = within(navigationMenu).getByText(label).closest('button')
+      if (!button) {
+        throw new Error(`Expected ${label} navigation button to be rendered`)
+      }
+
+      expect(within(button).getByText('Beta')).toHaveClass('bg-yellow-500/10')
+    }
+
+    const grokButton = within(navigationMenu)
+      .getByText('Grok')
+      .closest('button')
+    if (!grokButton) {
+      throw new Error('Expected Grok navigation button to be rendered')
+    }
+
+    expect(within(grokButton).getByText('Beta')).toHaveClass('bg-yellow-500/10')
+
+    const kimiButton = within(navigationMenu)
+      .getByText('Kimi Code')
+      .closest('button')
+    if (!kimiButton) {
+      throw new Error('Expected Kimi Code navigation button to be rendered')
+    }
+
+    expect(within(kimiButton).getByLabelText('Kimi Code')).toHaveClass(
+      'translate-x-0.5'
+    )
   })
 
   it('keeps the dialog open when Escape clears the desktop search', async () => {

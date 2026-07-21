@@ -5,6 +5,7 @@ import { ReviewCommentsDialog } from './ReviewCommentsDialog'
 
 const mocks = vi.hoisted(() => {
   let reviewCommentsModalOpen = true
+  let reviewCommentsMode: 'plan' | 'yolo' = 'yolo'
 
   return {
     getReviewCommentsModalOpen: () => reviewCommentsModalOpen,
@@ -14,6 +15,10 @@ const mocks = vi.hoisted(() => {
     resetReviewCommentsModalOpen: (open = true) => {
       reviewCommentsModalOpen = open
     },
+    setReviewCommentsMode: (mode: 'plan' | 'yolo') => {
+      reviewCommentsMode = mode
+    },
+    getReviewCommentsMode: () => reviewCommentsMode,
     setPendingMagicCommand: vi.fn(),
     invokeMock: vi.fn(),
   }
@@ -56,7 +61,13 @@ vi.mock('@/services/projects', () => ({
 }))
 
 vi.mock('@/services/preferences', () => ({
-  usePreferences: () => ({ data: {} }),
+  usePreferences: () => ({
+    data: {
+      magic_prompt_modes: {
+        review_comments_mode: mocks.getReviewCommentsMode(),
+      },
+    },
+  }),
 }))
 
 vi.mock('@/lib/transport', () => ({ invoke: mocks.invokeMock }))
@@ -84,6 +95,7 @@ describe('ReviewCommentsDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.resetReviewCommentsModalOpen()
+    mocks.setReviewCommentsMode('yolo')
     mocks.invokeMock.mockImplementation(
       (command: string, _args: Record<string, unknown>) => {
         if (command === 'get_pr_review_comments') {
@@ -194,6 +206,31 @@ describe('ReviewCommentsDialog', () => {
       expect(detail.prompt).toContain('coderabbitai')
       expect(detail.prompt).toContain('implemented and verified')
       expect(detail.prompts).toBeUndefined()
+    } finally {
+      window.removeEventListener('magic-command', magicCommand)
+    }
+  })
+
+  it('uses the configured review comments execution mode', async () => {
+    const user = userEvent.setup()
+    const magicCommand = vi.fn()
+    window.addEventListener('magic-command', magicCommand)
+    mocks.setReviewCommentsMode('plan')
+
+    try {
+      render(<ReviewCommentsDialog />)
+      await screen.findByRole('button', { name: /send to chat/i })
+
+      await user.keyboard('{Meta>}{Enter}{/Meta}')
+
+      await waitFor(() => {
+        expect(magicCommand).toHaveBeenCalledTimes(1)
+      })
+      const detail = (magicCommand.mock.calls[0]?.[0] as CustomEvent).detail
+      expect(detail).toMatchObject({
+        command: 'review-comments',
+        executionMode: 'plan',
+      })
     } finally {
       window.removeEventListener('magic-command', magicCommand)
     }

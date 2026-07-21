@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@/lib/transport'
 import { Download, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -22,23 +23,48 @@ import {
 import { useTerminal } from '@/hooks/useTerminal'
 import { disposeTerminal, setOnStopped } from '@/lib/terminal-instances'
 
+interface CliVersionInfo {
+  version: string
+  tagName?: string
+  tag_name?: string
+  publishedAt?: string
+  published_at?: string
+  prerelease?: boolean
+}
+
+export function normalizeManualCliVersionInput(input: string): string {
+  return input.trim().replace(/^v/i, '')
+}
+
+export function findMatchingCliVersion<T extends { version: string }>(
+  versions: T[],
+  input: string
+): T | null {
+  const normalizedInput = normalizeManualCliVersionInput(input)
+  if (!normalizedInput) return null
+
+  return (
+    versions.find(
+      version =>
+        normalizeManualCliVersionInput(version.version) === normalizedInput
+    ) ?? null
+  )
+}
+
 export interface SetupStateProps {
   cliName: string
-  versions: {
-    version: string
-    tagName?: string
-    tag_name?: string
-    publishedAt?: string
-    published_at?: string
-  }[]
+  versions: CliVersionInfo[]
   selectedVersion: string | null
   currentVersion?: string | null
   isLoading: boolean
   isError?: boolean
   onRetry?: () => void
   onVersionChange: (version: string) => void
+  onCheckManualVersion?: (version: string) => Promise<boolean>
   onInstall: () => void
 }
+
+type ManualVersionStatus = 'idle' | 'checking' | 'valid' | 'invalid' | 'error'
 
 export function SetupState({
   cliName,
@@ -49,8 +75,132 @@ export function SetupState({
   isError,
   onRetry,
   onVersionChange,
+  onCheckManualVersion,
   onInstall,
 }: SetupStateProps) {
+  const [manualVersion, setManualVersion] = useState('')
+  const [manualVersionStatus, setManualVersionStatus] =
+    useState<ManualVersionStatus>('idle')
+  const normalizedManualVersion = normalizeManualCliVersionInput(manualVersion)
+  const hasManualVersion = normalizedManualVersion.length > 0
+  const manualVersionNeedsCheck =
+    hasManualVersion && manualVersionStatus !== 'valid'
+
+  const handleSelectVersion = useCallback(
+    (version: string) => {
+      setManualVersion('')
+      setManualVersionStatus('idle')
+      onVersionChange(version)
+    },
+    [onVersionChange]
+  )
+
+  const handleManualVersionChange = useCallback(
+    (value: string) => {
+      setManualVersion(value)
+      if (!normalizeManualCliVersionInput(value) && versions[0]?.version) {
+        onVersionChange(versions[0].version)
+      }
+    },
+    [onVersionChange, versions]
+  )
+
+  const handleCheckManualVersion = useCallback(async () => {
+    if (!normalizedManualVersion || !onCheckManualVersion) return
+
+    setManualVersionStatus('checking')
+    try {
+      const exists = await onCheckManualVersion(normalizedManualVersion)
+      if (exists) {
+        onVersionChange(normalizedManualVersion)
+        setManualVersionStatus('valid')
+      } else {
+        setManualVersionStatus('invalid')
+      }
+    } catch {
+      setManualVersionStatus('error')
+    }
+  }, [normalizedManualVersion, onCheckManualVersion, onVersionChange])
+
+  useEffect(() => {
+    setManualVersionStatus('idle')
+  }, [manualVersion])
+
+  const renderManualVersionMessage = () => {
+    if (!hasManualVersion) return null
+    if (manualVersionStatus === 'valid') {
+      return (
+        <p className="text-xs text-muted-foreground">
+          Version v{normalizedManualVersion} exists and can be installed.
+        </p>
+      )
+    }
+    if (manualVersionStatus === 'invalid') {
+      return (
+        <p className="text-xs text-destructive">
+          Version not found at the download source.
+        </p>
+      )
+    }
+    if (manualVersionStatus === 'error') {
+      return (
+        <p className="text-xs text-destructive">
+          Could not check this version. Try again.
+        </p>
+      )
+    }
+    return (
+      <p className="text-xs text-muted-foreground">
+        Click Check to verify this version exists at the download source.
+      </p>
+    )
+  }
+
+  const renderManualVersionInput = (disabled = false) => (
+    <div className="space-y-1.5">
+      <label className="text-xs text-muted-foreground">
+        Or enter a manual version
+      </label>
+      <div className="flex gap-2">
+        <Input
+          type="text"
+          placeholder="2.1.98"
+          value={manualVersion}
+          onChange={e => handleManualVersionChange(e.target.value)}
+          aria-invalid={
+            manualVersionStatus === 'invalid' || manualVersionStatus === 'error'
+          }
+          disabled={disabled}
+          className="font-mono"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleCheckManualVersion}
+          disabled={
+            disabled ||
+            !onCheckManualVersion ||
+            !hasManualVersion ||
+            manualVersionStatus === 'checking'
+          }
+        >
+          {manualVersionStatus === 'checking' ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : null}
+          Check
+        </Button>
+      </div>
+      {disabled ? (
+        <p className="text-xs text-muted-foreground">
+          Manual versions can be used after Jean loads enough CLI metadata to
+          know which download source to check.
+        </p>
+      ) : (
+        renderManualVersionMessage()
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       {currentVersion && (
@@ -98,45 +248,38 @@ export function SetupState({
                 </Button>
               )}
             </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">
-                Or enter a version manually (e.g., 2.74.0)
-              </label>
-              <input
-                type="text"
-                placeholder="2.74.0"
-                value={selectedVersion ?? ''}
-                onChange={e => onVersionChange(e.target.value.trim())}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
-              />
-            </div>
+            {renderManualVersionInput(!onCheckManualVersion)}
           </div>
         ) : (
-          <Select
-            value={selectedVersion ?? undefined}
-            onValueChange={onVersionChange}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a version" />
-            </SelectTrigger>
-            <SelectContent>
-              {versions.map((v, index) => (
-                <SelectItem key={v.version} value={v.version}>
-                  v{v.version}
-                  {index === 0 && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      (latest)
-                    </span>
-                  )}
-                  {currentVersion === v.version && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      (current)
-                    </span>
-                  )}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="space-y-3">
+            <Select
+              value={selectedVersion ?? undefined}
+              onValueChange={handleSelectVersion}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a version" />
+              </SelectTrigger>
+              <SelectContent>
+                {versions.map((v, index) => (
+                  <SelectItem key={v.version} value={v.version}>
+                    v{v.version}
+                    {index === 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        (latest)
+                      </span>
+                    )}
+                    {currentVersion === v.version && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        (current)
+                      </span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {renderManualVersionInput(!onCheckManualVersion)}
+          </div>
         )}
         <p className="text-xs text-muted-foreground">
           {cliName} will be installed separately in Jean&apos;s application data
@@ -147,7 +290,7 @@ export function SetupState({
 
       <Button
         onClick={onInstall}
-        disabled={!selectedVersion || isLoading}
+        disabled={!selectedVersion || isLoading || manualVersionNeedsCheck}
         className="w-full"
         size="lg"
       >
@@ -255,6 +398,7 @@ export interface AuthLoginStateProps {
   terminalId: string
   command: string
   commandArgs?: string[] | null
+  action?: 'login' | 'install'
   onComplete: () => void
   onRetry?: () => void
   onSkip?: () => void
@@ -265,11 +409,17 @@ export function AuthLoginState({
   terminalId,
   command,
   commandArgs,
+  action = 'login',
   onComplete,
   onRetry,
   onSkip,
 }: AuthLoginStateProps) {
+  const actionLabel = action === 'install' ? 'Installation' : 'Login'
   const observerRef = useRef<ResizeObserver | null>(null)
+  const completionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  )
+  const completionStartedRef = useRef(false)
   const initialized = useRef(false)
   const [exitStatus, setExitStatus] = useState<{
     exitCode: number | null
@@ -283,6 +433,16 @@ export function AuthLoginState({
     command,
     commandArgs,
   })
+
+  const handleCompleteOnce = useCallback(() => {
+    if (completionStartedRef.current) return
+    completionStartedRef.current = true
+    if (completionTimeoutRef.current) {
+      clearTimeout(completionTimeoutRef.current)
+      completionTimeoutRef.current = null
+    }
+    onComplete()
+  }, [onComplete])
 
   const containerCallbackRef = useCallback(
     (container: HTMLDivElement | null) => {
@@ -346,7 +506,9 @@ export function AuthLoginState({
       if (exitCode === 0) {
         dbg('AuthLoginState: exit 0, calling onComplete in 1.5s')
         // Brief delay so user can see the success output
-        setTimeout(() => onComplete(), 1500)
+        if (!completionStartedRef.current) {
+          completionTimeoutRef.current = setTimeout(handleCompleteOnce, 1500)
+        }
         return
       }
 
@@ -354,7 +516,7 @@ export function AuthLoginState({
       setExitStatus({ exitCode, signal })
     })
     return () => setOnStopped(terminalId, undefined)
-  }, [terminalId, onComplete, cliName])
+  }, [terminalId, handleCompleteOnce, cliName])
 
   useEffect(() => {
     setExitStatus(null)
@@ -366,6 +528,9 @@ export function AuthLoginState({
       if (observerRef.current) {
         observerRef.current.disconnect()
       }
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current)
+      }
       invoke('stop_terminal', { terminalId }).catch(() => {
         /* noop */
       })
@@ -376,9 +541,13 @@ export function AuthLoginState({
   return (
     <div className="space-y-4">
       <div className="text-center">
-        <p className="font-medium">{cliName} Login Required</p>
+        <p className="font-medium">
+          {cliName} {action === 'install' ? 'Installation' : 'Login'} Required
+        </p>
         <p className="text-sm text-muted-foreground mt-1">
-          Complete the authentication process below.
+          Complete the{' '}
+          {action === 'install' ? 'installation' : 'authentication'}
+          {' process below.'}
         </p>
       </div>
 
@@ -389,7 +558,7 @@ export function AuthLoginState({
       {exitStatus && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
           <p className="text-sm font-medium text-destructive">
-            Login process exited unexpectedly
+            {actionLabel} process exited unexpectedly
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {exitStatus.signal
@@ -402,8 +571,8 @@ export function AuthLoginState({
       <div className="flex gap-2">
         {exitStatus ? (
           <>
-            <Button onClick={onComplete} className="flex-1" size="lg">
-              Check Login Status
+            <Button onClick={handleCompleteOnce} className="flex-1" size="lg">
+              Check {actionLabel} Status
             </Button>
             {onRetry && (
               <Button
@@ -412,13 +581,13 @@ export function AuthLoginState({
                 className="flex-1"
                 size="lg"
               >
-                Retry Login
+                Retry {actionLabel}
               </Button>
             )}
           </>
         ) : (
-          <Button onClick={onComplete} className="flex-1" size="lg">
-            I&apos;ve Completed Login
+          <Button onClick={handleCompleteOnce} className="flex-1" size="lg">
+            I&apos;ve Completed {actionLabel}
           </Button>
         )}
         {onSkip && (

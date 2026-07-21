@@ -10,6 +10,7 @@ import { useUIStore, getRemotePickerCallback } from '@/store/ui-store'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getGitRemotes, removeGitRemote } from '@/services/git-status'
 import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export function RemotePickerModal() {
   const { remotePickerOpen, remotePickerRepoPath, closeRemotePicker } =
@@ -17,6 +18,7 @@ export function RemotePickerModal() {
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const queryClient = useQueryClient()
+  const isMobile = useIsMobile()
 
   const { data: remotes = [] } = useQuery({
     queryKey: ['git-remotes', remotePickerRepoPath],
@@ -115,36 +117,49 @@ export function RemotePickerModal() {
         </DialogHeader>
 
         <div className="pb-2">
-          {remotes.map((remote, i) => (
-            <button
-              key={remote.name}
-              onClick={() => selectRemote(i)}
-              onMouseEnter={() => setSelectedIndex(i)}
-              className={cn(
-                'w-full flex items-center justify-between px-4 py-2 text-sm transition-colors',
-                'hover:bg-accent focus:outline-none',
-                selectedIndex === i && 'bg-accent'
-              )}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="truncate">{remote.name}</span>
-              </div>
-              <div className="flex items-center gap-1.5 ml-2 shrink-0">
-                {remote.name !== 'origin' && selectedIndex === i && (
-                  <Delete
-                    className="h-3.5 w-3.5 text-muted-foreground/50"
-                    aria-label="Press backspace to remove"
-                  />
+          {remotes.map((remote, i) => {
+            const canRemove = remote.name !== 'origin'
+            const showRemove = canRemove && (isMobile || selectedIndex === i)
+
+            return (
+              <div
+                key={remote.name}
+                onMouseEnter={() => setSelectedIndex(i)}
+                className={cn(
+                  'flex items-center transition-colors hover:bg-accent',
+                  selectedIndex === i && 'bg-accent'
                 )}
-                {i < 9 && (
-                  <kbd className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                    {i + 1}
-                  </kbd>
+              >
+                <button
+                  onClick={() => selectRemote(i)}
+                  className="flex min-w-0 flex-1 items-center justify-between px-4 py-2 text-sm focus:outline-none"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{remote.name}</span>
+                  </div>
+                  {i < 9 && (
+                    <kbd className="ml-2 shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {i + 1}
+                    </kbd>
+                  )}
+                </button>
+                {showRemove && (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${remote.name} remote`}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleRemoveRemote(i)
+                    }}
+                    className="mr-3 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <Delete className="h-3.5 w-3.5" />
+                  </button>
                 )}
               </div>
-            </button>
-          ))}
+            )
+          })}
         </div>
       </DialogContent>
     </Dialog>

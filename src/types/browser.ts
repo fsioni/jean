@@ -39,6 +39,24 @@ export interface BrowserClosedEvent {
   tabId: string
 }
 
+export interface BrowserGrabContext {
+  url: string
+  title: string
+  tagName: string
+  componentName?: string | null
+  filePath?: string | null
+  lineNumber?: number | null
+  selector?: string | null
+  text?: string | null
+  html?: string | null
+  stackContext?: string | null
+}
+
+export interface BrowserGrabContextEvent {
+  tabId: string
+  context: BrowserGrabContext
+}
+
 /** Bounds passed to browser_create / browser_set_bounds (logical pixels). */
 export interface BrowserBounds {
   x: number

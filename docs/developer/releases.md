@@ -82,12 +82,14 @@ Add these secrets to your GitHub repository (Settings → Secrets and variables 
    - Ask if you want to commit and push automatically
 
 3. **GitHub Actions will:**
-   - Build the app for all platforms
+   - Build the native app and headless server artifacts
    - Create a draft release
    - Generate `latest.json` for auto-updates
    - Upload all installers and signatures
 
 4. **Manually publish the draft release** on GitHub
+
+Before publishing, manually confirm that the intended release commit passed CI.
 
 ### Manual Method
 

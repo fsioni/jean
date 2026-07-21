@@ -3,6 +3,7 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   GitCommitHorizontal,
+  GitBranchPlus,
   GitMerge,
   GitPullRequest,
   GitPullRequestArrow,
@@ -58,7 +59,9 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
-import { invoke } from '@/lib/transport'
+import { useAvailableKimiModels } from '@/services/kimi-cli'
+import { startCommitJob } from '@/services/commit-jobs'
+import { invoke, listen } from '@/lib/transport'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
 import { openExternal } from '@/lib/platform'
@@ -73,17 +76,20 @@ import {
   performGitPull,
 } from '@/services/git-status'
 import type {
-  CreateCommitResponse,
   RevertCommitResponse,
   CreatePrResponse,
   DetectPrResponse,
   MergeConflictsResponse,
   MergePrResponse,
-  ReviewResponse,
+  ReviewJob,
+  StartReviewJobResponse,
 } from '@/types/projects'
 import type { Session } from '@/types/chat'
 import {
   type CliBackend,
+  DEFAULT_FINAL_REVIEW_PROMPT,
+  DEFAULT_MAGIC_PROMPT_MODES,
+  DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_RESOLVE_CONFLICTS_PROMPT,
   PREDEFINED_CLI_PROFILES,
   resolveMagicPromptBackend,
@@ -91,7 +97,7 @@ import {
 } from '@/types/preferences'
 import { useRemotePicker } from '@/hooks/useRemotePicker'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
-import { chatQueryKeys } from '@/services/chat'
+import { chatQueryKeys, refreshWorktreeSessionsCaches } from '@/services/chat'
 import {
   linkWorktreePr,
   saveWorktreePr,
@@ -100,17 +106,27 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import {
   CODEX_MODEL_OPTIONS,
-  MODEL_OPTIONS,
   OPENCODE_MODEL_OPTIONS,
   GROK_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  getCatalogModelOptions,
+  useModelCatalog,
+} from '@/services/model-catalog'
+import { BackendLabel } from '@/components/ui/backend-label'
 import { ReviewMethodModal } from '@/components/chat/ReviewMethodModal'
+import {
+  resolveCodeReviewConfigs,
+  startCodeReviewsSequentially,
+} from '@/lib/code-review-configs'
+import { resolveDefaultModelForBackend } from '@/lib/session-defaults'
 
 type MagicOption =
   | 'save-context'
   | 'load-context'
   | 'linked-projects'
+  | 'fork-session'
   | 'commit'
   | 'commit-and-push'
   | 'pull'
@@ -156,6 +172,13 @@ const CANVAS_ALLOWED_OPTIONS = new Set<MagicOption>([
 
 /** Canvas options that navigate to worktree chat and dispatch a magic-command event */
 const CANVAS_NAVIGATE_AND_DISPATCH_OPTIONS = new Set<MagicOption>(['merge'])
+
+/** Git-only actions should not depend on a mounted ChatWindow event listener. */
+const DIRECT_MAGIC_GIT_OPTIONS = new Set<MagicOption>([
+  'commit',
+  'commit-and-push',
+  'push',
+])
 
 interface MagicOptionItem {
   id: MagicOption
@@ -230,6 +253,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           label: 'Linked Projects',
           icon: Link2,
           key: 'K',
+        },
+        {
+          id: 'fork-session',
+          label: 'Fork Session',
+          icon: GitBranchPlus,
+          key: 'W',
         },
       ],
     },
@@ -343,6 +372,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   s: 'save-context',
   l: 'load-context',
   k: 'linked-projects',
+  w: 'fork-session',
   c: 'commit',
   p: 'commit-and-push',
   d: 'pull',
@@ -442,6 +472,10 @@ export function MagicModal() {
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
   })
+  const { data: availableKimiModels } = useAvailableKimiModels({
+    enabled: installedBackends.includes('kimi'),
+  })
+  const { data: modelCatalog } = useModelCatalog()
 
   // Build columns dynamically based on PR state
   const magicColumns = useMemo(() => buildMagicColumns(hasOpenPr), [hasOpenPr])
@@ -498,6 +532,24 @@ export function MagicModal() {
       : GROK_MODEL_OPTIONS
     return models
   }, [availableGrokModels])
+  const kimiModelOptions = useMemo(() => {
+    if (!availableKimiModels?.length) {
+      return [{ value: 'kimi/default', label: 'Configured default' }]
+    }
+    return availableKimiModels.map(model => ({
+      value: `kimi/${model.id}`,
+      label: model.label,
+    }))
+  }, [availableKimiModels])
+
+  const claudeModelOptions = useMemo(
+    () =>
+      getCatalogModelOptions(modelCatalog, 'claude').map(option => ({
+        ...option,
+        label: option.label.replace(/^Claude\s+/, ''),
+      })),
+    [modelCatalog]
+  )
 
   const investigateDefaults = useMemo(() => {
     if (!investigateType) return null
@@ -516,18 +568,20 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[modelKey] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
         : backend === 'opencode'
-          ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+          ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
           : backend === 'cursor'
             ? (preferences?.selected_cursor_model ?? 'cursor/auto')
             : backend === 'commandcode'
               ? (preferences?.selected_commandcode_model ??
                 'commandcode/default')
-              : backend === 'grok'
-                ? (preferences?.selected_grok_model ??
-                  'grok/grok-composer-2.5-fast')
-                : (preferences?.selected_model ?? 'sonnet'))
+              : backend === 'kimi'
+                ? (preferences?.selected_kimi_model ?? 'kimi/default')
+                : backend === 'grok'
+                  ? (preferences?.selected_grok_model ??
+                    'grok/grok-4.5')
+                  : (preferences?.selected_model ?? 'sonnet'))
     const provider = resolveMagicPromptProvider(
       preferences?.magic_prompt_providers,
       providerKey,
@@ -548,18 +602,20 @@ export function MagicModal() {
     const model =
       preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
       (backend === 'codex'
-        ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+        ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
         : backend === 'opencode'
-          ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+          ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
           : backend === 'cursor'
             ? (preferences?.selected_cursor_model ?? 'cursor/auto')
             : backend === 'commandcode'
               ? (preferences?.selected_commandcode_model ??
                 'commandcode/default')
-              : backend === 'grok'
-                ? (preferences?.selected_grok_model ??
-                  'grok/grok-composer-2.5-fast')
-                : (preferences?.selected_model ?? 'sonnet'))
+              : backend === 'kimi'
+                ? (preferences?.selected_kimi_model ?? 'kimi/default')
+                : backend === 'grok'
+                  ? (preferences?.selected_grok_model ??
+                    'grok/grok-4.5')
+                  : (preferences?.selected_model ?? 'sonnet'))
     const provider = resolveMagicPromptProvider(
       preferences?.magic_prompt_providers,
       RESOLVE_CONFLICTS_PROVIDER_KEY,
@@ -600,9 +656,9 @@ export function MagicModal() {
             { value: 'sonnet', label: `Sonnet${suffix(sonnetModel)}` },
             { value: 'haiku', label: `Haiku${suffix(haikuModel)}` },
           ]
-        : MODEL_OPTIONS
+        : claudeModelOptions
     },
-    [preferences?.custom_cli_profiles]
+    [claudeModelOptions, preferences?.custom_cli_profiles]
   )
 
   const investigateClaudeProvider =
@@ -614,6 +670,123 @@ export function MagicModal() {
     resolveDefaults.provider && resolveDefaults.provider !== '__anthropic__'
       ? resolveDefaults.provider
       : null
+
+  const startFinalReview = useCallback(async () => {
+    if (!selectedWorktreeId || !worktree?.path) return
+
+    const defaultBackend =
+      project?.default_backend ?? preferences?.default_backend ?? 'claude'
+    const backend = (resolveMagicPromptBackend(
+      preferences?.magic_prompt_backends,
+      'final_review_backend',
+      defaultBackend
+    ) ?? defaultBackend) as CliBackend
+    const model =
+      preferences?.magic_prompt_models?.final_review_model ??
+      resolveDefaultModelForBackend(backend, preferences)
+    const provider =
+      backend === 'claude'
+        ? resolveMagicPromptProvider(
+            preferences?.magic_prompt_providers,
+            'final_review_provider',
+            preferences?.default_provider
+          )
+        : null
+    const executionMode =
+      preferences?.magic_prompt_modes?.final_review_mode ??
+      DEFAULT_MAGIC_PROMPT_MODES.final_review_mode
+    const prompt =
+      preferences?.magic_prompts?.final_review ?? DEFAULT_FINAL_REVIEW_PROMPT
+
+    try {
+      const session = await invoke<Session>('create_session', {
+        worktreeId: selectedWorktreeId,
+        worktreePath: worktree.path,
+        name: 'Final review',
+        backend: backend !== 'claude' ? backend : undefined,
+      })
+      const store = useChatStore.getState()
+
+      store.registerWorktreePath(selectedWorktreeId, worktree.path)
+      store.setSelectedBackend(session.id, backend)
+      store.setSelectedModel(session.id, model)
+      store.setSelectedProvider(session.id, provider)
+      store.setActiveSession(selectedWorktreeId, session.id)
+      store.setExecutionMode(session.id, executionMode)
+      store.setExecutingMode(session.id, executionMode)
+      store.setLastSentMessage(session.id, prompt)
+      store.setError(session.id, null)
+      store.clearInputDraft(session.id)
+
+      window.dispatchEvent(
+        new CustomEvent('open-worktree-modal', {
+          detail: {
+            worktreeId: selectedWorktreeId,
+            worktreePath: worktree.path,
+          },
+        })
+      )
+
+      await Promise.all([
+        invoke('set_session_backend', {
+          worktreeId: selectedWorktreeId,
+          worktreePath: worktree.path,
+          sessionId: session.id,
+          backend,
+        }),
+        invoke('set_session_model', {
+          worktreeId: selectedWorktreeId,
+          worktreePath: worktree.path,
+          sessionId: session.id,
+          model,
+        }),
+        invoke('set_session_provider', {
+          worktreeId: selectedWorktreeId,
+          worktreePath: worktree.path,
+          sessionId: session.id,
+          provider,
+        }),
+        invoke('update_session_state', {
+          worktreeId: selectedWorktreeId,
+          worktreePath: worktree.path,
+          sessionId: session.id,
+          selectedExecutionMode: executionMode,
+        }),
+      ])
+
+      await invoke('send_chat_message', {
+        sessionId: session.id,
+        worktreeId: selectedWorktreeId,
+        worktreePath: worktree.path,
+        message: prompt,
+        model,
+        executionMode,
+        effortLevel:
+          preferences?.magic_prompt_efforts?.final_review_effort ?? undefined,
+        parallelExecutionPrompt: preferences?.parallel_execution_prompt_enabled
+          ? (preferences.magic_prompts?.parallel_execution ??
+            DEFAULT_PARALLEL_EXECUTION_PROMPT)
+          : undefined,
+        backend: backend !== 'claude' ? backend : undefined,
+        customProfileName:
+          provider && provider !== '__anthropic__' ? provider : undefined,
+        chromeEnabled: preferences?.chrome_enabled ?? false,
+        aiLanguage: preferences?.ai_language,
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.sessions(selectedWorktreeId),
+      })
+    } catch (error) {
+      toast.error(`Failed to start final review: ${error}`)
+    }
+  }, [
+    preferences,
+    project?.default_backend,
+    queryClient,
+    selectedWorktreeId,
+    worktree?.path,
+  ])
 
   const investigateClaudeModelOptions = useMemo(
     () => getClaudeModelOptionsForProvider(investigateClaudeProvider),
@@ -633,11 +806,18 @@ export function MagicModal() {
           return opencodeModelOptions
         case 'grok':
           return grokModelOptions
+        case 'kimi':
+          return kimiModelOptions
         default:
           return investigateClaudeModelOptions
       }
     },
-    [grokModelOptions, investigateClaudeModelOptions, opencodeModelOptions]
+    [
+      grokModelOptions,
+      investigateClaudeModelOptions,
+      kimiModelOptions,
+      opencodeModelOptions,
+    ]
   )
 
   const customInvestigateModelOptions = useMemo(
@@ -664,7 +844,9 @@ export function MagicModal() {
       case 'cursor':
         return 'Cursor'
       case 'grok':
-        return 'Grok (Beta)'
+        return 'Grok'
+      case 'kimi':
+        return 'Kimi Code'
       default:
         return 'Claude'
     }
@@ -710,11 +892,18 @@ export function MagicModal() {
           return opencodeModelOptions
         case 'grok':
           return grokModelOptions
+        case 'kimi':
+          return kimiModelOptions
         default:
           return resolveClaudeModelOptions
       }
     },
-    [grokModelOptions, opencodeModelOptions, resolveClaudeModelOptions]
+    [
+      grokModelOptions,
+      kimiModelOptions,
+      opencodeModelOptions,
+      resolveClaudeModelOptions,
+    ]
   )
 
   const customResolveModelOptions = useMemo(
@@ -880,8 +1069,7 @@ export function MagicModal() {
             : `Creating commit on ${branch}...`
         )
         try {
-          const result = await invoke<CreateCommitResponse>(
-            'create_commit_with_ai',
+          await startCommitJob(
             {
               worktreePath: worktree.path,
               customPrompt: preferences?.magic_prompts?.commit_message,
@@ -898,26 +1086,46 @@ export function MagicModal() {
                 preferences?.magic_prompt_efforts?.commit_message_effort ??
                 null,
               specificFiles,
+            },
+            job => {
+              clearWorktreeLoading(selectedWorktreeId)
+              if (job.status === 'failed' || !job.response) {
+                opToast.error(`Failed: ${job.error}`)
+                return
+              }
+
+              clearGitDiffSelectedFiles()
+              triggerImmediateGitPoll()
+              window.dispatchEvent(new CustomEvent('git-commit-completed'))
+              if (worktree.project_id) {
+                fetchWorktreesStatus(worktree.project_id)
+              }
+              const result = job.response
+              if (result.push_permission_denied) {
+                opToast.error(
+                  `No permission to push to PR #${worktree.pr_number}. Create a separate PR instead.`,
+                  {
+                    action: {
+                      label: toastActionLabel('Open PR'),
+                      onClick: () => executeGitDirectly('open-pr'),
+                    },
+                  }
+                )
+              } else if (result.push_fell_back) {
+                opToast.warning(
+                  'Could not push to PR branch, pushed to new branch instead'
+                )
+              } else if (result.commit_hash) {
+                const prefix = isPush ? 'Committed and pushed' : 'Committed'
+                opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
+              } else {
+                opToast.success('Pushed to remote')
+              }
             }
           )
-          clearGitDiffSelectedFiles()
-          triggerImmediateGitPoll()
-          window.dispatchEvent(new CustomEvent('git-commit-completed'))
-          if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
-          if (result.push_fell_back) {
-            opToast.warning(
-              'Could not push to PR branch, pushed to new branch instead'
-            )
-          } else if (result.commit_hash) {
-            const prefix = isPush ? 'Committed and pushed' : 'Committed'
-            opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
-          } else {
-            opToast.success('Pushed to remote')
-          }
         } catch (error) {
-          opToast.error(`Failed: ${error}`)
-        } finally {
           clearWorktreeLoading(selectedWorktreeId)
+          opToast.error(`Failed: ${error}`)
         }
       }
 
@@ -978,7 +1186,17 @@ export function MagicModal() {
               )
               triggerImmediateGitPoll()
               if (worktree.project_id) fetchWorktreesStatus(worktree.project_id)
-              if (result.fellBack) {
+              if (result.permissionDenied) {
+                opToast.error(
+                  `No permission to push to PR #${worktree.pr_number}. Create a separate PR instead.`,
+                  {
+                    action: {
+                      label: toastActionLabel('Open PR'),
+                      onClick: () => executeGitDirectly('open-pr'),
+                    },
+                  }
+                )
+              } else if (result.fellBack) {
                 opToast.warning(
                   'Could not push to PR branch, pushed to new branch instead'
                 )
@@ -1179,10 +1397,10 @@ export function MagicModal() {
                   RESOLVE_CONFLICTS_MODEL_KEY
                 ] ??
                 (resolvedBackend === 'codex'
-                  ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+                  ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
                   : resolvedBackend === 'opencode'
                     ? (preferences?.selected_opencode_model ??
-                      'opencode/gpt-5.5')
+                      'opencode/gpt-5.6-sol')
                     : resolvedBackend === 'cursor'
                       ? (preferences?.selected_cursor_model ?? 'cursor/auto')
                       : (preferences?.selected_model ?? 'sonnet'))
@@ -1338,10 +1556,9 @@ ${resolveInstructions}`
               override?.model ??
               preferences?.magic_prompt_models?.[RESOLVE_CONFLICTS_MODEL_KEY] ??
               (resolvedBackend === 'codex'
-                ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+                ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
                 : resolvedBackend === 'opencode'
-                  ? (preferences?.selected_opencode_model ??
-                    'opencode/gpt-5.5')
+                  ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
                   : resolvedBackend === 'cursor'
                     ? (preferences?.selected_cursor_model ?? 'cursor/auto')
                     : (preferences?.selected_model ?? 'sonnet'))
@@ -1527,44 +1744,21 @@ ${resolveInstructions}`
             break
           }
 
-          const reviewRunId = generateId()
-          let cancelRequested = false
-          const reviewLabel =
-            reviewSource === 'coderabbit-cli'
-              ? 'CodeRabbit CLI review'
-              : 'Review'
-          const toastId = toast.loading(
-            `${reviewLabel} for ${reviewTarget}...`,
-            {
-              cancel: {
-                label: 'Cancel',
-                onClick: () => {
-                  cancelRequested = true
-                  toast.loading(`Cancelling review for ${reviewTarget}...`, {
-                    id: toastId,
-                  })
-                  invoke<boolean>('cancel_review_with_ai', { reviewRunId })
-                    .then(cancelled => {
-                      if (cancelled) {
-                        toast.info(`Review cancelled for ${reviewTarget}`, {
-                          id: toastId,
-                        })
-                      } else {
-                        toast.info(
-                          `No active review to cancel for ${reviewTarget}`,
-                          { id: toastId }
-                        )
-                      }
-                    })
-                    .catch(error => {
-                      toast.error(`Failed to cancel review: ${error}`, {
-                        id: toastId,
-                      })
-                    })
-                },
-              },
-            }
-          )
+          const reviewConfigs =
+            reviewSource === 'ai'
+              ? resolveCodeReviewConfigs({
+                  configured: preferences?.magic_code_review_configs,
+                  fallbackBackend:
+                    resolveMagicPromptBackend(
+                      preferences?.magic_prompt_backends,
+                      'code_review_backend',
+                      preferences?.default_backend
+                    ) ?? 'claude',
+                  fallbackModel:
+                    preferences?.magic_prompt_models?.code_review_model ??
+                    'sonnet',
+                })
+              : [undefined]
 
           // Fire-and-forget: detect and link PR if not already linked
           if (!worktree.pr_number) {
@@ -1591,120 +1785,183 @@ ${resolveInstructions}`
               })
           }
 
-          try {
-            const result = await invoke<ReviewResponse>(
-              reviewSource === 'coderabbit-cli'
-                ? 'run_coderabbit_review'
-                : 'run_review_with_ai',
-              reviewSource === 'coderabbit-cli'
-                ? {
+          let reviewSessionId: string | undefined
+          await startCodeReviewsSequentially(
+            reviewConfigs,
+            async reviewConfig => {
+              const reviewRunId = generateId()
+              const reviewLabel =
+                reviewSource === 'coderabbit-cli'
+                  ? 'CodeRabbit CLI review'
+                  : reviewConfig
+                    ? `Review (${reviewConfig.backend} / ${reviewConfig.model})`
+                    : 'Review'
+              const toastId = toast.loading(
+                `Starting ${reviewLabel} for ${reviewTarget}...`
+              )
+
+              try {
+                const { job } = await invoke<StartReviewJobResponse>(
+                  'start_review_job',
+                  {
+                    worktreeId: selectedWorktreeId,
                     worktreePath: worktree.path,
-                    reviewRunId,
-                    reviewType: 'all',
-                  }
-                : {
-                    worktreePath: worktree.path,
+                    source: reviewSource,
+                    backend:
+                      reviewConfig?.backend ??
+                      resolveMagicPromptBackend(
+                        preferences?.magic_prompt_backends,
+                        'code_review_backend',
+                        preferences?.default_backend
+                      ),
                     customPrompt: preferences?.magic_prompts?.code_review,
-                    model: preferences?.magic_prompt_models?.code_review_model,
+                    model:
+                      reviewConfig?.model ??
+                      preferences?.magic_prompt_models?.code_review_model,
                     customProfileName: resolveMagicPromptProvider(
                       preferences?.magic_prompt_providers,
                       'code_review_provider',
                       preferences?.default_provider
                     ),
                     reasoningEffort:
+                      reviewConfig?.reasoning_effort ??
                       preferences?.magic_prompt_efforts?.code_review_effort ??
                       null,
                     reviewRunId,
+                    reviewType:
+                      reviewSource === 'coderabbit-cli' ? 'all' : null,
+                    sessionId: reviewSessionId,
                   }
-            )
+                )
 
-            const newSession = await invoke<Session>('create_session', {
-              worktreeId: selectedWorktreeId,
-              worktreePath: worktree.path,
-              name: 'Code Review',
-            })
+                reviewSessionId ??= job.sessionId
 
-            const {
-              setReviewResults,
-              setActiveSession,
-              clearActiveWorktree,
-              copySessionSettings,
-              activeSessionIds,
-            } = useChatStore.getState()
-            const currentReviewSessionId = activeSessionIds[selectedWorktreeId]
-            setReviewResults(newSession.id, result)
+                if (job.sessionId) {
+                  const { setActiveSession, clearActiveWorktree } =
+                    useChatStore.getState()
+                  setActiveSession(selectedWorktreeId, job.sessionId)
+                  useProjectsStore.getState().selectWorktree(selectedWorktreeId)
+                  clearActiveWorktree()
+                  useUIStore
+                    .getState()
+                    .markWorktreeForAutoOpenSession(
+                      selectedWorktreeId,
+                      job.sessionId
+                    )
+                  queryClient.invalidateQueries({
+                    queryKey: chatQueryKeys.sessions(selectedWorktreeId),
+                  })
+                }
 
-            // Inherit model/mode/thinking settings from current session
-            if (currentReviewSessionId)
-              copySessionSettings(currentReviewSessionId, newSession.id)
-
-            // Navigate to ProjectCanvasView and auto-open session modal
-            setActiveSession(selectedWorktreeId, newSession.id)
-            useProjectsStore.getState().selectWorktree(selectedWorktreeId)
-            clearActiveWorktree()
-            useUIStore
-              .getState()
-              .markWorktreeForAutoOpenSession(selectedWorktreeId, newSession.id)
-
-            // Persist review results to session file
-            invoke('update_session_state', {
-              worktreeId: selectedWorktreeId,
-              worktreePath: worktree.path,
-              sessionId: newSession.id,
-              reviewResults: result,
-              // eslint-disable-next-line @typescript-eslint/no-empty-function
-            }).catch(() => {})
-
-            queryClient.invalidateQueries({
-              queryKey: chatQueryKeys.sessions(selectedWorktreeId),
-            })
-
-            const findingCount = result.findings.length
-            toast.success(
-              `${reviewSource === 'coderabbit-cli' ? 'CodeRabbit CLI review' : 'Review'} done on ${reviewTarget} (${findingCount} findings)`,
-              {
-                id: toastId,
-                action: {
-                  label: toastActionLabel('Open'),
-                  onClick: () => {
-                    const { setActiveSession, clearActiveWorktree } =
-                      useChatStore.getState()
-                    useProjectsStore
-                      .getState()
-                      .selectWorktree(selectedWorktreeId)
-                    clearActiveWorktree()
-                    setActiveSession(selectedWorktreeId, newSession.id)
-                    setTimeout(() => {
-                      window.dispatchEvent(
-                        new CustomEvent('open-session-modal', {
-                          detail: {
-                            sessionId: newSession.id,
-                            worktreeId: selectedWorktreeId,
-                            worktreePath: worktree.path,
-                          },
+                toast.loading(`${reviewLabel} running for ${reviewTarget}...`, {
+                  id: toastId,
+                  duration: 5000,
+                  cancel: {
+                    label: 'Cancel',
+                    onClick: () => {
+                      invoke<boolean>('cancel_review_job', {
+                        jobId: job.id,
+                      }).catch(error => {
+                        toast.error(`Failed to cancel review: ${error}`, {
+                          id: toastId,
                         })
-                      )
-                    }, 50)
+                      })
+                    },
                   },
-                },
+                })
+
+                let unlistenReviewJob: (() => void) | null = null
+                let handledTerminalReviewJob = false
+                const handleTerminalReviewJob = (reviewJob: ReviewJob) => {
+                  if (reviewJob.id !== job.id) return
+                  if (reviewJob.status === 'running') return
+                  if (handledTerminalReviewJob) return
+
+                  handledTerminalReviewJob = true
+                  unlistenReviewJob?.()
+                  if (reviewJob.status === 'completed') {
+                    const completedSessionId = reviewJob.sessionId
+                    void refreshWorktreeSessionsCaches(
+                      queryClient,
+                      selectedWorktreeId,
+                      worktree.path
+                    ).finally(() => {
+                      queryClient.invalidateQueries({
+                        queryKey: chatQueryKeys.sessions(selectedWorktreeId),
+                      })
+                      queryClient.invalidateQueries({
+                        queryKey: ['all-sessions'],
+                      })
+                    })
+                    toast.dismiss(toastId)
+                    toast.success(
+                      `${reviewLabel} done on ${reviewTarget} (${reviewJob.findingCount ?? 0} findings)`,
+                      {
+                        action: completedSessionId
+                          ? {
+                              label: toastActionLabel('Open'),
+                              onClick: () => {
+                                const {
+                                  setActiveSession,
+                                  clearActiveWorktree,
+                                } = useChatStore.getState()
+                                useProjectsStore
+                                  .getState()
+                                  .selectWorktree(selectedWorktreeId)
+                                clearActiveWorktree()
+                                setActiveSession(
+                                  selectedWorktreeId,
+                                  completedSessionId
+                                )
+                                setTimeout(() => {
+                                  window.dispatchEvent(
+                                    new CustomEvent('open-session-modal', {
+                                      detail: {
+                                        sessionId: completedSessionId,
+                                        worktreeId: selectedWorktreeId,
+                                        worktreePath: worktree.path,
+                                      },
+                                    })
+                                  )
+                                }, 50)
+                              },
+                            }
+                          : undefined,
+                      }
+                    )
+                  } else if (reviewJob.status === 'cancelled') {
+                    toast.dismiss(toastId)
+                    toast.info(`Review cancelled for ${reviewTarget}`)
+                  } else {
+                    toast.dismiss(toastId)
+                    toast.error(
+                      `Review failed: ${reviewJob.error ?? 'Unknown error'}`
+                    )
+                  }
+                }
+
+                unlistenReviewJob = await listen<ReviewJob>(
+                  'review-job:updated',
+                  event => handleTerminalReviewJob(event.payload)
+                )
+                if (handledTerminalReviewJob) {
+                  unlistenReviewJob()
+                } else {
+                  const currentJob = await invoke<ReviewJob | null>(
+                    'get_review_job',
+                    { jobId: job.id }
+                  ).catch(() => null)
+                  if (currentJob) handleTerminalReviewJob(currentJob)
+                }
+              } catch (error) {
+                toast.error(`Failed to start review: ${error}`, {
+                  id: toastId,
+                })
+              } finally {
+                clearWorktreeLoading(selectedWorktreeId)
               }
-            )
-          } catch (error) {
-            const errorString = String(error)
-            const cancelled =
-              cancelRequested ||
-              errorString.toLowerCase().includes('cancelled') ||
-              errorString.toLowerCase().includes('canceled')
-            if (cancelled) {
-              toast.info(`Review cancelled for ${reviewTarget}`, {
-                id: toastId,
-              })
-            } else {
-              toast.error(`Review failed: ${error}`, { id: toastId })
             }
-          } finally {
-            clearWorktreeLoading(selectedWorktreeId)
-          }
+          )
           break
         }
       }
@@ -2010,6 +2267,12 @@ ${resolveInstructions}`
         return
       }
 
+      if (DIRECT_MAGIC_GIT_OPTIONS.has(option)) {
+        setMagicModalOpen(false)
+        void executeGitDirectly(option)
+        return
+      }
+
       // Commands that need ChatWindow: navigate to worktree first, then set pending command
       if (
         isOnCanvas &&
@@ -2121,6 +2384,7 @@ ${resolveInstructions}`
         open={reviewMethodDialogOpen}
         onOpenChange={setReviewMethodDialogOpen}
         onAiReview={() => executeGitDirectly('review', undefined, 'ai')}
+        onFinalReview={startFinalReview}
         onCodeRabbitCliReview={() =>
           executeGitDirectly('review', undefined, 'coderabbit-cli')
         }
@@ -2404,9 +2668,13 @@ ${resolveInstructions}`
                         size="sm"
                         hideIcon={
                           installedBackends.filter(backend =>
-                            ['claude', 'codex', 'opencode', 'grok'].includes(
-                              backend
-                            )
+                            [
+                              'claude',
+                              'codex',
+                              'opencode',
+                              'grok',
+                              'kimi',
+                            ].includes(backend)
                           ).length <= 1
                         }
                         onClick={() => setInvestigateSelectionMode('custom')}
@@ -2424,7 +2692,14 @@ ${resolveInstructions}`
                           <SelectItem value="opencode">OpenCode</SelectItem>
                         )}
                         {installedBackends.includes('grok') && (
-                          <SelectItem value="grok">Grok (Beta)</SelectItem>
+                          <SelectItem value="grok">
+                            <BackendLabel backend="grok" />
+                          </SelectItem>
+                        )}
+                        {installedBackends.includes('kimi') && (
+                          <SelectItem value="kimi">
+                            <BackendLabel backend="kimi" />
+                          </SelectItem>
                         )}
                       </SelectContent>
                     </Select>
@@ -2557,9 +2832,13 @@ ${resolveInstructions}`
                         size="sm"
                         hideIcon={
                           installedBackends.filter(backend =>
-                            ['claude', 'codex', 'opencode', 'grok'].includes(
-                              backend
-                            )
+                            [
+                              'claude',
+                              'codex',
+                              'opencode',
+                              'grok',
+                              'kimi',
+                            ].includes(backend)
                           ).length <= 1
                         }
                         onClick={() => setResolveSelectionMode('custom')}
@@ -2577,7 +2856,14 @@ ${resolveInstructions}`
                           <SelectItem value="opencode">OpenCode</SelectItem>
                         )}
                         {installedBackends.includes('grok') && (
-                          <SelectItem value="grok">Grok (Beta)</SelectItem>
+                          <SelectItem value="grok">
+                            <BackendLabel backend="grok" />
+                          </SelectItem>
+                        )}
+                        {installedBackends.includes('kimi') && (
+                          <SelectItem value="kimi">
+                            <BackendLabel backend="kimi" />
+                          </SelectItem>
                         )}
                       </SelectContent>
                     </Select>

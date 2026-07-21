@@ -9,6 +9,7 @@ describe('ProjectsStore', () => {
       expandedProjectIds: new Set<string>(),
       expandedFolderIds: new Set<string>(),
       projectCanvasSettings: {},
+      githubDashboardFavoriteProjectIds: [],
       addProjectDialogOpen: false,
       projectSettingsDialogOpen: false,
       projectSettingsProjectId: null,
@@ -267,6 +268,21 @@ describe('ProjectsStore', () => {
         worktreeSortMode: 'manual',
         pinnedLabels: [{ name: 'Bug', color: '#eab308', pinned: true }],
       })
+    })
+  })
+
+  describe('GitHub dashboard favorites', () => {
+    it('toggles favorite project IDs without duplicating them', () => {
+      const { toggleGitHubDashboardFavoriteProject } =
+        useProjectsStore.getState()
+
+      toggleGitHubDashboardFavoriteProject('project-2')
+      toggleGitHubDashboardFavoriteProject('project-1')
+      toggleGitHubDashboardFavoriteProject('project-2')
+
+      expect(
+        useProjectsStore.getState().githubDashboardFavoriteProjectIds
+      ).toEqual(['project-1'])
     })
   })
 })

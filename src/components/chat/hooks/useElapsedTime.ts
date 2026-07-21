@@ -1,18 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useVisibilityAwareTicker } from '@/hooks/useVisibilityAwareTicker'
 import { formatDuration } from '../time-utils'
 
 export function useElapsedTime(startTime: number | null): string | null {
   const [elapsed, setElapsed] = useState<number | null>(null)
+  const updateElapsed = useCallback(() => {
+    if (startTime == null) return
+    setElapsed(Date.now() - startTime)
+  }, [startTime])
 
   useEffect(() => {
     if (startTime == null) {
       setElapsed(null)
-      return
+    } else {
+      setElapsed(Date.now() - startTime)
     }
-    setElapsed(Date.now() - startTime)
-    const id = setInterval(() => setElapsed(Date.now() - startTime), 1000)
-    return () => clearInterval(id)
   }, [startTime])
+
+  useVisibilityAwareTicker(startTime != null, updateElapsed)
 
   if (elapsed == null) return null
   return formatDuration(elapsed)

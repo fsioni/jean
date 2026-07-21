@@ -73,6 +73,9 @@ export {
 }
 export type { ChatToolbarProps }
 
+/** Tracks concurrent ChatToolbar mounts (remount races during session switch). */
+let chatToolbarMountCount = 0
+
 export const ChatToolbar = memo(function ChatToolbar({
   isSending,
   hasPendingQuestions,
@@ -98,6 +101,9 @@ export const ChatToolbar = memo(function ChatToolbar({
   worktreeId,
   activeSessionId,
   projectId,
+  runScripts,
+  packageScripts,
+  favoritePackageScripts,
   loadedIssueContexts,
   loadedPRContexts,
   loadedSecurityContexts,
@@ -131,6 +137,9 @@ export const ChatToolbar = memo(function ChatToolbar({
   enabledMcpServers,
   onToggleMcpServer,
   onOpenProjectSettings,
+  onRunCommand,
+  onRunPackageScript,
+  onToggleFavoritePackageScript,
 }: ChatToolbarProps) {
   const {
     statuses: mcpStatuses,
@@ -164,10 +173,18 @@ export const ChatToolbar = memo(function ChatToolbar({
   })
 
   // Signal to FloatingDock that its burger counterpart now lives in this toolbar.
+  // Use a process-wide mount count so React remount races (session key change)
+  // cannot leave chatToolbarMounted=false while a newer toolbar is mounted —
+  // that would show FloatingDock over a blank-looking chat on mobile/web.
   useEffect(() => {
-    const { setChatToolbarMounted } = useUIStore.getState()
-    setChatToolbarMounted(true)
-    return () => setChatToolbarMounted(false)
+    chatToolbarMountCount += 1
+    useUIStore.getState().setChatToolbarMounted(true)
+    return () => {
+      chatToolbarMountCount = Math.max(0, chatToolbarMountCount - 1)
+      if (chatToolbarMountCount === 0) {
+        useUIStore.getState().setChatToolbarMounted(false)
+      }
+    }
   }, [])
 
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({
@@ -188,18 +205,42 @@ export const ChatToolbar = memo(function ChatToolbar({
       is_default: model.is_default,
     })) ?? PI_MODEL_OPTIONS
 
-  const { isCodex, activeMcpCount, backendModelSections, selectedModelLabel } =
-    useToolbarDerivedState({
-      selectedBackend,
-      selectedProvider,
-      selectedModel,
-      opencodeModelOptions,
-      piModelOptions,
-      customCliProfiles,
-      installedBackends,
-      availableMcpServers,
-      enabledMcpServers,
-    })
+  const {
+    isCodex,
+    activeMcpCount,
+    backendModelSections,
+    selectedModelLabel,
+    selectedModelReasoning,
+  } = useToolbarDerivedState({
+    selectedBackend,
+    selectedProvider,
+    selectedModel,
+    opencodeModelOptions,
+    piModelOptions,
+    customCliProfiles,
+    installedBackends,
+    availableMcpServers,
+    enabledMcpServers,
+  })
+  useEffect(() => {
+    if (!selectedModelReasoning) return
+    const values = new Set(
+      selectedModelReasoning.levels.map(level => level.value)
+    )
+    if (selectedModelReasoning.type === 'effort') {
+      if (!values.has(selectedEffortLevel)) {
+        onEffortLevelChange(selectedModelReasoning.default as EffortLevel)
+      }
+    } else if (!values.has(selectedThinkingLevel)) {
+      onThinkingLevelChange(selectedModelReasoning.default as ThinkingLevel)
+    }
+  }, [
+    onEffortLevelChange,
+    onThinkingLevelChange,
+    selectedEffortLevel,
+    selectedModelReasoning,
+    selectedThinkingLevel,
+  ])
   const availableExecutionModes = getSupportedExecutionModes(selectedBackend)
   const hasMultipleBackendModelChoices =
     backendModelSections.reduce(
@@ -386,10 +427,7 @@ export const ChatToolbar = memo(function ChatToolbar({
 
       <div className="@container flex justify-start px-4 py-2 md:px-6">
         <div className="inline-flex max-w-full flex-nowrap items-center overflow-x-auto whitespace-nowrap bg-transparent scrollbar-hide">
-          <DockBurgerButton
-            activeMcpCount={activeMcpCount}
-            className="flex @xl:hidden"
-          />
+          <DockBurgerButton className="flex @xl:hidden" />
 
           <MobileToolbarMenu
             isDisabled={false}
@@ -422,6 +460,7 @@ export const ChatToolbar = memo(function ChatToolbar({
             hideThinkingLevel={hideThinkingLevel}
             useAdaptiveThinking={useAdaptiveThinking}
             isCodex={isCodex}
+            modelReasoning={selectedModelReasoning}
             customCliProfiles={customCliProfiles}
             onOpenBackendModelPicker={() =>
               setMobileBackendModelPickerOpen(true)
@@ -450,6 +489,12 @@ export const ChatToolbar = memo(function ChatToolbar({
             prDisplayStatus={displayStatus}
             worktreeId={worktreeId}
             onAttach={onAttach}
+            runScripts={runScripts}
+            onRunCommand={onRunCommand}
+            packageScripts={packageScripts}
+            favoritePackageScripts={favoritePackageScripts}
+            onRunPackageScript={onRunPackageScript}
+            onToggleFavoritePackageScript={onToggleFavoritePackageScript}
           />
 
           {isMobile && (
@@ -493,6 +538,7 @@ export const ChatToolbar = memo(function ChatToolbar({
             providerLocked={providerLocked}
             customCliProfiles={customCliProfiles}
             isCodex={isCodex}
+            modelReasoning={selectedModelReasoning}
             prUrl={prUrl}
             prNumber={prNumber}
             displayStatus={displayStatus}
@@ -501,7 +547,6 @@ export const ChatToolbar = memo(function ChatToolbar({
             activeWorktreePath={activeWorktreePath}
             availableMcpServers={availableMcpServers}
             enabledMcpServers={enabledMcpServers}
-            activeMcpCount={activeMcpCount}
             isHealthChecking={isHealthChecking}
             mcpStatuses={mcpStatuses}
             loadedIssueContexts={loadedIssueContexts}

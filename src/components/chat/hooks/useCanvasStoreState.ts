@@ -3,6 +3,20 @@ import { useChatStore } from '@/store/chat-store'
 import type { ChatStoreState } from '../session-card-utils'
 
 /**
+ * Streaming text changes every animation frame during a run. Reading it
+ * lazily through a stable getter (instead of subscribing to the maps) keeps
+ * every canvas/sidebar card consumer off the per-frame re-render path —
+ * cards re-read the current text whenever a subscribed field changes.
+ */
+const getStreamingText: ChatStoreState['getStreamingText'] = sessionId => {
+  const state = useChatStore.getState()
+  return {
+    content: state.streamingContents[sessionId] ?? '',
+    blocks: state.streamingContentBlocks[sessionId] ?? [],
+  }
+}
+
+/**
  * Subscribe to chat store state needed for computing session card data.
  * Uses individual selectors for reliable re-renders — useShallow's useRef
  * mutation inside selectors can race with React concurrent rendering,
@@ -13,10 +27,6 @@ export function useCanvasStoreState(): ChatStoreState {
   const executingModes = useChatStore(state => state.executingModes)
   const executionModes = useChatStore(state => state.executionModes)
   const activeToolCalls = useChatStore(state => state.activeToolCalls)
-  const streamingContents = useChatStore(state => state.streamingContents)
-  const streamingContentBlocks = useChatStore(
-    state => state.streamingContentBlocks
-  )
   const answeredQuestions = useChatStore(state => state.answeredQuestions)
   const waitingForInputSessionIds = useChatStore(
     state => state.waitingForInputSessionIds
@@ -33,8 +43,7 @@ export function useCanvasStoreState(): ChatStoreState {
       executingModes,
       executionModes,
       activeToolCalls,
-      streamingContents,
-      streamingContentBlocks,
+      getStreamingText,
       answeredQuestions,
       waitingForInputSessionIds,
       reviewingSessions,
@@ -46,8 +55,6 @@ export function useCanvasStoreState(): ChatStoreState {
       executingModes,
       executionModes,
       activeToolCalls,
-      streamingContents,
-      streamingContentBlocks,
       answeredQuestions,
       waitingForInputSessionIds,
       reviewingSessions,

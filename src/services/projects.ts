@@ -31,9 +31,10 @@ import { getFileManagerName } from '@/lib/platform'
 
 import type { AppPreferences } from '@/types/preferences'
 import type { AdvisoryContext } from '@/types/github'
-import { hasBackend } from '@/lib/environment'
+import { hasBackend, hasBackendTransport } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
 import { shouldSuppressAutoFixConflictNotification } from './worktree-conflict-events'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 
 // Check if a backend is available (Tauri IPC or WebSocket)
 // Kept as `isTauri` for backward compatibility across the codebase
@@ -59,7 +60,7 @@ export function useProjects() {
   return useQuery({
     queryKey: projectsQueryKeys.list(),
     queryFn: async (): Promise<Project[]> => {
-      if (!isTauri()) {
+      if (!hasBackendTransport()) {
         logger.debug('Not in Tauri context, returning empty projects')
         return []
       }
@@ -71,7 +72,7 @@ export function useProjects() {
         return projects
       } catch (error) {
         logger.error('Failed to load projects', { error })
-        return []
+        return preserveQueryCacheOnError(error)
       }
     },
     staleTime: 1000 * 60 * 5, // 5 minutes
@@ -86,7 +87,7 @@ export function useWorktrees(projectId: string | null) {
   return useQuery({
     queryKey: projectsQueryKeys.worktrees(projectId ?? ''),
     queryFn: async (): Promise<Worktree[]> => {
-      if (!isTauri() || !projectId) {
+      if (!hasBackendTransport() || !projectId) {
         return []
       }
 
@@ -101,7 +102,7 @@ export function useWorktrees(projectId: string | null) {
         return worktrees
       } catch (error) {
         logger.error('Failed to load worktrees', { error, projectId })
-        return []
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!projectId,
@@ -129,7 +130,7 @@ export function useWorktree(worktreeId: string | null) {
   return useQuery({
     queryKey,
     queryFn: async (): Promise<Worktree | null> => {
-      if (!isTauri() || !worktreeId) {
+      if (!hasBackendTransport() || !worktreeId) {
         return null
       }
 
@@ -142,7 +143,7 @@ export function useWorktree(worktreeId: string | null) {
         return worktree
       } catch (error) {
         logger.error('Failed to load worktree', { error, worktreeId })
-        return null
+        return preserveQueryCacheOnError(error)
       }
     },
     enabled: !!worktreeId && !isPending,
@@ -460,6 +461,7 @@ export function useCreateWorktree() {
       securityContext,
       advisoryContext,
       linearContext,
+      sentryContext,
       customName,
       origin,
       background: _background,
@@ -522,6 +524,14 @@ export function useCreateWorktree() {
           createdAt: string
         }[]
       }
+      /** Sentry issue context to attach to the new worktree */
+      sentryContext?: {
+        id: string
+        shortId: string
+        title: string
+        permalink: string
+        content: string
+      }
       /** Custom worktree name (used when retrying after path conflict) */
       customName?: string
       /** Origin/category for the worktree */
@@ -550,6 +560,7 @@ export function useCreateWorktree() {
         securityContext,
         advisoryContext,
         linearContext,
+        sentryContext,
         customName,
         origin,
       })
@@ -2195,19 +2206,39 @@ export function useRunScripts(worktreePath: string | null) {
   })
 }
 
+export interface PackageScript {
+  name: string
+  command: string
+  args: string[]
+}
+
+/** Get scripts from package.json with the detected package-manager command. */
+export function usePackageScripts(worktreePath: string | null) {
+  return useQuery<PackageScript[]>({
+    queryKey: ['package-scripts', worktreePath],
+    queryFn: () =>
+      worktreePath
+        ? invoke<PackageScript[]>('get_package_scripts', { worktreePath })
+        : Promise.resolve([]),
+    enabled: !!worktreePath && hasBackendTransport(),
+    staleTime: 30_000,
+  })
+}
+
 /**
  * Hook to get configured ports from jean.json for a worktree.
  * Returns PortEntry[] (empty = none configured).
+ * Works on native Tauri and web access (via backend transport).
  */
 export function usePorts(worktreePath: string | null) {
   return useQuery<PortEntry[]>({
     queryKey: ['ports', worktreePath],
     queryFn: async () => {
-      if (!isTauri() || !worktreePath) return []
+      if (!worktreePath || !hasBackendTransport()) return []
       const ports = await invoke<PortEntry[]>('get_ports', { worktreePath })
       return ports
     },
-    enabled: !!worktreePath,
+    enabled: !!worktreePath && hasBackendTransport(),
     staleTime: 30_000,
   })
 }
@@ -2531,6 +2562,9 @@ export function useUpdateProjectSettings() {
       worktreesDir,
       linearApiKey,
       linearTeamId,
+      sentryAuthToken,
+      sentryOrganizationSlug,
+      sentryProjectSlug,
       autoFixSettings,
     }: {
       projectId: string
@@ -2544,6 +2578,9 @@ export function useUpdateProjectSettings() {
       worktreesDir?: string
       linearApiKey?: string
       linearTeamId?: string
+      sentryAuthToken?: string
+      sentryOrganizationSlug?: string
+      sentryProjectSlug?: string
       autoFixSettings?: Project['auto_fix_settings']
       linkedProjectIds?: string[]
     }): Promise<Project> => {
@@ -2568,6 +2605,9 @@ export function useUpdateProjectSettings() {
         worktreesDir,
         linearApiKey,
         linearTeamId,
+        sentryAuthToken,
+        sentryOrganizationSlug,
+        sentryProjectSlug,
         autoFixSettings,
         linkedProjectIds,
       })

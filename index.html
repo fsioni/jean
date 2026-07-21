@@ -10,6 +10,24 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover"
     />
     <meta name="theme-color" content="#101010" />
+    <script>
+      ;(() => {
+        let savedTheme = 'system'
+        try {
+          savedTheme = localStorage.getItem('ui-theme') || 'system'
+        } catch {
+          // Fall back to the OS theme when storage is unavailable.
+        }
+        const resolvedTheme =
+          savedTheme === 'system'
+            ? matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : savedTheme
+        document.documentElement.classList.add(resolvedTheme)
+        document.documentElement.style.colorScheme = resolvedTheme
+      })()
+    </script>
     <title>Jean</title>
   </head>
 

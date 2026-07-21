@@ -1,6 +1,7 @@
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
@@ -47,13 +48,16 @@ export function MobileBackendModelPickerSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="flex max-h-[75svh] rounded-t-xl p-0"
+        className="flex h-[75svh] max-h-[75svh] min-h-0 overflow-hidden rounded-t-xl p-0"
         showCloseButton={false}
       >
-        <SheetHeader className="border-b px-4 py-3">
+        <SheetHeader className="shrink-0 border-b px-4 py-3">
           <SheetTitle className="text-base">
             Select Backend &amp; Model
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            Search and select the backend and model for this chat session.
+          </SheetDescription>
         </SheetHeader>
         <BackendModelPickerContent
           open={open}
@@ -68,7 +72,7 @@ export function MobileBackendModelPickerSheet({
           onBackendModelChange={onBackendModelChange}
           onRequestClose={() => onOpenChange(false)}
           className="min-h-0"
-          commandListClassName="max-h-none flex-1 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]"
+          commandListClassName="!max-h-none min-h-0 flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom)+0.5rem)]"
         />
       </SheetContent>
     </Sheet>

@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { Activity, Loader2 } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import type {
@@ -25,6 +25,7 @@ import {
   getPlanTextBlockIndicesToHide,
   isDuplicatePlanTextBlock,
   resolvePlanContent,
+  type TimelineItem,
 } from './tool-call-utils'
 import { ToolCallsDisplay } from './ToolCallsDisplay'
 import { PlanDisplay } from './PlanFileDisplay'
@@ -33,7 +34,6 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { logger } from '@/lib/logger'
-
 
 function WorkingVisualRow() {
   return (
@@ -101,39 +101,83 @@ export const StreamingMessage = memo(function StreamingMessage({
   areQuestionsSkipped,
   onCopySteeredText,
 }: StreamingMessageProps) {
-  const resolvedPlan = resolvePlanContent({
-    toolCalls,
-    messageContent: streamingContent,
-    contentBlocks,
-  })
-  const hiddenPlanTextBlockIndices = getPlanTextBlockIndicesToHide(
-    contentBlocks,
-    resolvedPlan.content
+  const resolvedPlan = useMemo(
+    () =>
+      resolvePlanContent({
+        toolCalls,
+        messageContent: streamingContent,
+        contentBlocks,
+      }),
+    [toolCalls, streamingContent, contentBlocks]
   )
-  const fallbackPrePlanText = getIntroTextBeforeDuplicatePlan(
-    streamingContent,
-    resolvedPlan.content
+  const hiddenPlanTextBlockIndices = useMemo(
+    () => getPlanTextBlockIndicesToHide(contentBlocks, resolvedPlan.content),
+    [contentBlocks, resolvedPlan.content]
   )
+  const fallbackPrePlanText = useMemo(
+    () =>
+      getIntroTextBeforeDuplicatePlan(streamingContent, resolvedPlan.content),
+    [streamingContent, resolvedPlan.content]
+  )
+
+  // Timeline construction is O(blocks + tools) and runs on every streaming
+  // frame otherwise — memoize on the immutable store slices it derives from.
+  const timelineData = useMemo(() => {
+    if (contentBlocks.length === 0) return null
+    let timeline: TimelineItem[]
+    try {
+      timeline = buildTimeline(contentBlocks, toolCalls)
+    } catch (e) {
+      logger.error('Failed to build streaming timeline', {
+        sessionId,
+        error: e,
+      })
+      return { error: true as const }
+    }
+    // First contentBlocks index per text block content — replaces a per-item
+    // O(n) findIndex during render.
+    const textBlockIndexByText = new Map<string, number>()
+    contentBlocks.forEach((block, index) => {
+      if (block.type === 'text' && !textBlockIndexByText.has(block.text)) {
+        textBlockIndexByText.set(block.text, index)
+      }
+    })
+    // Find all incomplete item indices for spinner (show on all in-progress tools)
+    // Use === undefined check since empty string is a valid "completed" output (e.g. Read tools)
+    const incompleteIndices = new Set<number>()
+    timeline.forEach((item, idx) => {
+      if (item.type === 'task' && item.taskTool.output === undefined)
+        incompleteIndices.add(idx)
+      else if (item.type === 'standalone' && item.tool.output === undefined)
+        incompleteIndices.add(idx)
+      else if (
+        item.type === 'stackedGroup' &&
+        item.items.some(i => i.type === 'tool' && i.tool.output === undefined)
+      )
+        incompleteIndices.add(idx)
+    })
+    return {
+      error: false as const,
+      timeline,
+      textBlockIndexByText,
+      incompleteIndices,
+    }
+  }, [contentBlocks, toolCalls, sessionId])
 
   return (
     <div className="text-foreground/90">
       {/* Render streaming content blocks inline if available */}
-      {contentBlocks.length > 0 ? (
+      {timelineData ? (
         (() => {
-          let timeline
-          try {
-            timeline = buildTimeline(contentBlocks, toolCalls)
-          } catch (e) {
-            logger.error('Failed to build streaming timeline', {
-              sessionId,
-              error: e,
-            })
+          if (timelineData.error) {
             return (
               <div className="text-sm text-muted-foreground italic">
                 [Streaming content could not be rendered]
               </div>
             )
           }
+          const { timeline, textBlockIndexByText, incompleteIndices } =
+            timelineData
           const hasRenderedTextItem = timeline.some(
             item => item.type === 'text'
           )
@@ -143,25 +187,6 @@ export const StreamingMessage = memo(function StreamingMessage({
                 ? streamingContent
                 : null))
             : null
-          // Find all incomplete item indices for spinner (show on all in-progress tools)
-          // Use === undefined check since empty string is a valid "completed" output (e.g. Read tools)
-          const incompleteIndices = new Set<number>()
-          timeline.forEach((item, idx) => {
-            if (item.type === 'task' && item.taskTool.output === undefined)
-              incompleteIndices.add(idx)
-            else if (
-              item.type === 'standalone' &&
-              item.tool.output === undefined
-            )
-              incompleteIndices.add(idx)
-            else if (
-              item.type === 'stackedGroup' &&
-              item.items.some(
-                i => i.type === 'tool' && i.tool.output === undefined
-              )
-            )
-              incompleteIndices.add(idx)
-          })
 
           return (
             <>
@@ -199,11 +224,7 @@ export const StreamingMessage = memo(function StreamingMessage({
                                   )
                                 case 'text': {
                                   const textBlockIndex =
-                                    contentBlocks.findIndex(
-                                      block =>
-                                        block.type === 'text' &&
-                                        block.text === item.text
-                                    )
+                                    textBlockIndexByText.get(item.text) ?? -1
                                   if (
                                     textBlockIndex >= 0 &&
                                     hiddenPlanTextBlockIndices.has(

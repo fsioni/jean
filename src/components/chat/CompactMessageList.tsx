@@ -32,9 +32,10 @@ import {
   normalizeQuestionMultipleField,
 } from '@/types/chat'
 import { MessageItem } from './MessageItem'
+import { EditedFilesDisplay } from './EditedFilesDisplay'
 import { AskUserQuestion } from './AskUserQuestion'
 import { SteeredPromptGroup } from './SteeredPromptGroup'
-import { buildTimeline } from './tool-call-utils'
+import { buildTimeline, coalesceContentBlocks } from './tool-call-utils'
 import { formatDuration, getAssistantDurationMs } from './time-utils'
 import {
   TOOL_CALL_ROW_CLASS,
@@ -229,7 +230,7 @@ function findLatestAssistantText(
     const message = group[g]?.message
     if (!message || message.role !== 'assistant') continue
 
-    const blocks = message.content_blocks ?? []
+    const blocks = coalesceContentBlocks(message.content_blocks ?? [])
     const texts: string[] = []
     for (const block of blocks) {
       if (block?.type === 'text' && block.text.trim()) {
@@ -320,7 +321,7 @@ function summarizeGroup(
   for (let g = group.length - 1; g >= 0; g--) {
     const message = group[g]?.message
     if (!message) continue
-    const blocks: ContentBlock[] = message.content_blocks ?? []
+    const blocks = coalesceContentBlocks(message.content_blocks ?? [])
     for (let i = blocks.length - 1; i >= 0; i--) {
       const block = blocks[i]
       if (!block) continue
@@ -1173,6 +1174,9 @@ export const CompactMessageList = memo(
               Boolean(item.latestText) &&
               !(latestTextIsRecap && latestRunHasPlan)
             const surfaceRecap = latestTextIsRecap && showLatestText
+            const surfacedLatestToolCalls = showLatestText
+              ? item.messages.flatMap(({ message }) => message.tool_calls ?? [])
+              : []
             return (
               <div key={item.key}>
                 <CompactActivityRow
@@ -1192,6 +1196,12 @@ export const CompactMessageList = memo(
                     >
                       {item.latestText ?? ''}
                     </Markdown>
+                    {surfacedLatestToolCalls.length > 0 && (
+                      <EditedFilesDisplay
+                        toolCalls={surfacedLatestToolCalls}
+                        worktreePath={worktreePath}
+                      />
+                    )}
                   </div>
                 )}
               </div>

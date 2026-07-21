@@ -56,6 +56,27 @@ Rust and React communicate through three patterns:
    (Used by git status polling, PR status updates, worktree events)
 ```
 
+### Backend-Owned Long-Running Jobs
+
+Long-running operations that must survive web/mobile WebSocket disconnects
+should be owned by Rust, not by a pending frontend `invoke()` response. The
+frontend should start the job and receive an immediate job id; Rust
+should run the process, persist the final state, and emit best-effort progress
+events. After a disconnect-triggered reload, the frontend recovers from
+persisted session/project data or job query commands instead of relying on the
+original WebSocket response.
+
+Current example: review magic uses `start_review_job`, which creates a Code
+Review session with a running indicator and starts the AI/CodeRabbit review in a
+Rust background task. AI review supports up to five distinct backend/model pairs
+per worktree; each pair has its own model-compatible reasoning level. A batch of
+AI reviews shares one Code Review session, and `review_results` stores the
+backend/model results together so the review panel can switch between them;
+entries are created with a running status so the dropdown can show loading
+state before each result arrives.
+Duplicate pairs are rejected while running. Job progress emits
+`review-job:updated`.
+
 ### Command-Centric Design
 
 All user actions flow through a centralized command system:
@@ -88,6 +109,11 @@ Each major system has focused documentation:
 Additional systems (no dedicated docs yet):
 
 - **Terminal** - Built-in PTY terminal emulator (`src-tauri/src/terminal/`).
+  On Unix, terminals launched with a command run it through the user's
+  interactive login shell so package scripts and native CLI sessions inherit
+  the same PATH as a normally opened terminal. Structured command arguments
+  are shell-escaped before launch; Windows continues to invoke binaries or
+  `.cmd`/`.bat` shims directly to avoid PowerShell argument rewriting.
   Sessions can use chat or terminal as their primary surface via
   `useUIStore.sessionPrimarySurface`. Full-screen terminal sessions own exactly
   one terminal instance via `sessionTerminalIds` and must render through
@@ -107,11 +133,28 @@ Additional systems (no dedicated docs yet):
   silently launching an unrelated conversation. The native CLI picker also merges
   backend-owned history from local stores where stable (`~/.codex/sessions/**`
   and `~/.claude/projects/<escaped-cwd>/**`) and imports a chosen history row as
-  a Jean terminal session running the backend's native resume command.
+  a Jean terminal session running the backend's native resume command. Resumable
+  Jean chat sessions can likewise be duplicated into a separate native-client
+  terminal session from the session-tab context menu; the original chat session
+  remains unchanged.
 
   **Web-mode persistence.** In web access (Axum HTTP server + WebSocket),
   panel/side/drawer and modal terminals survive a full browser refresh. Three
   pieces cooperate:
+
+  **Native remote UI.** When the desktop app selects a remote Jean, it keeps
+  running its bundled React UI and routes shared backend commands and events to
+  that server over authenticated HTTP/WebSocket transport. Local shell
+  operations such as clipboard access, external URL opening, native menus, and
+  notifications continue to use the local Tauri runtime.
+
+  When an established WebSocket disconnects, the frontend reloads the page
+  instead of repairing stale in-memory state. The normal
+  HTTP bootstrap then restores current persisted state, while backend-owned
+  jobs and terminals keep running. Before reload, the current canvas session
+  modal and active session are copied to short-lived `sessionStorage` so the
+  same session header is restored even if the debounced UI-state save has not
+  completed yet.
   1. **Backend PTY registry** (`src-tauri/src/terminal/registry.rs`) keeps the
      real `portable_pty` process alive in `TERMINAL_SESSIONS` keyed by
      `terminal_id`. The frontend is a viewer; refresh never kills the PTY.
@@ -120,9 +163,9 @@ Additional systems (no dedicated docs yet):
      `TERMINAL_BUFFER_MAX_EVENTS = 12000` events/terminal and
      `TERMINAL_BUFFER_MAX_BYTES = 3MB` per terminal) holds the most
      recent `terminal:output` and `terminal:started` envelopes with monotonic
-     sequence numbers. On WebSocket reconnect — and on full-page refresh via
-     `requestTerminalReplay` — the frontend asks for events after a given
-     `last_seq` and the backend streams the buffered slice.
+     sequence numbers. After a full-page refresh, `requestTerminalReplay` asks
+     for events after a given `last_seq` and the backend streams the buffered
+     slice.
 
   3. **UI state hydration** (`src/hooks/useUIStatePersistence.ts`,
      `restoreTerminalRuntimeState`) is web-only. On load it reads
@@ -147,10 +190,11 @@ Additional systems (no dedicated docs yet):
   re-checking the race.
 
 - **Background Tasks** - Git/PR polling with focus-aware intervals (`src-tauri/src/background_tasks/`); Auto Fix issue polling/planning/yolo handoff and scheduler active-hours window via `chrono` local time with midnight-crossing support (`src-tauri/src/auto_fix/`)
-- **HTTP Server** - Embedded Axum server + WebSocket for headless/web mode (`src-tauri/src/http_server/`)
+- **HTTP Server** - Tauri-free Axum server + WebSocket from `jean-core`; `src-server` provides the standalone Tokio adapter. See [server-architecture.md](./server-architecture.md).
 - **Diagnostics** - CPU/memory monitoring panel (`src-tauri/src/diagnostics/`)
 - **MCP** - Model Context Protocol server integration with per-project overrides (`src/services/mcp.ts`)
-- **CLI Management** - Claude CLI, Codex CLI, Cursor CLI, OpenCode, PI, and gh CLI installation/versioning (`src-tauri/src/claude_cli/`, `src-tauri/src/codex_cli/`, `src-tauri/src/cursor_cli/`, `src-tauri/src/opencode_cli/`, `src-tauri/src/pi_cli/`, `src-tauri/src/gh_cli/`)
+- **Model Catalog** - CDN-driven model lists and reasoning capabilities with bundled offline fallback ([model-catalog.md](./model-catalog.md))
+- **CLI Management** - Claude CLI, Codex CLI, Cursor CLI, OpenCode, PI, Command Code, Grok, Kimi Code, and gh CLI installation/versioning (backend-specific modules under `src-tauri/src/`)
 
 Cursor-specific notes:
 
@@ -165,7 +209,19 @@ Grok-specific notes:
 - Grok chat uses ACP over stdio (`grok --no-auto-update agent --no-leader stdio`) instead of `grok -p`, because headless `-p` streaming JSON does not expose reliable tool-call events.
 - Grok ACP processes are kept warm per Jean session and reused for follow-up prompts, then idle-stopped after five minutes. If the process is gone (app restart, crash, cancellation, model/mode flag change), Jean spawns a new ACP process and reloads via persisted `grok_session_id`.
 - ACP `session/update` chunks are mapped to Jean's common chat stream events (`chat:chunk`, `chat:tool_use`, `chat:tool_result`, `chat:done`), and ACP session ids are persisted as `grok_session_id` for later `session/load`.
-- Jean implements the minimal ACP client surface Grok needs for headless tool execution: `session/request_permission`, `terminal/*`, and text-file read/write requests. Plan mode denies terminal and write requests; build/yolo can auto-approve via ACP/CLI flags.
+- Jean implements the minimal ACP client surface Grok needs for headless tool execution: `session/request_permission`, `terminal/*`, and text-file read/write requests. Plan mode auto-approves research tools (`read`/`search`/`think`/`fetch`/`execute`, including `run_terminal_command` / `terminal/*`) so investigations can use `gh`/`git`/`rg`/etc., and denies mutating file tools (`edit`/`delete`/`move`/`write`) plus hard-blocks `fs/write`; build/yolo auto-approve via ACP/CLI flags. Synthetic ExitPlanMode is only injected for plan-like content (not short research preambles).
+- **All modes** launch Grok ACP with `--no-plan`. Grok's native `exit_plan_mode` requires the TUI approval surface ACP cannot show; leaving native plan enabled caused Jean plan-mode turns to hang after research. Jean plan mode is enforced with a plan-mode system instruction, mutation-blocking tool permissions, and synthetic ExitPlanMode. Build/yolo also pass `--always-approve`.
+- Grok CLI currently advertises `promptCapabilities.image: false`. Jean rejects raster image attachments before saving or sending them, preserves already-pending images so the user can switch backends, and also validates Grok messages in Rust to prevent binary files from reaching ACP text-file reads. SVG attachments remain supported as text files.
+- **MCP:** Jean discovers Grok-visible servers from `~/.grok/config.toml` / project `.grok/config.toml`, plus Claude/Cursor/`.mcp.json` compat sources (same merge set as grok-build). Health uses `grok mcp doctor --json`. On each turn Jean (1) temporarily syncs `disabled_mcp_servers` so only session-enabled servers auto-load, (2) passes enabled configs as ACP `mcpServers` on `session/new`/`session/load`, then (3) restores the previous disabled list when the turn ends. Unix detached hosts receive MCP via `--mcp-servers-file`.
+
+Kimi Code-specific notes:
+
+- Jean manages the official `@moonshot-ai/kimi-code` npm package or uses a `kimi` binary from `PATH`.
+- Interactive chat uses the official `kimi acp` stdio protocol. Jean maps ACP text, thinking, tool, image, session-resume, cancellation, and permission-mode behavior into the shared chat event model.
+- Jean maps execution modes to Kimi's native modes: `plan` → `plan`, `build` → `auto`, and `yolo` → `yolo`. Final plan text is exposed through Jean's standard plan-approval tool shape.
+- Kimi session IDs are persisted as `kimi_session_id`; each follow-up starts a fresh ACP process and uses `session/resume` for conversation continuity. On Unix, interactive turns run through a detached Jean ACP host (`--jean-kimi-acp-host`) that owns Kimi's stdio, appends ACP updates to the run JSONL, accepts cancellation over a short local socket, and can be reattached through `resume_session` after Jean restarts. Windows retains the attached, non-survivable fallback.
+- Configured models are discovered with `kimi provider list --json`. Magic-prompt operations use `kimi -p` with strict JSON instructions and validation because Kimi Code does not expose a native JSON Schema output flag.
+- MCP entries are discovered from `~/.kimi-code/mcp.json` and project-local `.kimi-code/mcp.json`; Kimi Code loads those servers when the ACP session starts.
 
 ### Component Hierarchy
 

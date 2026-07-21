@@ -26,12 +26,6 @@ vi.mock('@/services/opencode-cli', () => ({
   }),
 }))
 
-vi.mock('@/services/cursor-cli', () => ({
-  useAvailableCursorModels: () => ({
-    data: [{ id: 'auto', label: 'Auto' }],
-  }),
-}))
-
 vi.mock('@/services/commandcode-cli', () => ({
   useAvailableCommandCodeModels: () => ({
     data: [{ id: 'auto', label: 'Auto' }],
@@ -41,6 +35,15 @@ vi.mock('@/services/commandcode-cli', () => ({
 const patchPreferencesMutate = vi.fn()
 let mockFavoriteModels: string[] = []
 let mockFastModeModels: string[] = []
+let mockCursorModels: { id: string; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
+]
+
+vi.mock('@/services/cursor-cli', () => ({
+  useAvailableCursorModels: () => ({
+    data: mockCursorModels,
+  }),
+}))
 
 vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({
@@ -55,6 +58,7 @@ vi.mock('@/services/preferences', () => ({
 beforeEach(() => {
   mockFavoriteModels = []
   mockFastModeModels = []
+  mockCursorModels = [{ id: 'auto', label: 'Auto' }]
   patchPreferencesMutate.mockClear()
   vi.stubGlobal(
     'matchMedia',
@@ -177,6 +181,27 @@ describe('BackendModelPickerContent', () => {
     expect(cursorTab.querySelector('.bg-yellow-500')).toBeNull()
     expect(commandCodeTab.querySelector('.bg-yellow-500')).not.toBeNull()
     expect(grokTab.querySelector('.bg-yellow-500')).not.toBeNull()
+  })
+
+  it('keeps the Cursor fallback model when web access caches an empty model list', () => {
+    mockCursorModels = []
+
+    render(
+      <BackendModelPickerContent
+        open
+        selectedBackend="cursor"
+        selectedModel="cursor/auto"
+        selectedProvider={null}
+        installedBackends={['cursor']}
+        customCliProfiles={[]}
+        onModelChange={vi.fn()}
+        onBackendModelChange={vi.fn()}
+        onRequestClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Auto')).toBeInTheDocument()
+    expect(screen.queryByText('No Cursor models found.')).toBeNull()
   })
 
   it('does not add an empty custom Command Code model option', async () => {
@@ -532,9 +557,9 @@ describe('BackendModelPickerContent', () => {
     await user.keyboard('{Meta>}f{/Meta}')
 
     expect(patchPreferencesMutate).toHaveBeenCalledWith({
-      fast_mode_models: ['codex:gpt-5.4'],
+      fast_mode_models: ['codex:gpt-5.6-sol'],
     })
-    expect(onModelChange).toHaveBeenCalledWith('gpt-5.4-fast')
+    expect(onModelChange).toHaveBeenCalledWith('gpt-5.6-sol-fast')
     expect(onRequestClose).toHaveBeenCalled()
   })
 

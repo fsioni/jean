@@ -6,6 +6,7 @@ import {
   getCatalogDefaultModelOptions,
   getCatalogModelFastInfo,
   getCatalogModelOptions,
+  getCatalogModelReasoning,
   readCachedModelCatalog,
 } from './model-catalog'
 
@@ -180,5 +181,174 @@ describe('model catalog', () => {
       value: 'gpt-5.5',
       label: 'GPT 5.5',
     })
+  })
+
+  it('uses Codex native Ultra effort for bundled GPT 5.6 Sol and Terra', () => {
+    for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra']) {
+      const reasoning = getCatalogModelReasoning(null, 'codex', model)
+
+      expect(reasoning?.default).toBe('medium')
+      expect(reasoning?.levels.map(level => level.value)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultra',
+      ])
+    }
+  })
+
+  it('does not expose Ultra effort for bundled GPT 5.6 Luna', () => {
+    const reasoning = getCatalogModelReasoning(
+      null,
+      'codex',
+      'gpt-5.6-luna'
+    )
+
+    expect(reasoning?.default).toBe('medium')
+    expect(reasoning?.levels.map(level => level.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ])
+  })
+
+  it('loads model reasoning capabilities and arbitrary levels from the CDN', async () => {
+    const catalog = await fetchModelCatalog({
+      storage: createStorage(),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              version: 1,
+              updated_at: '2026-07-10T00:00:00Z',
+              defaults: { codex: 'gpt-5.6-sol' },
+              backends: {
+                codex: {
+                  models: [
+                    {
+                      id: 'gpt-5.6-sol',
+                      label: 'GPT 5.6 Sol',
+                      fast_id: 'gpt-5.6-sol-fast',
+                      reasoning: {
+                        type: 'effort',
+                        default: 'medium',
+                        levels: [
+                          { value: 'low', label: 'Low' },
+                          { value: 'medium', label: 'Medium' },
+                          {
+                            value: 'ultra',
+                            label: 'Ultra',
+                            description: 'Automatic delegation',
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          )
+      ),
+    })
+
+    expect(
+      getCatalogModelReasoning(catalog, 'codex', 'gpt-5.6-sol-fast')
+    ).toEqual({
+      type: 'effort',
+      default: 'medium',
+      levels: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        {
+          value: 'ultra',
+          label: 'Ultra',
+          description: 'Automatic delegation',
+        },
+      ],
+    })
+  })
+
+  it('accepts catalog models and reasoning metadata for every Jean backend', async () => {
+    const catalog = await fetchModelCatalog({
+      storage: createStorage(),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              version: 1,
+              updated_at: '2026-07-10T00:00:00Z',
+              defaults: { grok: 'grok/future' },
+              backends: {
+                grok: {
+                  models: [
+                    {
+                      id: 'grok/future',
+                      label: 'Grok Future',
+                      reasoning: {
+                        type: 'effort',
+                        default: 'medium',
+                        levels: [{ value: 'medium', label: 'Medium' }],
+                      },
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          )
+      ),
+    })
+
+    expect(getCatalogModelOptions(catalog, 'grok')).toEqual([
+      { value: 'grok/future', label: 'Grok Future' },
+    ])
+    expect(getCatalogModelReasoning(catalog, 'grok', 'grok/future')?.type).toBe(
+      'effort'
+    )
+  })
+
+  it('ignores invalid reasoning metadata without rejecting the model', async () => {
+    const catalog = await fetchModelCatalog({
+      storage: createStorage(),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              version: 1,
+              updated_at: '2026-07-10T00:00:00Z',
+              defaults: { claude: 'claude-invalid' },
+              backends: {
+                claude: {
+                  models: [
+                    {
+                      id: 'claude-invalid',
+                      label: 'Claude Invalid',
+                      reasoning: {
+                        type: 'thinking',
+                        default: 'missing',
+                        levels: [{ value: 'think', label: 'Think' }],
+                      },
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          )
+      ),
+    })
+
+    expect(getCatalogModelOptions(catalog, 'claude')).toContainEqual({
+      value: 'claude-invalid',
+      label: 'Claude Invalid',
+    })
+    expect(
+      getCatalogModelReasoning(catalog, 'claude', 'claude-invalid')
+    ).toBeUndefined()
   })
 })

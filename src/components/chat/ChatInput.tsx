@@ -103,10 +103,6 @@ export const ChatInput = memo(function ChatInput({
   // This avoids React re-renders on every keystroke
   const valueRef = useRef<string>('')
 
-  const debouncedSaveRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined
-  )
-
   // File mention popover state (local to this component)
   const [fileMentionOpen, setFileMentionOpen] = useState(false)
   const [fileMentionQuery, setFileMentionQuery] = useState('')
@@ -205,8 +201,6 @@ export const ChatInput = memo(function ChatInput({
 
       // React to external clears (draft went from non-empty to empty)
       if (prevDraft && !draft && inputRef.current?.value) {
-        // Cancel pending debounced writes so cleared drafts don't get restored.
-        clearTimeout(debouncedSaveRef.current)
         inputRef.current.value = ''
         valueRef.current = ''
         setShowHint(true)
@@ -227,7 +221,6 @@ export const ChatInput = memo(function ChatInput({
   }, [activeSessionId, inputRef, resizeTextarea])
 
   const clearInputState = useCallback(() => {
-    clearTimeout(debouncedSaveRef.current)
     if (inputRef.current) {
       inputRef.current.value = ''
     }
@@ -277,11 +270,10 @@ export const ChatInput = memo(function ChatInput({
       // PERFORMANCE: Update ref only, no React render
       valueRef.current = value
 
-      // Debounced save to store for persistence (crash recovery, session switching)
-      clearTimeout(debouncedSaveRef.current)
-      debouncedSaveRef.current = setTimeout(() => {
-        useChatStore.getState().setInputDraft(activeSessionId, value)
-      }, 1000)
+      // Keep the uncontrolled DOM value in Zustand immediately. Disk writes are
+      // debounced by useUIStatePersistence, so reload recovery stays current
+      // without re-rendering this textarea on every keystroke.
+      useChatStore.getState().setInputDraft(activeSessionId, value)
 
       // Update hint visibility only at empty/non-empty boundary (minimal re-renders)
       const isEmpty = !value.trim()
@@ -608,8 +600,6 @@ export const ChatInput = memo(function ChatInput({
       // Enter without shift sends the message (on mobile, Enter adds a newline instead)
       if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
         e.preventDefault()
-        // Cancel any pending debounced save
-        clearTimeout(debouncedSaveRef.current)
         // Sync to store immediately before submit so ChatWindow can read it
         if (activeSessionId) {
           useChatStore
@@ -1127,9 +1117,7 @@ export const ChatInput = memo(function ChatInput({
         valueRef.current = newValue
         resizeTextarea()
 
-        // Cancel pending debounced save (it still has the old "/query" value)
-        // and sync cleaned value to store immediately
-        clearTimeout(debouncedSaveRef.current)
+        // Sync the cleaned value to the store immediately.
         useChatStore.getState().setInputDraft(activeSessionId, newValue)
         onHasValueChangeRef.current?.(Boolean(newValue.trim()))
 
@@ -1153,9 +1141,6 @@ export const ChatInput = memo(function ChatInput({
   // Handle command selection from / mention popover (executes immediately)
   const handleCommandSelect = useCallback(
     (command: ClaudeCommand) => {
-      // Cancel pending debounced save (it still has the old "/command" value)
-      clearTimeout(debouncedSaveRef.current)
-
       // Built-in `/goal` is not a command-template. Insert "/goal "
       // literal so the user types an objective; submit handling either
       // intercepts it for Codex or passes it through to native backends.

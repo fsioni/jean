@@ -6,6 +6,7 @@ const STATUS_PRIORITY: Record<string, number> = {
   planning: 1,
   vibing: 2,
   yoloing: 3,
+  reviewing: 4,
   review: 4,
   completed: 4,
   idle: 5,
@@ -15,6 +16,10 @@ export function sortSessionCardsForTabs(
   cards: SessionCardData[]
 ): SessionCardData[] {
   return [...cards].sort((a, b) => {
+    const aIsCodeReview = a.session.name.startsWith('Code Review')
+    const bIsCodeReview = b.session.name.startsWith('Code Review')
+    if (aIsCodeReview !== bIsCodeReview) return aIsCodeReview ? -1 : 1
+
     const pa = STATUS_PRIORITY[a.status] ?? 1
     const pb = STATUS_PRIORITY[b.status] ?? 1
     if (pa !== pb) return pa - pb
@@ -44,4 +49,24 @@ export function buildReorderedSessionIdsWithinStatus(
   ids.splice(fromIndex, 1)
   ids.splice(toIndex, 0, draggedSessionId)
   return ids
+}
+
+/**
+ * Resolve which session ChatWindow should mount in SessionChatModal.
+ *
+ * When the sessions query is transiently empty (invalidate after send, web
+ * reconnect), keep the store's active session so ChatWindow is not unmounted —
+ * unmounting blanks the modal and shows FloatingDock instead of chat input.
+ */
+export function resolveModalSessionId(
+  activeSessionId: string | undefined,
+  sessionIds: readonly string[]
+): string | null {
+  if (
+    activeSessionId &&
+    (sessionIds.length === 0 || sessionIds.includes(activeSessionId))
+  ) {
+    return activeSessionId
+  }
+  return sessionIds[0] ?? null
 }

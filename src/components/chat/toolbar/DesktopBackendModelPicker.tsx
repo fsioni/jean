@@ -20,6 +20,7 @@ import { useAvailableCursorModels } from '@/services/cursor-cli'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { useAvailableCommandCodeModels } from '@/services/commandcode-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
+import { useAvailableKimiModels } from '@/services/kimi-cli'
 import { cn } from '@/lib/utils'
 import { Kbd } from '@/components/ui/kbd'
 import { BackendLabel } from '@/components/ui/backend-label'
@@ -87,6 +88,9 @@ export function DesktopBackendModelPicker({
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
   })
+  const { data: availableKimiModels } = useAvailableKimiModels({
+    enabled: installedBackends.includes('kimi'),
+  })
 
   const opencodeModelOptions = useMemo(() => {
     if (opencodeModelsError) return []
@@ -97,10 +101,12 @@ export function DesktopBackendModelPicker({
   }, [availableOpencodeModels, opencodeModelsError])
   const cursorModelOptions = useMemo(
     () =>
-      availableCursorModels?.map(model => ({
-        value: `cursor/${model.id}`,
-        label: model.label || formatCursorModelLabel(model.id),
-      })),
+      availableCursorModels?.length
+        ? availableCursorModels.map(model => ({
+            value: `cursor/${model.id}`,
+            label: model.label || formatCursorModelLabel(model.id),
+          }))
+        : undefined,
     [availableCursorModels]
   )
   const piModelOptions = useMemo(
@@ -128,6 +134,14 @@ export function DesktopBackendModelPicker({
       })),
     [availableGrokModels]
   )
+  const kimiModelOptions = useMemo(
+    () =>
+      availableKimiModels?.map(model => ({
+        value: `kimi/${model.id}`,
+        label: model.label,
+      })),
+    [availableKimiModels]
+  )
 
   const { backendModelSections, selectedModelLabel } = useToolbarDerivedState({
     selectedBackend,
@@ -138,6 +152,7 @@ export function DesktopBackendModelPicker({
     piModelOptions,
     commandcodeModelOptions,
     grokModelOptions,
+    kimiModelOptions,
     customCliProfiles,
     installedBackends,
   })
@@ -211,6 +226,11 @@ export function DesktopBackendModelPicker({
       <PopoverContent
         align="end"
         className="w-[min(36rem,calc(100vw-4rem))] p-0"
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+          }
+        }}
       >
         <BackendModelPickerContent
           open={open}

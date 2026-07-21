@@ -158,6 +158,7 @@ export function useSessionStatePersistence() {
         answeredQuestions,
         submittedAnswers,
         fixedFindings,
+        fixedReviewFindings,
         pendingPermissionDenials,
         pendingCodexCommandApprovalRequests,
         pendingCodexPermissionRequests,
@@ -175,13 +176,17 @@ export function useSessionStatePersistence() {
       } = useChatStore.getState()
 
       const ctx = deniedMessageContext[sessionId]
+      const combinedFixedFindings = new Set([
+        ...(fixedFindings[sessionId] ?? new Set()),
+        ...(fixedReviewFindings[sessionId] ?? new Set()),
+      ])
 
       return {
         answeredQuestions: Array.from(
           answeredQuestions[sessionId] ?? new Set()
         ),
         submittedAnswers: submittedAnswers[sessionId] ?? {},
-        fixedFindings: Array.from(fixedFindings[sessionId] ?? new Set()),
+        fixedFindings: Array.from(combinedFixedFindings),
         pendingPermissionDenials: pendingPermissionDenials[sessionId] ?? [],
         pendingCodexCommandApprovalRequests:
           pendingCodexCommandApprovalRequests[sessionId] ?? [],
@@ -316,6 +321,18 @@ export function useSessionStatePersistence() {
         ...statusCurrentState.reviewingSessions,
         [activeSessionId]: effectiveReviewing,
       }
+    }
+
+    if (
+      session.review_results &&
+      statusCurrentState.reviewResults[activeSessionId] !==
+        session.review_results
+    ) {
+      statusUpdates.reviewResults = {
+        ...statusCurrentState.reviewResults,
+        [activeSessionId]: session.review_results,
+      }
+      statusUpdates.reviewSidebarVisible = true
     }
 
     if (Object.keys(statusUpdates).length > 0) {
@@ -573,6 +590,8 @@ export function useSessionStatePersistence() {
     let prevSubmittedAnswers =
       useChatStore.getState().submittedAnswers[sessionId]
     let prevFixedFindings = useChatStore.getState().fixedFindings[sessionId]
+    let prevFixedReviewFindings =
+      useChatStore.getState().fixedReviewFindings[sessionId]
     let prevPendingDenials =
       useChatStore.getState().pendingPermissionDenials[sessionId]
     let prevPendingCodexCommandApprovalRequests =
@@ -605,6 +624,7 @@ export function useSessionStatePersistence() {
       const currentAnswered = state.answeredQuestions[sessionId]
       const currentSubmitted = state.submittedAnswers[sessionId]
       const currentFixed = state.fixedFindings[sessionId]
+      const currentFixedReview = state.fixedReviewFindings[sessionId]
       const currentDenials = state.pendingPermissionDenials[sessionId]
       const currentCodexCommandApprovalRequests =
         state.pendingCodexCommandApprovalRequests[sessionId]
@@ -629,6 +649,7 @@ export function useSessionStatePersistence() {
         currentAnswered !== prevAnsweredQuestions ||
         currentSubmitted !== prevSubmittedAnswers ||
         currentFixed !== prevFixedFindings ||
+        currentFixedReview !== prevFixedReviewFindings ||
         currentDenials !== prevPendingDenials ||
         currentCodexCommandApprovalRequests !==
           prevPendingCodexCommandApprovalRequests ||
@@ -649,6 +670,7 @@ export function useSessionStatePersistence() {
         prevAnsweredQuestions = currentAnswered
         prevSubmittedAnswers = currentSubmitted
         prevFixedFindings = currentFixed
+        prevFixedReviewFindings = currentFixedReview
         prevPendingDenials = currentDenials
         prevPendingCodexCommandApprovalRequests =
           currentCodexCommandApprovalRequests

@@ -29,6 +29,7 @@ export function getModelImpliedBackend(
   if (model.startsWith('commandcode/')) return 'commandcode'
   if (model.startsWith('cursor/')) return 'cursor'
   if (model.startsWith('grok/')) return 'grok'
+  if (model.startsWith('kimi/')) return 'kimi'
   if (model.startsWith('opencode/')) return 'opencode'
   if (model.startsWith('pi/')) return 'pi'
   if (model.startsWith('codex') || model.includes('codex')) return 'codex'
@@ -48,10 +49,12 @@ export function getModelImpliedBackend(
  */
 export function supportsAdaptiveThinking(
   model: string,
-  cliVersion: string | null | undefined
+  cliVersion: string | null | undefined,
+  catalogUsesEffort?: boolean
 ): boolean {
   const usesEffortLevels =
-    model.startsWith('claude-fable-') || model.startsWith('claude-opus-')
+    catalogUsesEffort ??
+    (model.startsWith('claude-fable-') || model.startsWith('claude-opus-'))
   if (!usesEffortLevels) return false
   if (!cliVersion) return false
   return compareVersions(cliVersion, ADAPTIVE_THINKING_MIN_CLI_VERSION) >= 0

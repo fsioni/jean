@@ -87,6 +87,12 @@ export interface Project {
   jenkins_token?: string | null
   /** Preview base URL template; "{pr}" → PR id (e.g. "https://{pr}.preview.example.com"). Admin link + freshness derive /admin and /version. Kept in local config, not source. */
   jenkins_preview_url_template?: string | null
+  /** Sentry auth token override for this project */
+  sentry_auth_token?: string | null
+  /** Sentry organization slug */
+  sentry_organization_slug?: string | null
+  /** Sentry project slug */
+  sentry_project_slug?: string | null
   /** IDs of linked projects for cross-project context sharing */
   linked_project_ids?: string[]
   /** Per-project automated issue fixing settings */
@@ -448,6 +454,22 @@ export interface CreateCommitResponse {
   push_permission_denied: boolean
 }
 
+export type CommitJobStatus = 'running' | 'completed' | 'failed'
+
+export interface CommitJob {
+  id: string
+  worktreePath: string
+  status: CommitJobStatus
+  response?: CreateCommitResponse
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface StartCommitJobResponse {
+  job: CommitJob
+}
+
 /** Response from reverting the last local commit */
 export interface RevertCommitResponse {
   /** Hash of the reverted commit */
@@ -514,6 +536,42 @@ export interface ReviewResponse {
   findings: ReviewFinding[]
   /** Overall review verdict */
   approval_status: 'approved' | 'changes_requested' | 'needs_discussion'
+}
+
+export interface ReviewResultEntry {
+  backend: string
+  model: string
+  status?: ReviewJobStatus
+  result?: ReviewResponse
+  error?: string
+}
+
+export interface GroupedReviewResults {
+  reviews: ReviewResultEntry[]
+}
+
+export type StoredReviewResults = ReviewResponse | GroupedReviewResults
+
+export type ReviewJobStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface ReviewJob {
+  id: string
+  reviewRunId: string
+  worktreeId: string
+  worktreePath: string
+  sessionId?: string
+  source: 'ai' | 'coderabbit-cli' | string
+  backend?: string
+  model?: string
+  status: ReviewJobStatus
+  findingCount?: number
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface StartReviewJobResponse {
+  job: ReviewJob
 }
 
 // =============================================================================

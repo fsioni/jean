@@ -8,6 +8,7 @@ import {
   Shield,
   GitBranch,
   Bot,
+  Bug,
 } from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { LucideIcon } from 'lucide-react'
@@ -29,6 +30,7 @@ import { GitHubPRsTab } from './GitHubPRsTab'
 import { SecurityAlertsTab } from './SecurityAlertsTab'
 import { BranchesTab } from './BranchesTab'
 import { LinearIssuesTab } from './LinearIssuesTab'
+import { SentryIssuesTab } from './SentryIssuesTab'
 import { IssuePreviewModal } from './IssuePreviewModal'
 // --- perso/ai-pipeline ---
 import { AiPipelineTab } from './AiPipelineTab'
@@ -43,7 +45,8 @@ export type TabId =
   | 'linear'
   // --- perso/ai-pipeline ---
   | 'pipeline'
-// --- /perso/ai-pipeline ---
+  // --- /perso/ai-pipeline ---
+  | 'sentry'
 
 export interface Tab {
   id: TabId
@@ -63,6 +66,8 @@ export const TABS: Tab[] = [
   // --- perso/ai-pipeline ---
   { id: 'pipeline', label: 'Pipeline IA', key: '7', icon: Bot },
   // --- /perso/ai-pipeline ---
+  // perso: Sentry moved to 8 — 7 stays on our Pipeline IA tab.
+  { id: 'sentry', label: 'Sentry', key: '8', icon: Bug },
 ]
 
 export function NewWorktreeModal() {
@@ -146,6 +151,10 @@ export function NewWorktreeModal() {
     handleSelectLinearIssue: handlers.handleSelectLinearIssue,
     handleSelectLinearIssueAndInvestigate:
       handlers.handleSelectLinearIssueAndInvestigate,
+    filteredSentryIssues: data.filteredSentryIssues,
+    handleSelectSentryIssue: handlers.handleSelectSentryIssue,
+    handleSelectSentryIssueAndInvestigate:
+      handlers.handleSelectSentryIssueAndInvestigate,
   })
 
   // Apply store-provided default tab when modal opens
@@ -168,7 +177,8 @@ export function NewWorktreeModal() {
         activeTab === 'prs' ||
         activeTab === 'security' ||
         activeTab === 'branches' ||
-        activeTab === 'linear') &&
+        activeTab === 'linear' ||
+        activeTab === 'sentry') &&
       newWorktreeModalOpen
     ) {
       const timer = setTimeout(() => {
@@ -375,6 +385,26 @@ export function NewWorktreeModal() {
               <AiPipelineTab isActive={newWorktreeModalOpen} />
             )}
             {/* --- /perso/ai-pipeline --- */}
+            {activeTab === 'sentry' && (
+              <SentryIssuesTab
+                projectId={data.selectedProjectId ?? ''}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                issues={data.filteredSentryIssues}
+                isLoading={data.isLoadingSentryIssues}
+                isRefetching={data.isRefetchingSentryIssues}
+                error={data.sentryIssuesError}
+                onRefresh={() => data.refetchSentryIssues()}
+                selectedIndex={selectedItemIndex}
+                setSelectedIndex={setSelectedItemIndex}
+                onSelectIssue={handlers.handleSelectSentryIssue}
+                onInvestigateIssue={
+                  handlers.handleSelectSentryIssueAndInvestigate
+                }
+                creatingFromId={handlers.creatingFromSentryId}
+                searchInputRef={searchInputRef}
+              />
+            )}
 
             {activeTab === 'branches' && (
               <BranchesTab
@@ -388,9 +418,7 @@ export function NewWorktreeModal() {
                 selectedIndex={selectedItemIndex}
                 setSelectedIndex={setSelectedItemIndex}
                 onSelectBranch={handlers.handleSelectBranch}
-                onStackBranch={handlers.handleStackOnBranch}
                 creatingFromBranch={handlers.creatingFromBranch}
-                stackingFromBranch={handlers.stackingFromBranch}
                 searchInputRef={searchInputRef}
               />
             )}

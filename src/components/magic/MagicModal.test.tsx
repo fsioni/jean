@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { MagicModal } from './MagicModal'
 
 const mocks = vi.hoisted(() => {
@@ -32,7 +32,11 @@ const mocks = vi.hoisted(() => {
     clearInputDraft: vi.fn(),
     toastSuccess: vi.fn(),
     toastError: vi.fn(),
+    toastLoading: vi.fn(() => 'toast-1'),
+    startCommitJob: vi.fn(),
+    gitPush: vi.fn(),
     openExternal: vi.fn(),
+    activeWorktreePath: null as string | null,
     worktree,
   }
 })
@@ -80,6 +84,8 @@ vi.mock('@/store/ui-store', () => ({
         setReviewCommentsModalOpen: vi.fn(),
         setReleaseNotesModalOpen: vi.fn(),
         setLinkedProjectsModalOpen: vi.fn(),
+        gitDiffSelectedFiles: new Set<string>(),
+        clearGitDiffSelectedFiles: vi.fn(),
       }),
     }
   ),
@@ -103,14 +109,14 @@ vi.mock('@/store/chat-store', () => ({
     (selector?: (state: ChatState) => unknown) => {
       const state: ChatState = {
         activeWorktreeId: null,
-        activeWorktreePath: null,
+        activeWorktreePath: mocks.activeWorktreePath,
         activeSessionIds: {},
       }
       return selector ? selector(state) : state
     },
     {
       getState: () => ({
-        activeWorktreePath: null,
+        activeWorktreePath: mocks.activeWorktreePath,
         activeSessionIds: {},
         setWorktreeLoading: vi.fn(),
         clearWorktreeLoading: vi.fn(),
@@ -172,8 +178,17 @@ vi.mock('@/services/preferences', () => ({
     data: {
       default_backend: 'claude',
       selected_codex_model: 'gpt-5.5',
-      magic_prompt_backends: { resolve_conflicts_backend: 'codex' },
-      magic_prompts: { resolve_conflicts: 'Resolve and finish.' },
+      magic_prompt_models: { final_review_model: 'gpt-5.5' },
+      magic_prompt_efforts: { final_review_effort: 'high' },
+      magic_prompt_modes: { final_review_mode: 'plan' },
+      magic_prompts: {
+        resolve_conflicts: 'Resolve and finish.',
+        final_review: 'Run the custom final audit and return tables.',
+      },
+      magic_prompt_backends: {
+        resolve_conflicts_backend: 'codex',
+        final_review_backend: 'codex',
+      },
     },
   }),
 }))
@@ -187,14 +202,19 @@ vi.mock('@/hooks/useInstalledBackends', () => ({
 }))
 
 vi.mock('@/hooks/useRemotePicker', () => ({
-  useRemotePicker: () => vi.fn(),
+  useRemotePicker: () =>
+    vi.fn((action: (remote: string) => void) => action('origin')),
 }))
 
 vi.mock('@/services/git-status', () => ({
   triggerImmediateGitPoll: mocks.triggerImmediateGitPoll,
   fetchWorktreesStatus: mocks.fetchWorktreesStatus,
-  gitPush: vi.fn(),
+  gitPush: mocks.gitPush,
   performGitPull: vi.fn(),
+}))
+
+vi.mock('@/services/commit-jobs', () => ({
+  startCommitJob: mocks.startCommitJob,
 }))
 
 vi.mock('@/lib/transport', () => ({ invoke: mocks.invokeMock }))
@@ -217,14 +237,25 @@ vi.mock('sonner', () => ({
   toast: {
     success: mocks.toastSuccess,
     error: mocks.toastError,
-    loading: vi.fn(() => 'toast-1'),
+    loading: mocks.toastLoading,
     info: vi.fn(),
     warning: vi.fn(),
   },
 }))
 
 vi.mock('@/components/chat/ReviewMethodModal', () => ({
-  ReviewMethodModal: () => null,
+  ReviewMethodModal: ({
+    open,
+    onFinalReview,
+  }: {
+    open: boolean
+    onFinalReview: () => void
+  }) =>
+    open ? (
+      <button data-testid="final-review-choice" onClick={onFinalReview}>
+        Final review
+      </button>
+    ) : null,
 }))
 
 describe('MagicModal manual PR link', () => {
@@ -232,6 +263,7 @@ describe('MagicModal manual PR link', () => {
     vi.clearAllMocks()
     mocks.worktree.pr_number = null
     mocks.worktree.pr_url = null
+    mocks.activeWorktreePath = null
     mocks.invokeMock.mockImplementation((command: string) => {
       if (command === 'detect_and_link_pr') return Promise.resolve(null)
       if (command === 'link_worktree_pr') {
@@ -377,6 +409,56 @@ describe('MagicModal manual PR link', () => {
     expect(mocks.setExecutionMode).toHaveBeenCalledWith(
       'conflict-session',
       'yolo'
+    )
+  })
+
+  it('starts Final review as a normal plan-mode session with dedicated settings', async () => {
+    const user = userEvent.setup()
+    mocks.invokeMock.mockImplementation((command: string) => {
+      if (command === 'create_session') {
+        return Promise.resolve({
+          id: 'final-review-session',
+          name: 'Final review',
+          order: 1,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+          backend: 'codex',
+        })
+      }
+      if (command === 'send_chat_message') {
+        return Promise.resolve({ id: 'message-1' })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    render(<MagicModal />)
+
+    await user.click(screen.getByRole('button', { name: /^review/i }))
+    fireEvent.click(screen.getByTestId('final-review-choice'))
+
+    await waitFor(() => {
+      expect(mocks.invokeMock).toHaveBeenCalledWith(
+        'send_chat_message',
+        expect.objectContaining({
+          sessionId: 'final-review-session',
+          worktreeId: 'wt-1',
+          worktreePath: '/repo/worktree',
+          message: 'Run the custom final audit and return tables.',
+          model: 'gpt-5.5',
+          effortLevel: 'high',
+          executionMode: 'plan',
+          backend: 'codex',
+        })
+      )
+    })
+    expect(mocks.setActiveSession).toHaveBeenCalledWith(
+      'wt-1',
+      'final-review-session'
+    )
+    expect(mocks.setExecutionMode).toHaveBeenCalledWith(
+      'final-review-session',
+      'plan'
     )
   })
 
@@ -530,6 +612,62 @@ describe('MagicModal manual PR link', () => {
     render(<MagicModal />)
 
     expect(screen.queryByRole('button', { name: /release post/i })).toBeNull()
+  })
+
+  it('shows the fork session magic command', () => {
+    render(<MagicModal />)
+
+    expect(
+      screen.getByRole('button', { name: /fork session/i })
+    ).toBeInTheDocument()
+  })
+
+  it('starts commit and push actions directly with loading notifications when chat is active', async () => {
+    const user = userEvent.setup()
+    mocks.activeWorktreePath = '/repo/worktree'
+    mocks.startCommitJob.mockResolvedValue({})
+    mocks.gitPush.mockResolvedValue({ fellBack: false })
+
+    const { rerender } = render(<MagicModal />)
+
+    await user.click(screen.getByRole('button', { name: /^commit c$/i }))
+
+    expect(mocks.toastLoading).toHaveBeenCalledWith(
+      'Creating commit on feature-branch...',
+      expect.any(Object)
+    )
+    expect(mocks.startCommitJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: '/repo/worktree',
+        push: false,
+      }),
+      expect.any(Function)
+    )
+
+    rerender(<MagicModal />)
+    await user.click(screen.getByRole('button', { name: /^push u$/i }))
+
+    expect(mocks.toastLoading).toHaveBeenCalledWith(
+      'Pushing feature-branch...',
+      expect.any(Object)
+    )
+    expect(mocks.gitPush).toHaveBeenCalledWith('/repo/worktree', null, 'origin')
+
+    rerender(<MagicModal />)
+    await user.click(screen.getByRole('button', { name: /^commit & push p$/i }))
+
+    expect(mocks.toastLoading).toHaveBeenCalledWith(
+      'Committing and pushing on feature-branch...',
+      expect.any(Object)
+    )
+    expect(mocks.startCommitJob).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        worktreePath: '/repo/worktree',
+        push: true,
+        remote: 'origin',
+      }),
+      expect.any(Function)
+    )
   })
 
   it('reverts the last commit only after confirmation', async () => {

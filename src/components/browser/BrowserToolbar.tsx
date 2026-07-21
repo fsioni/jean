@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Loader2,
+  MousePointer2,
   Plus,
   RotateCw,
   X,
@@ -14,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { isBlankTabUrl, useBrowserStore } from '@/store/browser-store'
 import { browserBackend, useBrowserTabActions } from '@/hooks/useBrowserPane'
 import type { BrowserTab } from '@/types/browser'
+import { toast } from 'sonner'
 
 // Stable empty-array reference — see comment in BrowserView.tsx.
 const EMPTY_TABS: BrowserTab[] = []
@@ -149,6 +151,13 @@ export const BrowserToolbar = memo(function BrowserToolbar({
     [worktreeId]
   )
 
+  const handleEnableGrab = useCallback(() => {
+    void actions
+      .enableGrab()
+      .then(() => toast.success('Grab enabled for this browser tab'))
+      .catch(error => toast.error(`Failed to enable Grab: ${error}`))
+  }, [actions])
+
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault()
@@ -210,6 +219,17 @@ export const BrowserToolbar = memo(function BrowserToolbar({
             <RotateCw className="h-4 w-4" />
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={handleEnableGrab}
+          disabled={!activeTab || isBlankTabUrl(activeTab.url)}
+          aria-label="Grab DOM element"
+          title="Grab DOM element"
+        >
+          <MousePointer2 className="h-4 w-4" />
+        </Button>
         <form className="min-w-0 flex-1" onSubmit={handleSubmit}>
           <Input
             ref={inputRef}

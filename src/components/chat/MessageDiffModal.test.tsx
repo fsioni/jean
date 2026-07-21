@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@/test/test-utils'
 import { MessageDiffModal } from './MessageDiffModal'
+import { useState } from 'react'
 
 let tauriAvailable = false
 
@@ -22,10 +23,16 @@ vi.mock('@/services/projects', () => ({
 
 vi.mock('@/lib/environment', () => ({
   isNativeApp: () => false,
+  isLocalBackend: () => false,
 }))
 
 vi.mock('@pierre/diffs/react', () => ({
-  FileDiff: () => <div data-testid="file-diff" />,
+  FileDiff: ({ fileDiff }: { fileDiff: unknown }) => {
+    const [initialFileDiff] = useState(fileDiff)
+    return (
+      <div data-testid="file-diff">{JSON.stringify(initialFileDiff)}</div>
+    )
+  },
 }))
 
 const patch = `Index: src/example.ts
@@ -98,5 +105,52 @@ describe('MessageDiffModal header', () => {
     expect(closeButton.className).toContain('absolute')
     expect(closeButton.className).toContain('right-4')
     expect(closeButton.className).toContain('top-4')
+  })
+
+  it('refreshes the rendered diff when a live FileChange patch updates while open', async () => {
+    const firstPatch = `Index: src/example.ts
+===================================================================
+--- src/example.ts
++++ src/example.ts
+@@ -1,1 +1,2 @@
+ const a = 1
++const b = 2
+`
+    const updatedPatch = `Index: src/example.ts
+===================================================================
+--- src/example.ts
++++ src/example.ts
+@@ -1,1 +1,3 @@
+ const a = 1
++const b = 2
++const c = 3
+`
+
+    const { rerender } = render(
+      <MessageDiffModal
+        isOpen
+        onClose={vi.fn()}
+        filePath="/repo/src/example.ts"
+        worktreePath="/repo"
+        edits={[]}
+        patch={firstPatch}
+      />
+    )
+
+    expect(await screen.findByTestId('file-diff')).toHaveTextContent('b = 2')
+    expect(screen.getByTestId('file-diff')).not.toHaveTextContent('c = 3')
+
+    rerender(
+      <MessageDiffModal
+        isOpen
+        onClose={vi.fn()}
+        filePath="/repo/src/example.ts"
+        worktreePath="/repo"
+        edits={[]}
+        patch={updatedPatch}
+      />
+    )
+
+    expect(screen.getByTestId('file-diff')).toHaveTextContent('c = 3')
   })
 })

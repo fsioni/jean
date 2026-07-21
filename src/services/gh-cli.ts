@@ -18,9 +18,9 @@ import type {
   GhInstallProgress,
 } from '@/types/gh-cli'
 
-import { hasBackend } from '@/lib/environment'
+import { hasBackendTransport } from '@/lib/environment'
 
-const isTauri = hasBackend
+const isTauri = hasBackendTransport
 
 // Query keys for GitHub CLI
 export const ghCliQueryKeys = {
@@ -303,6 +303,9 @@ export function useGhCliSetup() {
     })
   }
 
+  const checkManualVersion = (version: string) =>
+    invoke<boolean>('check_gh_cli_version_exists', { version })
+
   return {
     status: status.data,
     isStatusLoading: status.isLoading,
@@ -315,6 +318,7 @@ export function useGhCliSetup() {
     installError: installMutation.error,
     progress,
     install,
+    checkManualVersion,
     refetchStatus: status.refetch,
   }
 }

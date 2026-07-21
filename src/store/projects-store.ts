@@ -32,6 +32,9 @@ interface ProjectsUIState {
   // Project canvas settings per project
   projectCanvasSettings: Record<string, ProjectCanvasSettings>
 
+  // Favorited projects shown first in the GitHub Dashboard filter and sections
+  githubDashboardFavoriteProjectIds: string[]
+
   // Add project dialog state
   addProjectDialogOpen: boolean
   addProjectParentFolderId: string | null
@@ -112,6 +115,8 @@ interface ProjectsUIState {
     pinnedLabels: LabelData[]
   ) => void
   setProjectCanvasLabels: (projectId: string, labels: LabelData[]) => void
+  setGitHubDashboardFavoriteProjectIds: (projectIds: string[]) => void
+  toggleGitHubDashboardFavoriteProject: (projectId: string) => void
 }
 
 export const useProjectsStore = create<ProjectsUIState>()(
@@ -126,6 +131,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       expandedFolderIds: new Set<string>(),
       projectAccessTimestamps: {},
       projectCanvasSettings: {},
+      githubDashboardFavoriteProjectIds: [],
       addProjectDialogOpen: false,
       addProjectParentFolderId: null,
       projectSettingsDialogOpen: false,
@@ -339,6 +345,36 @@ export const useProjectsStore = create<ProjectsUIState>()(
           },
           undefined,
           'setProjectCanvasLabels'
+        ),
+
+      setGitHubDashboardFavoriteProjectIds: projectIds =>
+        set(
+          state =>
+            state.githubDashboardFavoriteProjectIds === projectIds
+              ? state
+              : { githubDashboardFavoriteProjectIds: projectIds },
+          undefined,
+          'setGitHubDashboardFavoriteProjectIds'
+        ),
+
+      toggleGitHubDashboardFavoriteProject: projectId =>
+        set(
+          state => {
+            const current = state.githubDashboardFavoriteProjectIds
+            if (current.includes(projectId)) {
+              return {
+                githubDashboardFavoriteProjectIds: current.filter(
+                  id => id !== projectId
+                ),
+              }
+            }
+
+            return {
+              githubDashboardFavoriteProjectIds: [...current, projectId],
+            }
+          },
+          undefined,
+          'toggleGitHubDashboardFavoriteProject'
         ),
 
       // Folder expansion actions

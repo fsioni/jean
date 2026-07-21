@@ -33,7 +33,7 @@ export type ScheduledWakeupStatus = 'pending' | 'fired' | 'cancelled'
 export interface ScheduledWakeupState extends ScheduledWakeup {
   status: ScheduledWakeupStatus
 }
-import type { ReviewResponse } from '@/types/projects'
+import type { StoredReviewResults } from '@/types/projects'
 import { invoke } from '@/lib/transport'
 import type { ClaudeModel, CodexModel, CliBackend } from '@/types/preferences'
 export type { ClaudeModel, CodexModel }
@@ -42,7 +42,10 @@ export type { ClaudeModel, CodexModel }
 export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-4-8[1m]'
 
 /** Default Codex model */
-export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.5'
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.6-sol'
+
+/** Default OpenCode model */
+export const DEFAULT_OPENCODE_MODEL = 'opencode/gpt-5.6-sol'
 
 /** Default thinking level */
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'off'
@@ -65,6 +68,7 @@ function compactReplayBlocks(blocks: ContentBlock[]): ContentBlock[] {
   return blocks.filter(block => {
     if (block.type === 'text') return block.text.length > 0
     if (block.type === 'thinking') return block.thinking.length > 0
+    if (block.type === 'user_input') return block.text.length > 0
     return block.type === 'tool_use'
   })
 }
@@ -86,7 +90,7 @@ interface ChatUIState {
   activeSessionIds: Record<string, string>
 
   // AI review results per session (sessionId → results)
-  reviewResults: Record<string, ReviewResponse>
+  reviewResults: Record<string, StoredReviewResults>
 
   // Whether the review sidebar is visible (global toggle)
   reviewSidebarVisible: boolean
@@ -303,7 +307,7 @@ interface ChatUIState {
   getActiveSession: (worktreeId: string) => string | undefined
 
   // Actions - AI Review results management (session-scoped)
-  setReviewResults: (sessionId: string, results: ReviewResponse) => void
+  setReviewResults: (sessionId: string, results: StoredReviewResults) => void
   clearReviewResults: (sessionId: string) => void
   setReviewSidebarVisible: (visible: boolean) => void
   toggleReviewSidebar: () => void
@@ -321,7 +325,6 @@ interface ChatUIState {
     tableKey: string,
     rowIndex: number
   ) => void
-
   // Actions - ScheduleWakeup indicator state (keyed by tool_call_id)
   setScheduledWakeup: (toolCallId: string, wakeup: ScheduledWakeupState) => void
   markScheduledWakeupStatus: (
@@ -381,6 +384,14 @@ interface ChatUIState {
 
   // Actions - Streaming content (session-based)
   appendStreamingContent: (sessionId: string, chunk: string) => void
+  /**
+   * Hot path: append a streamed text chunk to BOTH `streamingContents` and
+   * `streamingContentBlocks` in a single atomic set(). The rAF chunk flush
+   * calls this once per frame — one set() means one subscriber notification
+   * sweep instead of two (appendStreamingContent + addTextBlock), and no
+   * transient state where the string and blocks disagree.
+   */
+  appendStreamingChunk: (sessionId: string, text: string) => void
   setStreamingContent: (sessionId: string, content: string) => void
   clearStreamingContent: (sessionId: string) => void
 
@@ -424,6 +435,10 @@ interface ChatUIState {
   consumeStreamingReplayToolBlock: (
     sessionId: string,
     toolCallId: string
+  ) => boolean
+  consumeStreamingReplayUserInput: (
+    sessionId: string,
+    text: string
   ) => boolean
   clearStreamingReplayContentBlocks: (sessionId: string) => void
 
@@ -561,6 +576,11 @@ interface ChatUIState {
   enqueueMessage: (sessionId: string, message: QueuedMessage) => void
   dequeueMessage: (sessionId: string) => QueuedMessage | undefined
   removeQueuedMessage: (sessionId: string, messageId: string) => void
+  updateQueuedMessage: (
+    sessionId: string,
+    messageId: string,
+    message: string
+  ) => void
   moveQueuedMessageFront: (sessionId: string, messageId: string) => void
   clearQueue: (sessionId: string) => void
   getQueueLength: (sessionId: string) => number
@@ -1314,6 +1334,39 @@ export const useChatStore = create<ChatUIState>()(
           'appendStreamingContent'
         ),
 
+      appendStreamingChunk: (sessionId, text) =>
+        set(
+          state => {
+            if (!text) return state
+            const blocks = state.streamingContentBlocks[sessionId] ?? []
+            const lastBlock = blocks[blocks.length - 1]
+            // Mirror addTextBlock: merge into a trailing text block, otherwise
+            // start a new one (e.g. after a tool_use/thinking block).
+            let newBlocks: ContentBlock[]
+            if (lastBlock && lastBlock.type === 'text') {
+              newBlocks = [...blocks]
+              newBlocks[newBlocks.length - 1] = {
+                type: 'text',
+                text: lastBlock.text + text,
+              }
+            } else {
+              newBlocks = [...blocks, { type: 'text', text }]
+            }
+            return {
+              streamingContents: {
+                ...state.streamingContents,
+                [sessionId]: (state.streamingContents[sessionId] ?? '') + text,
+              },
+              streamingContentBlocks: {
+                ...state.streamingContentBlocks,
+                [sessionId]: newBlocks,
+              },
+            }
+          },
+          undefined,
+          'appendStreamingChunk'
+        ),
+
       setStreamingContent: (sessionId, content) =>
         set(
           state => {
@@ -1632,13 +1685,50 @@ export const useChatStore = create<ChatUIState>()(
 
       consumeStreamingReplayText: (sessionId, text) => {
         if (!text) return text
-        const blocks = get().streamingReplayContentBlocks[sessionId]
-        const first = blocks?.[0]
+        let blocks = get().streamingReplayContentBlocks[sessionId]
+        let first = blocks?.[0]
         if (!blocks?.length || !first) return text
 
+        // Bootstrap replay is capped and may begin after the snapshot prefix.
+        // Find the retained text inside a later snapshot block before deciding
+        // that this is genuinely new live output.
         if (first.type !== 'text') {
-          get().clearStreamingReplayContentBlocks(sessionId)
-          return text
+          const matchingIndex = blocks.findIndex(
+            block => block.type === 'text' && block.text.includes(text)
+          )
+          if (matchingIndex < 0) {
+            get().clearStreamingReplayContentBlocks(sessionId)
+            return text
+          }
+          blocks = blocks.slice(matchingIndex)
+          first = blocks[0]
+        } else if (
+          !first.text.startsWith(text) &&
+          !text.startsWith(first.text)
+        ) {
+          const matchingIndex = blocks.findIndex(
+            block => block.type === 'text' && block.text.includes(text)
+          )
+          if (matchingIndex < 0) {
+            get().clearStreamingReplayContentBlocks(sessionId)
+            return text
+          }
+          blocks = blocks.slice(matchingIndex)
+          first = blocks[0]
+        }
+
+        if (!first || first.type !== 'text') return text
+
+        const matchOffset = first.text.indexOf(text)
+        if (matchOffset > 0) {
+          const remaining = first.text.slice(matchOffset + text.length)
+          get().setStreamingReplayContentBlocks(
+            sessionId,
+            remaining
+              ? [{ type: 'text', text: remaining }, ...blocks.slice(1)]
+              : blocks.slice(1)
+          )
+          return ''
         }
 
         if (first.text.startsWith(text)) {
@@ -1666,8 +1756,12 @@ export const useChatStore = create<ChatUIState>()(
         if (!blocks?.length || !first) return thinking
 
         if (first.type !== 'thinking') {
-          get().clearStreamingReplayContentBlocks(sessionId)
-          return thinking
+          // Codex persists completed agent/tool items in running snapshots but
+          // not its transient reasoning deltas. Those deltas still exist in the
+          // WebSocket replay buffer and can arrive before the first persisted
+          // text block. Drop them without abandoning the remaining snapshot
+          // dedupe, otherwise every following text/tool event renders twice.
+          return ''
         }
 
         if (first.thinking.startsWith(thinking)) {
@@ -1701,8 +1795,42 @@ export const useChatStore = create<ChatUIState>()(
           return true
         }
 
+        // HTTP bootstrap caps replay events, so the first retained event can
+        // start in the middle of the running snapshot. Resynchronize at the
+        // matching tool instead of abandoning dedupe and replaying the suffix.
+        const matchingIndex = blocks.findIndex(
+          block =>
+            block.type === 'tool_use' && block.tool_call_id === toolCallId
+        )
+        if (matchingIndex >= 0) {
+          get().setStreamingReplayContentBlocks(
+            sessionId,
+            blocks.slice(matchingIndex + 1)
+          )
+          return true
+        }
+
         get().clearStreamingReplayContentBlocks(sessionId)
         return false
+      },
+
+      consumeStreamingReplayUserInput: (sessionId, text) => {
+        const blocks = get().streamingReplayContentBlocks[sessionId]
+        if (!blocks?.length) return false
+
+        const matchingIndex = blocks.findIndex(
+          block => block.type === 'user_input' && block.text === text
+        )
+        if (matchingIndex < 0) {
+          get().clearStreamingReplayContentBlocks(sessionId)
+          return false
+        }
+
+        get().setStreamingReplayContentBlocks(
+          sessionId,
+          blocks.slice(matchingIndex + 1)
+        )
+        return true
       },
 
       clearStreamingReplayContentBlocks: sessionId =>
@@ -2543,6 +2671,25 @@ export const useChatStore = create<ChatUIState>()(
           'removeQueuedMessage'
         ),
 
+      updateQueuedMessage: (sessionId, messageId, message) =>
+        set(
+          state => {
+            const queue = state.messageQueues[sessionId] ?? []
+            const idx = queue.findIndex(m => m.id === messageId)
+            if (idx === -1 || queue[idx]?.message === message) return state
+            return {
+              messageQueues: {
+                ...state.messageQueues,
+                [sessionId]: queue.map(m =>
+                  m.id === messageId ? { ...m, message } : m
+                ),
+              },
+            }
+          },
+          undefined,
+          'updateQueuedMessage'
+        ),
+
       moveQueuedMessageFront: (sessionId, messageId) =>
         set(
           state => {
@@ -2750,6 +2897,7 @@ export const useChatStore = create<ChatUIState>()(
           state => {
             const current = state.pendingCodexUserInputRequests[sessionId]
             if (!current && requests.length === 0) return state
+            if (current === requests) return state
             return {
               pendingCodexUserInputRequests: {
                 ...state.pendingCodexUserInputRequests,
@@ -2895,6 +3043,8 @@ export const useChatStore = create<ChatUIState>()(
               state.sendingSessionIds
             const { [sessionId]: _wi, ...waitingForInputSessionIds } =
               state.waitingForInputSessionIds
+            const { [sessionId]: _reviewing, ...reviewingSessions } =
+              state.reviewingSessions
             const { [sessionId]: _sp, ...streamingPlanApprovals } =
               state.streamingPlanApprovals
             const { [sessionId]: _em, ...executingModes } = state.executingModes
@@ -2914,10 +3064,7 @@ export const useChatStore = create<ChatUIState>()(
                 sendStarted > 0
                   ? { ...state.completedDurations, [sessionId]: elapsed }
                   : state.completedDurations,
-              reviewingSessions: {
-                ...state.reviewingSessions,
-                [sessionId]: true,
-              },
+              reviewingSessions,
             }
           },
           undefined,
@@ -3120,6 +3267,8 @@ export const useChatStore = create<ChatUIState>()(
               state.completedDurations
             const { [sessionId]: _replay, ...restReplayContentBlocks } =
               state.streamingReplayContentBlocks
+            const { [sessionId]: _checkedRows, ...restTableCheckedRows } =
+              state.tableCheckedRows
 
             return {
               approvedTools: restApproved,
@@ -3141,6 +3290,7 @@ export const useChatStore = create<ChatUIState>()(
               codexGoals: restCodexGoals,
               completedDurations: restDurations,
               streamingReplayContentBlocks: restReplayContentBlocks,
+              tableCheckedRows: restTableCheckedRows,
             }
           },
           undefined,
