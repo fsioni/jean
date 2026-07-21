@@ -3944,57 +3944,17 @@ fn is_grok_cli_json_wrapper(value: &Value) -> bool {
         || (value.get("text").is_some() && value.get("usage").is_some())
 }
 
-fn extract_json_object(text: &str) -> Result<String, String> {
+/// Scan free-form text for the first parseable JSON object.
+fn scan_json_object(text: &str) -> Result<String, String> {
     let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("No JSON object found in Grok response".to_string());
+    }
     if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        // Avoid treating the CLI envelope as payload when nested extractors call us.
         if is_grok_cli_json_wrapper(&value) {
-            // Native --json-schema path: preferred structured payload.
-            match value.get("structuredOutput") {
-                Some(Value::Object(_)) | Some(Value::Array(_)) => {
-                    return serde_json::to_string(value.get("structuredOutput").unwrap())
-                        .map_err(|e| format!("Failed to serialize Grok structuredOutput: {e}"));
-                }
-                Some(Value::String(inner)) if !inner.trim().is_empty() => {
-                    return extract_json_object(inner);
-                }
-                Some(Value::Null) | None => {}
-                Some(other) => {
-                    return Err(format!(
-                        "Unexpected structuredOutput type in Grok response: {other}"
-                    ));
-                }
-            }
-
-            // Fall back to the assistant text field (prompt-only JSON mode).
-            if let Some(inner) = value.get("text").and_then(Value::as_str) {
-                match extract_json_object(inner) {
-                    Ok(json) => return Ok(json),
-                    Err(text_err) => {
-                        if let Some(err) = value
-                            .get("structuredOutputError")
-                            .and_then(Value::as_str)
-                            .filter(|s| !s.trim().is_empty())
-                        {
-                            return Err(format!(
-                                "Grok structured output failed: {err} (text also unusable: {text_err})"
-                            ));
-                        }
-                        return Err(text_err);
-                    }
-                }
-            }
-
-            if let Some(err) = value
-                .get("structuredOutputError")
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-            {
-                return Err(format!("Grok structured output failed: {err}"));
-            }
-
             return Err("No JSON object found in Grok response".to_string());
         }
-        // Already a bare JSON object/array/value — return as-is.
         return Ok(trimmed.to_string());
     }
     let start = trimmed
@@ -4009,17 +3969,77 @@ fn extract_json_object(text: &str) -> Result<String, String> {
     Ok(candidate.to_string())
 }
 
+fn extract_json_object(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if is_grok_cli_json_wrapper(&value) {
+            // Native --json-schema path: preferred structured payload.
+            match value.get("structuredOutput") {
+                Some(Value::Object(_)) | Some(Value::Array(_)) => {
+                    return serde_json::to_string(value.get("structuredOutput").unwrap())
+                        .map_err(|e| format!("Failed to serialize Grok structuredOutput: {e}"));
+                }
+                Some(Value::String(inner)) if !inner.trim().is_empty() => {
+                    return scan_json_object(inner);
+                }
+                Some(Value::Null) | None => {}
+                Some(other) => {
+                    return Err(format!(
+                        "Unexpected structuredOutput type in Grok response: {other}"
+                    ));
+                }
+            }
+
+            // Fall back to assistant text, then thought (models sometimes only
+            // draft JSON there when structured output is cancelled mid-turn).
+            let mut last_err = "No JSON object found in Grok response".to_string();
+            for key in ["text", "thought"] {
+                if let Some(inner) = value.get(key).and_then(Value::as_str) {
+                    match scan_json_object(inner) {
+                        Ok(json) => return Ok(json),
+                        Err(err) => last_err = err,
+                    }
+                }
+            }
+
+            if let Some(err) = value
+                .get("structuredOutputError")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+            {
+                return Err(format!(
+                    "Grok structured output failed: {err} ({last_err})"
+                ));
+            }
+
+            return Err(last_err);
+        }
+        // Already a bare JSON object/array/value — return as-is.
+        return Ok(trimmed.to_string());
+    }
+    scan_json_object(trimmed)
+}
+
 fn build_one_shot_json_prompt(prompt: &str, json_schema: Option<&str>) -> String {
     match json_schema {
         // Schema is passed via --json-schema; only remind the model to answer as JSON.
         Some(_) => format!(
-            "{prompt}\n\nReturn only a single valid JSON object matching the provided JSON schema. Do not wrap it in markdown or add commentary."
+            "{prompt}\n\nReturn only a single valid JSON object matching the provided JSON schema. Do not wrap it in markdown or add commentary. Do not invoke skills, subagents, or tools — the full input is already in this message."
         ),
         None => {
             format!("{prompt}\n\nReturn only a single valid JSON object. Do not wrap it in markdown.")
         }
     }
 }
+
+/// Rules injected for structured one-shot calls so Grok does not detour into
+/// interactive review skills / MCP / tool exploration (which frequently cancels
+/// constrained decoding and yields empty or missing findings).
+const ONE_SHOT_STRUCTURED_RULES: &str = "\
+Complete structured JSON output in a single turn without tools, skills, subagents, or MCP. \
+Review/answer only from content already in the user message. \
+When the task is a code review, report clear security, correctness, race, data-loss, and contract bugs with high confidence — do not approve with empty findings when the provided diff introduces obvious defects. \
+Prefer no finding only when no actionable defect is present.";
 
 pub fn execute_one_shot_grok(
     app: &AppHandle,
@@ -4039,6 +4059,9 @@ pub fn execute_one_shot_grok(
     let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     cmd.args([
         "--no-auto-update",
+        "--no-memory",
+        "--no-subagents",
+        "--disable-web-search",
         "-p",
         &json_prompt,
         "--cwd",
@@ -4047,15 +4070,30 @@ pub fn execute_one_shot_grok(
         "dontAsk",
         "--sandbox",
         "read-only",
-        "--disable-web-search",
-        "--no-subagents",
         "--model",
         raw_grok_model(Some(model)).unwrap_or(model),
     ]);
     // Prefer native constrained decoding when a schema is available. Implies
     // --output-format json and populates structuredOutput on success.
+    //
+    // Structured one-shots must not use tools/MCP: Grok's auto skill discovery
+    // (review / caveman-review) plus MCP frequently cancels constrained decoding
+    // and returns empty findings even when the model drafted real issues.
     if let Some(schema) = json_schema {
-        cmd.args(["--json-schema", schema]);
+        cmd.args([
+            "--json-schema",
+            schema,
+            // Empty allowlist removes built-in tools for this headless run.
+            "--tools",
+            "",
+            "--deny",
+            "MCPTool(*)",
+            "--rules",
+            ONE_SHOT_STRUCTURED_RULES,
+            // One-shot magic prompts should finish quickly once tools are gone.
+            "--max-turns",
+            "2",
+        ]);
     } else {
         cmd.args(["--output-format", "json"]);
     }
@@ -4074,6 +4112,23 @@ pub fn execute_one_shot_grok(
         return Err(format!("Grok one-shot request failed: {}", stderr.trim()));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Ok(wrapper) = serde_json::from_str::<Value>(stdout.trim()) {
+        if is_grok_cli_json_wrapper(&wrapper) {
+            let stop = wrapper
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let has_structured = matches!(
+                wrapper.get("structuredOutput"),
+                Some(Value::Object(_)) | Some(Value::Array(_)) | Some(Value::String(_))
+            );
+            if stop.eq_ignore_ascii_case("cancelled") && !has_structured {
+                log::warn!(
+                    "Grok one-shot cancelled without structuredOutput; attempting recovery from text/thought"
+                );
+            }
+        }
+    }
     extract_json_object(&stdout)
 }
 
@@ -4092,6 +4147,7 @@ mod tests {
         // Schema is passed via --json-schema; do not bloat the prompt with a copy.
         assert!(!prompt.contains(schema));
         assert!(prompt.contains("matching the provided JSON schema"));
+        assert!(prompt.contains("Do not invoke skills"));
     }
 
     #[test]
@@ -4504,6 +4560,32 @@ Integrate Hermes as a first-class Jean AI backend with profile support.
         assert!(
             err.contains("model did not produce structured output"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_json_object_recovers_json_from_thought_when_structured_output_missing() {
+        let stdout = r#"{
+  "text": "",
+  "thought": "Drafting review.\n{\"summary\":\"Bug found\",\"findings\":[{\"severity\":\"critical\",\"category\":\"security\",\"confidence\":\"high\",\"blocking\":true,\"introduced_by_diff\":true,\"file\":\"a.rs\",\"line\":1,\"title\":\"auth bypass\",\"description\":\"always true\",\"failure_scenario\":\"any login\",\"suggestion\":\"check password\"}],\"approval_status\":\"changes_requested\"}",
+  "stopReason": "Cancelled",
+  "sessionId": "grok-session-1",
+  "structuredOutput": null,
+  "structuredOutputError": "model did not produce structured output"
+}"#;
+
+        let json = extract_json_object(stdout).unwrap();
+        let value: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value.get("approval_status").and_then(Value::as_str),
+            Some("changes_requested")
+        );
+        assert_eq!(
+            value
+                .get("findings")
+                .and_then(Value::as_array)
+                .map(|a| a.len()),
+            Some(1)
         );
     }
 
