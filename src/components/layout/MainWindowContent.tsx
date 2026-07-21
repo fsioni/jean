@@ -13,6 +13,7 @@ import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { scheduleIdleWork } from '@/lib/idle'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
+import { useCloseMissionControlOnNavigate } from '@/components/mission-control/useCloseMissionControlOnNavigate'
 
 const ChatWindow = lazy(() =>
   import('@/components/chat/ChatWindow').then(mod => ({
@@ -43,6 +44,8 @@ export function MainWindowContent({
 }: MainWindowContentProps) {
   const activeWorktreePath = useChatStore(state => state.activeWorktreePath)
   const missionControlOpen = useUIStore(state => state.missionControlOpen)
+  // Any project/worktree navigation dismisses Mission Control (perso/jenkins).
+  useCloseMissionControlOnNavigate()
   const isMobile = useIsMobile()
   const swipeBackCallback = useCallback(() => {
     useChatStore.getState().clearActiveWorktree()

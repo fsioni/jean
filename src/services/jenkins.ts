@@ -6,6 +6,7 @@
  *
  * Backend contract:
  * - get_jenkins_status({ projectId, worktreeId, prId?, branch? }) -> JenkinsWorktreeStatus
+ * - get_jenkins_failure_report({ projectId, worktreeId, prId?, branch? }) -> JenkinsFailureReport
  * - save_jenkins_config({ projectId, url, user, token, previewUrlTemplate? }) -> Project
  * - rerun_jenkins_pipeline({ projectId, worktreeId, prId?, branch? }) -> void
  * - restart_jenkins_integration({ projectId, buildNumber }) -> void
@@ -23,7 +24,10 @@ import {
 } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import { isTauri } from '@/services/projects'
-import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import type {
+  JenkinsFailureReport,
+  JenkinsWorktreeStatus,
+} from '@/types/jenkins'
 
 function getErrorMessage(error: unknown): string {
   if (!error) return ''
@@ -67,6 +71,42 @@ export const jenkinsQueryKeys = {
   all: ['jenkins'] as const,
   status: (worktreeId: string) =>
     [...jenkinsQueryKeys.all, 'status', worktreeId] as const,
+  /** Keyed by build number so a new build never shows the old build's failure. */
+  failure: (worktreeId: string, buildNumber: number | null) =>
+    [...jenkinsQueryKeys.all, 'failure', worktreeId, buildNumber] as const,
+}
+
+/**
+ * Why the PR's pipeline failed: failing stage, named failing tests and a cleaned
+ * log excerpt — everything the user would otherwise open Jenkins for.
+ *
+ * On demand only (`enabled`): the backend walks several Jenkins endpoints to
+ * build it, so it must never run for every row in a list.
+ */
+export function useJenkinsFailureReport(
+  projectId: string | null,
+  worktreeId: string | null,
+  buildNumber: number | null,
+  prId?: string | null,
+  branch?: string | null,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: jenkinsQueryKeys.failure(worktreeId ?? '', buildNumber),
+    queryFn: async (): Promise<JenkinsFailureReport> =>
+      invoke<JenkinsFailureReport>('get_jenkins_failure_report', {
+        projectId,
+        worktreeId,
+        prId: prId ?? null,
+        branch: branch ?? null,
+      }),
+    enabled:
+      (options?.enabled ?? false) && isTauri() && !!projectId && !!worktreeId,
+    // A finished build's failure never changes; a new build gets a new key.
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 10,
+    retry: 1,
+  })
 }
 
 // ============================================================================

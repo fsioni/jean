@@ -4629,6 +4629,8 @@ pub fn run() {
             projects::list_workflow_runs,
             // --- perso/jenkins ---
             jenkins::get_jenkins_status,
+            jenkins::get_jenkins_statuses,
+            jenkins::get_jenkins_failure_report,
             jenkins::rerun_jenkins_pipeline,
             jenkins::restart_jenkins_integration,
             jenkins::save_jenkins_config,

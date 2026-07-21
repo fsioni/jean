@@ -1,0 +1,115 @@
+Started by upstream project "build-and-test" build number 7139
+originally caused by:
+ Started by upstream project "build-and-test_Launcher-on-pr" build number 5470
+ originally caused by:
+  GitHub pull request #1234 of commit cafe1234cafe1234cafe1234cafe1234cafe1234, no merge conflicts.
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on builder2 in /workspace/elm-tests
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] dir
+Running in /workspace/elm-tests/source
+[Pipeline] {
+[Pipeline] git
+The recommended git tool is: git
+No credentials specified
+Fetching changes from the remote Git repository
+ > git rev-parse --resolve-git-dir /workspace/elm-tests/source/.git # timeout=10
+ > git config remote.origin.url git@github.com:example-org/example-app.git # timeout=10
+Fetching upstream changes from git@github.com:example-org/example-app.git
+ > git --version # timeout=10
+ > git --version # 'git version 2.43.0'
+ > git fetch --tags --force --progress -- git@github.com:example-org/example-app.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+JENKINS-19022: warning: possible memory leak due to Git plugin usage; see: https://plugins.jenkins.io/git/#remove-git-plugin-buildsbybranch-builddata-script
+Checking out Revision cafe1234cafe1234cafe1234cafe1234cafe1234 (refs/remotes/origin/CU-12345678-example-feature)
+Commit message: "Merge master into CU-12345678-example-feature — résolution conflits (CU-12345678)"
+ > git rev-parse refs/remotes/origin/CU-12345678-example-feature^{commit} # timeout=10
+ > git config core.sparsecheckout # timeout=10
+ > git checkout -f cafe1234cafe1234cafe1234cafe1234cafe1234 # timeout=10
+ > git branch -a -v --no-abbrev # timeout=10
+ > git branch -D CU-12345678-example-feature # timeout=10
+ > git checkout -b CU-12345678-example-feature cafe1234cafe1234cafe1234cafe1234cafe1234 # timeout=10
+ > git rev-list --no-walk beef5678beef5678beef5678beef5678beef5678 # timeout=10
+[Pipeline] }
+[Pipeline] // dir
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Testing)
+[Pipeline] ansiColor
+[Pipeline] {
+
+[Pipeline] sh
+Loading NVM... (HOME=/home/ci)
+Loaded NVM
+Now using node v18.20.8 (npm v10.8.2)
+yarn run v1.22.22
+$ yarn install
+[1/5] Validating package.json...
+[2/5] Resolving packages...
+success Already up-to-date.
+Done in 0.24s.
+yarn run v1.22.22
+$ elm-test --report=junit > result-junit.xml
+-- TYPE MISMATCH - /workspace/elm-tests/source/front/tests/App/Feature/FeatureTest.elm
+
+Something is off with the body of the `ctx` definition:
+
+45|>    { appVersionSHA = "SHA"
+46|>    , baseURL = ""
+47|>    , currentKey = ""
+48|>    , language = "fr_FR"
+49|>    , themes = themes
+50|>    }
+
+The body is a record of type:
+
+    { appVersionSHA : String
+    , baseURL : String
+    , currentKey : String
+    , language : String
+    , themes : Model.ThemePool
+    }
+
+But the type annotation on `ctx` says it should be:
+
+    Update.UpdateContext
+
+Hint: Looks like the page field is missing.
+
+`elm make` failed with exit code 1.
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+[Pipeline] }
+
+[Pipeline] // ansiColor
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] script
+[Pipeline] {
+[Pipeline] junit
+Recording test results
+[Checks API] No suitable checks publisher found.
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] wrap
+[Pipeline] {
+[Pipeline] script
+[Pipeline] {
+[Pipeline] slackSend
+Slack Send Pipeline step running, values are - baseUrl: <empty>, teamDomain: EXAMPLE, channel: #ci, color: <empty>, botUser: true, tokenCredentialId: slack_token, notifyCommitters: false, iconEmoji: <empty>, username: <empty>, timestamp: <empty>
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] }
+[Pipeline] // wrap
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE

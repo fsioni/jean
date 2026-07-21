@@ -1,0 +1,45 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/build-and-test/7139/execution/node/25/wfapi/describe"
+    }
+  },
+  "id": "25",
+  "name": "Elm tests",
+  "execNode": "",
+  "status": "FAILED",
+  "error": {
+    "message": null,
+    "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+  },
+  "startTimeMillis": 1784632539298,
+  "durationMillis": 71024,
+  "pauseDurationMillis": 0,
+  "stageFlowNodes": [
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/28/wfapi/describe"
+        },
+        "log": {
+          "href": "/job/build-and-test/7139/execution/node/28/wfapi/log"
+        },
+        "console": {
+          "href": "/job/build-and-test/7139/execution/node/28/log"
+        }
+      },
+      "id": "28",
+      "name": "Building elm-tests",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632539376,
+      "durationMillis": 70857,
+      "pauseDurationMillis": 0,
+      "parentNodes": ["27"]
+    }
+  ]
+}

@@ -160,6 +160,243 @@ pub fn parse_stages(json: &str) -> Result<Vec<JenkinsStage>, String> {
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// Failure diagnosis (see `JenkinsFailureReport`)
+// ---------------------------------------------------------------------------
+
+/// Max lines kept in a log excerpt, counted from the END (errors land last).
+const LOG_EXCERPT_LINES: usize = 120;
+/// Hard cap on the excerpt size, so a single pathological line can't blow up
+/// the payload or the prompt handed to the agent.
+const LOG_EXCERPT_CHARS: usize = 12_000;
+/// A line this long without a single space is a base64 blob, not a message.
+const BLOB_LINE_LEN: usize = 200;
+/// Noise emitted by the shared pipeline library on every build.
+const NOISE_PREFIXES: &[&str] = &[
+    "[Pipeline]",
+    "[Checks API]",
+    "Slack Send Pipeline step running",
+    "Recording test results",
+    "Archiving artifacts",
+    "Notifying upstream projects",
+];
+
+/// The first failed stage of a `wfapi/describe` response, as `(node_id, name)`.
+///
+/// Stages are listed in execution order, so the first FAILED one is the root
+/// cause; later stages usually fail as a consequence.
+pub fn find_failed_stage(json: &str) -> Option<(String, String)> {
+    let root: Value = serde_json::from_str(json).ok()?;
+    root.get("stages")?.as_array()?.iter().find_map(|stage| {
+        if stage.get("status").and_then(Value::as_str) != Some("FAILED") {
+            return None;
+        }
+        Some((
+            stage.get("id").and_then(Value::as_str)?.to_string(),
+            stage.get("name").and_then(Value::as_str)?.to_string(),
+        ))
+    })
+}
+
+/// The first failed step inside a stage (`stageFlowNodes`), as its node id.
+pub fn find_failed_node(json: &str) -> Option<String> {
+    let root: Value = serde_json::from_str(json).ok()?;
+    let nodes = root.get("stageFlowNodes")?.as_array()?;
+    // Prefer a failed node; fall back to the last node when the stage failed
+    // without any single step being marked FAILED (e.g. a timeout).
+    nodes
+        .iter()
+        .find(|n| n.get("status").and_then(Value::as_str) == Some("FAILED"))
+        .or_else(|| nodes.last())
+        .and_then(|n| n.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// `(text, consoleUrl)` from a `wfapi/log` response.
+pub fn parse_node_log(json: &str) -> (String, Option<String>) {
+    let Ok(root) = serde_json::from_str::<Value>(json) else {
+        return (String::new(), None);
+    };
+    (
+        root.get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        root.get("consoleUrl")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+/// The downstream build a stage delegated to, as `(job, number)`.
+///
+/// Planexpo's `build-and-test` mostly orchestrates other jobs, so a failing
+/// stage's own log is just `Starting building: elm-tests #6377` (wrapped in
+/// Jenkins link markup — call this on the HTML-stripped text).
+pub fn find_downstream_build(log: &str) -> Option<(String, u64)> {
+    // Scan bottom-up: the last mention is the attempt that actually failed.
+    log.lines().rev().find_map(|line| {
+        let rest = line
+            .split_once("Starting building:")
+            .or_else(|| line.split_once("Build "))
+            .map(|(_, rest)| rest)?;
+        let (job, after) = rest.trim().split_once('#')?;
+        let number: u64 = after
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        let job = job.trim();
+        (!job.is_empty()).then(|| (job.to_string(), number))
+    })
+}
+
+/// Strip ANSI escape sequences and Jenkins' HTML link markup from a log.
+pub fn strip_log_markup(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // ANSI CSI sequence: ESC [ … <final byte>
+            '\u{1b}' => {
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            }
+            // HTML tag: drop it, keep the inner text.
+            '<' => {
+                for c in chars.by_ref() {
+                    if c == '>' {
+                        break;
+                    }
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Turn a raw Jenkins log into a readable excerpt: markup stripped, pipeline
+/// noise dropped, blobs removed, tail-truncated to the last useful lines.
+pub fn clean_log_excerpt(raw: &str) -> String {
+    let stripped = strip_log_markup(raw);
+    let mut kept: Vec<&str> = Vec::new();
+    for line in stripped.lines() {
+        let trimmed = line.trim_end();
+        let probe = trimmed.trim_start();
+        if NOISE_PREFIXES.iter().any(|p| probe.starts_with(p)) {
+            continue;
+        }
+        if probe.len() > BLOB_LINE_LEN && !probe.contains(' ') {
+            continue;
+        }
+        // Collapse runs of blank lines (Elm/Python traces are already spaced).
+        if probe.is_empty() && kept.last().is_none_or(|l| l.trim().is_empty()) {
+            continue;
+        }
+        kept.push(trimmed);
+    }
+    let start = kept.len().saturating_sub(LOG_EXCERPT_LINES);
+    let excerpt = kept[start..].join("\n");
+    let excerpt = excerpt.trim();
+
+    // Char-safe tail cut (logs carry UTF-8: Elm arrows, French accents…).
+    match excerpt.char_indices().rev().nth(LOG_EXCERPT_CHARS - 1) {
+        Some((cut, _)) if cut > 0 => format!("…\n{}", &excerpt[cut..]),
+        _ => excerpt.to_string(),
+    }
+}
+
+/// Failing cases from a `testReport/api/json` response, capped at `max`.
+///
+/// Returns `(cases, total_failed)` — the total comes from Jenkins' own
+/// `failCount` so the UI can say "3 of 27 shown".
+pub fn parse_failed_tests(json: &str, max: usize) -> (Vec<super::types::JenkinsFailedTest>, u32) {
+    let Ok(root) = serde_json::from_str::<Value>(json) else {
+        return (Vec::new(), 0);
+    };
+    let total = root
+        .get("failCount")
+        .and_then(Value::as_u64)
+        .unwrap_or_default() as u32;
+    let mut out = Vec::new();
+    let suites = root.get("suites").and_then(Value::as_array);
+    for case in suites
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.get("cases").and_then(Value::as_array))
+        .flatten()
+    {
+        // REGRESSION = newly failing; FAILED = still failing.
+        if !matches!(
+            case.get("status").and_then(Value::as_str),
+            Some("FAILED" | "REGRESSION")
+        ) {
+            continue;
+        }
+        if out.len() >= max {
+            break;
+        }
+        out.push(super::types::JenkinsFailedTest {
+            class_name: case
+                .get("className")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            name: case
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            message: failure_message(case),
+        });
+    }
+    (out, total)
+}
+
+/// Readable failure message for a test case.
+///
+/// `errorDetails` is the assertion message when the runner sets one, but jest
+/// leaves it null and puts everything in `errorStackTrace` (verified on
+/// Planexpo's `unit-tests` #7031). Falls back to the head of the stack trace,
+/// dropping the `at …` frames that carry no information inline.
+fn failure_message(case: &Value) -> Option<String> {
+    let details = case
+        .get("errorDetails")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+    if let Some(details) = details {
+        return Some(truncate_chars(details, 400));
+    }
+    let trace = case.get("errorStackTrace").and_then(Value::as_str)?;
+    let head: Vec<&str> = trace
+        .lines()
+        .take_while(|l| !l.trim_start().starts_with("at "))
+        .collect();
+    let head = head.join("\n");
+    let head = head.trim();
+    (!head.is_empty()).then(|| truncate_chars(head, 400))
+}
+
+fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    value.chars().take(max).collect::<String>() + "…"
+}
+
 /// Find the queue item whose params reference `pr_id` for one of `jobs`.
 ///
 /// Queue item `params` are a newline-separated `key=value` blob (different from
@@ -171,34 +408,49 @@ pub fn find_queued_for_pr(json: &str, pr_id: &str, jobs: &[&str]) -> Option<Jenk
     }
     let root: Value = serde_json::from_str(json).ok()?;
     let items = root.get("items")?.as_array()?;
-    for item in items {
-        let task_name = item
-            .get("task")
-            .and_then(|t| t.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !jobs.contains(&task_name) {
-            continue;
-        }
+
+    // The pipeline items waiting, oldest first — Jenkins serves them in that
+    // order, so the index is the position in line.
+    let mut waiting: Vec<&Value> = items
+        .iter()
+        .filter(|item| {
+            let task = item
+                .get("task")
+                .and_then(|t| t.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            jobs.contains(&task)
+        })
+        .collect();
+    waiting.sort_by_key(|item| {
+        item.get("inQueueSince")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    });
+
+    let total = waiting.len() as u32;
+    let index = waiting.iter().position(|item| {
         let params = item
             .get("params")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if queue_params_match_pr(params, pr_id) {
-            return Some(JenkinsQueueItem {
-                why: item.get("why").and_then(Value::as_str).map(str::to_string),
-                since_ms: item
-                    .get("inQueueSince")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                blocked: item
-                    .get("blocked")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            });
-        }
-    }
-    None
+        queue_params_match_pr(params, pr_id)
+    })?;
+    let item = waiting[index];
+
+    Some(JenkinsQueueItem {
+        why: item.get("why").and_then(Value::as_str).map(str::to_string),
+        since_ms: item
+            .get("inQueueSince")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        blocked: item
+            .get("blocked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        position: index as u32 + 1,
+        total,
+    })
 }
 
 /// Exact-match a PR id against `PR_ID=` / `ghprbPullId=` lines (avoids 395 ~ 3954).
@@ -260,6 +512,16 @@ mod tests {
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
     const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
     const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
+
+    // Failure-diagnosis fixtures. Captured from a real controller (build
+    // `build-and-test` #7139 → `elm-tests` #6377, plus a `unit-tests` JUnit
+    // report with two failures) and anonymised — hosts, paths and test names
+    // are neutral, the SHAPE is untouched.
+    const DESCRIBE_FAILED: &str = include_str!("tests/fixtures/wfapi-describe-failed.json");
+    const STAGE_NODE_FAILED: &str = include_str!("tests/fixtures/wfapi-stage-node-failed.json");
+    const NODE_LOG: &str = include_str!("tests/fixtures/wfapi-node-log.json");
+    const CONSOLE_LOG: &str = include_str!("tests/fixtures/elm-tests-console.txt");
+    const TEST_REPORT: &str = include_str!("tests/fixtures/test-report-failed.json");
 
     #[test]
     fn parses_builds_with_parameters() {
@@ -465,5 +727,144 @@ mod tests {
         assert_eq!(detect_transition(Some("FAILURE"), "FAILURE"), None);
         // Still building → no notification.
         assert_eq!(detect_transition(Some("SUCCESS"), "BUILDING"), None);
+    }
+
+    #[test]
+    fn queue_reports_the_position_in_line_oldest_first() {
+        // Two PRs waiting on the serialized pipeline: the one that entered the
+        // queue first is 1/2, the other 2/2.
+        let json = r#"{"items":[
+            {"task":{"name":"build-and-test"},"params":"\nPR_ID=200\n","inQueueSince":2000},
+            {"task":{"name":"build-and-test"},"params":"\nPR_ID=100\n","inQueueSince":1000},
+            {"task":{"name":"some-other-job"},"params":"\nPR_ID=300\n","inQueueSince":500}
+        ]}"#;
+        let first = find_queued_for_pr(json, "100", QUEUE_JOBS).expect("100 queued");
+        assert_eq!((first.position, first.total), (1, 2));
+        let second = find_queued_for_pr(json, "200", QUEUE_JOBS).expect("200 queued");
+        assert_eq!((second.position, second.total), (2, 2));
+        // Jobs outside the pipeline never count toward the line.
+        assert_eq!(find_queued_for_pr(json, "300", QUEUE_JOBS), None);
+    }
+
+    // -- Failure diagnosis ---------------------------------------------------
+
+    #[test]
+    fn finds_the_first_failed_stage_not_the_cascade() {
+        // #7139 fails from "Elm tests" onwards; every later stage fails as a
+        // consequence. The report must point at the root cause.
+        let (node_id, name) = find_failed_stage(DESCRIBE_FAILED).expect("a failed stage");
+        assert_eq!(name, "Elm tests");
+        assert_eq!(node_id, "25");
+    }
+
+    #[test]
+    fn no_failed_stage_on_a_green_build() {
+        assert_eq!(find_failed_stage(BUILDS_FIXTURE), None); // wrong shape → None
+        let green = r#"{"stages":[{"id":"4","name":"Unit tests","status":"SUCCESS"}]}"#;
+        assert_eq!(find_failed_stage(green), None);
+    }
+
+    #[test]
+    fn finds_the_failing_step_inside_a_stage() {
+        assert_eq!(find_failed_node(STAGE_NODE_FAILED).as_deref(), Some("28"));
+    }
+
+    #[test]
+    fn falls_back_to_the_last_step_when_none_is_marked_failed() {
+        // Timeouts abort the stage without flagging an individual step.
+        let json = r#"{"stageFlowNodes":[
+            {"id":"10","status":"SUCCESS"},
+            {"id":"11","status":"ABORTED"}
+        ]}"#;
+        assert_eq!(find_failed_node(json).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn reads_text_and_console_url_from_a_step_log() {
+        let (text, console) = parse_node_log(NODE_LOG);
+        assert!(text.contains("Starting building:"));
+        assert_eq!(
+            console.as_deref(),
+            Some("/job/build-and-test/7139/execution/node/28/log")
+        );
+    }
+
+    #[test]
+    fn follows_the_downstream_build_a_stage_delegates_to() {
+        // The stage log is pure Jenkins link markup; the real output lives in
+        // the downstream job it scheduled.
+        let (text, _) = parse_node_log(NODE_LOG);
+        let plain = strip_log_markup(&text);
+        assert_eq!(
+            find_downstream_build(&plain),
+            Some(("elm-tests".to_string(), 6377))
+        );
+    }
+
+    #[test]
+    fn no_downstream_build_when_the_stage_ran_its_own_steps() {
+        assert_eq!(find_downstream_build("+ yarn test\nFAILED 3 specs"), None);
+    }
+
+    #[test]
+    fn strips_ansi_codes_and_jenkins_link_markup() {
+        let raw = "\u{1b}[31mBuild <a href='/job/x/1/' class='link'>x #1</a> completed\u{1b}[0m";
+        assert_eq!(strip_log_markup(raw), "Build x #1 completed");
+        assert_eq!(strip_log_markup("a &lt;b&gt; &amp; c"), "a <b> & c");
+    }
+
+    #[test]
+    fn log_excerpt_keeps_the_error_and_drops_the_noise() {
+        let excerpt = clean_log_excerpt(CONSOLE_LOG);
+        // The actual compiler error survives…
+        assert!(excerpt.contains("TYPE MISMATCH"));
+        assert!(excerpt.contains("`elm make` failed with exit code 1."));
+        // …while the per-build pipeline chatter is gone.
+        assert!(!excerpt.contains("[Pipeline]"));
+        assert!(!excerpt.contains("Slack Send Pipeline step running"));
+        assert!(!excerpt.contains("Recording test results"));
+    }
+
+    #[test]
+    fn log_excerpt_drops_base64_blobs_and_caps_length() {
+        let blob = "x".repeat(400);
+        let raw = format!("keep me\n{blob}\nkeep me too");
+        let excerpt = clean_log_excerpt(&raw);
+        assert_eq!(excerpt, "keep me\nkeep me too");
+
+        let huge = (0..4000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let excerpt = clean_log_excerpt(&huge);
+        assert!(excerpt.chars().count() <= LOG_EXCERPT_CHARS + 2);
+        // Truncation keeps the TAIL — that's where failures are reported.
+        assert!(excerpt.ends_with("line 3999"));
+    }
+
+    #[test]
+    fn parses_failing_tests_with_the_jest_stack_trace_fallback() {
+        let (tests, total) = parse_failed_tests(TEST_REPORT, 15);
+        assert_eq!(total, 2);
+        assert_eq!(tests.len(), 2);
+        assert!(tests.iter().all(|t| !t.name.is_empty()));
+        // jest leaves `errorDetails` null: the message comes from the head of
+        // the stack trace, with the `at …` frames stripped.
+        let message = tests[0].message.as_deref().expect("a failure message");
+        assert!(message.contains("Exceeded timeout of 5000 ms"));
+        assert!(!message.contains("\n    at "));
+    }
+
+    #[test]
+    fn failing_tests_are_capped_but_the_total_is_not() {
+        let (tests, total) = parse_failed_tests(TEST_REPORT, 1);
+        assert_eq!(tests.len(), 1);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn passing_cases_are_never_reported_as_failures() {
+        let (tests, _) = parse_failed_tests(TEST_REPORT, 15);
+        assert!(tests.iter().all(|t| t.name.contains("WidgetRepoMongo")));
     }
 }

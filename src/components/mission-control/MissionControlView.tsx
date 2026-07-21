@@ -15,6 +15,7 @@ import {
   Search,
   XCircle,
   ListFilter,
+  GitPullRequest,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { invoke } from '@/lib/transport'
@@ -29,6 +30,7 @@ import {
 } from '@/components/ui/tooltip'
 import { useUIStore } from '@/store/ui-store'
 import { MissionControlRow } from './MissionControlRow'
+import { MissionControlPrRow } from './MissionControlPrRow'
 import { useMissionControlRows } from './useMissionControlRows'
 
 /** Status filter chips — meaning carried by icon shape + label (colorblind-safe). */
@@ -62,7 +64,7 @@ const STATUS_FILTERS: {
  * so opening the view gets fresh data quickly.
  */
 export function MissionControlView() {
-  const { rows, jenkinsProjectCount, failureCount, isLoading } =
+  const { rows, prRows, jenkinsProjectCount, failureCount, isLoading } =
     useMissionControlRows()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -112,6 +114,25 @@ export function MissionControlView() {
       )
     })
   }, [rows, search, statusFilter])
+
+  const filteredPrRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return prRows.filter(row => {
+      if (
+        statusFilter !== 'all' &&
+        row.status?.overallStatus !== statusFilter
+      ) {
+        return false
+      }
+      if (!q) return true
+      return (
+        row.pr.title.toLowerCase().includes(q) ||
+        row.project.name.toLowerCase().includes(q) ||
+        row.pr.headRefName.toLowerCase().includes(q) ||
+        String(row.pr.number).includes(q)
+      )
+    })
+  }, [prRows, search, statusFilter])
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background font-sans">
@@ -201,7 +222,7 @@ export function MissionControlView() {
             <Loader2 className="size-4 animate-spin" />
             Chargement des worktrees…
           </div>
-        ) : filteredRows.length === 0 ? (
+        ) : filteredRows.length === 0 && filteredPrRows.length === 0 ? (
           <EmptyState
             title={
               rows.length === 0
@@ -219,6 +240,19 @@ export function MissionControlView() {
             {filteredRows.map(row => (
               <MissionControlRow key={row.worktree.id} row={row} />
             ))}
+
+            {/* The user's own open PRs that aren't checked out in Jean. */}
+            {filteredPrRows.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                  <GitPullRequest className="size-3.5" />
+                  Mes PR sans worktree ({filteredPrRows.length})
+                </div>
+                {filteredPrRows.map(row => (
+                  <MissionControlPrRow key={row.pr.number} row={row} />
+                ))}
+              </>
+            )}
           </div>
         )}
       </ScrollArea>
