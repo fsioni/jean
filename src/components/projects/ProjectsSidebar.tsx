@@ -11,6 +11,9 @@ import { useProjects, useCreateFolder } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { ProjectTree } from './ProjectTree'
 import { MissionControlSidebarButton } from '@/components/mission-control/MissionControlSidebarButton'
+// --- perso/ai-pipeline ---
+import { AiPipelineSidebarButton } from '@/components/ai-pipeline/AiPipelineSidebarButton'
+// --- /perso/ai-pipeline ---
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { scheduleIdleWork } from '@/lib/idle'
 
@@ -32,8 +35,11 @@ export function ProjectsSidebar() {
   return (
     <div className="flex h-full flex-col">
       {/* Mission Control — permanent cross-project Jenkins overview */}
-      <div className="p-1.5 pb-0">
+      <div className="space-y-0.5 p-1.5 pb-0">
         <MissionControlSidebarButton isNarrow={isNarrow} />
+        {/* --- perso/ai-pipeline --- */}
+        <AiPipelineSidebarButton isNarrow={isNarrow} />
+        {/* --- /perso/ai-pipeline --- */}
       </div>
 
       {/* Content */}

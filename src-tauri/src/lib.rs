@@ -4639,10 +4639,11 @@ pub fn run() {
             // --- perso/ai-pipeline ---
             ai_pipeline::get_ai_pipeline_config,
             ai_pipeline::set_ai_pipeline_config,
+            ai_pipeline::set_ai_pipeline_project,
             ai_pipeline::list_ai_pipeline_prs,
-            ai_pipeline::list_ai_pipeline_review_tasks,
+            ai_pipeline::list_ai_pipeline_tasks,
             ai_pipeline::assign_pr_to_me,
-            ai_pipeline::resume_ai_pipeline_pr,
+            ai_pipeline::resume_ai_pipeline_task,
             ai_pipeline::finish_ai_pipeline_pr,
             // --- /perso/ai-pipeline ---
             // Saved context commands

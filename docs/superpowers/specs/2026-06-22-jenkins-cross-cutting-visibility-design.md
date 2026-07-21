@@ -104,3 +104,37 @@ Causes candidates identifiées par lecture du code (`poller.rs`), de la plus pro
 ## Hors périmètre (→ #9)
 Dashboard « mission control » (vue unique tous worktrees, stages, re-run depuis la liste, durées).
 Construit ensuite sur la même donnée poll-ée.
+
+---
+
+## Suite (2026-07-21) — pastilles muettes : rétention Jenkins, pas `pr_number`
+
+Symptôme rapporté : la CI/preview ne s'affiche pas pour certains worktrees à PR
+(ex. `pr-4143-CU-86cahukqt-vue-exposant-readonly`), « selon comment la branche a
+été créée ».
+
+**Ce n'était pas la cause B** (`pr_number` manquant) : le worktree l'avait bien.
+Mesure sur le contrôleur réel : `build-and-test` ne **retient que ~23 builds**
+(~6 h de CI) — demander `{0,300}` renvoie toujours 23, les autres sont purgés.
+`match_build()` ne trouvait donc rien pour toute PR construite quelques heures
+plus tôt ⇒ `overallStatus = UNKNOWN` ⇒ la row **ne rendait rien**, ce qui se lit
+comme « la feature est cassée ». La variable n'était pas le mode de création de
+la branche mais **la date du dernier build**.
+
+Corrections :
+
+1. **Fallback GitHub** (`jenkins/gh_checks.rs`). Le verdict survit en commit
+   status sur la tête de PR (écrit par ghprb) ; GitHub le garde indéfiniment.
+   Un seul `gh pr list --json number,headRefOid,statusCheckRollup` par projet et
+   par cycle reconstruit le verdict de toutes les PR ouvertes. Utilisé
+   uniquement quand Jenkins n'a plus de build ; `verdictSource`
+   (`jenkins` | `github` | `none`) le dit à l'UI, qui l'annonce en tooltip.
+2. **Le même appel renvoie `headRefOid`**, réutilisé par la sonde de fraîcheur
+   preview : supprime un `gh pr view` par worktree et par cycle. Net, le poller
+   fait **moins** de sous-processus qu'avant.
+3. **Poller : worktrees archivés ignorés** (`archived_at.is_none()`) — 21
+   worktrees pollés pour 5 actifs avant le correctif.
+4. **Plus jamais de row muette** : `WorktreeCiStatus` affiche « CI inconnu »
+   (icône + texte + tooltip, jamais la couleur seule) quand ni Jenkins ni GitHub
+   n'a de verdict, et ne rend rien que dans les cas légitimes (pas de PR, projet
+   pas encore chargé, ligne pas encore pollée).

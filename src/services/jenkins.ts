@@ -59,6 +59,7 @@ function notConfiguredStatus(
     previewFreshness: null,
     queue: null,
     overallStatus: 'UNKNOWN',
+    verdictSource: 'none',
     checkedAt: Math.floor(Date.now() / 1000),
   }
 }

@@ -138,6 +138,12 @@ export interface JenkinsWorktreeStatus {
   queue: JenkinsQueueItem | null
   /** "BUILDING" | "QUEUED" | "SUCCESS" | "FAILURE" | "UNKNOWN" */
   overallStatus: string
+  /**
+   * Where `overallStatus` came from: "jenkins" (a matched build), "github" (the
+   * PR head commit status, because Jenkins had already rotated the build out of
+   * its short history) or "none". Used to keep tooltips honest.
+   */
+  verdictSource: string
   /** Epoch seconds when this status was checked. */
   checkedAt: number
 }

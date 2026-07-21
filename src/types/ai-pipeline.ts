@@ -9,6 +9,11 @@ import type { Worktree } from '@/types/projects'
 export interface AiPipelineConfig {
   /** Label the pipeline puts on its PRs (defaults to `ai-full-flow`). */
   pipelineLabel?: string
+  /**
+   * Project the pipeline lists are always scoped to, whatever the entry point.
+   * Absent = follow the project the modal was opened from.
+   */
+  projectId?: string
 }
 
 /** A pipeline PR surfaced from the dashboard `/prs` endpoint. */
@@ -31,19 +36,35 @@ export interface AiPipelinePr {
 }
 
 /**
- * A ClickUp `TO REVIEW` ticket ready to pick up (unassigned or mine), joined
- * with its PR in the current project's repo. ClickUp is the source of truth for
- * inclusion; the PR carries the resume target + CI state (may be red). Draft PRs
- * are excluded server-side (a draft means the pipeline hasn't finished).
+ * A pickable ClickUp ticket (unassigned or mine), joined with its PR in the
+ * current project's repo when there is one. ClickUp is the source of truth for
+ * inclusion; the PR carries the resume target + CI state (may be red).
+ *
+ * `pr` is only ever absent in the STUCK bucket — the pipeline sometimes gives
+ * up before pushing anything.
  */
-export interface AiPipelineReviewTask {
+export interface AiPipelineTask {
   taskId: string
   name: string
   status?: string
   /** `true` = already mine, `false` = unassigned (free to grab). */
   assignedToMe: boolean
   url?: string
-  pr: AiPipelinePr
+  /** ClickUp tag names (`ai-done`, `ai-escalade`, …). */
+  tags: string[]
+  /** `urgent` | `high` | `normal` | `low`. */
+  priority?: string
+  /** Last ClickUp update, epoch milliseconds as a string. */
+  updatedAt?: string
+  pr?: AiPipelinePr
+}
+
+/** The two pickable buckets, fetched in one round-trip. */
+export interface AiPipelineTaskLists {
+  /** `to review` / `in review` tickets whose PR is ready (non-draft). */
+  review: AiPipelineTask[]
+  /** `stuck` tickets, with or without a PR. */
+  stuck: AiPipelineTask[]
 }
 
 /** Outcome of one best-effort sub-step. */

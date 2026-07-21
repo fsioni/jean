@@ -24,6 +24,11 @@ pub struct AiPipelineConfig {
     /// as pipeline PRs regardless of the label.)
     #[serde(default)]
     pub pipeline_label: Option<String>,
+    /// Project the pipeline lists are always scoped to, whatever the entry
+    /// point (sidebar, New Session tab, command palette). `None` falls back to
+    /// the project the modal was opened from.
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 impl AiPipelineConfig {
@@ -105,6 +110,19 @@ pub async fn set_ai_pipeline_config(
     save_ai_pipeline_config(&app, &config)
 }
 
+/// Pin the project the pipeline lists are scoped to. `None`/empty unpins it
+/// (the lists then follow the project the modal was opened from). Kept separate
+/// from [`set_ai_pipeline_config`] so pinning never clobbers the label.
+#[tauri::command]
+pub async fn set_ai_pipeline_project(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let mut config = load_ai_pipeline_config(&app)?;
+    config.project_id = project_id.filter(|t| !t.trim().is_empty());
+    save_ai_pipeline_config(&app, &config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +137,7 @@ mod tests {
     fn effective_label_uses_configured_value() {
         let cfg = AiPipelineConfig {
             pipeline_label: Some("my-label".to_string()),
+            ..Default::default()
         };
         assert_eq!(cfg.effective_label(), "my-label");
     }
@@ -127,7 +146,18 @@ mod tests {
     fn effective_label_ignores_blank() {
         let cfg = AiPipelineConfig {
             pipeline_label: Some("   ".to_string()),
+            ..Default::default()
         };
         assert_eq!(cfg.effective_label(), DEFAULT_PIPELINE_LABEL);
+    }
+
+    /// A config file written before the pinned-project field existed must still
+    /// load (the feature ships to an app that already has a sidecar on disk).
+    #[test]
+    fn config_without_project_id_still_parses() {
+        let cfg: AiPipelineConfig =
+            serde_json::from_str(r#"{"pipelineLabel":"ai-full-flow"}"#).unwrap();
+        assert_eq!(cfg.project_id, None);
+        assert_eq!(cfg.effective_label(), "ai-full-flow");
     }
 }

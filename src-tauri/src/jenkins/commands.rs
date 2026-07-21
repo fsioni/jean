@@ -10,9 +10,11 @@ use tauri::AppHandle;
 use super::client::JenkinsClient;
 use super::config;
 use super::freshness::{self, PreviewFreshness};
+use super::gh_checks::{self, PrChecks};
 use super::parse;
 use super::types::{
     JenkinsAttempt, JenkinsBuild, JenkinsFailureReport, JenkinsStage, JenkinsWorktreeStatus,
+    SOURCE_GITHUB, SOURCE_JENKINS, SOURCE_NONE,
 };
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
@@ -125,6 +127,10 @@ pub fn integration_attempts_for(
 /// Only the matched pipeline build's stages are fetched (one extra request).
 /// Shared by [`get_jenkins_status`] and the background poller so the matching
 /// logic stays in one place.
+///
+/// `gh_verdict` is the GitHub commit-status fallback for this PR (see
+/// [`gh_checks`]): used only when Jenkins has no matching build left, which on a
+/// busy controller happens within hours.
 pub async fn assemble_status(
     client: &JenkinsClient,
     pipeline_builds: &[JenkinsBuild],
@@ -135,6 +141,7 @@ pub async fn assemble_status(
     pr_id: Option<&str>,
     branch: Option<&str>,
     preview_url_template: Option<&str>,
+    gh_verdict: Option<&str>,
 ) -> JenkinsWorktreeStatus {
     let pipeline = match_build(pipeline_builds, pr_id, branch).cloned();
 
@@ -170,7 +177,18 @@ pub async fn assemble_status(
     let preview_url = resolved_pr
         .as_deref()
         .and_then(|pr| preview_url(preview_url_template, pr));
-    let overall_status = parse::overall_status_with_queue(pipeline.as_ref(), queue.is_some());
+
+    // Jenkins first; fall back to the GitHub commit status when it kept no
+    // build for this PR, so an old-but-known verdict beats a blank row.
+    let jenkins_status = parse::overall_status_with_queue(pipeline.as_ref(), queue.is_some());
+    let (overall_status, verdict_source) = if jenkins_status == parse::STATUS_UNKNOWN {
+        match gh_verdict.filter(|v| !v.is_empty()) {
+            Some(v) => (v.to_string(), SOURCE_GITHUB),
+            None => (jenkins_status, SOURCE_NONE),
+        }
+    } else {
+        (jenkins_status, SOURCE_JENKINS)
+    };
 
     JenkinsWorktreeStatus {
         worktree_id: worktree_id.to_string(),
@@ -184,24 +202,30 @@ pub async fn assemble_status(
         preview_freshness: None,
         queue,
         overall_status,
+        verdict_source: verdict_source.to_string(),
         checked_at: now_secs(),
     }
 }
 
 /// Resolve live preview freshness for a worktree's PR (probe `/version`, compare
 /// to the PR head). Returns `None` when there is no PR to attach a preview to.
+///
+/// `pr_head_sha` is the head commit already known from the project-wide
+/// [`gh_checks`] call; when present it spares one `gh pr view` subprocess per
+/// worktree per poll cycle.
 pub(super) async fn resolve_preview_freshness(
     app: &AppHandle,
     repo_path: &str,
     pr_id: Option<&str>,
     pr_number: Option<u32>,
     preview_url_template: Option<&str>,
+    pr_head_sha: Option<String>,
 ) -> Option<PreviewFreshness> {
     let pr_id = pr_id.filter(|p| !p.is_empty())?;
     // No configured preview domain → nothing to probe (and nothing hardcoded).
     let version_url = format!("{}/version", preview_base_url(preview_url_template, pr_id)?);
     let gh = resolve_gh_binary(app);
-    Some(freshness::resolve_freshness(repo_path, pr_id, pr_number, gh, &version_url).await)
+    Some(freshness::resolve_freshness(repo_path, pr_number, gh, &version_url, pr_head_sha).await)
 }
 
 /// Live Jenkins status for the worktree's PR/branch.
@@ -229,6 +253,14 @@ pub async fn get_jenkins_status(
         .unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
 
+    let worktree = data.worktrees.iter().find(|w| w.id == worktree_id);
+    // GitHub commit statuses outlive Jenkins' short build retention — the
+    // fallback verdict (and the PR head for the freshness probe) come from here.
+    let gh_check = fetch_pr_checks_for(&app, worktree.map_or(project.path.as_str(), |w| &w.path))
+        .await
+        .remove(&worktree.and_then(|w| w.pr_number).unwrap_or_default())
+        .unwrap_or_default();
+
     let mut status = assemble_status(
         &client,
         &pipeline_builds,
@@ -239,21 +271,32 @@ pub async fn get_jenkins_status(
         pr_id.as_deref(),
         branch.as_deref(),
         cfg.preview_url_template.as_deref(),
+        gh_check.verdict.as_deref(),
     )
     .await;
 
-    if let Some(worktree) = data.worktrees.iter().find(|w| w.id == worktree_id) {
+    if let Some(worktree) = worktree {
         status.preview_freshness = resolve_preview_freshness(
             &app,
             &worktree.path,
             status.pr_id.as_deref(),
             worktree.pr_number,
             cfg.preview_url_template.as_deref(),
+            gh_check.head_sha,
         )
         .await;
     }
 
     Ok(status)
+}
+
+/// Fetch the GitHub checks of every open PR of a repo, off the async runtime.
+pub(super) async fn fetch_pr_checks_for(app: &AppHandle, repo_path: &str) -> PrChecks {
+    let gh = resolve_gh_binary(app);
+    let repo = repo_path.to_string();
+    tokio::task::spawn_blocking(move || gh_checks::fetch_pr_checks(&repo, &gh))
+        .await
+        .unwrap_or_default()
 }
 
 /// One PR/branch to resolve a status for, in a batch request.
@@ -288,7 +331,11 @@ pub async fn get_jenkins_statuses(
     if targets.is_empty() {
         return Ok(Vec::new());
     }
-    let cfg = config::load_config(&app, &project_id)?;
+    let data = load_projects_data(&app)?;
+    let project = data
+        .find_project(&project_id)
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    let cfg = config::config_from_project(project)?;
     let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
@@ -298,9 +345,18 @@ pub async fn get_jenkins_statuses(
         .await
         .unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
+    // These PRs are the likeliest to have been rotated out of Jenkins' short
+    // build history, so the GitHub fallback verdict matters even more here.
+    let gh_checks = fetch_pr_checks_for(&app, &project.path).await;
 
     let mut out = Vec::with_capacity(targets.len());
     for target in targets.iter().take(MAX_STATUS_TARGETS) {
+        let gh_verdict = target
+            .pr_id
+            .as_deref()
+            .and_then(|pr| pr.parse::<u32>().ok())
+            .and_then(|pr| gh_checks.get(&pr))
+            .and_then(|check| check.verdict.as_deref());
         out.push(
             assemble_status(
                 &client,
@@ -312,6 +368,7 @@ pub async fn get_jenkins_statuses(
                 target.pr_id.as_deref(),
                 target.branch.as_deref(),
                 cfg.preview_url_template.as_deref(),
+                gh_verdict,
             )
             .await,
         );
@@ -764,5 +821,72 @@ mod tests {
     fn clean_blanks_to_none() {
         assert_eq!(clean("  ".into()), None);
         assert_eq!(clean(" http://x ".into()), Some("http://x".to_string()));
+    }
+
+    /// Assemble a status for a PR with no matching Jenkins build. Safe to run
+    /// offline: stages are only fetched when a pipeline build matched.
+    async fn assemble_without_build(gh_verdict: Option<&str>) -> JenkinsWorktreeStatus {
+        let client = JenkinsClient::new("http://127.0.0.1:1", "u", "t");
+        assemble_status(
+            &client,
+            &[],
+            &[],
+            &[],
+            "{}",
+            "wt-1",
+            Some("4143"),
+            Some("CU-86cahukqt-vue-exposant-readonly"),
+            None,
+            gh_verdict,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_the_github_verdict_when_jenkins_kept_no_build() {
+        // The real regression: Jenkins retains ~23 builds (~6 h) on a busy
+        // controller, so a PR built yesterday matches nothing and the row used
+        // to render blank. GitHub still has the commit status.
+        let status = assemble_without_build(Some(parse::STATUS_SUCCESS)).await;
+        assert_eq!(status.overall_status, parse::STATUS_SUCCESS);
+        assert_eq!(status.verdict_source, SOURCE_GITHUB);
+        // No build to link to — the verdict is all we recovered.
+        assert!(status.pipeline.is_none());
+        assert_eq!(status.pr_id.as_deref(), Some("4143"));
+    }
+
+    #[tokio::test]
+    async fn stays_unknown_when_neither_side_has_a_verdict() {
+        let status = assemble_without_build(None).await;
+        assert_eq!(status.overall_status, parse::STATUS_UNKNOWN);
+        assert_eq!(status.verdict_source, SOURCE_NONE);
+
+        // An empty verdict string is treated as absent, not as a fallback.
+        let status = assemble_without_build(Some("")).await;
+        assert_eq!(status.verdict_source, SOURCE_NONE);
+    }
+
+    #[tokio::test]
+    async fn a_matched_jenkins_build_wins_over_the_github_verdict() {
+        let client = JenkinsClient::new("http://127.0.0.1:1", "u", "t");
+        let builds = vec![JenkinsBuild {
+            result: Some("FAILURE".into()),
+            ..build(7150, Some("4143"), Some("feat"))
+        }];
+        let status = assemble_status(
+            &client,
+            &builds,
+            &[],
+            &[],
+            "{}",
+            "wt-1",
+            Some("4143"),
+            None,
+            None,
+            Some(parse::STATUS_SUCCESS),
+        )
+        .await;
+        assert_eq!(status.overall_status, parse::STATUS_FAILURE);
+        assert_eq!(status.verdict_source, SOURCE_JENKINS);
     }
 }

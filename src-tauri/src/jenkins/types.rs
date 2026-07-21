@@ -151,6 +151,17 @@ pub struct JenkinsWorktreeStatus {
     pub queue: Option<JenkinsQueueItem>,
     /// Aggregated state: `BUILDING` / `QUEUED` / `SUCCESS` / `FAILURE` / `UNKNOWN`.
     pub overall_status: String,
+    /// Where `overall_status` came from — `jenkins` (a matched build), `github`
+    /// (commit status, because Jenkins had already rotated the build out) or
+    /// `none`. Lets the UI stay honest about a verdict it can't link to a build.
+    pub verdict_source: String,
     /// Epoch seconds when this status was computed.
     pub checked_at: i64,
 }
+
+/// `overall_status` read from a matched Jenkins build (or its queue item).
+pub const SOURCE_JENKINS: &str = "jenkins";
+/// `overall_status` recovered from the GitHub commit status of the PR head.
+pub const SOURCE_GITHUB: &str = "github";
+/// No verdict available from either side.
+pub const SOURCE_NONE: &str = "none";
