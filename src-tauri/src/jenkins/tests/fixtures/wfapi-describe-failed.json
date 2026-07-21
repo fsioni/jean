@@ -1,0 +1,153 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/build-and-test/7139/wfapi/describe"
+    }
+  },
+  "id": "7139",
+  "name": "#7139",
+  "status": "FAILED",
+  "startTimeMillis": 1784632499131,
+  "endTimeMillis": 1784632610750,
+  "durationMillis": 111619,
+  "queueDurationMillis": 11,
+  "pauseDurationMillis": 0,
+  "stages": [
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/4/wfapi/describe"
+        }
+      },
+      "id": "4",
+      "name": "Pre-stage",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1784632499369,
+      "durationMillis": 12060,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/16/wfapi/describe"
+        }
+      },
+      "id": "16",
+      "name": "Unit tests",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1784632511452,
+      "durationMillis": 27827,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/25/wfapi/describe"
+        }
+      },
+      "id": "25",
+      "name": "Elm tests",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632539298,
+      "durationMillis": 71024,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/34/wfapi/describe"
+        }
+      },
+      "id": "34",
+      "name": "Build test for PR",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632610347,
+      "durationMillis": 53,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/38/wfapi/describe"
+        }
+      },
+      "id": "38",
+      "name": "Build master",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632610419,
+      "durationMillis": 68,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/42/wfapi/describe"
+        }
+      },
+      "id": "42",
+      "name": "Integration tests",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632610511,
+      "durationMillis": 73,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/46/wfapi/describe"
+        }
+      },
+      "id": "46",
+      "name": "Build all clients for PR",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632610607,
+      "durationMillis": 43,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/build-and-test/7139/execution/node/50/wfapi/describe"
+        }
+      },
+      "id": "50",
+      "name": "Deploy preview",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": null,
+        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+      },
+      "startTimeMillis": 1784632610662,
+      "durationMillis": 53,
+      "pauseDurationMillis": 0
+    }
+  ]
+}

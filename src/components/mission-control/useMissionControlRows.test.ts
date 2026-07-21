@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, Worktree } from '@/types/projects'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import type { GitHubPullRequest } from '@/types/github'
 import {
+  classifyProjectRows,
   compareMissionControlRows,
   isJenkinsConfigured,
-  selectPrWorktrees,
   type MissionControlRow,
 } from './useMissionControlRows'
 
@@ -41,8 +42,24 @@ function row(
     project: project({}),
     worktree: worktree({ id: name, name }),
     prId: '1',
+    kind: 'linked',
     status,
   }
+}
+
+function pr(partial: Partial<GitHubPullRequest>): GitHubPullRequest {
+  return {
+    number: 1,
+    title: 'PR',
+    state: 'OPEN',
+    headRefName: 'feat',
+    baseRefName: 'master',
+    isDraft: false,
+    created_at: '',
+    author: { login: 'me' },
+    labels: [],
+    ...partial,
+  } as GitHubPullRequest
 }
 
 describe('isJenkinsConfigured', () => {
@@ -57,25 +74,69 @@ describe('isJenkinsConfigured', () => {
   })
 })
 
-describe('selectPrWorktrees', () => {
-  it('keeps only PR-linked, non-archived worktrees and pairs them with the project', () => {
-    const p = project({ id: 'p1', name: 'Proj' })
-    const lists = [
+describe('classifyProjectRows', () => {
+  const p = project({ id: 'p1', name: 'Proj' })
+
+  it('classifies a PR-linked worktree, ignoring archived ones', () => {
+    const { rows } = classifyProjectRows(
+      p,
       [
         worktree({ id: 'a', pr_number: 42 }),
-        worktree({ id: 'b' }), // no PR → excluded
-        worktree({ id: 'c', pr_number: 7, archived_at: 123 }), // archived → excluded
+        worktree({ id: 'c', pr_number: 7, archived_at: 123 }),
       ],
-    ]
-    const result = selectPrWorktrees([p], lists)
-    expect(result.map(r => r.worktree.id)).toEqual(['a'])
-    const [first] = result
-    expect(first?.prId).toBe('42')
-    expect(first?.project).toBe(p)
+      [],
+      []
+    )
+    expect(rows.map(r => [r.worktree.id, r.kind, r.prId])).toEqual([
+      ['a', 'linked', '42'],
+    ])
   })
 
-  it('tolerates a project whose worktree list has not loaded yet', () => {
-    expect(selectPrWorktrees([project({})], [undefined])).toEqual([])
+  it('recovers a worktree whose PR link is missing in Jean', () => {
+    const { rows } = classifyProjectRows(
+      p,
+      [worktree({ id: 'a', branch: 'feat-x' })],
+      [pr({ number: 99, headRefName: 'feat-x' })],
+      []
+    )
+    expect(rows[0]?.kind).toBe('detached')
+    expect(rows[0]?.prId).toBe('99')
+    expect(rows[0]?.detectedPr?.number).toBe(99)
+  })
+
+  it('keeps a worktree that genuinely has no PR', () => {
+    const { rows } = classifyProjectRows(
+      p,
+      [worktree({ id: 'a', branch: 'wip' })],
+      [pr({ number: 99, headRefName: 'other' })],
+      []
+    )
+    expect(rows[0]?.kind).toBe('no-pr')
+    expect(rows[0]?.prId).toBe('')
+  })
+
+  it('surfaces the user own open PRs that no worktree covers', () => {
+    const { orphans } = classifyProjectRows(
+      p,
+      [worktree({ id: 'a', pr_number: 42, branch: 'feat-42' })],
+      [],
+      [
+        pr({ number: 42, headRefName: 'feat-42' }),
+        pr({ number: 77, headRefName: 'feat-77' }),
+      ]
+    )
+    expect(orphans.map(o => o.number)).toEqual([77])
+  })
+
+  it('does not call a PR orphan when a worktree sits on its branch', () => {
+    // Branch match is enough: the worktree may simply have a stale PR link.
+    const { orphans } = classifyProjectRows(
+      p,
+      [worktree({ id: 'a', branch: 'feat-77' })],
+      [],
+      [pr({ number: 77, headRefName: 'feat-77' })]
+    )
+    expect(orphans).toEqual([])
   })
 })
 

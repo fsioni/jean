@@ -14,6 +14,13 @@ vi.mock('@/components/jenkins/PreviewBadge', () => ({
 vi.mock('@/services/jenkins', () => ({
   useRerunJenkinsPipeline: () => ({ mutate: vi.fn(), isPending: false }),
 }))
+vi.mock('@/services/git-status', () => ({
+  useGitStatus: () => ({ data: null }),
+}))
+// Mounting the failure panel would fetch a report; it has its own test file.
+vi.mock('@/components/jenkins/FailureReportPanel', () => ({
+  FailureReportPanel: () => <div data-testid="failure-panel" />,
+}))
 vi.mock('@/store/chat-store', () => ({
   useChatStore: { getState: () => ({ clearActiveWorktree: vi.fn() }) },
 }))
@@ -42,6 +49,7 @@ function mkRow(
     project: { id: 'p1', name: 'Proj' },
     worktree: { id: 'wt1', name: 'alpha', branch: 'feat', pr_url: null },
     prId: '42',
+    kind: 'linked',
     status: {
       worktreeId: 'wt1',
       overallStatus,
@@ -98,5 +106,58 @@ describe('MissionControlRow', () => {
     )
     expect(queryByLabelText('Déplier les étapes')).toBeNull()
     expect(queryByLabelText('Replier les étapes')).toBeNull()
+  })
+
+  it('states the rank and wait when the run is stuck in the Jenkins queue', () => {
+    const row = mkRow('QUEUED', false, [])
+    Object.assign(row.status ?? {}, {
+      queue: {
+        why: 'Build #4798 is already in progress',
+        sinceMs: Date.now() - 8 * 60_000,
+        blocked: true,
+        position: 2,
+        total: 5,
+      },
+    })
+    const { getByText } = render(<MissionControlRow row={row} />)
+    expect(getByText('2/5')).toBeInTheDocument()
+    expect(getByText(/8 min/)).toBeInTheDocument()
+  })
+
+  it('flags a branch that is behind its base as needing a rebase', () => {
+    const row = mkRow('SUCCESS', false, [])
+    ;(row.worktree as { cached_behind_count?: number }).cached_behind_count = 12
+    const { getByText } = render(<MissionControlRow row={row} />)
+    // Words + icon, never color alone.
+    expect(getByText(/À rebase · 12/)).toBeInTheDocument()
+  })
+
+  it('marks a PR found on the branch while Jean had no link', () => {
+    const row = mkRow('SUCCESS', false, [])
+    Object.assign(row, {
+      kind: 'detached',
+      prId: '99',
+      detectedPr: { number: 99, url: 'https://gh/pr/99' },
+    })
+    const { getByText } = render(<MissionControlRow row={row} />)
+    expect(getByText(/#99/)).toBeInTheDocument()
+    expect(getByText(/détectée/)).toBeInTheDocument()
+  })
+
+  it('says plainly when a worktree has no PR at all', () => {
+    const row = mkRow('UNKNOWN', false, [])
+    Object.assign(row, { kind: 'no-pr', prId: '' })
+    const { getByText } = render(<MissionControlRow row={row} />)
+    expect(getByText('pas de PR')).toBeInTheDocument()
+  })
+
+  it('opens the failure diagnosis from the "Pourquoi ?" shortcut', () => {
+    const row = mkRow('FAILURE', false, [])
+    const { getByRole, getByTestId, queryByTestId } = render(
+      <MissionControlRow row={row} />
+    )
+    expect(queryByTestId('failure-panel')).toBeNull()
+    fireEvent.click(getByRole('button', { name: /Pourquoi/ }))
+    expect(getByTestId('failure-panel')).toBeInTheDocument()
   })
 })

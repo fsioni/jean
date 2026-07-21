@@ -81,6 +81,8 @@ export interface GitHubPullRequest {
   created_at: string // From GitHub API (snake_case)
   author: GitHubAuthor
   labels: GitHubLabel[]
+  /** Web URL — only set by the list/search commands. */
+  url?: string
 }
 
 export interface GitHubReview {

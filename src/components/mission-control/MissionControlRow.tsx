@@ -6,8 +6,11 @@ import {
   ChevronRight,
   ExternalLink,
   GitBranch,
+  GitPullRequestArrow,
+  Hourglass,
   Loader2,
   RefreshCw,
+  Stethoscope,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { clickUpTaskIdFromBranch, clickupTaskUrl } from '@/lib/clickup'
@@ -19,7 +22,9 @@ import {
   JenkinsStageList,
   formatDuration,
 } from '@/components/jenkins/JenkinsStageList'
+import { FailureReportPanel } from '@/components/jenkins/FailureReportPanel'
 import { useRerunJenkinsPipeline } from '@/services/jenkins'
+import { useGitStatus } from '@/services/git-status'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
@@ -50,6 +55,14 @@ function pipelineDuration(row: Row): { text: string; live: boolean } | null {
     return { text: formatDuration(pipeline.durationMs), live: false }
   }
   return null
+}
+
+/** "8 min" — how long the item has been waiting in the Jenkins queue. */
+function formatWait(sinceMs: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - sinceMs) / 60000))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  return `${hours} h ${String(minutes % 60).padStart(2, '0')}`
 }
 
 /** Compact "where is the run" summary while building (colorblind-safe text). */
@@ -90,8 +103,15 @@ export function MissionControlRow({ row }: { row: Row }) {
   const stages = status?.stages ?? []
   const hasStages = stages.length > 0
   const isFailure = status?.overallStatus === 'FAILURE'
+  const queue = status?.queue ?? null
+  // Commits on origin/<base> this branch doesn't have — i.e. "rebase me".
+  // Live git status first, persisted cache as the fallback (same precedence as
+  // `WorktreeItem` / the project canvas).
+  const { data: gitStatus } = useGitStatus(worktree.id)
+  const behind = gitStatus?.behind_count ?? worktree.cached_behind_count ?? 0
 
-  useElapsedTick(building)
+  // The queue wait ticks like the build clock does.
+  useElapsedTick(building || !!queue)
   const duration = pipelineDuration(row)
   const progress = building ? stageProgress(stages) : null
 
@@ -105,9 +125,12 @@ export function MissionControlRow({ row }: { row: Row }) {
 
   const toggleExpanded = useCallback(() => setExpanded(e => !e), [])
 
+  // A detached row has no `pr_url` on the worktree yet (Jean's link is being
+  // repaired in the background) — fall back to the PR we detected by branch.
+  const prUrl = worktree.pr_url ?? row.detectedPr?.url ?? null
   const handleOpenPr = useCallback(() => {
-    if (worktree.pr_url) openUrl(worktree.pr_url)
-  }, [worktree.pr_url])
+    if (prUrl) openUrl(prUrl)
+  }, [prUrl])
 
   const clickUpId = clickUpTaskIdFromBranch(worktree.branch)
   const handleOpenClickUp = useCallback(() => {
@@ -141,8 +164,8 @@ export function MissionControlRow({ row }: { row: Row }) {
   return (
     <div className="border-b border-border/60 transition-colors hover:bg-muted/40">
       <div className="flex items-center gap-2 px-3 py-2">
-        {/* Expand toggle (only when there are stages to show) */}
-        {hasStages ? (
+        {/* Expand toggle (stages to show, or a failure to diagnose) */}
+        {hasStages || isFailure ? (
           <button
             type="button"
             onClick={toggleExpanded}
@@ -174,16 +197,26 @@ export function MissionControlRow({ row }: { row: Row }) {
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <GitBranch className="size-3 shrink-0" />
             <span className="truncate font-mono">{worktree.branch}</span>
-            {worktree.pr_url && (
+            {prUrl && (
               <button
                 type="button"
                 onClick={handleOpenPr}
                 className="inline-flex shrink-0 items-center gap-0.5 transition-colors hover:text-foreground"
-                title="Ouvrir la PR sur GitHub"
+                title={
+                  row.kind === 'detached'
+                    ? 'PR trouvée sur cette branche — Jean la rattache en arrière-plan'
+                    : 'Ouvrir la PR sur GitHub'
+                }
               >
                 #{prId}
+                {row.kind === 'detached' && ' (détectée)'}
                 <ExternalLink className="size-3" />
               </button>
+            )}
+            {row.kind === 'no-pr' && (
+              <span className="shrink-0 italic" title="Aucune PR ouverte sur cette branche — Jenkins ne build que les PR">
+                pas de PR
+              </span>
             )}
             {clickUpId && (
               <button
@@ -196,8 +229,39 @@ export function MissionControlRow({ row }: { row: Row }) {
                 ClickUp
               </button>
             )}
+            {/* Is the base branch already in this branch, or is a rebase due?
+                Stated in words + icon — never by color alone. */}
+            {behind > 0 && (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 font-medium text-amber-700 dark:text-amber-500"
+                title={`Cette branche est ${behind} commit(s) derrière ${worktree.base_branch ?? 'la branche de base'} — un rebase est conseillé avant de se fier au pipeline`}
+              >
+                <GitPullRequestArrow className="size-3" />À rebase · {behind}
+              </span>
+            )}
           </div>
         </div>
+
+        {/* Waiting in the Jenkins queue: rank + wait, so the global queue never
+            has to be opened to know whether the build is next or buried. */}
+        {queue && (
+          <span
+            className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-500"
+            title={
+              queue.why
+                ? `En file d'attente — ${queue.why}`
+                : "En file d'attente Jenkins"
+            }
+          >
+            <Hourglass className="size-3" />
+            <span className="tabular-nums">
+              {queue.position}/{queue.total}
+            </span>
+            <span className="hidden tabular-nums md:inline">
+              · {formatWait(queue.sinceMs)}
+            </span>
+          </span>
+        )}
 
         {/* Live stage progress while building (text-based: no color-only cue) */}
         {progress && (
@@ -250,6 +314,17 @@ export function MissionControlRow({ row }: { row: Row }) {
             <Button
               variant="outline"
               size="sm"
+              onClick={toggleExpanded}
+              title="Voir la cause de l'échec (stage, tests, log) sans ouvrir Jenkins"
+            >
+              <Stethoscope className="size-3.5" />
+              Pourquoi&nbsp;?
+            </Button>
+          )}
+          {isFailure && (
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleRerun}
               disabled={rerun.isPending}
               title="Re-run du pipeline (comment ghprb « retest this please »)"
@@ -275,12 +350,25 @@ export function MissionControlRow({ row }: { row: Row }) {
       </div>
 
       {/* Inline stage timeline — the Jenkins-like breakdown, no tab to keep open */}
-      {expanded && hasStages && (
+      {expanded && (hasStages || isFailure) && (
         <div className="px-3 pb-2.5 pl-9">
-          <JenkinsStageList
-            stages={stages}
-            attempts={status?.integrationAttempts ?? []}
-          />
+          {hasStages && (
+            <JenkinsStageList
+              stages={stages}
+              attempts={status?.integrationAttempts ?? []}
+            />
+          )}
+
+          {/* Why it broke: fetched only once this section is actually open. */}
+          {isFailure && (
+            <FailureReportPanel
+              project={project}
+              worktree={worktree}
+              prId={prId}
+              buildNumber={pipeline?.number ?? null}
+            />
+          )}
+
           {pipeline?.url && (
             <button
               type="button"

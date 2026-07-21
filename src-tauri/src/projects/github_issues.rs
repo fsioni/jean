@@ -1350,6 +1350,10 @@ pub struct GitHubPullRequest {
     pub author: GitHubAuthor,
     #[serde(default)]
     pub labels: Vec<GitHubLabel>,
+    /// Web URL — only populated by the listing/search commands (perso/jenkins:
+    /// Mission Control links straight to PRs that have no worktree).
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// GitHub review
@@ -1540,7 +1544,7 @@ pub async fn list_github_prs(
             "pr",
             "list",
             "--json",
-            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels",
+            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels,url",
             "-L",
             "1000",
             "--state",
@@ -1591,7 +1595,7 @@ pub async fn search_github_prs(
             "--search",
             &query,
             "--json",
-            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels",
+            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels,url",
             "-L",
             "100",
             "--state",
@@ -1641,7 +1645,7 @@ pub async fn get_github_pr_by_number(
             "view",
             &pr_number.to_string(),
             "--json",
-            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels",
+            "number,title,body,state,headRefName,baseRefName,isDraft,createdAt,author,labels,url",
         ])
         .output()
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;

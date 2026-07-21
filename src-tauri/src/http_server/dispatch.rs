@@ -3205,6 +3205,28 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+        "get_jenkins_statuses" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let targets: Vec<crate::jenkins::JenkinsStatusTarget> = from_field(&args, "targets")?;
+            let result =
+                crate::jenkins::get_jenkins_statuses(app.clone(), project_id, targets).await?;
+            to_value(result)
+        }
+        "get_jenkins_failure_report" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
+            let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
+            let branch: Option<String> = from_field_opt(&args, "branch")?;
+            let result = crate::jenkins::get_jenkins_failure_report(
+                app.clone(),
+                project_id,
+                worktree_id,
+                pr_id,
+                branch,
+            )
+            .await?;
+            to_value(result)
+        }
         "rerun_jenkins_pipeline" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
             let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;

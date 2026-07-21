@@ -67,6 +67,46 @@ pub struct JenkinsStage {
     pub duration_ms: u64,
 }
 
+/// One failing test case from a build's JUnit report.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JenkinsFailedTest {
+    /// Test class / file, e.g. `"acceptance.test_exposant"`.
+    pub class_name: String,
+    /// Test case name.
+    pub name: String,
+    /// First lines of `errorDetails`, trimmed to stay readable inline.
+    pub message: Option<String>,
+}
+
+/// Why a pipeline build failed — the diagnostic Mission Control shows instead of
+/// sending the user to Jenkins.
+///
+/// Built by drilling from the pipeline build into its first failed stage, then
+/// into the downstream job that stage delegated to (Planexpo's `build-and-test`
+/// mostly orchestrates `elm-tests` / `integration-tests` / AIO builds, so the
+/// stage's own log only says "Starting building: elm-tests #6377").
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JenkinsFailureReport {
+    /// `build-and-test` build the report was computed from.
+    pub pipeline_number: u64,
+    /// Name of the first failed stage, e.g. `"Elm tests"`.
+    pub stage: Option<String>,
+    /// Downstream job the stage delegated to, when it did (`"elm-tests"`).
+    pub downstream_job: Option<String>,
+    /// Downstream build number (`6377`).
+    pub downstream_number: Option<u64>,
+    /// Best link to open the actually-failing console on Jenkins.
+    pub console_url: Option<String>,
+    /// Failing test cases (capped — see `failed_test_count` for the true total).
+    pub failed_tests: Vec<JenkinsFailedTest>,
+    /// Total failing tests reported by Jenkins (may exceed `failed_tests.len()`).
+    pub failed_test_count: u32,
+    /// Cleaned tail of the failing log (pipeline noise and ANSI codes stripped).
+    pub log_excerpt: String,
+}
+
 /// A pending item in the Jenkins build queue (not yet a build).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +117,12 @@ pub struct JenkinsQueueItem {
     pub since_ms: i64,
     /// Blocked (e.g. serialized behind a running build / waiting on a lock).
     pub blocked: bool,
+    /// 1-based rank among the pipeline items waiting, oldest first — "2nd in
+    /// line". The whole point of the global queue view: knowing whether the
+    /// build is next or buried.
+    pub position: u32,
+    /// How many pipeline items are waiting in total (this one included).
+    pub total: u32,
 }
 
 /// Aggregated Jenkins status for a single worktree's PR.

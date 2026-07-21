@@ -67,6 +67,39 @@ export interface JenkinsAttempt {
   url: string
 }
 
+/** One failing test case from a build's JUnit report. */
+export interface JenkinsFailedTest {
+  className: string
+  name: string
+  /** Assertion message, or the head of the stack trace when the runner (jest)
+   * leaves `errorDetails` empty. */
+  message: string | null
+}
+
+/**
+ * Why a pipeline build failed — the diagnostic that replaces opening Jenkins.
+ *
+ * Resolved on demand (`get_jenkins_failure_report`), not by the poller: it costs
+ * several Jenkins round-trips, so it is only fetched when the user asks.
+ */
+export interface JenkinsFailureReport {
+  /** `build-and-test` build the report was computed from. */
+  pipelineNumber: number
+  /** First failed stage, e.g. "Elm tests" (null when nothing looks failed). */
+  stage: string | null
+  /** Downstream job the stage delegated to, e.g. "elm-tests". */
+  downstreamJob: string | null
+  downstreamNumber: number | null
+  /** Best link to the actually-failing console on Jenkins. */
+  consoleUrl: string | null
+  /** Failing test cases (capped — compare with `failedTestCount`). */
+  failedTests: JenkinsFailedTest[]
+  /** Total failing tests reported by Jenkins. */
+  failedTestCount: number
+  /** Cleaned tail of the failing log (pipeline noise stripped). */
+  logExcerpt: string
+}
+
 /** A pending item in the Jenkins build queue (not yet a build). */
 export interface JenkinsQueueItem {
   /** Why it's waiting, e.g. "Build #4,798 is already in progress". */
@@ -75,6 +108,10 @@ export interface JenkinsQueueItem {
   sinceMs: number
   /** Blocked (serialized behind a running build / waiting on a lock). */
   blocked: boolean
+  /** 1-based rank among the pipeline items waiting (oldest first). */
+  position: number
+  /** How many pipeline items are waiting in total. */
+  total: number
 }
 
 /** Aggregated Jenkins status for a single worktree / PR. */

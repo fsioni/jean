@@ -13,8 +13,8 @@ use super::freshness::{self, PreviewFreshness};
 use super::gh_checks::{self, PrChecks};
 use super::parse;
 use super::types::{
-    JenkinsAttempt, JenkinsBuild, JenkinsStage, JenkinsWorktreeStatus, SOURCE_GITHUB,
-    SOURCE_JENKINS, SOURCE_NONE,
+    JenkinsAttempt, JenkinsBuild, JenkinsFailureReport, JenkinsStage, JenkinsWorktreeStatus,
+    SOURCE_GITHUB, SOURCE_JENKINS, SOURCE_NONE,
 };
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
@@ -299,6 +299,83 @@ pub(super) async fn fetch_pr_checks_for(app: &AppHandle, repo_path: &str) -> PrC
         .unwrap_or_default()
 }
 
+/// One PR/branch to resolve a status for, in a batch request.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JenkinsStatusTarget {
+    /// Opaque id echoed back as `worktreeId` so the caller can join the result.
+    pub key: String,
+    pub pr_id: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// Cap on a batch request — a safety net, not an expected limit.
+const MAX_STATUS_TARGETS: usize = 30;
+
+/// Statuses for several PRs at once, fetching each Jenkins job's build list
+/// **once** for the whole batch.
+///
+/// Exists for the PRs that have no worktree: the background poller only walks
+/// PR-linked worktrees, so nothing populates their status cache. Calling
+/// [`get_jenkins_status`] per PR would re-fetch every build list each time (4
+/// requests × N); this pays that cost once.
+///
+/// No preview freshness: that needs a repo checkout, which is precisely what
+/// these PRs lack.
+#[tauri::command]
+pub async fn get_jenkins_statuses(
+    app: AppHandle,
+    project_id: String,
+    targets: Vec<JenkinsStatusTarget>,
+) -> Result<Vec<JenkinsWorktreeStatus>, String> {
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let data = load_projects_data(&app)?;
+    let project = data
+        .find_project(&project_id)
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    let cfg = config::config_from_project(project)?;
+    let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
+
+    let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
+    let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
+    let integration_builds = client
+        .fetch_builds(INTEGRATION_JOB)
+        .await
+        .unwrap_or_default();
+    let queue_json = client.fetch_queue().await.unwrap_or_default();
+    // These PRs are the likeliest to have been rotated out of Jenkins' short
+    // build history, so the GitHub fallback verdict matters even more here.
+    let gh_checks = fetch_pr_checks_for(&app, &project.path).await;
+
+    let mut out = Vec::with_capacity(targets.len());
+    for target in targets.iter().take(MAX_STATUS_TARGETS) {
+        let gh_verdict = target
+            .pr_id
+            .as_deref()
+            .and_then(|pr| pr.parse::<u32>().ok())
+            .and_then(|pr| gh_checks.get(&pr))
+            .and_then(|check| check.verdict.as_deref());
+        out.push(
+            assemble_status(
+                &client,
+                &pipeline_builds,
+                &preview_builds,
+                &integration_builds,
+                &queue_json,
+                &target.key,
+                target.pr_id.as_deref(),
+                target.branch.as_deref(),
+                cfg.preview_url_template.as_deref(),
+                gh_verdict,
+            )
+            .await,
+        );
+    }
+    Ok(out)
+}
+
 /// Re-run a PR's `build-and-test` pipeline by asking ghprb to retest it.
 ///
 /// Neither Jenkins job can be re-triggered directly with the right effect:
@@ -394,6 +471,124 @@ async fn post_ghprb_retest_comment(
     })
     .await
     .map_err(|e| format!("Re-run task failed to join: {e}"))?
+}
+
+/// Max failing test cases returned inline (the rest stay on Jenkins).
+const MAX_FAILED_TESTS: usize = 15;
+/// Console tail fetched for the failing build. Planexpo logs run 20–80 KB, so
+/// this keeps whole logs while capping pathological ones.
+const CONSOLE_TAIL_BYTES: u64 = 256 * 1024;
+
+/// Diagnose why a PR's pipeline failed, WITHOUT opening Jenkins.
+///
+/// Drills down: pipeline build → first FAILED stage → the failing step's log →
+/// (usually) the downstream job that step delegated to. Returns that job's
+/// failing tests plus a cleaned log excerpt, ready to read inline or hand to the
+/// agent.
+///
+/// Errors only when Jenkins is unreachable / misconfigured; a build with no
+/// identifiable failure still returns a report with empty fields.
+#[tauri::command]
+pub async fn get_jenkins_failure_report(
+    app: AppHandle,
+    project_id: String,
+    worktree_id: Option<String>,
+    pr_id: Option<String>,
+    branch: Option<String>,
+) -> Result<JenkinsFailureReport, String> {
+    let _ = worktree_id; // Kept for symmetry with the other Jenkins commands.
+    let cfg = config::load_config(&app, &project_id)?;
+    let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
+
+    let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
+    let build = match_build(&pipeline_builds, pr_id.as_deref(), branch.as_deref())
+        .ok_or_else(|| "No Jenkins build found for this PR.".to_string())?;
+
+    let mut report = JenkinsFailureReport {
+        pipeline_number: build.number,
+        stage: None,
+        downstream_job: None,
+        downstream_number: None,
+        console_url: Some(format!("{}console", build.url)),
+        failed_tests: Vec::new(),
+        failed_test_count: 0,
+        log_excerpt: String::new(),
+    };
+
+    // 1. Which stage broke?
+    let stages_json = client.fetch_stages_json(PIPELINE_JOB, build.number).await?;
+    let Some((stage_node, stage_name)) = parse::find_failed_stage(&stages_json) else {
+        return Ok(report);
+    };
+    report.stage = Some(stage_name);
+
+    // 2. Which step inside it, and what did that step log?
+    let raw_log = match client
+        .fetch_stage_node_json(PIPELINE_JOB, build.number, &stage_node)
+        .await
+        .ok()
+        .and_then(|json| parse::find_failed_node(&json))
+    {
+        Some(node) => {
+            let (text, console_url) = client
+                .fetch_node_log_json(PIPELINE_JOB, build.number, &node)
+                .await
+                .map(|json| parse::parse_node_log(&json))
+                .unwrap_or_default();
+            if let Some(url) = console_url {
+                report.console_url = Some(absolute_jenkins_url(&cfg.url, &url));
+            }
+            text
+        }
+        None => String::new(),
+    };
+
+    // 3. Most stages just orchestrate a downstream job — follow it for the real
+    //    output. Otherwise the stage's own log IS the output.
+    let (log_job, log_build) =
+        match parse::find_downstream_build(&parse::strip_log_markup(&raw_log)) {
+            Some((job, number)) => {
+                report.downstream_job = Some(job.clone());
+                report.downstream_number = Some(number);
+                report.console_url =
+                    Some(format!("{}/job/{job}/{number}/console", trim_url(&cfg.url)));
+                (job, number)
+            }
+            None => {
+                report.log_excerpt = parse::clean_log_excerpt(&raw_log);
+                (PIPELINE_JOB.to_string(), build.number)
+            }
+        };
+
+    if report.log_excerpt.is_empty() {
+        report.log_excerpt = client
+            .fetch_console_tail(&log_job, log_build, CONSOLE_TAIL_BYTES)
+            .await
+            .map(|raw| parse::clean_log_excerpt(&raw))
+            .unwrap_or_default();
+    }
+
+    // 4. Named failing tests, when the job published a JUnit report.
+    if let Ok(Some(json)) = client.fetch_test_report(&log_job, log_build).await {
+        let (tests, total) = parse::parse_failed_tests(&json, MAX_FAILED_TESTS);
+        report.failed_tests = tests;
+        report.failed_test_count = total;
+    }
+
+    Ok(report)
+}
+
+fn trim_url(base: &str) -> &str {
+    base.trim().trim_end_matches('/')
+}
+
+/// Jenkins `_links` hrefs are controller-relative (`/job/x/1/…`).
+fn absolute_jenkins_url(base: &str, href: &str) -> String {
+    if href.starts_with("http") {
+        href.to_string()
+    } else {
+        format!("{}{href}", trim_url(base))
+    }
 }
 
 /// Restart only the flaky `Integration tests` stage of a pipeline build.

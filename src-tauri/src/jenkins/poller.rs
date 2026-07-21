@@ -24,6 +24,11 @@ use super::{config, types::JenkinsWorktreeStatus};
 use crate::http_server::EmitExt;
 use crate::projects::storage::load_projects_data;
 
+/// How long a pipeline may sit in the Jenkins queue before we say so. Below
+/// this, waiting is normal (the pipeline serializes); above it, the run is stuck
+/// behind something and the user wants to know without watching the queue.
+const QUEUE_ALERT: Duration = Duration::from_secs(15 * 60);
+
 /// Idle cadence when nothing is building.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// Faster cadence while a build is in progress / queued, so the CI pills feel
@@ -55,11 +60,10 @@ pub async fn start_poller(app: AppHandle, signal: JenkinsPollSignal) -> Result<(
         IDLE_POLL_INTERVAL.as_secs(),
         ACTIVE_POLL_INTERVAL.as_secs()
     );
-    // (project_id, pr_id) -> last terminal overall status (SUCCESS/FAILURE).
-    let mut last_results: HashMap<(String, String), String> = HashMap::new();
+    let mut memory = PollMemory::default();
 
     loop {
-        let any_active = match poll_cycle(&app, &mut last_results).await {
+        let any_active = match poll_cycle(&app, &mut memory).await {
             Ok(active) => active,
             Err(e) => {
                 log::debug!("Jenkins poll cycle error: {e}");
@@ -82,12 +86,24 @@ pub async fn start_poller(app: AppHandle, signal: JenkinsPollSignal) -> Result<(
     }
 }
 
+/// What the poller remembers between cycles, so it can notify on *changes*
+/// rather than on every observation.
+///
+/// Keyed by `(project_id, pr_id)`. Everything here is anti-spam state: without
+/// it the same red build would notify every 60 seconds.
+#[derive(Default)]
+struct PollMemory {
+    /// Last terminal overall status (SUCCESS/FAILURE) — green↔red transitions.
+    results: HashMap<(String, String), String>,
+    /// Last preview freshness seen, so "preview is up to date again" fires once.
+    preview_freshness: HashMap<(String, String), String>,
+    /// PRs already flagged as stuck in the queue; cleared when they leave it.
+    queue_alerted: std::collections::HashSet<(String, String)>,
+}
+
 /// Returns `true` if any tracked worktree is BUILDING/QUEUED — the caller speeds
 /// up the cadence while something is in flight.
-async fn poll_cycle(
-    app: &AppHandle,
-    last_results: &mut HashMap<(String, String), String>,
-) -> Result<bool, String> {
+async fn poll_cycle(app: &AppHandle, memory: &mut PollMemory) -> Result<bool, String> {
     let data = load_projects_data(app)?;
 
     // Per-cycle observability: how many projects are Jenkins-configured and how
@@ -176,7 +192,9 @@ async fn poll_cycle(
             }
 
             let _ = app.emit_all(STATUS_EVENT, &status);
-            track_transition(app, last_results, &project.id, &pr_id, &status);
+            track_transition(app, &mut memory.results, &project.id, &pr_id, &status);
+            track_preview_freshness(app, memory, &project.id, &pr_id, &status);
+            track_queue_wait(app, memory, &project.id, &pr_id, &status);
         }
     }
 
@@ -223,6 +241,88 @@ fn track_transition(
         );
     }
     last_results.insert(key, new_status.to_string());
+}
+
+/// Notify when the PR preview finishes catching up with the PR head.
+///
+/// The deploy is asynchronous and slower than the pipeline, so "is the preview
+/// serving my last commit yet?" is a question that otherwise gets answered by
+/// reloading the page until it works.
+fn track_preview_freshness(
+    app: &AppHandle,
+    memory: &mut PollMemory,
+    project_id: &str,
+    pr_id: &str,
+    status: &JenkinsWorktreeStatus,
+) {
+    let Some(freshness) = &status.preview_freshness else {
+        return;
+    };
+    let key = (project_id.to_string(), pr_id.to_string());
+    let previous = memory
+        .preview_freshness
+        .insert(key, freshness.status.clone());
+
+    // Only a real STALE/DOWN → UP_TO_DATE flip notifies: the first observation
+    // is a baseline (same anti-spam rule as build transitions).
+    if freshness.status != "UP_TO_DATE" {
+        return;
+    }
+    if !matches!(previous.as_deref(), Some("STALE" | "DOWN")) {
+        return;
+    }
+
+    log::info!("Jenkins notification (PR #{pr_id}): preview up to date");
+    let _ = app
+        .notification()
+        .builder()
+        .title(format!("🌐 Preview à jour — PR #{pr_id}"))
+        .body("La preview sert maintenant le dernier commit de la PR")
+        .show();
+}
+
+/// Notify once when a queued pipeline has been waiting past [`QUEUE_ALERT`].
+fn track_queue_wait(
+    app: &AppHandle,
+    memory: &mut PollMemory,
+    project_id: &str,
+    pr_id: &str,
+    status: &JenkinsWorktreeStatus,
+) {
+    let key = (project_id.to_string(), pr_id.to_string());
+    let Some(queue) = &status.queue else {
+        // Left the queue → re-arm for the next time.
+        memory.queue_alerted.remove(&key);
+        return;
+    };
+
+    let waited_ms = now_ms().saturating_sub(queue.since_ms);
+    if waited_ms < QUEUE_ALERT.as_millis() as i64 {
+        return;
+    }
+    if !memory.queue_alerted.insert(key) {
+        return; // Already told the user about this one.
+    }
+
+    let minutes = waited_ms / 60_000;
+    let detail = queue
+        .why
+        .clone()
+        .unwrap_or_else(|| "En attente d'un exécuteur Jenkins".to_string());
+    log::info!("Jenkins notification (PR #{pr_id}): queued for {minutes} min");
+    let _ = app
+        .notification()
+        .builder()
+        .title(format!("⏳ En file depuis {minutes} min — PR #{pr_id}"))
+        .body(format!("{} ({}/{})", detail, queue.position, queue.total))
+        .show();
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn notify(app: &AppHandle, transition: Transition, pr_id: &str, status: &JenkinsWorktreeStatus) {

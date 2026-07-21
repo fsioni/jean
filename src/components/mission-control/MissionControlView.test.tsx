@@ -8,6 +8,11 @@ const mockSetOpen = vi.fn()
 vi.mock('./useMissionControlRows', () => ({
   useMissionControlRows: () => mockData(),
 }))
+vi.mock('./MissionControlPrRow', () => ({
+  MissionControlPrRow: ({ row }: { row: { pr: { number: number } } }) => (
+    <div data-testid="pr-row">#{row.pr.number}</div>
+  ),
+}))
 vi.mock('./MissionControlRow', () => ({
   MissionControlRow: ({
     row,
@@ -37,9 +42,18 @@ function mkRow(name: string, overallStatus?: string) {
   } as unknown as MissionControlData['rows'][number]
 }
 
+function mkPrRow(number: number) {
+  return {
+    project: { id: 'p1', name: 'Proj' },
+    pr: { number, title: `PR ${number}`, headRefName: `feat-${number}` },
+    status: undefined,
+  } as unknown as MissionControlData['prRows'][number]
+}
+
 function data(partial: Partial<MissionControlData>): MissionControlData {
   return {
     rows: [],
+    prRows: [],
     jenkinsProjectCount: 1,
     failureCount: 0,
     isLoading: false,
@@ -102,5 +116,29 @@ describe('MissionControlView', () => {
     mockData.mockReturnValue(data({ rows: [], jenkinsProjectCount: 2 }))
     const { getByText } = render(<MissionControlView />)
     expect(getByText('Aucune PR active')).toBeInTheDocument()
+  })
+
+  it('lists the user PRs that have no worktree in their own section', () => {
+    mockData.mockReturnValue(
+      data({ rows: [mkRow('alpha', 'SUCCESS')], prRows: [mkPrRow(4118)] })
+    )
+    const { getByText, getAllByTestId } = render(<MissionControlView />)
+    expect(getByText(/Mes PR sans worktree \(1\)/)).toBeInTheDocument()
+    expect(getAllByTestId('pr-row')).toHaveLength(1)
+  })
+
+  it('keeps the list visible when only PR-without-worktree rows match', () => {
+    mockData.mockReturnValue(
+      data({ rows: [mkRow('alpha', 'SUCCESS')], prRows: [mkPrRow(4118)] })
+    )
+    const { getByPlaceholderText, queryAllByTestId, getAllByTestId } = render(
+      <MissionControlView />
+    )
+    fireEvent.change(
+      getByPlaceholderText('Rechercher (projet, worktree, branche, PR#)…'),
+      { target: { value: '4118' } }
+    )
+    expect(queryAllByTestId('row')).toHaveLength(0)
+    expect(getAllByTestId('pr-row')).toHaveLength(1)
   })
 })
