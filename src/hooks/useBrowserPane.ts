@@ -4,6 +4,8 @@ import { isNativeApp } from '@/lib/environment'
 import { isBlankTabUrl, useBrowserStore } from '@/store/browser-store'
 import type {
   BrowserClosedEvent,
+  BrowserGrabContext,
+  BrowserGrabContextEvent,
   BrowserNavEvent,
   BrowserPageLoadEvent,
   BrowserTab,
@@ -20,6 +22,51 @@ const failureMessage = (url: string): string =>
 
 const timeoutMessage = (url: string): string =>
   `Loading ${url} timed out after 20s. The server may be slow or unreachable.`
+
+function sanitizeFilenamePart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+}
+
+function grabContextFilename(context: BrowserGrabContext): string {
+  const primary = sanitizeFilenamePart(
+    context.componentName || context.tagName || 'element'
+  )
+  const secondary = sanitizeFilenamePart(
+    context.text || context.selector || context.title || ''
+  )
+  return secondary
+    ? `dom-${primary || 'element'}-${secondary}.txt`
+    : `dom-${primary || 'element'}.txt`
+}
+
+function formatGrabContext(context: BrowserGrabContext): string {
+  const parts = [
+    'Selected DOM element from embedded browser:',
+    `URL: ${context.url || 'unknown'}`,
+  ]
+
+  if (context.title) parts.push(`Title: ${context.title}`)
+  if (context.componentName) parts.push(`Component: ${context.componentName}`)
+  if (context.filePath) {
+    const line = context.lineNumber ? `:${context.lineNumber}` : ''
+    parts.push(`Source: ${context.filePath}${line}`)
+  }
+  parts.push(`Element: ${context.tagName || 'element'}`)
+  if (context.selector) parts.push(`Selector: ${context.selector}`)
+  if (context.text) parts.push(`Text: ${context.text}`)
+  if (context.stackContext) {
+    parts.push('', 'React stack context:', '```', context.stackContext, '```')
+  }
+  if (context.html) {
+    parts.push('', 'HTML:', '```html', context.html, '```')
+  }
+
+  return parts.join('\n')
+}
 
 function clearWatchdog(tabId: string): void {
   const t = watchdogs.get(tabId)
@@ -141,6 +188,20 @@ export function useBrowserEvents(): void {
     )
 
     unlistenPromises.push(
+      listen<BrowserGrabContextEvent>('browser:grab-context', e => {
+        const text = formatGrabContext(e.payload.context)
+        window.dispatchEvent(
+          new CustomEvent('attach-pasted-text', {
+            detail: {
+              content: text,
+              filename: grabContextFilename(e.payload.context),
+            },
+          })
+        )
+      })
+    )
+
+    unlistenPromises.push(
       listen<BrowserClosedEvent>('browser:closed', e => {
         // Backend confirms tab closed — store-side removal happened in caller already
         // but if some other path closed it (e.g. window.open intercepted), clean up here.
@@ -207,6 +268,7 @@ interface BrowserActions {
   stop: () => Promise<void>
   close: () => Promise<void>
   focus: () => Promise<void>
+  enableGrab: () => Promise<void>
 }
 
 /** Hook returning stable action callbacks for a single browser tab. */
@@ -303,6 +365,19 @@ export function useBrowserTabActions(tabId: string | null): BrowserActions {
     }
   }, [tabId])
 
+  const enableGrab = useCallback(async () => {
+    if (!tabId || !isNativeApp()) return
+    try {
+      const theme = document.documentElement.classList.contains('dark')
+        ? 'dark'
+        : 'light'
+      await invoke('browser_enable_grab', { tabId, theme })
+    } catch (err) {
+      console.error('[browser] enable grab failed:', err)
+      throw err
+    }
+  }, [tabId])
+
   const focus = useCallback(async () => {
     if (!tabId || !isNativeApp()) return
     try {
@@ -312,7 +387,7 @@ export function useBrowserTabActions(tabId: string | null): BrowserActions {
     }
   }, [tabId])
 
-  return { navigate, back, forward, reload, stop, close, focus }
+  return { navigate, back, forward, reload, stop, close, focus, enableGrab }
 }
 
 /** Helpers to call backend lifecycle commands without going through React. */

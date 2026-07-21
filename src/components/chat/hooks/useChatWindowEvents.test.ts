@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { useChatWindowEvents } from './useChatWindowEvents'
 import { useUIStore } from '@/store/ui-store'
+import { useChatStore } from '@/store/chat-store'
+import { invoke } from '@/lib/transport'
 
 vi.mock('@/hooks/use-mobile', () => ({
   useIsMobile: () => false,
@@ -37,6 +39,7 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
     vi.clearAllMocks()
     vi.useRealTimers()
     document.body.innerHTML = ''
+    useChatStore.setState({ pendingTextFiles: {} })
     useUIStore.setState({
       sessionChatModalOpen: false,
       sessionChatModalWorktreeId: null,
@@ -172,6 +175,42 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
     })
   })
 
+
+  it('saves browser grabbed context as a named pasted text attachment', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      id: 'text-1',
+      path: '/tmp/pasted-texts/dom-button-save.txt',
+      filename: 'dom-button-save.txt',
+      size: 42,
+    })
+    renderUseChatWindowEvents()
+
+    window.dispatchEvent(
+      new CustomEvent('attach-pasted-text', {
+        detail: {
+          content: 'Selected DOM element from embedded browser',
+          filename: 'dom-button-save.txt',
+        },
+      })
+    )
+
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('save_pasted_text', {
+        content: 'Selected DOM element from embedded browser',
+        filename: 'dom-button-save.txt',
+      })
+    })
+    expect(useChatStore.getState().pendingTextFiles['session-1']).toEqual([
+      {
+        id: 'text-1',
+        path: '/tmp/pasted-texts/dom-button-save.txt',
+        filename: 'dom-button-save.txt',
+        size: 42,
+        content: 'Selected DOM element from embedded browser',
+      },
+    ])
+  })
+
   it('handles worktree build approval for a pending plan', () => {
     const params = renderUseChatWindowEvents()
 
@@ -232,6 +271,7 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
   })
 
   it('ignores worktree approval shortcuts in non-modal chat when a session modal is open', () => {
+    useChatStore.setState({ pendingTextFiles: {} })
     useUIStore.setState({
       sessionChatModalOpen: true,
       sessionChatModalWorktreeId: 'worktree-2',

@@ -7,8 +7,40 @@
  */
 
 import { useSyncExternalStore } from 'react'
-import { isNativeApp, setWsConnected } from './environment'
+import { isNativeApp, setWebAccessEnabled, setWsConnected } from './environment'
 import { generateId } from './uuid'
+import { isServerWindows } from './platform'
+import { getActiveRemoteConnection } from './remote-connections'
+
+export function usesWebSocketBackend(): boolean {
+  return !isNativeApp() || getActiveRemoteConnection() !== null
+}
+
+function getWebBackendBaseUrl(): string {
+  return getActiveRemoteConnection()?.url ?? window.location.origin
+}
+
+function getWebBackendToken(): string {
+  const remote = getActiveRemoteConnection()
+  if (remote) return remote.token
+  const urlToken = new URLSearchParams(window.location.search).get('token')
+  return urlToken || localStorage.getItem('jean-http-token') || ''
+}
+
+function backendUrl(path: string): string {
+  const base = `${getWebBackendBaseUrl().replace(/\/+$/, '')}/`
+  return new URL(path.replace(/^\/+/, ''), base).toString()
+}
+
+function fetchBackend(url: string): Promise<Response> {
+  if (!getActiveRemoteConnection()) return fetch(url)
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 12_000)
+  return fetch(url, { signal: controller.signal }).finally(() =>
+    clearTimeout(timeout)
+  )
+}
 
 // ---------------------------------------------------------------------------
 // File source URL conversion (drop-in for Tauri's convertFileSrc)
@@ -33,7 +65,7 @@ export function setAppDataDir(dir: string): void {
  * In browser mode, converts to /api/files/ URLs served by the HTTP server.
  */
 export function convertFileSrc(filePath: string, protocol = 'asset'): string {
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     // Use Tauri's native implementation which correctly percent-encodes paths
     // on all platforms (JS encodeURIComponent misses dots/hyphens/underscores
     // that Tauri's Rust encoder expects on Windows).
@@ -44,19 +76,20 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
     }
     // Fallback (should not reach in native app)
     const path = encodeURIComponent(filePath)
-    return navigator.userAgent.includes('Windows')
+    return isServerWindows()
       ? `https://${protocol}.localhost/${path}`
       : `${protocol}://localhost/${path}`
   }
 
   // Browser mode: convert server filesystem path to /api/files/ URL
-  const token = localStorage.getItem('jean-http-token') || ''
+  const token = getWebBackendToken()
   const params = token ? `?token=${encodeURIComponent(token)}` : ''
+  const base = getActiveRemoteConnection()?.url ?? ''
 
   // Try exact prefix match with cached app data dir
   if (_appDataDir && filePath.startsWith(_appDataDir)) {
     const relativePath = filePath.substring(_appDataDir.length)
-    return `/api/files/${encodeURI(relativePath)}${params}`
+    return `${base}/api/files/${encodeURI(relativePath)}${params}`
   }
 
   // Fallback: detect app data dir marker in path (works before _appDataDir is set)
@@ -64,7 +97,7 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
     const idx = filePath.indexOf(marker)
     if (idx !== -1) {
       const relativePath = filePath.substring(idx + marker.length)
-      return `/api/files/${encodeURI(relativePath)}${params}`
+      return `${base}/api/files/${encodeURI(relativePath)}${params}`
     }
   }
 
@@ -79,17 +112,95 @@ export function convertFileSrc(filePath: string, protocol = 'asset'): string {
  * project/worktree roots before serving it.
  */
 export function convertProjectFileSrc(filePath: string): string {
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     return convertFileSrc(filePath)
   }
 
-  const token = localStorage.getItem('jean-http-token') || ''
+  const token = getWebBackendToken()
   const params = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `/api/project-files/${encodeURIComponent(filePath)}${params}`
+  const base = getActiveRemoteConnection()?.url ?? ''
+  return `${base}/api/project-files/${encodeURIComponent(filePath)}${params}`
 }
 
 /** Unlisten function type — compatible with Tauri's UnlistenFn. */
 export type UnlistenFn = () => void
+
+function containNativeUnlisten(
+  unlisten: () => void | Promise<void>
+): UnlistenFn {
+  let active = true
+  return () => {
+    if (!active) return
+    active = false
+    try {
+      void Promise.resolve(unlisten()).catch(() => {
+        // Page teardown can remove Tauri's listener registry first.
+      })
+    } catch {
+      // Page teardown can remove Tauri's listener registry first.
+    }
+  }
+}
+
+const DESKTOP_ONLY_COMMANDS = new Set([
+  'set_window_vibrancy',
+  'send_native_notification',
+  'read_clipboard_image',
+  'write_clipboard_text',
+  'save_dropped_image',
+  'open_file_in_default_app',
+  'open_worktree_in_finder',
+  'open_project_worktrees_folder',
+  'open_worktree_in_terminal',
+  'open_worktree_in_editor',
+  'open_project_on_github',
+  'open_branch_on_github',
+  'open_log_directory',
+  'set_project_avatar',
+  'start_http_server',
+  'stop_http_server',
+  'browser_create',
+  'browser_navigate',
+  'browser_back',
+  'browser_forward',
+  'browser_reload',
+  'browser_stop',
+  'browser_set_bounds',
+  'browser_set_visible',
+  'browser_set_focus',
+  'browser_get_url',
+  'browser_close',
+  'browser_report_title',
+  'browser_enable_grab',
+  'browser_report_grab_context',
+  'get_active_browser_tabs',
+  'has_active_browser_tab',
+])
+
+// These commands belong to the local desktop shell even when its application
+// content is connected to a remote Jean backend.
+const LOCAL_SHELL_COMMANDS = new Set([
+  'set_window_vibrancy',
+  'send_native_notification',
+  'read_clipboard_image',
+  'write_clipboard_text',
+  'browser_create',
+  'browser_navigate',
+  'browser_back',
+  'browser_forward',
+  'browser_reload',
+  'browser_stop',
+  'browser_set_bounds',
+  'browser_set_visible',
+  'browser_set_focus',
+  'browser_get_url',
+  'browser_close',
+  'browser_report_title',
+  'browser_enable_grab',
+  'browser_report_grab_context',
+  'get_active_browser_tabs',
+  'has_active_browser_tab',
+])
 
 // ---------------------------------------------------------------------------
 // Public API (same signatures as Tauri)
@@ -112,9 +223,18 @@ export async function invoke<T>(
     return null as T
   }
 
-  if (isNativeApp()) {
+  if (
+    !usesWebSocketBackend() ||
+    (isNativeApp() && LOCAL_SHELL_COMMANDS.has(command))
+  ) {
     const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
-    return tauriInvoke<T>(command, args)
+    if (DESKTOP_ONLY_COMMANDS.has(command)) {
+      return tauriInvoke<T>(command, args)
+    }
+    return tauriInvoke<T>('dispatch_core_command', {
+      command,
+      args: args ?? {},
+    })
   }
   return wsTransport.invoke<T>(command, args)
 }
@@ -138,11 +258,24 @@ export async function listen<T>(
     return () => et.removeEventListener(event, wrapped)
   }
 
-  if (isNativeApp()) {
+  if (!usesWebSocketBackend()) {
     const { listen: tauriListen } = await import('@tauri-apps/api/event')
-    return tauriListen<T>(event, handler)
+    const unlisten = await tauriListen<T>(event, handler)
+    return containNativeUnlisten(unlisten)
   }
   return wsTransport.listen<T>(event, handler)
+}
+
+/** Listen for events emitted by the local desktop shell, even when connected
+ * to a remote Jean backend. Browser clients have no local shell. */
+export async function listenLocal<T>(
+  event: string,
+  handler: (event: { payload: T }) => void
+): Promise<() => void> {
+  if (!isNativeApp()) return listen(event, handler)
+  const { listen: tauriListen } = await import('@tauri-apps/api/event')
+  const unlisten = await tauriListen<T>(event, handler)
+  return containNativeUnlisten(unlisten)
 }
 
 /**
@@ -151,7 +284,7 @@ export async function listen<T>(
  * tracking was lost but the Rust PTY and replay buffer are still alive.
  */
 export function requestTerminalReplay(terminalId: string, lastSeq = 0): void {
-  if (isNativeApp()) return
+  if (!usesWebSocketBackend()) return
   wsTransport.requestTerminalReplay(terminalId, lastSeq)
 }
 
@@ -167,7 +300,6 @@ export interface InitialData {
   worktreesByProject?: Record<string, unknown[]>
   sessionsByWorktree?: Record<string, unknown> // worktreeId -> WorktreeSessions
   activeSessions?: Record<string, unknown> // sessionId -> Session (with messages)
-  activeSessionWorktreeIds?: Record<string, string> // sessionId -> worktreeId
   runningSessions?: string[] // sessionIds with active CLI processes
   replayEvents?: BootstrapEvent[]
   preferences?: unknown
@@ -180,34 +312,21 @@ export interface InitialData {
 
 let initialDataPromise: Promise<InitialData | null> | null = null
 let initialDataResolved = false
-let reconnectInitialDataPromise: Promise<InitialData | null> | null = null
 
 /**
  * Build the /api/init URL with the given query params.
- * Centralizes token + selected_project + active_sessions encoding.
+ * Centralizes token and selected_project encoding.
  */
-function buildInitUrl(opts: {
-  mode?: 'initial' | 'reconnect'
-  selectedProjectId?: string | null
-  activeSessionIds?: Record<string, string>
-}): string {
-  const urlToken = new URLSearchParams(window.location.search).get('token')
-  const token = urlToken || localStorage.getItem('jean-http-token') || ''
-
+function buildInitUrl(opts: { selectedProjectId?: string | null }): string {
+  const token = getWebBackendToken()
   const params = new URLSearchParams()
   if (token) params.set('token', token)
-  if (opts.mode === 'reconnect') params.set('mode', 'reconnect')
   if (opts.selectedProjectId) {
     params.set('selected_project', opts.selectedProjectId)
   }
-  if (opts.activeSessionIds && Object.keys(opts.activeSessionIds).length > 0) {
-    const pairs = Object.entries(opts.activeSessionIds)
-      .map(([wId, sId]) => `${wId}:${sId}`)
-      .join(',')
-    params.set('active_sessions', pairs)
-  }
   const qs = params.toString()
-  return qs ? `/api/init?${qs}` : '/api/init'
+  const url = backendUrl('api/init')
+  return qs ? `${url}?${qs}` : url
 }
 
 /**
@@ -224,7 +343,8 @@ function buildInitUrl(opts: {
 export async function preloadInitialData(
   selectedProjectId?: string | null
 ): Promise<InitialData | null> {
-  if (isNativeApp()) return null
+  if (!usesWebSocketBackend()) return null
+  setWebAccessEnabled(true)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (typeof window !== 'undefined' && (window as any).__JEAN_E2E_MOCK__)
     return null
@@ -233,7 +353,7 @@ export async function preloadInitialData(
   initialDataPromise = (async () => {
     try {
       const url = buildInitUrl({ selectedProjectId })
-      const response = await fetch(url)
+      const response = await fetchBackend(url)
       if (!response.ok) {
         return null
       }
@@ -246,72 +366,6 @@ export async function preloadInitialData(
   })()
 
   return initialDataPromise
-}
-
-/**
- * Re-fetch initial data via HTTP (bypasses memoization).
- * Used on WebSocket reconnect to bulk-reload fresh state.
- *
- * @param activeSessionIds - Browser's current active session IDs per worktree.
- *   Sent to the server so it loads the correct sessions even when ui_state.json
- *   is stale (debounced save hasn't flushed yet).
- * @param selectedProjectId - Browser's currently-selected project id. Scopes
- *   the payload to that project; falls back to `ui_state.json` when absent.
- */
-export async function refetchInitialData(
-  activeSessionIds?: Record<string, string>,
-  selectedProjectId?: string | null
-): Promise<InitialData | null> {
-  if (isNativeApp()) return null
-
-  try {
-    const url = buildInitUrl({
-      mode: 'reconnect',
-      selectedProjectId,
-      activeSessionIds,
-    })
-    const response = await fetch(url)
-    if (!response.ok) return null
-    return (await response.json()) as InitialData
-  } catch {
-    return null
-  }
-}
-
-/**
- * Start loading reconnect bootstrap data while the WebSocket is still
- * reconnecting, so the UI can re-seed immediately once the socket is open.
- */
-export function prefetchReconnectInitialData(
-  activeSessionIds?: Record<string, string>,
-  selectedProjectId?: string | null
-): Promise<InitialData | null> {
-  if (!reconnectInitialDataPromise) {
-    reconnectInitialDataPromise = refetchInitialData(
-      activeSessionIds,
-      selectedProjectId
-    )
-  }
-  return reconnectInitialDataPromise
-}
-
-/**
- * Use the in-flight reconnect bootstrap fetch if one exists; otherwise fetch
- * now. The consumed promise is cleared so a future reconnect gets fresh data.
- */
-export async function consumeReconnectInitialData(
-  activeSessionIds?: Record<string, string>,
-  selectedProjectId?: string | null
-): Promise<InitialData | null> {
-  const prefetched = reconnectInitialDataPromise
-  const promise =
-    prefetched ?? refetchInitialData(activeSessionIds, selectedProjectId)
-  reconnectInitialDataPromise = null
-  const data = await promise
-  if (!data && prefetched) {
-    return refetchInitialData(activeSessionIds, selectedProjectId)
-  }
-  return data
 }
 
 /**
@@ -351,7 +405,7 @@ interface WsMessage {
   error?: string
   event?: string
   payload?: unknown
-  /** Monotonic sequence number for event replay on reconnect. */
+  /** Monotonic sequence number for replay deduplication. */
   seq?: number
 }
 
@@ -369,8 +423,8 @@ class WsTransport {
     string,
     Set<(event: { payload: unknown }) => void>
   >()
-  private reconnectAttempt = 0
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private connectRetryAttempt = 0
+  private connectRetryTimer: ReturnType<typeof setTimeout> | null = null
   private connectWatchdog: ReturnType<typeof setTimeout> | null = null
   /** Periodic check that we're seeing inbound traffic from the server.
    *  The server sends app-level heartbeats every 20s because browser JS cannot
@@ -387,27 +441,21 @@ class WsTransport {
   private static readonly EVENT_BUFFER_MAX_AGE = 5_000
   private static readonly EVENT_BUFFER_MAX_SIZE = 50
   private _connected = false
+  private _hasConnectedOnce = false
   private _connecting = false
   private _authError: string | null = null
-  private _dataReady = false
-  private _tokenValidated = false
-  private _lastConnectTime = 0
   private _subscribers = new Set<() => void>()
+  private _establishedDisconnectListeners = new Set<() => void>()
   private _connectEnabled = false
-  /** Track last seen seq per session for replay on reconnect. */
+  /** Track last seen sequence numbers to deduplicate bootstrap replay. */
   private _lastSeqBySession = new Map<string, number>()
-  /** Sessions that were actively streaming when we disconnected. */
-  private _activeStreamingSessions = new Set<string>()
-  /** Track last seen seq per terminal for replay on reconnect. */
+  /** Track terminal sequence numbers for explicit full-refresh replay. */
   private _lastSeqByTerminal = new Map<string, number>()
-  /** Terminals that were running when we (potentially) disconnected. */
-  private _activeTerminals = new Set<string>()
 
   constructor() {
-    // Reconnect instantly when the page returns to the foreground or the
-    // network comes back. Mobile browsers suspend background tabs and freeze
-    // JS timers, so the livenessTimer cannot detect a dead socket until it
-    // resumes — these listeners give us an immediate wake trigger.
+    // Mobile browsers suspend background tabs and freeze JS timers. Check the
+    // socket immediately on wake so a stale established connection triggers
+    // the app reload without waiting for the periodic liveness timer.
     if (typeof window !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleWake)
       window.addEventListener('online', this.handleWake)
@@ -423,24 +471,9 @@ class WsTransport {
     return this._authError
   }
 
-  get dataReady(): boolean {
-    return this._dataReady
-  }
-
   private setConnected(value: boolean): void {
     this._connected = value
     setWsConnected(value)
-    if (!value) {
-      // Mark data as not ready when disconnected — overlay should stay
-      // visible until seedCache() completes after reconnect.
-      this._dataReady = false
-    }
-    this.notifySubscribers()
-  }
-
-  setDataReady(value: boolean): void {
-    if (this._dataReady === value) return
-    this._dataReady = value
     this.notifySubscribers()
   }
 
@@ -459,14 +492,14 @@ class WsTransport {
     return () => this._subscribers.delete(callback)
   }
 
+  onEstablishedDisconnect(callback: () => void): () => void {
+    this._establishedDisconnectListeners.add(callback)
+    return () => this._establishedDisconnectListeners.delete(callback)
+  }
+
   /** Get current connection snapshot for useSyncExternalStore. */
   getSnapshot(): boolean {
     return this._connected
-  }
-
-  /** Get current data-ready snapshot for useSyncExternalStore. */
-  getDataReadySnapshot(): boolean {
-    return this._dataReady
   }
 
   /** Get current auth error snapshot for useSyncExternalStore. */
@@ -477,6 +510,9 @@ class WsTransport {
   /** Connect to the WebSocket server (validates token first). */
   connect(): void {
     if (!this._connectEnabled) return
+    // Established connections recover through a full page reload, never a
+    // second in-memory WebSocket connection.
+    if (this._hasConnectedOnce && !this._connected) return
     if (
       this._connecting ||
       this.ws?.readyState === WebSocket.OPEN ||
@@ -484,12 +520,14 @@ class WsTransport {
     )
       return
 
+    const remote = getActiveRemoteConnection()
     // Read token from URL query param or localStorage
     const urlToken = new URLSearchParams(window.location.search).get('token')
-    const token = urlToken || localStorage.getItem('jean-http-token') || ''
+    const token =
+      remote?.token || urlToken || localStorage.getItem('jean-http-token') || ''
 
     // Persist token from URL to localStorage for future page loads
-    if (urlToken) {
+    if (!remote && urlToken) {
       localStorage.setItem('jean-http-token', urlToken)
 
       // Remove token from URL for security (prevent history/bookmark exposure)
@@ -500,19 +538,9 @@ class WsTransport {
 
     this._connecting = true
 
-    // On reconnect with a previously-validated token, skip auth HTTP
-    // round-trip and go straight to WebSocket. If the token has been
-    // revoked, the WS handshake will fail and onclose will fire —
-    // we detect that (rapid close within 2s) and fall back to full
-    // validation on the next attempt.
-    if (this._tokenValidated && token) {
-      this.connectWs(token)
+    this.validateAndConnect(token).finally(() => {
       this._connecting = false
-    } else {
-      this.validateAndConnect(token).finally(() => {
-        this._connecting = false
-      })
-    }
+    })
   }
 
   enableConnect(): void {
@@ -522,16 +550,18 @@ class WsTransport {
   }
 
   private async validateAndConnect(token: string): Promise<void> {
+    const authBaseUrl = backendUrl('api/auth')
     const authUrl = token
-      ? `${window.location.origin}/api/auth?token=${encodeURIComponent(token)}`
-      : `${window.location.origin}/api/auth`
+      ? `${authBaseUrl}?token=${encodeURIComponent(token)}`
+      : authBaseUrl
 
     try {
-      const res = await fetch(authUrl)
+      const res = await fetchBackend(authUrl)
       if (!res.ok) {
-        // Invalid token — clear it, set error, don't reconnect
-        localStorage.removeItem('jean-http-token')
-        this._tokenValidated = false
+        // Invalid token — clear it and wait for the user to provide another.
+        if (!getActiveRemoteConnection()) {
+          localStorage.removeItem('jean-http-token')
+        }
         this.setAuthError(
           token
             ? "Invalid access token. Check the URL in Jean's Web Access settings."
@@ -540,74 +570,52 @@ class WsTransport {
         return
       }
     } catch {
-      // Server unreachable — schedule reconnect (not an auth error)
+      if (getActiveRemoteConnection()) {
+        this.setAuthError(
+          "Jean could not reach the server's authentication endpoint. Check that the server is running and the URL and port are correct. If the address opens in a browser, update and restart the remote Jean server so it allows desktop connections (CORS)."
+        )
+        return
+      }
+      // The initial page load may race server startup. Retry connecting until
+      // the first successful socket; established sockets use a page reload.
       this.setAuthError(null)
-      this.scheduleReconnect()
+      this.scheduleConnectRetry()
       return
     }
 
     // Token valid (or not required) — clear any previous auth error and connect
     this.setAuthError(null)
-    this._tokenValidated = true
     this.connectWs(token)
   }
 
   private connectWs(token: string): void {
-    // Derive WS URL from current page location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const url = `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`
+    const base = new URL(backendUrl('ws'))
+    base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+    base.searchParams.set('token', token)
+    const url = base.toString()
 
     this.ws = new WebSocket(url)
     this.clearConnectWatchdog()
     this.connectWatchdog = setTimeout(() => {
       if (this.ws?.readyState === WebSocket.CONNECTING) {
         console.warn(
-          '[WsTransport] WebSocket connect watchdog fired, forcing reconnect'
+          '[WsTransport] WebSocket connect watchdog fired, retrying connection'
         )
         try {
           this.ws.close()
         } catch {
-          // Ignore close errors; reconnect logic handles recovery.
+          // Ignore close errors; the initial-connect retry handles recovery.
         }
       }
     }, WsTransport.CONNECT_TIMEOUT)
 
     this.ws.onopen = () => {
       this.clearConnectWatchdog()
-      this._lastConnectTime = Date.now()
       this._lastInbound = Date.now()
       this.startLivenessTimer()
+      this._hasConnectedOnce = true
       this.setConnected(true)
-      this.reconnectAttempt = 0
-
-      // Replay missed events for sessions that were actively streaming
-      for (const sessionId of this._activeStreamingSessions) {
-        const lastSeq = this._lastSeqBySession.get(sessionId)
-        if (lastSeq != null) {
-          this.ws?.send(
-            JSON.stringify({
-              type: 'replay',
-              session_id: sessionId,
-              last_seq: lastSeq,
-            })
-          )
-        }
-      }
-
-      // Replay missed terminal output (heals output gap during disconnect)
-      for (const terminalId of this._activeTerminals) {
-        const lastSeq = this._lastSeqByTerminal.get(terminalId)
-        if (lastSeq != null) {
-          this.ws?.send(
-            JSON.stringify({
-              type: 'terminal_replay',
-              terminal_id: terminalId,
-              last_seq: lastSeq,
-            })
-          )
-        }
-      }
+      this.connectRetryAttempt = 0
 
       // Flush queued messages
       for (const item of this.queue) {
@@ -628,17 +636,29 @@ class WsTransport {
     }
 
     this.ws.onclose = () => {
+      const wasConnected = this._connected
+
+      if (wasConnected) {
+        for (const callback of this._establishedDisconnectListeners) {
+          try {
+            callback()
+          } catch (error) {
+            console.error(
+              '[WsTransport] Established disconnect listener failed:',
+              error
+            )
+          }
+        }
+      }
+
       this.clearConnectWatchdog()
       this.stopLivenessTimer()
       this.ws = null
 
-      // If the socket closed within 2s of opening, the token may have been
-      // revoked — force full auth validation on the next attempt.
-      if (this._lastConnectTime && Date.now() - this._lastConnectTime < 2000) {
-        this._tokenValidated = false
-      }
-
       this.setConnected(false)
+      if (wasConnected && getActiveRemoteConnection()) {
+        this.setAuthError('Connection to the selected Jean server was lost.')
+      }
 
       // Clear event buffer — stale events from a dead connection
       // must not be delivered when the next connection opens.
@@ -653,11 +673,13 @@ class WsTransport {
       }
       this.pending.clear()
 
-      // Clear queued-but-unsent messages to prevent reconnect from
-      // flushing stale commands that spawn duplicate CLI processes.
+      // Clear queued-but-unsent messages so a later page bootstrap cannot
+      // spawn duplicate CLI processes.
       this.queue = []
 
-      this.scheduleReconnect()
+      if (!wasConnected && !this._hasConnectedOnce) {
+        this.scheduleConnectRetry()
+      }
     }
 
     this.ws.onerror = () => {
@@ -667,7 +689,7 @@ class WsTransport {
 
   // Commands that spawn/attach to long-lived processes or are critical to
   // terminal lifecycle. These get an extended timeout instead of the default
-  // 60s so idle/reconnect edges do not falsely fail terminal sessions.
+  // 60s so idle connection edges do not falsely fail terminal sessions.
   private static readonly LONG_RUNNING_COMMANDS: ReadonlySet<string> = new Set([
     'send_chat_message',
     'run_review_with_ai',
@@ -700,9 +722,6 @@ class WsTransport {
    *  ping/pong alone is not visible to browser JavaScript. */
   private static readonly INBOUND_TIMEOUT = 50_000
   private static readonly LIVENESS_CHECK_INTERVAL = 10_000
-  /** After a resume, wait this long for queued inbound frames to flush before
-   *  judging an OPEN socket stale (avoids false reconnects on a healthy socket). */
-  private static readonly WAKE_RECHECK_DELAY = 3_000
 
   /** Call a backend command over WebSocket. */
   async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -745,10 +764,10 @@ class WsTransport {
           this.pending.delete(id)
           reject(
             new Error(
-              `Command queue is full (${WsTransport.MAX_QUEUE_SIZE}). Reconnecting WebSocket...`
+              `Command queue is full (${WsTransport.MAX_QUEUE_SIZE}). Restarting connection...`
             )
           )
-          this.forceReconnect()
+          this.restartConnectionAttempt()
           return
         }
 
@@ -764,9 +783,8 @@ class WsTransport {
     })
   }
 
-  /** Request terminal replay and keep this terminal tracked for reconnects. */
+  /** Request buffered terminal output after a full page refresh. */
   requestTerminalReplay(terminalId: string, lastSeq = 0): void {
-    this._activeTerminals.add(terminalId)
     const currentLastSeq = this._lastSeqByTerminal.get(terminalId)
     const effectiveLastSeq =
       currentLastSeq == null ? lastSeq : Math.max(lastSeq, currentLastSeq)
@@ -850,7 +868,7 @@ class WsTransport {
         pending.reject(new Error(msg.error || 'Unknown error'))
       }
     } else if (msg.type === 'event' && msg.event) {
-      // Track seq per session for replay dedup + reconnect
+      // Track sequence numbers for bootstrap/live overlap deduplication.
       if (msg.seq != null && msg.payload) {
         const payload = msg.payload as Record<string, unknown>
         const sessionId = payload.session_id as string | undefined
@@ -860,19 +878,12 @@ class WsTransport {
             return // Already processed — skip duplicate from replay
           }
           this._lastSeqBySession.set(sessionId, msg.seq)
-          // Track actively streaming sessions
-          if (msg.event === 'chat:chunk' || msg.event === 'chat:thinking') {
-            this._activeStreamingSessions.add(sessionId)
-          } else if (
-            msg.event === 'chat:done' ||
-            msg.event === 'chat:cancelled'
-          ) {
-            this._activeStreamingSessions.delete(sessionId)
+          if (msg.event === 'chat:done' || msg.event === 'chat:cancelled') {
             this._lastSeqBySession.delete(sessionId)
           }
         }
 
-        // Track terminal seq for replay on reconnect (output gap healing)
+        // Track terminal sequence numbers for explicit full-refresh replay.
         const terminalId = payload.terminal_id as string | undefined
         if (terminalId && msg.event.startsWith('terminal:')) {
           const lastSeen = this._lastSeqByTerminal.get(terminalId)
@@ -880,10 +891,7 @@ class WsTransport {
             return // Duplicate from replay — skip
           }
           this._lastSeqByTerminal.set(terminalId, msg.seq)
-          if (msg.event === 'terminal:started') {
-            this._activeTerminals.add(terminalId)
-          } else if (msg.event === 'terminal:stopped') {
-            this._activeTerminals.delete(terminalId)
+          if (msg.event === 'terminal:stopped') {
             this._lastSeqByTerminal.delete(terminalId)
           }
         }
@@ -910,21 +918,20 @@ class WsTransport {
     }
   }
 
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) return
-    // Don't reconnect if there's an auth error — user needs to fix the token
+  private scheduleConnectRetry(): void {
+    if (this.connectRetryTimer || this._hasConnectedOnce) return
+    // Don't retry if there's an auth error — user needs to fix the token.
     if (this._authError) return
 
-    // Exponential backoff: 100ms, 500ms, 1s, 2s, 4s, ... max 30s
-    // First attempt is fast (100ms) for brief disconnections.
+    // Exponential backoff while establishing the initial connection.
     const delay =
-      this.reconnectAttempt === 0
+      this.connectRetryAttempt === 0
         ? 100
-        : Math.min(500 * 2 ** (this.reconnectAttempt - 1), 30_000)
-    this.reconnectAttempt++
+        : Math.min(500 * 2 ** (this.connectRetryAttempt - 1), 30_000)
+    this.connectRetryAttempt++
 
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
+    this.connectRetryTimer = setTimeout(() => {
+      this.connectRetryTimer = null
       this.connect()
     }, delay)
   }
@@ -941,12 +948,12 @@ class WsTransport {
       if (this.ws?.readyState !== WebSocket.OPEN) return
       if (Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT) {
         console.warn(
-          '[WsTransport] No inbound traffic, forcing reconnect (proxy/NAT idle drop?)'
+          '[WsTransport] No inbound traffic, closing stale connection for reload'
         )
         try {
           this.ws.close()
         } catch {
-          // Ignore close errors; onclose will schedule reconnect.
+          // Ignore close errors; a successful close triggers the app reload.
         }
       }
     }, WsTransport.LIVENESS_CHECK_INTERVAL)
@@ -970,46 +977,40 @@ class WsTransport {
 
     if (state === WebSocket.OPEN) {
       // Socket claims to be open. After a suspend it may be a zombie, but a
-      // healthy socket also looks stale until queued heartbeats are delivered.
-      // Re-check shortly, once any buffered inbound traffic has landed.
-      setTimeout(() => {
-        if (
-          this.ws?.readyState === WebSocket.OPEN &&
-          Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT
-        ) {
-          console.warn(
-            '[WsTransport] Stale socket after resume, forcing reconnect'
-          )
-          try {
-            this.ws.close()
-          } catch {
-            // Ignore close errors; onclose schedules the reconnect.
-          }
+      // recent socket may simply have queued frames. Replace one already past
+      // the liveness timeout immediately so iOS resume adds no extra delay.
+      if (Date.now() - this._lastInbound > WsTransport.INBOUND_TIMEOUT) {
+        console.warn('[WsTransport] Stale socket after resume, reloading app')
+        try {
+          this.ws?.close()
+        } catch {
+          // Ignore close errors; a successful close triggers the app reload.
         }
-      }, WsTransport.WAKE_RECHECK_DELAY)
+      }
       return
     }
 
-    // Disconnected — reconnect immediately instead of waiting out the backoff.
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
+    // Before the first successful connection, retry immediately on wake.
+    if (this._hasConnectedOnce) return
+    if (this.connectRetryTimer) {
+      clearTimeout(this.connectRetryTimer)
+      this.connectRetryTimer = null
     }
-    this.reconnectAttempt = 0
+    this.connectRetryAttempt = 0
     this.connect()
   }
 
-  private forceReconnect(): void {
+  private restartConnectionAttempt(): void {
     this.clearConnectWatchdog()
     if (this.ws) {
       try {
         this.ws.close()
       } catch {
-        // Ignore close errors; reconnect scheduling will recover.
+        // Ignore close errors; initial connection retry will recover.
       }
       return
     }
-    this.scheduleReconnect()
+    this.scheduleConnectRetry()
   }
 
   ingestBootstrapEvents(events: BootstrapEvent[]): void {
@@ -1032,7 +1033,6 @@ const wsTransport = new WsTransport()
 
 const subscribe = (cb: () => void) => wsTransport.subscribe(cb)
 const getSnapshot = () => wsTransport.getSnapshot()
-const getDataReadySnapshot = () => wsTransport.getDataReadySnapshot()
 const getAuthErrorSnapshot = () => wsTransport.getAuthErrorSnapshot()
 
 // E2E mock: always report connected, no auth errors
@@ -1053,27 +1053,16 @@ export function useWsConnectionStatus(): boolean {
   )
 }
 
-/**
- * React hook that returns whether reconnect data has been fully seeded.
- * Stays false from disconnect until seedCache() completes.
- * Only meaningful in browser mode (!isNativeApp()).
- */
-export function useWsDataReady(): boolean {
-  return useSyncExternalStore(
-    isE2eMocked ? noopSubscribe : subscribe,
-    isE2eMocked ? () => true : getDataReadySnapshot
-  )
-}
-
-/** Mark WebSocket data as ready (called by App.tsx after seedCache). */
-export function setWsDataReady(value: boolean): void {
-  wsTransport.setDataReady(value)
-}
-
 /** Start browser WebSocket transport after preload/bootstrap is complete. */
 export function connectTransport(): void {
-  if (isNativeApp() || isE2eMocked) return
+  if (!usesWebSocketBackend() || isE2eMocked) return
+  setWebAccessEnabled(true)
   wsTransport.enableConnect()
+}
+
+/** Run immediately when an established browser WebSocket disconnects. */
+export function onEstablishedWsDisconnect(callback: () => void): () => void {
+  return wsTransport.onEstablishedDisconnect(callback)
 }
 
 /**
@@ -1082,18 +1071,8 @@ export function connectTransport(): void {
  * Web mode: reflects current WebSocket connected state.
  */
 export function isTransportConnected(): boolean {
-  if (isNativeApp() || isE2eMocked) return true
+  if (!usesWebSocketBackend() || isE2eMocked) return true
   return wsTransport.connected
-}
-
-/**
- * Subscribe to transport connection state changes. No-op on native / E2E.
- * Used by non-React modules (e.g. terminal-instances.ts banner).
- * Returns unsubscribe.
- */
-export function subscribeTransportStatus(cb: () => void): () => void {
-  if (isNativeApp() || isE2eMocked) return noopSubscribe()
-  return wsTransport.subscribe(cb)
 }
 
 /** Feed replayed server events through the normal event pipeline before connect. */

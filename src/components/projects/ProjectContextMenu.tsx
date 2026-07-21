@@ -114,28 +114,19 @@ export function ProjectContextMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-64">
-        <ContextMenuItem onClick={handleOpenSettings}>
-          <Settings className="mr-2 h-4 w-4" />
-          Project Settings
+        <ContextMenuItem onClick={handleNewWorktree}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Worktree
         </ContextMenuItem>
-
-        {isNested && (
-          <ContextMenuItem onClick={handleMoveToRoot}>
-            <ArrowUpToLine className="mr-2 h-4 w-4" />
-            Move to Root
-          </ContextMenuItem>
-        )}
-
-        <ContextMenuSeparator />
 
         <ContextMenuItem onClick={handleNewBaseSession}>
           <Home className="mr-2 h-4 w-4" />
           {existingBaseSession ? 'Open Base Session' : 'New Base Session'}
         </ContextMenuItem>
 
-        <ContextMenuItem onClick={handleNewWorktree}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Worktree
+        <ContextMenuItem onClick={handleOpenSettings}>
+          <Settings className="mr-2 h-4 w-4" />
+          Project Settings
         </ContextMenuItem>
 
         <ContextMenuSeparator />
@@ -170,6 +161,13 @@ export function ProjectContextMenu({
         </ContextMenuItem>
 
         <ContextMenuSeparator />
+
+        {isNested && (
+          <ContextMenuItem onClick={handleMoveToRoot}>
+            <ArrowUpToLine className="mr-2 h-4 w-4" />
+            Move to Root
+          </ContextMenuItem>
+        )}
 
         <ContextMenuItem
           variant="destructive"

@@ -7,6 +7,7 @@ vi.mock('@/lib/transport', () => ({
 
 vi.mock('@/lib/environment', () => ({
   hasBackend: () => true,
+  hasBackendTransport: () => true,
 }))
 
 vi.mock('@/lib/terminal-instances', () => ({
@@ -22,6 +23,7 @@ import {
   prefetchSessions,
   reconnectNativeCliSession,
 } from './chat'
+import { preserveQueryCacheOnError } from '@/lib/query-error'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
@@ -33,6 +35,20 @@ const toastMock = toast as unknown as {
   success: ReturnType<typeof vi.fn>
   error: ReturnType<typeof vi.fn>
 }
+
+describe('transient WebSocket query failures', () => {
+  it('rethrows disconnects so TanStack Query preserves cached session data', () => {
+    const error = new Error('WebSocket disconnected')
+
+    expect(() => preserveQueryCacheOnError(error)).toThrow(error)
+  })
+
+  it('does not convert other load failures into empty session data', () => {
+    const error = new Error('session file is invalid')
+
+    expect(() => preserveQueryCacheOnError(error)).toThrow(error)
+  })
+})
 
 describe('prefetchSessions', () => {
   beforeEach(() => {

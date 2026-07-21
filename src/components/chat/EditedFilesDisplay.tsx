@@ -192,12 +192,15 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
                 type="button"
                 onClick={() => setSelectedFilePath(filePath)}
                 aria-label={`View changes to ${getFilename(filePath)}`}
-                className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex min-w-0 max-w-full rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Badge variant="outline" className="cursor-pointer gap-1.5">
-                  {getFilename(filePath)}
+                <Badge
+                  variant="outline"
+                  className="max-w-[calc(100vw-4rem)] cursor-pointer gap-1.5 sm:max-w-none"
+                >
+                  <span className="min-w-0 truncate">{getFilename(filePath)}</span>
                   {stats && (stats.additions > 0 || stats.deletions > 0) && (
-                    <span className="flex items-center font-mono text-xs opacity-80">
+                    <span className="flex shrink-0 items-center font-mono text-xs opacity-80">
                       <span className="text-green-500">+{stats.additions}</span>
                       <span className="text-muted-foreground mx-0.5">/</span>
                       <span className="text-red-500">-{stats.deletions}</span>

@@ -9,6 +9,7 @@ import { CursorIcon } from '@/components/icons/CursorIcon'
 import { PiIcon } from '@/components/icons/PiIcon'
 import { CommandCodeIcon } from '@/components/icons/CommandCodeIcon'
 import { GrokIcon } from '@/components/icons/GrokIcon'
+import { KimiIcon } from '@/components/icons/KimiIcon'
 import type { CliBackend } from '@/types/preferences'
 
 export type BackendIconComponent = ForwardRefExoticComponent<
@@ -31,6 +32,8 @@ export function getBackendIcon(backend: CliBackend): BackendIconComponent {
       return CommandCodeIcon
     case 'grok':
       return GrokIcon
+    case 'kimi':
+      return KimiIcon
   }
 }
 
@@ -45,16 +48,23 @@ export function getBackendLabel(backend: CliBackend): string {
     case 'cursor':
       return 'Cursor'
     case 'pi':
-      return 'Pi'
+      return 'PI'
     case 'commandcode':
       return 'Command Code'
     case 'grok':
       return 'Grok'
+    case 'kimi':
+      return 'Kimi Code'
   }
 }
 
 export function isBetaBackend(backend: CliBackend): boolean {
-  return backend === 'pi' || backend === 'commandcode' || backend === 'grok'
+  return (
+    backend === 'pi' ||
+    backend === 'commandcode' ||
+    backend === 'grok' ||
+    backend === 'kimi'
+  )
 }
 
 export function getBackendPlainLabel(backend: CliBackend): string {
@@ -80,6 +90,7 @@ export function BackendLabel({
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span>{label}</span>
       <Badge
+        aria-hidden="true"
         variant="outline"
         className={cn(
           'rounded-sm px-1.5 py-0 text-[10px] leading-4 uppercase tracking-wide bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/40',

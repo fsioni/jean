@@ -57,19 +57,71 @@ describe('openExternal', () => {
 })
 
 describe('server platform detection', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllGlobals()
+  })
+
+  it('does not derive server platform flags from the browser platform', async () => {
+    vi.stubGlobal('window', { open: vi.fn() })
+    vi.stubGlobal('navigator', { platform: 'Win32' })
+
+    const { isMacOS, isWindows, isLinux, getServerPlatform } =
+      await import('./platform')
+
+    expect(getServerPlatform()).toBe('linux')
+    expect(isWindows).toBe(false)
+    expect(isMacOS).toBe(false)
+    expect(isLinux).toBe(true)
+  })
+
   it('uses the Jean server platform instead of the browser platform when provided', async () => {
     vi.stubGlobal('window', { open: vi.fn() })
     vi.stubGlobal('navigator', { platform: 'Win32' })
 
-    const { getServerPlatform, isServerWindows, setServerPlatform } =
-      await import('./platform')
+    const platform = await import('./platform')
 
-    setServerPlatform('linux')
+    platform.setServerPlatform('linux')
 
-    expect(getServerPlatform()).toBe('linux')
-    expect(isServerWindows()).toBe(false)
+    expect(platform.getServerPlatform()).toBe('linux')
+    expect(platform.isServerWindows()).toBe(false)
+    expect(platform.isWindows).toBe(false)
 
-    setServerPlatform('windows')
-    expect(isServerWindows()).toBe(true)
+    platform.setServerPlatform('windows')
+    expect(platform.isServerWindows()).toBe(true)
+    expect(platform.isWindows).toBe(true)
+  })
+
+  it('keeps the native client platform separate from a remote server platform', async () => {
+    vi.stubGlobal('navigator', {
+      platform: 'MacIntel',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+
+    const platform = await import('./platform')
+
+    platform.setServerPlatform('linux')
+
+    expect(platform.isClientMacOS).toBe(true)
+    expect(platform.isClientLinux).toBe(false)
+    expect(platform.isMacOS).toBe(false)
+    expect(platform.isLinux).toBe(true)
+  })
+
+  it('formats shortcuts for the native Mac client when the server is Linux', async () => {
+    vi.stubGlobal('window', {
+      __TAURI_INTERNALS__: { invoke: vi.fn() },
+    })
+    vi.stubGlobal('navigator', {
+      platform: 'MacIntel',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+
+    const platform = await import('./platform')
+    platform.setServerPlatform('linux')
+    const { formatShortcutDisplay } = await import('@/types/keybindings')
+
+    expect(formatShortcutDisplay('mod+period')).toBe('⌘ + .')
+    expect(platform.getModifierSymbol()).toBe('⌘')
   })
 })

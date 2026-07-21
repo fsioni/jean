@@ -19,6 +19,19 @@ vi.mock('@/services/model-catalog', async importOriginal => {
           codex: {
             models: [{ id: 'gpt-remote', label: 'GPT Remote' }],
           },
+          grok: {
+            models: [
+              {
+                id: 'grok/remote',
+                label: 'Grok Remote',
+                reasoning: {
+                  type: 'effort',
+                  default: 'max',
+                  levels: [{ value: 'max', label: 'Maximum' }],
+                },
+              },
+            ],
+          },
         },
       },
     }),
@@ -52,6 +65,29 @@ describe('useToolbarDerivedState', () => {
     expect(result.current.selectedModelLabel).toBe('Remote')
   })
 
+  it('adds CDN models and reasoning metadata for non-Codex backends', () => {
+    const { result } = renderHook(() =>
+      useToolbarDerivedState({
+        selectedBackend: 'grok',
+        selectedProvider: null,
+        selectedModel: 'grok/remote',
+        customCliProfiles: [],
+        installedBackends: ['grok'],
+        grokModelOptions: [{ value: 'grok/local', label: 'Grok Local' }],
+      })
+    )
+
+    expect(result.current.filteredModelOptions).toEqual([
+      { value: 'grok/remote', label: 'Grok Remote' },
+      { value: 'grok/local', label: 'Grok Local' },
+    ])
+    expect(result.current.selectedModelReasoning).toEqual({
+      type: 'effort',
+      default: 'max',
+      levels: [{ value: 'max', label: 'Maximum' }],
+    })
+  })
+
   it('keeps provider-specific Claude aliases instead of remote catalog options', () => {
     const { result } = renderHook(() =>
       useToolbarDerivedState({
@@ -66,6 +102,30 @@ describe('useToolbarDerivedState', () => {
     expect(
       result.current.claudeModelOptions.map(option => option.value)
     ).toEqual(['opus', 'sonnet', 'haiku'])
+  })
+
+  it('exposes Kimi Code as an installed backend with its configured default', () => {
+    const { result } = renderHook(() =>
+      useToolbarDerivedState({
+        selectedBackend: 'kimi',
+        selectedProvider: null,
+        selectedModel: 'kimi/default',
+        customCliProfiles: [],
+        installedBackends: ['kimi'],
+        kimiModelOptions: [
+          { value: 'kimi/default', label: 'Configured default' },
+        ],
+      })
+    )
+
+    expect(result.current.backendModelSections).toEqual([
+      {
+        backend: 'kimi',
+        label: 'Kimi Code',
+        options: [{ value: 'kimi/default', label: 'Configured default' }],
+      },
+    ])
+    expect(result.current.selectedModelLabel).toBe('Configured default')
   })
 
   it('counts enabled MCP servers identified by backend-prefixed keys', () => {

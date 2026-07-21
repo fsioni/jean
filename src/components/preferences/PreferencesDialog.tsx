@@ -58,7 +58,8 @@ import { CursorIcon } from '@/components/icons/CursorIcon'
 import { PiIcon } from '@/components/icons/PiIcon'
 import { CommandCodeIcon } from '@/components/icons/CommandCodeIcon'
 import { GrokIcon } from '@/components/icons/GrokIcon'
-import type { MagicPrompts } from '@/types/preferences'
+import { KimiIcon } from '@/components/icons/KimiIcon'
+import type { CliBackend, MagicPrompts } from '@/types/preferences'
 import { GeneralPane } from './panes/GeneralPane'
 import { ClaudePane } from './panes/ClaudePane'
 import { CodexPane } from './panes/CodexPane'
@@ -67,6 +68,7 @@ import { CursorPane } from './panes/CursorPane'
 import { PiPane } from './panes/PiPane'
 import { CommandCodePane } from './panes/CommandCodePane'
 import { GrokPane } from './panes/GrokPane'
+import { KimiPane } from './panes/KimiPane'
 import { GitHubPane } from './panes/GitHubPane'
 import { CodeRabbitPane } from './panes/CodeRabbitPane'
 import { AppearancePane } from './panes/AppearancePane'
@@ -85,12 +87,14 @@ import {
   type PreferenceSearchEntry,
 } from './preferences-search'
 import { PreferencesSearchBar } from './PreferencesSearchBar'
+import { BackendLabel } from '@/components/ui/backend-label'
 
 interface NavigationItem {
   type: 'item'
   id: PreferencePane
   name: string
   icon: LucideIcon
+  backend?: CliBackend
   desktopOnly?: boolean
 }
 
@@ -149,18 +153,28 @@ const navigationEntries: (NavigationItem | NavigationSeparator)[] = [
     id: 'pi',
     name: 'PI',
     icon: PiIcon,
+    backend: 'pi',
   },
   {
     type: 'item',
     id: 'commandcode',
     name: 'Command Code',
     icon: CommandCodeIcon,
+    backend: 'commandcode',
   },
   {
     type: 'item',
     id: 'grok',
-    name: 'Grok (Beta)',
+    name: 'Grok',
     icon: GrokIcon,
+    backend: 'grok',
+  },
+  {
+    type: 'item',
+    id: 'kimi',
+    name: 'Kimi Code',
+    icon: KimiIcon,
+    backend: 'kimi',
   },
   {
     type: 'item',
@@ -248,6 +262,7 @@ const paneIconMap: Record<PreferencePane, LucideIcon> = {
   pi: PiIcon,
   commandcode: CommandCodeIcon,
   grok: GrokIcon,
+  kimi: KimiIcon,
   github: Github,
   coderabbit: Rabbit,
   opinionated: Sparkles,
@@ -702,8 +717,18 @@ export function PreferencesDialog() {
                               onClick={() => handlePaneSelect(entry.id)}
                               className="w-full"
                             >
-                              <entry.icon />
-                              <span>{entry.name}</span>
+                              <entry.icon
+                                className={
+                                  entry.id === 'kimi'
+                                    ? 'translate-x-0.5'
+                                    : undefined
+                                }
+                              />
+                              {entry.backend ? (
+                                <BackendLabel backend={entry.backend} />
+                              ) : (
+                                <span>{entry.name}</span>
+                              )}
                             </button>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
@@ -839,6 +864,11 @@ export function PreferencesDialog() {
               {activePane === 'grok' && (
                 <div id="pref-pane-grok">
                   <GrokPane />
+                </div>
+              )}
+              {activePane === 'kimi' && (
+                <div id="pref-pane-kimi" className="min-w-0 max-w-full">
+                  <KimiPane />
                 </div>
               )}
               {activePane === 'github' && (

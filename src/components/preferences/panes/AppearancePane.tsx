@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -29,7 +30,7 @@ import {
   type FileEditMode,
   type TerminalBackgroundMode,
 } from '@/types/preferences'
-import { isMacOS } from '@/lib/platform'
+import { getModifierSymbol, isClientMacOS } from '@/lib/platform'
 import { invoke } from '@/lib/transport'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
@@ -72,7 +73,7 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-const modKey = isMacOS ? 'Cmd' : 'Ctrl'
+const modKey = getModifierSymbol()
 
 export const AppearancePane: React.FC = () => {
   const { theme, setTheme } = useTheme()
@@ -82,9 +83,15 @@ export const AppearancePane: React.FC = () => {
 
   // Zoom uses commit-only saving to avoid flickering the webview during drag.
   // localZoom tracks slider position, preferences are saved only on release.
-  const prefsZoom = preferences?.zoom_level ?? ZOOM_LEVEL_DEFAULT
-  const [localZoom, setLocalZoom] = useState<number | null>(null)
-  const zoomValue = localZoom ?? prefsZoom
+  const desktopZoom = preferences?.zoom_level ?? ZOOM_LEVEL_DEFAULT
+  const savedMobileZoom = preferences?.mobile_zoom_level ?? ZOOM_LEVEL_DEFAULT
+  const syncZoomLevels = preferences?.sync_zoom_levels ?? true
+  const [localDesktopZoom, setLocalDesktopZoom] = useState<number | null>(null)
+  const [localMobileZoom, setLocalMobileZoom] = useState<number | null>(null)
+  const desktopZoomValue = localDesktopZoom ?? desktopZoom
+  const mobileZoomValue = syncZoomLevels
+    ? desktopZoomValue
+    : (localMobileZoom ?? savedMobileZoom)
 
   const handleThemeChange = useCallback(
     async (value: 'light' | 'dark' | 'system') => {
@@ -104,11 +111,33 @@ export const AppearancePane: React.FC = () => {
   )
 
   const handleZoomCommit = useCallback(
-    (value: number) => {
-      setLocalZoom(null)
-      patchPreferences.mutate({ zoom_level: value })
+    (target: 'desktop' | 'mobile', value: number) => {
+      if (target === 'desktop') {
+        setLocalDesktopZoom(null)
+        patchPreferences.mutate(
+          syncZoomLevels
+            ? { zoom_level: value, mobile_zoom_level: value }
+            : { zoom_level: value }
+        )
+      } else {
+        setLocalMobileZoom(null)
+        patchPreferences.mutate({ mobile_zoom_level: value })
+      }
     },
-    [patchPreferences]
+    [patchPreferences, syncZoomLevels]
+  )
+
+  const handleSyncZoomLevelsChange = useCallback(
+    (checked: boolean | 'indeterminate') => {
+      const shouldSync = checked === true
+      setLocalDesktopZoom(null)
+      setLocalMobileZoom(null)
+      patchPreferences.mutate({
+        sync_zoom_levels: shouldSync,
+        mobile_zoom_level: desktopZoom,
+      })
+    },
+    [desktopZoom, patchPreferences]
   )
 
   const handleFontChange = useCallback(
@@ -324,7 +353,7 @@ export const AppearancePane: React.FC = () => {
             </Select>
           </InlineField>
 
-          {isMacOS && (
+          {isClientMacOS && (
             <InlineField
               label="Window transparency"
               description="Translucent window with desktop blur (uses significant GPU)"
@@ -471,21 +500,53 @@ export const AppearancePane: React.FC = () => {
             />
           </ScalingField>
 
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="sync-zoom-levels"
+              checked={syncZoomLevels}
+              onCheckedChange={handleSyncZoomLevelsChange}
+              disabled={patchPreferences.isPending}
+            />
+            <Label
+              htmlFor="sync-zoom-levels"
+              className="cursor-pointer text-sm"
+            >
+              Sync desktop and mobile scaling
+            </Label>
+          </div>
+
           <ScalingField
-            label="Zoom level"
-            description="Control the zoom level to adjust the size of the interface"
+            label="Desktop zoom level"
+            description="Adjust the interface size on desktop screens"
           >
             <Slider
               ticks={zoomLevelTicks}
-              value={zoomValue}
-              onValueChange={setLocalZoom}
-              onValueCommit={handleZoomCommit}
+              value={desktopZoomValue}
+              onValueChange={setLocalDesktopZoom}
+              onValueCommit={value => handleZoomCommit('desktop', value)}
               disabled={patchPreferences.isPending}
             />
             <p className="text-xs text-muted-foreground">
               You can change the zoom level with {modKey} +/- and reset to the
               default zoom with {modKey}+0.
             </p>
+          </ScalingField>
+
+          <ScalingField
+            label="Mobile zoom level"
+            description={
+              syncZoomLevels
+                ? 'Synced with the desktop zoom level'
+                : 'Adjust the interface size on mobile screens'
+            }
+          >
+            <Slider
+              ticks={zoomLevelTicks}
+              value={mobileZoomValue}
+              onValueChange={setLocalMobileZoom}
+              onValueCommit={value => handleZoomCommit('mobile', value)}
+              disabled={syncZoomLevels || patchPreferences.isPending}
+            />
           </ScalingField>
         </div>
       </SettingsSection>

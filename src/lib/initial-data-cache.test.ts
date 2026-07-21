@@ -5,7 +5,7 @@ import {
 } from './initial-data-cache'
 
 describe('initial data cache helpers', () => {
-  it('collects worktree paths from reconnect data without requiring sessions payload', () => {
+  it('collects worktree paths from bootstrap data without requiring sessions payload', () => {
     expect(
       collectWorktreePaths({
         'project-1': [
@@ -19,7 +19,7 @@ describe('initial data cache helpers', () => {
     })
   })
 
-  it('collects persisted execution modes from reconnect session payloads', () => {
+  it('collects persisted execution modes from bootstrap session payloads', () => {
     expect(
       collectExecutionModes({
         sessionsByWorktree: {

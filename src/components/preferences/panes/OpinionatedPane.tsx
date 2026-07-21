@@ -66,10 +66,18 @@ const PLUGINS: PluginDefinition[] = [
       'Cross-backend skill/plugin that reduces output tokens by ~65-75% through terse, caveman-style communication while maintaining technical accuracy.',
     githubUrl: 'https://github.com/JuliusBrussee/caveman',
     scope: 'ai-backends',
-    backends: ['Claude', 'Codex', 'OpenCode', 'Cursor'],
+    backends: [
+      'Claude',
+      'Codex',
+      'OpenCode',
+      'Cursor',
+      'Pi',
+      'Command Code',
+      'Grok',
+    ],
     usage: [
       {
-        note: "Installs through Caveman's unified installer for every Jean AI backend found on this machine: Claude, Codex, OpenCode, and Cursor.",
+        note: "Installs through Caveman's unified installer where supported, then mirrors skills into each backend's CLI path (including ~/.grok/skills for Grok) plus Jean-global mirrors.",
       },
       {
         note: 'Claude and OpenCode can auto-activate. Codex and Cursor expose skills for per-session activation with /caveman; Cursor also gets an always-on rule when the installer can write one.',
@@ -95,10 +103,18 @@ const PLUGINS: PluginDefinition[] = [
       'Cross-backend skill pack. Adds brainstorming, TDD, systematic debugging, code review, plan writing/execution, parallel agent dispatch, and git worktree workflows.',
     githubUrl: 'https://github.com/obra/superpowers',
     scope: 'ai-backends',
-    backends: ['Claude', 'Codex', 'OpenCode', 'Cursor'],
+    backends: [
+      'Claude',
+      'Codex',
+      'OpenCode',
+      'Cursor',
+      'Pi',
+      'Command Code',
+      'Grok',
+    ],
     usage: [
       {
-        note: 'Installs through Claude when available, then mirrors Superpowers skills into every installed Jean AI backend. Without Claude, Jean fetches the Superpowers repo directly.',
+        note: 'Installs through Claude when available, then mirrors Superpowers skills into each backend CLI path (including ~/.grok/skills for Grok) plus Jean-global mirrors. Without Claude, Jean fetches the Superpowers repo directly.',
       },
       {
         label: 'Brainstorm a feature',
@@ -123,6 +139,15 @@ const PLUGINS: PluginDefinition[] = [
 interface PluginStatus {
   installed: boolean
   version: string | null
+  install_supported?: boolean
+  unsupported_reason?: string
+  backends?: BackendPluginStatus[]
+}
+
+interface BackendPluginStatus {
+  id: string
+  label: string
+  installed: boolean
 }
 
 function PluginCard({ plugin }: { plugin: PluginDefinition }) {
@@ -170,6 +195,12 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
     }
   }, [plugin.id, plugin.name, checkStatus])
 
+  const hasMissingBackend =
+    plugin.scope === 'ai-backends' &&
+    (status?.backends?.some(backend => !backend.installed) ?? false)
+  const statusLabel = hasMissingBackend ? 'Partial' : 'Installed'
+  const installUnsupported = status?.install_supported === false
+
   const handleUninstall = useCallback(async () => {
     setUninstalling(true)
     const toastId = toast.loading(`Uninstalling ${plugin.name}...`)
@@ -191,12 +222,12 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
 
   return (
     <div className="rounded-lg border">
-      <div className="flex items-center gap-2 px-3 py-2 hover:bg-muted/40 rounded-lg">
+      <div className="flex flex-col gap-2 px-3 py-2 hover:bg-muted/40 rounded-lg sm:flex-row sm:items-center">
         <button
           type="button"
           onClick={() => setExpanded(e => !e)}
           aria-expanded={expanded}
-          className="min-w-0 flex-1 flex items-center gap-2 text-left cursor-pointer"
+          className="min-w-0 w-full flex-1 flex flex-wrap items-center gap-2 text-left cursor-pointer"
         >
           <ChevronRight
             className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform ${
@@ -207,24 +238,37 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
             {plugin.name}
           </Label>
           {!checking && status?.installed && (
-            <Badge variant="secondary" className="gap-1 text-xs">
+            <Badge
+              variant="secondary"
+              className="min-w-0 max-w-full gap-1 text-xs"
+            >
               <CheckCircle className="h-3 w-3 text-green-500" />
-              Installed
+              <span>{statusLabel}</span>
               {status.version &&
-                (plugin.id === 'caveman'
-                  ? ` (${status.version})`
-                  : ` (v${status.version})`)}
+                (plugin.scope === 'ai-backends' ? (
+                  <span className="hidden truncate sm:inline">
+                    {' '}
+                    ({status.version})
+                  </span>
+                ) : (
+                  <span className="truncate"> (v{status.version})</span>
+                ))}
             </Badge>
           )}
-          <Badge variant="outline" className="text-xs">
+          {!checking && installUnsupported && (
+            <Badge variant="outline" className="text-xs">
+              Unsupported
+            </Badge>
+          )}
+          <Badge variant="outline" className="max-w-full truncate text-xs">
             {plugin.scope === 'system-wide'
               ? 'System-wide (shell)'
               : plugin.scope === 'ai-backends'
-                ? 'All AI backends'
+                ? 'AI backend skills'
                 : 'Claude CLI plugin'}
           </Badge>
         </button>
-        <span className="flex items-center gap-2 shrink-0">
+        <span className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
           {checking ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           ) : status?.installed ? (
@@ -240,10 +284,27 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
               </Button>
               {plugin.scope === 'ai-backends' && (
                 <Button
+                  variant={hasMissingBackend ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={handleInstall}
+                  disabled={installing || uninstalling}
+                  className="flex-1 sm:flex-none"
+                >
+                  {installing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  {hasMissingBackend ? 'Reinstall' : 'Install again'}
+                </Button>
+              )}
+              {plugin.scope === 'ai-backends' && (
+                <Button
                   variant="outline"
                   size="sm"
                   onClick={handleUninstall}
                   disabled={installing || uninstalling}
+                  className="flex-1 sm:flex-none"
                 >
                   {uninstalling ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -258,14 +319,16 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
             <Button
               size="sm"
               onClick={handleInstall}
-              disabled={installing || uninstalling}
+              disabled={installing || uninstalling || installUnsupported}
+              title={status?.unsupported_reason}
+              className="w-full sm:w-auto"
             >
-              {installing ? (
+              {installUnsupported ? null : installing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              Install
+              {installUnsupported ? 'Unsupported' : 'Install'}
             </Button>
           )}
         </span>
@@ -282,7 +345,13 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
             <p className="text-xs text-muted-foreground">
               {plugin.description}
             </p>
+            {status?.unsupported_reason && (
+              <p className="text-xs text-destructive">
+                {status.unsupported_reason}
+              </p>
+            )}
             <button
+              type="button"
               onClick={() => openExternal(plugin.githubUrl)}
               className="inline-flex items-center gap-1 text-xs text-primary hover:underline underline-offset-2 cursor-pointer"
             >
@@ -291,15 +360,39 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
             </button>
           </div>
 
+          {plugin.scope === 'ai-backends' && status?.backends && (
+            <div className="border-t pt-3 space-y-2">
+              <div className="text-xs font-medium text-foreground/80">
+                Backend status
+              </div>
+              <div className="grid gap-1.5">
+                {status.backends.map(backend => (
+                  <div
+                    key={backend.id}
+                    className="flex items-center justify-between rounded-md bg-muted/40 px-2 py-1.5 text-xs"
+                  >
+                    <span className="text-foreground/80">{backend.label}</span>
+                    <Badge
+                      variant={backend.installed ? 'secondary' : 'outline'}
+                      className="text-xs"
+                    >
+                      {backend.installed ? 'Installed' : 'Not installed'}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {plugin.usage.length > 0 && (
             <div className="border-t pt-3 space-y-2">
               <div className="text-xs font-medium text-foreground/80">
                 How to use
               </div>
               <ul className="space-y-1.5">
-                {plugin.usage.map((step, idx) => (
+                {plugin.usage.map(step => (
                   <li
-                    key={idx}
+                    key={step.command ?? step.label ?? step.note}
                     className="text-xs text-muted-foreground space-y-1"
                   >
                     {step.note && <div>{step.note}</div>}

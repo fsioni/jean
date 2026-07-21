@@ -1,5 +1,5 @@
 import { useCallback, useState, type RefObject } from 'react'
-import { invoke } from '@/lib/transport'
+import { invoke, listen } from '@/lib/transport'
 import { openExternal } from '@/lib/platform'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import { toastActionLabel } from '@/lib/toast-action-label'
@@ -9,7 +9,8 @@ import { generateId } from '@/lib/uuid'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
-import { chatQueryKeys } from '@/services/chat'
+import { chatQueryKeys, refreshWorktreeSessionsCaches } from '@/services/chat'
+import { startCommitJob } from '@/services/commit-jobs'
 import { buildMcpConfigJson } from '@/services/mcp'
 import { saveWorktreePr, projectsQueryKeys } from '@/services/projects'
 import {
@@ -24,10 +25,10 @@ import type { PrStatusEvent } from '@/types/pr-status'
 import { isBaseSession } from '@/types/projects'
 import type {
   CreatePrResponse,
-  CreateCommitResponse,
   DetectPrResponse,
   RevertCommitResponse,
-  ReviewResponse,
+  ReviewJob,
+  StartReviewJobResponse,
   MergeWorktreeResponse,
   MergeConflictsResponse,
   MergePrResponse,
@@ -43,14 +44,21 @@ import type {
 } from '@/types/chat'
 import {
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
+  DEFAULT_FINAL_REVIEW_PROMPT,
   DEFAULT_RESOLVE_CONFLICTS_PROMPT,
   DEFAULT_MAGIC_PROMPT_MODES,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
   type CliBackend,
   type AppPreferences,
+  type MagicCodeReviewConfig,
 } from '@/types/preferences'
 import type { InvestigateOverride } from './useMagicCommands'
+import {
+  resolveCodeReviewConfigs,
+  startCodeReviewsSequentially,
+} from '@/lib/code-review-configs'
+import { resolveDefaultModelForBackend } from '@/lib/session-defaults'
 
 interface SessionMutation<T> {
   mutate: (args: T) => void
@@ -109,6 +117,8 @@ interface UseGitOperationsReturn {
   handleOpenPr: () => Promise<void>
   /** Runs AI code review. */
   handleReview: () => Promise<void>
+  /** Starts an audit-only final review in a new session. */
+  handleFinalReview: () => Promise<void>
   /** Runs CodeRabbit CLI code review. */
   handleCodeRabbitReview: () => Promise<void>
   /** Triggers CodeRabbit by commenting on the open PR. */
@@ -184,9 +194,9 @@ export function useGitOperations({
         override?.model ??
         preferences?.magic_prompt_models?.resolve_conflicts_model ??
         (backend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : backend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : backend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : (preferences?.selected_model ?? 'sonnet'))
@@ -354,9 +364,9 @@ export function useGitOperations({
         override?.model ??
         preferences?.magic_prompt_models?.resolve_conflicts_model ??
         (backend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : backend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : backend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : (preferences?.selected_model ?? 'sonnet'))
@@ -369,6 +379,128 @@ export function useGitOperations({
     },
     [project?.default_backend, preferences]
   )
+
+  const handleFinalReview = useCallback(async () => {
+    if (!activeWorktreeId || !activeWorktreePath) return
+
+    const defaultBackend = (project?.default_backend ??
+      preferences?.default_backend ??
+      'claude') as CliBackend
+    const backend = (resolveMagicPromptBackend(
+      preferences?.magic_prompt_backends,
+      'final_review_backend',
+      defaultBackend
+    ) ?? defaultBackend) as CliBackend
+    const model =
+      preferences?.magic_prompt_models?.final_review_model ??
+      resolveDefaultModelForBackend(backend, preferences)
+    const provider =
+      backend === 'claude'
+        ? resolveMagicPromptProvider(
+            preferences?.magic_prompt_providers,
+            'final_review_provider',
+            preferences?.default_provider
+          )
+        : null
+    const executionMode =
+      preferences?.magic_prompt_modes?.final_review_mode ??
+      DEFAULT_MAGIC_PROMPT_MODES.final_review_mode
+    const prompt =
+      preferences?.magic_prompts?.final_review ?? DEFAULT_FINAL_REVIEW_PROMPT
+
+    try {
+      const session = await invoke<Session>('create_session', {
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        name: 'Final review',
+        backend,
+      })
+      const store = useChatStore.getState()
+
+      store.setSelectedBackend(session.id, backend)
+      store.setSelectedModel(session.id, model)
+      store.setSelectedProvider(session.id, provider)
+      store.setActiveSession(activeWorktreeId, session.id)
+      store.setExecutionMode(session.id, executionMode)
+      store.setExecutingMode(session.id, executionMode)
+      store.setLastSentMessage(session.id, prompt)
+      store.setError(session.id, null)
+      store.clearInputDraft(session.id)
+
+      setSessionBackend.mutate({
+        sessionId: session.id,
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        backend,
+      })
+      setSessionModel.mutate({
+        sessionId: session.id,
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        model,
+      })
+      setSessionProvider.mutate({
+        sessionId: session.id,
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        provider,
+      })
+      await invoke('update_session_state', {
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        sessionId: session.id,
+        selectedExecutionMode: executionMode,
+      })
+
+      sendMessage.mutate(
+        {
+          sessionId: session.id,
+          worktreeId: activeWorktreeId,
+          worktreePath: activeWorktreePath,
+          message: prompt,
+          model,
+          executionMode,
+          effortLevel:
+            preferences?.magic_prompt_efforts?.final_review_effort ?? undefined,
+          mcpConfig: buildMcpConfigJson(
+            mcpServersDataRef.current ?? [],
+            enabledMcpServersRef.current,
+            backend
+          ),
+          customProfileName:
+            provider && provider !== '__anthropic__' ? provider : undefined,
+          parallelExecutionPrompt:
+            preferences?.parallel_execution_prompt_enabled
+              ? (preferences.magic_prompts?.parallel_execution ??
+                DEFAULT_PARALLEL_EXECUTION_PROMPT)
+              : undefined,
+          chromeEnabled: preferences?.chrome_enabled ?? false,
+          aiLanguage: preferences?.ai_language,
+          backend: backend !== 'claude' ? backend : undefined,
+        },
+        { onSettled: () => inputRef.current?.focus() }
+      )
+
+      queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.sessions(activeWorktreeId),
+      })
+    } catch (error) {
+      toast.error(`Failed to start final review: ${error}`)
+    }
+  }, [
+    activeWorktreeId,
+    activeWorktreePath,
+    enabledMcpServersRef,
+    inputRef,
+    mcpServersDataRef,
+    preferences,
+    project?.default_backend,
+    queryClient,
+    sendMessage,
+    setSessionBackend,
+    setSessionModel,
+    setSessionProvider,
+  ])
 
   const handleCommit = useCallback(async () => {
     if (!activeWorktreePath || !activeWorktreeId) return
@@ -387,8 +519,7 @@ export function useGitOperations({
     const opToast = dismissibleToast.loading(`Creating commit on ${prefix}...`)
 
     try {
-      const result = await invoke<CreateCommitResponse>(
-        'create_commit_with_ai',
+      await startCommitJob(
         {
           worktreePath: activeWorktreePath,
           customPrompt: preferences?.magic_prompts?.commit_message,
@@ -402,19 +533,23 @@ export function useGitOperations({
           reasoningEffort:
             preferences?.magic_prompt_efforts?.commit_message_effort ?? null,
           specificFiles,
+        },
+        job => {
+          clearWorktreeLoading(activeWorktreeId)
+          if (job.status === 'failed' || !job.response) {
+            opToast.error(`${prefix}: Failed to commit: ${job.error}`)
+            return
+          }
+
+          clearGitDiffSelectedFiles()
+          triggerImmediateGitPoll()
+          window.dispatchEvent(new CustomEvent('git-commit-completed'))
+          opToast.success(`${prefix}: ${job.response.message.split('\n')[0]}`)
         }
       )
-
-      // Clear selected files and trigger refresh
-      clearGitDiffSelectedFiles()
-      triggerImmediateGitPoll()
-      window.dispatchEvent(new CustomEvent('git-commit-completed'))
-
-      opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
     } catch (error) {
-      opToast.error(`${prefix}: Failed to commit: ${error}`)
-    } finally {
       clearWorktreeLoading(activeWorktreeId)
+      opToast.error(`${prefix}: Failed to commit: ${error}`)
     }
   }, [
     activeWorktreeId,
@@ -450,8 +585,7 @@ export function useGitOperations({
       )
 
       try {
-        const result = await invoke<CreateCommitResponse>(
-          'create_commit_with_ai',
+        await startCommitJob(
           {
             worktreePath: activeWorktreePath,
             customPrompt: preferences?.magic_prompts?.commit_message,
@@ -467,42 +601,48 @@ export function useGitOperations({
             reasoningEffort:
               preferences?.magic_prompt_efforts?.commit_message_effort ?? null,
             specificFiles,
+          },
+          job => {
+            clearWorktreeLoading(activeWorktreeId)
+            if (job.status === 'failed' || !job.response) {
+              opToast.error(`${prefix}: Failed: ${job.error}`)
+              return
+            }
+
+            clearGitDiffSelectedFiles()
+            triggerImmediateGitPoll()
+            window.dispatchEvent(new CustomEvent('git-commit-completed'))
+
+            const result = job.response
+            if (result.push_permission_denied) {
+              opToast.error(
+                `${prefix}: No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
+                {
+                  action: {
+                    label: toastActionLabel('Open PR'),
+                    onClick: () =>
+                      window.dispatchEvent(
+                        new CustomEvent('magic-command', {
+                          detail: { command: 'open-pr' },
+                        })
+                      ),
+                  },
+                }
+              )
+            } else if (result.push_fell_back) {
+              opToast.warning(
+                `${prefix}: Could not push to PR branch, pushed to new branch instead`
+              )
+            } else if (result.commit_hash) {
+              opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
+            } else {
+              opToast.success(`${prefix}: Pushed to remote`)
+            }
           }
         )
-
-        // Clear selected files and trigger refresh
-        clearGitDiffSelectedFiles()
-        triggerImmediateGitPoll()
-        window.dispatchEvent(new CustomEvent('git-commit-completed'))
-
-        if (result.push_permission_denied) {
-          opToast.error(
-            `${prefix}: No permission to push to PR #${worktree?.pr_number}. Create a separate PR instead.`,
-            {
-              action: {
-                label: toastActionLabel('Open PR'),
-                onClick: () =>
-                  window.dispatchEvent(
-                    new CustomEvent('magic-command', {
-                      detail: { command: 'open-pr' },
-                    })
-                  ),
-              },
-            }
-          )
-        } else if (result.push_fell_back) {
-          opToast.warning(
-            `${prefix}: Could not push to PR branch, pushed to new branch instead`
-          )
-        } else if (result.commit_hash) {
-          opToast.success(`${prefix}: ${result.message.split('\n')[0]}`)
-        } else {
-          opToast.success(`${prefix}: Pushed to remote`)
-        }
       } catch (error) {
-        opToast.error(`${prefix}: Failed: ${error}`)
-      } finally {
         clearWorktreeLoading(activeWorktreeId)
+        opToast.error(`${prefix}: Failed: ${error}`)
       }
     },
     [
@@ -629,7 +769,19 @@ export function useGitOperations({
     const { setWorktreeLoading, clearWorktreeLoading } = useChatStore.getState()
     setWorktreeLoading(activeWorktreeId, 'pr')
     const branch = worktree?.branch ?? ''
-    const toastId = toast.loading(`Creating PR for ${branch}...`)
+    let cancellationRequested = false
+    const toastId = toast.loading(`Creating PR for ${branch}...`, {
+      cancel: {
+        label: 'Cancel',
+        onClick: async () => {
+          cancellationRequested = true
+          toast.info('Cancelling PR creation...', { id: toastId })
+          await invoke<boolean>('cancel_create_pr_with_ai_content', {
+            worktreePath: activeWorktreePath,
+          })
+        },
+      },
+    })
 
     try {
       const result = await invoke<CreatePrResponse>(
@@ -675,7 +827,12 @@ export function useGitOperations({
         }
       )
     } catch (error) {
-      toast.error(`Failed to create PR: ${error}`, { id: toastId })
+      const message = String(error)
+      if (cancellationRequested || message.includes('PR creation cancelled')) {
+        toast.info('PR creation cancelled', { id: toastId })
+      } else {
+        toast.error(`Failed to create PR: ${error}`, { id: toastId })
+      }
     } finally {
       clearWorktreeLoading(activeWorktreeId)
     }
@@ -696,7 +853,11 @@ export function useGitOperations({
   // If existingSessionId is provided, stores results on that session (in-place review from ChatWindow)
   // Creates a new session and stores review results in it
   const runReview = useCallback(
-    async (source: 'ai' | 'coderabbit-cli' | 'coderabbit-pr') => {
+    async (
+      source: 'ai' | 'coderabbit-cli' | 'coderabbit-pr',
+      reviewConfig?: MagicCodeReviewConfig,
+      reviewSessionId?: string
+    ) => {
       if (!activeWorktreeId || !activeWorktreePath) return
 
       const { setWorktreeLoading, clearWorktreeLoading } =
@@ -761,37 +922,11 @@ export function useGitOperations({
       }
 
       const reviewRunId = generateId()
-      let cancelRequested = false
       const reviewLabel =
         source === 'coderabbit-cli' ? 'CodeRabbit CLI review' : 'Review'
-      const toastId = toast.loading(`${reviewLabel} for ${reviewTarget}...`, {
-        cancel: {
-          label: 'Cancel',
-          onClick: () => {
-            cancelRequested = true
-            toast.loading(`Cancelling review for ${reviewTarget}...`, {
-              id: toastId,
-            })
-            invoke<boolean>('cancel_review_with_ai', { reviewRunId })
-              .then(cancelled => {
-                if (cancelled) {
-                  toast.info(`Review cancelled for ${reviewTarget}`, {
-                    id: toastId,
-                  })
-                } else {
-                  toast.info(`No active review to cancel for ${reviewTarget}`, {
-                    id: toastId,
-                  })
-                }
-              })
-              .catch(error => {
-                toast.error(`Failed to cancel review: ${error}`, {
-                  id: toastId,
-                })
-              })
-          },
-        },
-      })
+      const toastId = toast.loading(
+        `Starting ${reviewLabel} for ${reviewTarget}...`
+      )
 
       // Fire-and-forget: detect and link PR if not already linked
       if (!worktree?.pr_number) {
@@ -819,112 +954,143 @@ export function useGitOperations({
       }
 
       try {
-        const result = await invoke<ReviewResponse>(
-          source === 'coderabbit-cli'
-            ? 'run_coderabbit_review'
-            : 'run_review_with_ai',
-          source === 'coderabbit-cli'
-            ? {
-                worktreePath: activeWorktreePath,
-                reviewRunId,
-                reviewType: 'all',
-              }
-            : {
-                worktreePath: activeWorktreePath,
-                customPrompt: preferences?.magic_prompts?.code_review,
-                model: preferences?.magic_prompt_models?.code_review_model,
-                customProfileName: resolveMagicPromptProvider(
-                  preferences?.magic_prompt_providers,
-                  'code_review_provider',
-                  preferences?.default_provider
-                ),
-                reasoningEffort:
-                  preferences?.magic_prompt_efforts?.code_review_effort ?? null,
-                reviewRunId,
-              }
+        const { job } = await invoke<StartReviewJobResponse>(
+          'start_review_job',
+          {
+            worktreeId: activeWorktreeId,
+            worktreePath: activeWorktreePath,
+            source,
+            backend:
+              reviewConfig?.backend ??
+              resolveMagicPromptBackend(
+                preferences?.magic_prompt_backends,
+                'code_review_backend',
+                preferences?.default_backend
+              ),
+            customPrompt: preferences?.magic_prompts?.code_review,
+            model:
+              reviewConfig?.model ??
+              preferences?.magic_prompt_models?.code_review_model,
+            customProfileName: resolveMagicPromptProvider(
+              preferences?.magic_prompt_providers,
+              'code_review_provider',
+              preferences?.default_provider
+            ),
+            reasoningEffort:
+              reviewConfig?.reasoning_effort ??
+              preferences?.magic_prompt_efforts?.code_review_effort ??
+              null,
+            reviewRunId,
+            reviewType: source === 'coderabbit-cli' ? 'all' : null,
+            sessionId: reviewSessionId,
+          }
         )
 
-        // Always create a new session for the review
-        const newSession = await invoke<Session>('create_session', {
-          worktreeId: activeWorktreeId,
-          worktreePath: activeWorktreePath,
-          name: 'Code Review',
-        })
-        const targetSessionId = newSession.id
+        if (job.sessionId) {
+          const { setActiveSession, clearActiveWorktree } =
+            useChatStore.getState()
+          setActiveSession(activeWorktreeId, job.sessionId)
+          useProjectsStore.getState().selectWorktree(activeWorktreeId)
+          clearActiveWorktree()
+          useUIStore
+            .getState()
+            .markWorktreeForAutoOpenSession(activeWorktreeId, job.sessionId)
+          queryClient.invalidateQueries({
+            queryKey: chatQueryKeys.sessions(activeWorktreeId),
+          })
+        }
 
-        // Store review results in Zustand (session-scoped, auto-opens sidebar)
-        const {
-          setReviewResults,
-          setActiveSession,
-          clearActiveWorktree,
-          copySessionSettings,
-          activeSessionIds,
-        } = useChatStore.getState()
-        const currentReviewSessionId = activeSessionIds[activeWorktreeId]
-        setReviewResults(targetSessionId, result)
-
-        // Inherit model/mode/thinking settings from current session
-        if (currentReviewSessionId)
-          copySessionSettings(currentReviewSessionId, targetSessionId)
-
-        // Navigate to ProjectCanvasView and open the review session
-        setActiveSession(activeWorktreeId, targetSessionId)
-        useProjectsStore.getState().selectWorktree(activeWorktreeId)
-        clearActiveWorktree()
-        useUIStore
-          .getState()
-          .markWorktreeForAutoOpenSession(activeWorktreeId, targetSessionId)
-
-        // Persist review results to session file
-        invoke('update_session_state', {
-          worktreeId: activeWorktreeId,
-          worktreePath: activeWorktreePath,
-          sessionId: targetSessionId,
-          reviewResults: result,
-        }).catch(() => {
-          /* noop - best effort persist */
-        })
-
-        // Invalidate sessions query to refresh tab bar
-        queryClient.invalidateQueries({
-          queryKey: chatQueryKeys.sessions(activeWorktreeId),
-        })
-
-        const findingCount = result.findings.length
-        toast.success(
-          `${source === 'coderabbit-cli' ? 'CodeRabbit CLI review' : 'Review'} done on ${projectName}/${worktreeName} (${findingCount} findings)`,
+        toast.loading(
+          `${reviewLabel} running for ${projectName}/${worktreeName}...`,
           {
             id: toastId,
-            action: {
-              label: toastActionLabel('Open'),
+            duration: 5000,
+            cancel: {
+              label: 'Cancel',
               onClick: () => {
-                if (!activeWorktreePath) return
-                const { setActiveSession, clearActiveWorktree } =
-                  useChatStore.getState()
-                useProjectsStore.getState().selectWorktree(activeWorktreeId)
-                clearActiveWorktree()
-                setActiveSession(activeWorktreeId, targetSessionId)
-                useUIStore
-                  .getState()
-                  .markWorktreeForAutoOpenSession(
-                    activeWorktreeId,
-                    targetSessionId
-                  )
+                invoke<boolean>('cancel_review_job', { jobId: job.id }).catch(
+                  error => {
+                    toast.error(`Failed to cancel review: ${error}`, {
+                      id: toastId,
+                    })
+                  }
+                )
               },
             },
           }
         )
-      } catch (error) {
-        const errorString = String(error)
-        const cancelled =
-          cancelRequested ||
-          errorString.toLowerCase().includes('cancelled') ||
-          errorString.toLowerCase().includes('canceled')
-        if (cancelled) {
-          toast.info(`Review cancelled for ${reviewTarget}`, { id: toastId })
-        } else {
-          toast.error(`Failed to review: ${error}`, { id: toastId })
+
+        let unlistenReviewJob: (() => void) | null = null
+        let handledTerminalReviewJob = false
+        const handleTerminalReviewJob = (reviewJob: ReviewJob) => {
+          if (reviewJob.id !== job.id) return
+          if (reviewJob.status === 'running') return
+          if (handledTerminalReviewJob) return
+
+          handledTerminalReviewJob = true
+          unlistenReviewJob?.()
+          if (reviewJob.status === 'completed') {
+            const completedSessionId = reviewJob.sessionId
+            void refreshWorktreeSessionsCaches(
+              queryClient,
+              activeWorktreeId,
+              activeWorktreePath
+            ).finally(() => {
+              queryClient.invalidateQueries({
+                queryKey: chatQueryKeys.sessions(activeWorktreeId),
+              })
+              queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
+            })
+            toast.dismiss(toastId)
+            toast.success(
+              `${reviewLabel} done on ${projectName}/${worktreeName} (${reviewJob.findingCount ?? 0} findings)`,
+              {
+                action: completedSessionId
+                  ? {
+                      label: toastActionLabel('Open'),
+                      onClick: () => {
+                        const { setActiveSession, clearActiveWorktree } =
+                          useChatStore.getState()
+                        useProjectsStore
+                          .getState()
+                          .selectWorktree(activeWorktreeId)
+                        clearActiveWorktree()
+                        setActiveSession(activeWorktreeId, completedSessionId)
+                        useUIStore
+                          .getState()
+                          .markWorktreeForAutoOpenSession(
+                            activeWorktreeId,
+                            completedSessionId
+                          )
+                      },
+                    }
+                  : undefined,
+              }
+            )
+          } else if (reviewJob.status === 'cancelled') {
+            toast.dismiss(toastId)
+            toast.info(`Review cancelled for ${reviewTarget}`)
+          } else {
+            toast.dismiss(toastId)
+            toast.error(`Review failed: ${reviewJob.error ?? 'Unknown error'}`)
+          }
         }
+
+        unlistenReviewJob = await listen<ReviewJob>(
+          'review-job:updated',
+          event => handleTerminalReviewJob(event.payload)
+        )
+        if (handledTerminalReviewJob) {
+          unlistenReviewJob()
+        } else {
+          const currentJob = await invoke<ReviewJob | null>('get_review_job', {
+            jobId: job.id,
+          }).catch(() => null)
+          if (currentJob) handleTerminalReviewJob(currentJob)
+        }
+        return job.sessionId
+      } catch (error) {
+        toast.error(`Failed to start review: ${error}`, { id: toastId })
       } finally {
         clearWorktreeLoading(activeWorktreeId)
       }
@@ -937,23 +1103,41 @@ export function useGitOperations({
       queryClient,
       preferences?.magic_prompts?.code_review,
       preferences?.magic_prompt_models?.code_review_model,
+      preferences?.magic_code_review_configs,
+      preferences?.magic_prompt_backends,
+      preferences?.default_backend,
       preferences?.magic_prompt_providers,
       preferences?.default_provider,
       preferences?.magic_prompt_efforts?.code_review_effort,
     ]
   )
 
-  const handleReview = useCallback(() => runReview('ai'), [runReview])
+  const handleReview = useCallback(async () => {
+    const configs = resolveCodeReviewConfigs({
+      configured: preferences?.magic_code_review_configs,
+      fallbackBackend:
+        resolveMagicPromptBackend(
+          preferences?.magic_prompt_backends,
+          'code_review_backend',
+          preferences?.default_backend
+        ) ?? 'claude',
+      fallbackModel:
+        preferences?.magic_prompt_models?.code_review_model ?? 'sonnet',
+    })
+    let reviewSessionId: string | undefined
+    await startCodeReviewsSequentially(configs, async config => {
+      reviewSessionId =
+        (await runReview('ai', config, reviewSessionId)) ?? reviewSessionId
+    })
+  }, [preferences, runReview])
 
-  const handleCodeRabbitReview = useCallback(
-    () => runReview('coderabbit-cli'),
-    [runReview]
-  )
+  const handleCodeRabbitReview = useCallback(async () => {
+    await runReview('coderabbit-cli')
+  }, [runReview])
 
-  const handleCodeRabbitPrReview = useCallback(
-    () => runReview('coderabbit-pr'),
-    [runReview]
-  )
+  const handleCodeRabbitPrReview = useCallback(async () => {
+    await runReview('coderabbit-pr')
+  }, [runReview])
 
   // Handle Merge - validates and shows merge options dialog
   const handleMerge = useCallback(async () => {
@@ -1047,10 +1231,7 @@ export function useGitOperations({
           { worktreeId: activeWorktreeId }
         )
 
-        if (
-          !result.has_conflicts &&
-          (worktree.pr_number || worktree.pr_url)
-        ) {
+        if (!result.has_conflicts && (worktree.pr_number || worktree.pr_url)) {
           const prResult = await invoke<MergeConflictsResponse>(
             'fetch_and_merge_base',
             { worktreeId: activeWorktreeId }
@@ -1509,6 +1690,7 @@ ${resolveInstructions}`
     handleRevertLastCommit,
     handleOpenPr,
     handleReview,
+    handleFinalReview,
     handleCodeRabbitReview,
     handleCodeRabbitPrReview,
     handleMerge,

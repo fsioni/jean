@@ -26,6 +26,13 @@ describe('supportsAdaptiveThinking', () => {
     expect(supportsAdaptiveThinking('claude-fable-5', '2.1.32')).toBe(true)
   })
 
+  it('uses catalog effort metadata for models unknown to the bundled app', () => {
+    expect(supportsAdaptiveThinking('claude-future', '2.1.32', true)).toBe(true)
+    expect(supportsAdaptiveThinking('claude-future', '2.1.31', true)).toBe(
+      false
+    )
+  })
+
   it('does not use effort levels for Claude Fable before CLI support', () => {
     expect(supportsAdaptiveThinking('claude-fable-5', '2.1.31')).toBe(false)
   })

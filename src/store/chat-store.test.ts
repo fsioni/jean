@@ -33,6 +33,7 @@ describe('ChatStore', () => {
       reviewResults: {},
       reviewSidebarVisible: false,
       fixedReviewFindings: {},
+      tableCheckedRows: {},
       worktreePaths: {},
       sendingSessionIds: {},
       sendStartedAt: {},
@@ -253,7 +254,7 @@ describe('ChatStore', () => {
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
       expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
-      expect(state.reviewingSessions['session-1']).toBe(true)
+      expect(state.reviewingSessions['session-1']).toBeUndefined()
     })
 
     it('stores completed duration when a session completes', () => {
@@ -396,6 +397,73 @@ describe('ChatStore', () => {
       expect(
         useChatStore.getState().streamingContents['session-1']
       ).toBeUndefined()
+    })
+  })
+
+  describe('appendStreamingChunk (atomic string + block append)', () => {
+    it('appends to both streamingContents and streamingContentBlocks', () => {
+      const { appendStreamingChunk } = useChatStore.getState()
+
+      appendStreamingChunk('session-1', 'Hello ')
+      appendStreamingChunk('session-1', 'World')
+
+      const state = useChatStore.getState()
+      expect(state.streamingContents['session-1']).toBe('Hello World')
+      expect(state.streamingContentBlocks['session-1']).toEqual([
+        { type: 'text', text: 'Hello World' },
+      ])
+    })
+
+    it('matches the state produced by appendStreamingContent + addTextBlock', () => {
+      const { appendStreamingChunk, appendStreamingContent, addTextBlock } =
+        useChatStore.getState()
+
+      appendStreamingChunk('combined', 'part one ')
+      appendStreamingChunk('combined', 'part two')
+
+      appendStreamingContent('separate', 'part one ')
+      addTextBlock('separate', 'part one ')
+      appendStreamingContent('separate', 'part two')
+      addTextBlock('separate', 'part two')
+
+      const state = useChatStore.getState()
+      expect(state.streamingContents['combined']).toBe(
+        state.streamingContents['separate']
+      )
+      expect(state.streamingContentBlocks['combined']).toEqual(
+        state.streamingContentBlocks['separate']
+      )
+    })
+
+    it('starts a new text block after a tool block while the string keeps accumulating', () => {
+      const { appendStreamingChunk, addToolBlock } = useChatStore.getState()
+
+      appendStreamingChunk('session-1', 'Before tool. ')
+      addToolBlock('session-1', 'tool-1')
+      appendStreamingChunk('session-1', 'After tool.')
+
+      const state = useChatStore.getState()
+      expect(state.streamingContents['session-1']).toBe(
+        'Before tool. After tool.'
+      )
+      expect(state.streamingContentBlocks['session-1']).toEqual([
+        { type: 'text', text: 'Before tool. ' },
+        { type: 'tool_use', tool_call_id: 'tool-1' },
+        { type: 'text', text: 'After tool.' },
+      ])
+    })
+
+    it('is a no-op for empty text (state references unchanged)', () => {
+      const { appendStreamingChunk } = useChatStore.getState()
+
+      appendStreamingChunk('session-1', 'Hello')
+      const before = useChatStore.getState()
+
+      appendStreamingChunk('session-1', '')
+
+      const after = useChatStore.getState()
+      expect(after.streamingContents).toBe(before.streamingContents)
+      expect(after.streamingContentBlocks).toBe(before.streamingContentBlocks)
     })
   })
 
@@ -581,6 +649,34 @@ describe('ChatStore', () => {
       expect(store.consumeStreamingReplayText('session-1', 'OldNew')).toBe(
         'New'
       )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('resynchronizes when capped replay starts at a later tool block', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(
+        store.consumeStreamingReplayToolBlock('session-1', 'tool-1')
+      ).toBe(true)
+      expect(store.consumeStreamingReplayText('session-1', 'After tool.')).toBe(
+        ''
+      )
+      expect(
+        useChatStore.getState().streamingReplayContentBlocks['session-1']
+      ).toBeUndefined()
+    })
+
+    it('resynchronizes when capped replay starts inside a later text block', () => {
+      const store = useChatStore.getState()
+
+      store.setStreamingReplayContentBlocks('session-1', replayBlocks)
+
+      expect(store.consumeStreamingReplayText('session-1', 'After ')).toBe('')
+      expect(store.consumeStreamingReplayText('session-1', 'tool.')).toBe('')
       expect(
         useChatStore.getState().streamingReplayContentBlocks['session-1']
       ).toBeUndefined()
@@ -788,6 +884,34 @@ describe('ChatStore', () => {
       expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
 
       moveQueuedMessageFront('session-1', 'msg-1')
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
+    })
+
+    it('updates a queued message text by id', () => {
+      const { enqueueMessage, updateQueuedMessage, getQueuedMessages } =
+        useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+      enqueueMessage('session-1', createMockMessage('msg-2', 'Second'))
+
+      updateQueuedMessage('session-1', 'msg-2', 'Updated second')
+
+      expect(getQueuedMessages('session-1').map(m => m.message)).toEqual([
+        'First',
+        'Updated second',
+      ])
+    })
+
+    it('queued message update is a no-op for unknown id or unchanged text', () => {
+      const { enqueueMessage, updateQueuedMessage } = useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+
+      const before = useChatStore.getState().messageQueues['session-1']
+      updateQueuedMessage('session-1', 'unknown-id', 'Updated')
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
+
+      updateQueuedMessage('session-1', 'msg-1', 'First')
       expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
     })
   })

@@ -80,4 +80,27 @@ describe('EditedFilesDisplay', () => {
       '+another line'
     )
   })
+
+  it('truncates long mobile file modification names so stats remain visible', () => {
+    const toolCalls: ToolCall[] = [
+      {
+        id: 'fc-1',
+        name: 'FileChange',
+        input: [
+          {
+            path: 'database/migrations/2026_06_11_232520_create_connected_accounts_table.php',
+            diff: '@@ -1 +1 @@\n-old\n+new\n',
+          },
+        ],
+      },
+    ]
+
+    render(<EditedFilesDisplay toolCalls={toolCalls} />)
+
+    expect(
+      screen.getByText('2026_06_11_232520_create_connected_accounts_table.php')
+    ).toHaveClass('truncate')
+    expect(screen.getByText('+1')).toBeVisible()
+    expect(screen.getByText('-1')).toBeVisible()
+  })
 })

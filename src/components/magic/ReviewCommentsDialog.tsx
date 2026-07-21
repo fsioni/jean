@@ -28,7 +28,10 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useWorktrees } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
-import { DEFAULT_REVIEW_COMMENTS_PROMPT } from '@/types/preferences'
+import {
+  DEFAULT_MAGIC_PROMPT_MODES,
+  DEFAULT_REVIEW_COMMENTS_PROMPT,
+} from '@/types/preferences'
 import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
 import type {
@@ -464,6 +467,10 @@ export function ReviewCommentsDialog() {
       .map(formatConversationReviewItem)
   }, [tab, comments, selected, conversationItems, conversationSelected])
 
+  const reviewCommentsExecutionMode =
+    preferences?.magic_prompt_modes?.review_comments_mode ??
+    DEFAULT_MAGIC_PROMPT_MODES.review_comments_mode
+
   const dispatchReviewCommentsPrompts = useCallback(
     (detail: {
       prompt?: string
@@ -511,13 +518,14 @@ export function ReviewCommentsDialog() {
     setIsSending(true)
     dispatchReviewCommentsPrompts({
       prompt: buildPrompt(formatted.join('\n\n---\n\n')),
-      executionMode: 'yolo',
+      executionMode: reviewCommentsExecutionMode,
     })
   }, [
     prNumber,
     getSelectedFormattedComments,
     dispatchReviewCommentsPrompts,
     buildPrompt,
+    reviewCommentsExecutionMode,
   ])
 
   const handleSendSeparately = useCallback(() => {
@@ -529,13 +537,14 @@ export function ReviewCommentsDialog() {
     setIsSending(true)
     dispatchReviewCommentsPrompts({
       prompts: formatted.map(buildPrompt),
-      executionMode: 'yolo',
+      executionMode: reviewCommentsExecutionMode,
     })
   }, [
     prNumber,
     getSelectedFormattedComments,
     dispatchReviewCommentsPrompts,
     buildPrompt,
+    reviewCommentsExecutionMode,
   ])
 
   const handleDialogKeyDown = useCallback(

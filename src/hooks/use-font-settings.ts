@@ -20,6 +20,10 @@ function validateFontSize(size: number | undefined): number {
   return size
 }
 
+function pxToRem(size: number): string {
+  return `${size / 16}rem`
+}
+
 const uiFontFamilyMap: Record<UIFont, string> = {
   inter: "'Inter', -apple-system, 'Segoe UI', 'Roboto', sans-serif",
   geist: "'Geist', -apple-system, 'Segoe UI', 'Roboto', sans-serif",
@@ -57,9 +61,9 @@ function applyFontSettings(
     : 'jetbrains-mono'
 
   const root = document.documentElement
-  root.style.setProperty('--ui-font-size', `${validUiSize}px`)
+  root.style.setProperty('--ui-font-size', pxToRem(validUiSize))
   root.style.setProperty('--ui-line-height', getLineHeight(validUiSize))
-  root.style.setProperty('--chat-font-size', `${validChatSize}px`)
+  root.style.setProperty('--chat-font-size', pxToRem(validChatSize))
   root.style.setProperty('--chat-line-height', getLineHeight(validChatSize))
   root.style.setProperty('--font-family-sans', uiFontFamilyMap[validUiFont])
   root.style.setProperty('--font-family-chat', chatFontFamilyMap[validChatFont])

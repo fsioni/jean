@@ -1,9 +1,16 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useChatStore } from '@/store/chat-store'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   AlertCircle,
   AlertTriangle,
@@ -14,23 +21,45 @@ import {
   Loader2,
   Wrench,
 } from 'lucide-react'
-import { ModalCloseButton } from '@/components/ui/modal-close-button'
-import type { ReviewFinding, ReviewResponse } from '@/types/projects'
+import type {
+  ReviewFinding,
+  ReviewResponse,
+  StoredReviewResults,
+} from '@/types/projects'
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 interface ReviewResultsPanelProps {
   sessionId: string
+  isReviewing?: boolean
   onSendFix?: (message: string, executionMode: 'plan' | 'yolo') => void
 }
 
 /** Generate a unique key for a review finding */
 function getReviewFindingKey(finding: ReviewFinding, index: number): string {
   return `${finding.file}:${finding.line ?? 0}:${index}`
+}
+
+function getStoredReviewFindingKey(
+  finding: ReviewFinding,
+  index: number,
+  reviewKey: string | null
+): string {
+  const findingKey = getReviewFindingKey(finding, index)
+  return reviewKey ? `${reviewKey}:${findingKey}` : findingKey
+}
+
+function formatReviewBackendName(backend: string): string {
+  if (backend === 'opencode') return 'OpenCode'
+  if (backend === 'commandcode') return 'Command Code'
+  if (backend === 'kimi') return 'Kimi Code'
+  if (backend === 'coderabbit-cli') return 'CodeRabbit CLI'
+  return backend.charAt(0).toUpperCase() + backend.slice(1)
 }
 
 /** Get severity icon and color */
@@ -141,7 +170,21 @@ function getApprovalConfig(status: string) {
 }
 
 /** Empty state when no review results */
-function EmptyState() {
+function EmptyState({ isReviewing = false }: { isReviewing?: boolean }) {
+  if (isReviewing) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-10 w-10 animate-spin text-muted-foreground/60" />
+          <p className="mt-3 text-sm font-medium">Review running...</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Results will appear here when the review finishes.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full items-center justify-center">
       <div className="text-center">
@@ -154,26 +197,57 @@ function EmptyState() {
 
 export function ReviewResultsPanel({
   sessionId,
+  isReviewing = false,
   onSendFix,
 }: ReviewResultsPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [customSuggestion, setCustomSuggestion] = useState('')
   const [fixingIndices, setFixingIndices] = useState<Set<number>>(new Set())
   const [isFixingAll, setIsFixingAll] = useState(false)
+  const [selectedReviewKey, setSelectedReviewKey] = useState<string | null>(
+    null
+  )
+  const detailViewportRef = useRef<HTMLDivElement>(null)
+  const isMobile = useIsMobile()
 
-  const reviewResults = useChatStore(
+  const storedReviewResults = useChatStore(
     state => state.reviewResults[sessionId]
-  ) as ReviewResponse | undefined
+  ) as StoredReviewResults | undefined
+  const reviewEntries = useMemo(
+    () =>
+      storedReviewResults && 'reviews' in storedReviewResults
+        ? storedReviewResults.reviews
+        : [],
+    [storedReviewResults]
+  )
+  const effectiveReviewKey =
+    (selectedReviewKey &&
+    reviewEntries.some(
+      entry => `${entry.backend}\u0000${entry.model}` === selectedReviewKey
+    )
+      ? selectedReviewKey
+      : null) ??
+    (reviewEntries[0]
+      ? `${reviewEntries[0].backend}\u0000${reviewEntries[0].model}`
+      : null)
+  const selectedReviewEntry = reviewEntries.find(
+    entry => `${entry.backend}\u0000${entry.model}` === effectiveReviewKey
+  )
+  const reviewResults: ReviewResponse | undefined =
+    selectedReviewEntry?.result ??
+    (storedReviewResults && !('reviews' in storedReviewResults)
+      ? storedReviewResults
+      : undefined)
   const fixedReviewFindings = useChatStore(
     state => state.fixedReviewFindings[sessionId]
   )
 
   const isFindingFixed = useCallback(
     (finding: ReviewFinding, index: number) => {
-      const key = getReviewFindingKey(finding, index)
+      const key = getStoredReviewFindingKey(finding, index, effectiveReviewKey)
       return fixedReviewFindings?.has(key) ?? false
     },
-    [fixedReviewFindings]
+    [effectiveReviewKey, fixedReviewFindings]
   )
 
   const sortedFindings = useMemo(
@@ -197,6 +271,39 @@ export function ReviewResultsPanel({
     setSelectedIndex(index)
     setCustomSuggestion('')
   }, [])
+
+  const handleReviewSelect = useCallback((key: string) => {
+    setSelectedReviewKey(key)
+    setSelectedIndex(null)
+    setCustomSuggestion('')
+  }, [])
+
+  const reviewSelector =
+    reviewEntries.length > 1 && effectiveReviewKey ? (
+      <Select value={effectiveReviewKey} onValueChange={handleReviewSelect}>
+        <SelectTrigger className="h-7 w-auto min-w-48 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {reviewEntries.map(entry => {
+            const key = `${entry.backend}\u0000${entry.model}`
+            return (
+              <SelectItem key={key} value={key}>
+                <span className="flex items-center gap-1.5">
+                  {formatReviewBackendName(entry.backend)} · {entry.model}
+                  {entry.status === 'running' && (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span className="sr-only">Running</span>
+                    </>
+                  )}
+                </span>
+              </SelectItem>
+            )
+          })}
+        </SelectContent>
+      </Select>
+    ) : null
 
   const handleFixFinding = useCallback(
     (
@@ -225,7 +332,11 @@ ${suggestionToApply || '(Please determine the best fix)'}
 
 Please apply this fix to the file.`
 
-        const findingKey = getReviewFindingKey(finding, index)
+        const findingKey = getStoredReviewFindingKey(
+          finding,
+          index,
+          effectiveReviewKey
+        )
         useChatStore.getState().markReviewFindingFixed(sessionId, findingKey)
 
         onSendFix(message, executionMode ?? 'plan')
@@ -237,7 +348,7 @@ Please apply this fix to the file.`
         })
       }
     },
-    [sessionId, onSendFix]
+    [effectiveReviewKey, sessionId, onSendFix]
   )
 
   const handleFixAll = useCallback(
@@ -278,7 +389,11 @@ Please apply all these fixes to the codebase.`
         const { markReviewFindingFixed } = useChatStore.getState()
 
         for (const { finding, index } of unfixedFindings) {
-          const findingKey = getReviewFindingKey(finding, index)
+          const findingKey = getStoredReviewFindingKey(
+            finding,
+            index,
+            effectiveReviewKey
+          )
           markReviewFindingFixed(sessionId, findingKey)
         }
 
@@ -287,11 +402,35 @@ Please apply all these fixes to the codebase.`
         setIsFixingAll(false)
       }
     },
-    [reviewResults, sessionId, isFindingFixed, onSendFix]
+    [effectiveReviewKey, reviewResults, sessionId, isFindingFixed, onSendFix]
   )
 
+  useEffect(() => {
+    if (detailViewportRef.current) {
+      detailViewportRef.current.scrollTop = 0
+    }
+  }, [effectiveSelectedIndex])
+
   if (!reviewResults) {
-    return <EmptyState />
+    return (
+      <div className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
+        {reviewSelector && (
+          <div className="flex items-center gap-3 border-b px-4 py-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Review
+            </span>
+            {reviewSelector}
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          <EmptyState
+            isReviewing={
+              isReviewing || selectedReviewEntry?.status === 'running'
+            }
+          />
+        </div>
+      </div>
+    )
   }
 
   const approvalConfig = getApprovalConfig(reviewResults.approval_status)
@@ -321,13 +460,14 @@ Please apply all these fixes to the codebase.`
     effectiveSelectedIndex !== null && fixingIndices.has(effectiveSelectedIndex)
 
   return (
-    <div className="relative flex h-full flex-col bg-background">
+    <div className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
       {/* Title bar */}
       <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 md:gap-3">
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Review
           </span>
+          {reviewSelector}
           <div className="flex items-center gap-1.5">
             <ApprovalIcon className={cn('h-3.5 w-3.5', approvalConfig.color)} />
             <span className={cn('text-xs font-medium', approvalConfig.color)}>
@@ -370,19 +510,18 @@ Please apply all these fixes to the codebase.`
             </Badge>
           )}
         </div>
-        <ModalCloseButton
-          size="sm"
-          onClick={() => useChatStore.getState().setReviewSidebarVisible(false)}
-        />
       </div>
 
       {/* Master-detail layout */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+      <ResizablePanelGroup
+        direction={isMobile ? 'vertical' : 'horizontal'}
+        className="flex-1 min-h-0 min-w-0"
+      >
         {/* Left sidebar: findings list */}
         <ResizablePanel
-          defaultSize={40}
-          minSize={15}
-          maxSize={60}
+          defaultSize={isMobile ? 30 : 40}
+          minSize={isMobile ? 18 : 15}
+          maxSize={isMobile ? 45 : 60}
           className="flex flex-col min-h-0"
         >
           {/* Fix all actions */}
@@ -463,13 +602,13 @@ Please apply all these fixes to the codebase.`
 
         {/* Right detail panel */}
         <ResizablePanel
-          defaultSize={60}
+          defaultSize={isMobile ? 70 : 60}
           className="flex flex-col min-h-0 min-w-0"
         >
           {effectiveFinding ? (
             <>
               {/* Finding detail header */}
-              <div className="border-b px-6 py-4">
+              <div className="border-b px-4 py-3 md:px-6 md:py-4">
                 <div className="flex items-start gap-3">
                   {(() => {
                     const config = getSeverityConfig(
@@ -488,8 +627,8 @@ Please apply all these fixes to the codebase.`
                     )
                   })()}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <h3 className="min-w-0 break-words text-sm font-semibold">
                         {effectiveFinding.finding.title}
                       </h3>
                       <Badge
@@ -552,7 +691,7 @@ Please apply all these fixes to the codebase.`
                         </Badge>
                       )}
                     </div>
-                    <p className="mt-1 text-xs font-mono text-muted-foreground select-text cursor-text">
+                    <p className="mt-1 break-all text-xs font-mono text-muted-foreground select-text cursor-text">
                       {effectiveFinding.finding.file}
                       {effectiveFinding.finding.line
                         ? `:${effectiveFinding.finding.line}`
@@ -563,14 +702,14 @@ Please apply all these fixes to the codebase.`
               </div>
 
               {/* Finding detail content */}
-              <ScrollArea className="flex-1">
-                <div className="px-6 py-4 space-y-4 max-w-3xl">
+              <ScrollArea className="flex-1" viewportRef={detailViewportRef}>
+                <div className="max-w-3xl space-y-4 px-4 py-4 md:px-6">
                   {/* Description */}
                   <div>
                     <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
                       Description
                     </h4>
-                    <p className="text-sm leading-relaxed text-foreground/90 select-text cursor-text">
+                    <p className="break-words text-sm leading-relaxed text-foreground/90 select-text cursor-text">
                       {effectiveFinding.finding.description}
                     </p>
                   </div>
@@ -581,7 +720,7 @@ Please apply all these fixes to the codebase.`
                       <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
                         Failure Scenario
                       </h4>
-                      <p className="text-sm leading-relaxed text-foreground/90 select-text cursor-text">
+                      <p className="break-words text-sm leading-relaxed text-foreground/90 select-text cursor-text">
                         {effectiveFinding.finding.failure_scenario}
                       </p>
                     </div>
@@ -594,7 +733,7 @@ Please apply all these fixes to the codebase.`
                         Suggested Fix
                       </h4>
                       <div className="rounded-md bg-muted/50 p-3 border">
-                        <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/80 select-text cursor-text">
+                        <pre className="whitespace-pre-wrap break-words text-xs font-mono text-foreground/80 select-text cursor-text">
                           {effectiveFinding.finding.suggestion}
                         </pre>
                       </div>
@@ -613,7 +752,7 @@ Please apply all these fixes to the codebase.`
                         className="font-mono min-h-[80px] text-base md:text-xs"
                         placeholder="Custom fix instructions (optional)..."
                       />
-                      <div className="flex items-center gap-2 mt-3">
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
                         <Button
                           onClick={() =>
                             handleFixFinding(

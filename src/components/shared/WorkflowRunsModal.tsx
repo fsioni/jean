@@ -57,6 +57,7 @@ import {
 } from '@/types/preferences'
 import type { WorkflowRun } from '@/types/github'
 import type { Project, Worktree } from '@/types/projects'
+import { isReusableWorkflowInvestigationSession } from './workflow-run-utils'
 
 function timeAgo(dateString: string): string {
   const seconds = Math.floor(
@@ -320,6 +321,12 @@ export function WorkflowRunsModal() {
         preferences?.default_provider
       )
       const investigateBackend = resolveBackend(investigateModel)
+      // Prefer the Magic Prompt effort override (e.g. Medium for Grok). Never hardcode
+      // Claude thinking levels like "think" — that ignores the configured effort and
+      // shows the wrong badge for effort-based backends (Grok/Codex/Pi/OpenCode).
+      const investigateEffort =
+        preferences?.magic_prompt_efforts?.investigate_workflow_run_effort ??
+        undefined
       const investigateCustomProfile =
         investigateProvider && investigateProvider !== '__anthropic__'
           ? preferences?.custom_cli_profiles?.find(
@@ -437,6 +444,7 @@ export function WorkflowRunsModal() {
           setSelectedBackend,
           setExecutionMode,
           setExecutingMode,
+          setEffortLevel,
         } = useChatStore.getState()
 
         setLastSentMessage(sessionId, prompt)
@@ -447,6 +455,9 @@ export function WorkflowRunsModal() {
         setSelectedBackend(sessionId, investigateBackend)
         setExecutionMode(sessionId, investigateMode)
         setExecutingMode(sessionId, investigateMode)
+        if (investigateEffort) {
+          setEffortLevel(sessionId, investigateEffort)
+        }
 
         // Persist model/backend/provider to session on disk
         setSessionBackend.mutate({
@@ -475,7 +486,7 @@ export function WorkflowRunsModal() {
           message: prompt,
           model: investigateModel,
           executionMode: investigateMode,
-          thinkingLevel: 'think',
+          effortLevel: investigateEffort ?? undefined,
           backend: investigateBackend,
           customProfileName: investigateCustomProfile,
           parallelExecutionPrompt:
@@ -520,8 +531,7 @@ export function WorkflowRunsModal() {
       }
 
       const emptySession = existingSessions?.sessions?.find(
-        s =>
-          !s.archived_at && (s.message_count === 0 || s.message_count == null)
+        isReusableWorkflowInvestigationSession
       )
 
       if (emptySession) {

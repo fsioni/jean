@@ -43,7 +43,14 @@ import {
   reconnectNativeCliSession,
   canReconnectSession,
 } from '@/services/chat'
-import { useWorktree, useProjects, useRunScripts } from '@/services/projects'
+import {
+  useWorktree,
+  useProjects,
+  useRunScripts,
+  usePackageScripts,
+  type PackageScript,
+  projectsQueryKeys,
+} from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import type {
   Worktree,
@@ -61,7 +68,11 @@ import { useLoadedLinearIssueContexts } from '@/services/linear'
 import { useChatStore, DEFAULT_THINKING_LEVEL } from '@/store/chat-store'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { getLabelTextColor } from '@/lib/label-colors'
-import { PREDEFINED_CLI_PROFILES, type CliBackend } from '@/types/preferences'
+import {
+  PREDEFINED_CLI_PROFILES,
+  resolveMagicPromptBackend,
+  type CliBackend,
+} from '@/types/preferences'
 import type {
   ChatMessage,
   ToolCall,
@@ -78,8 +89,12 @@ import type {
   CodexDynamicToolCallRequest,
   PermissionDenial,
   PendingFile,
+  Question,
+  QuestionAnswer,
 } from '@/types/chat'
 import {
+  findCodexUserInputRequest,
+  getCodexUserInputRequestId,
   isAskUserQuestion,
   isPlanToolCall,
   normalizeCodexQuestions,
@@ -101,7 +116,6 @@ import { TextFilePreview } from './TextFilePreview'
 import { SkillBadge } from './SkillBadge'
 import { FileContentModal } from './FileContentModal'
 import { FilePreview } from './FilePreview'
-import { ContextPreview } from './ContextPreview'
 import { ChatInput } from './ChatInput'
 import { SessionDebugPanel } from './SessionDebugPanel'
 import { ChatToolbar } from './ChatToolbar'
@@ -148,12 +162,26 @@ import {
 } from '@/lib/model-utils'
 import { copyToClipboard, copyHtmlToClipboard } from '@/lib/clipboard'
 import { useClaudeCliStatus } from '@/services/claude-cli'
+import {
+  getCatalogModelReasoning,
+  useModelCatalog,
+} from '@/services/model-catalog'
 import { useAvailablePiModels } from '@/services/pi-cli'
 import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
 import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
 import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
-import { getEffectiveSessionWaiting } from './session-card-utils'
+import {
+  getEffectiveSessionWaiting,
+  isDedicatedEmptyCodeReviewSession,
+  shouldShowCodeReviewLoadingPanel,
+  shouldShowReviewFullWidth,
+} from './session-card-utils'
+
+interface ForkSessionToWorktreeResponse {
+  worktree: Worktree
+  session: Session
+}
 
 // Lazy-loaded heavy modals (code splitting)
 const GitDiffModal = lazy(() =>
@@ -199,6 +227,7 @@ import { useActiveTodosAndAgents } from './hooks/useActiveTodosAndAgents'
 import { usePendingAttachments } from './hooks/usePendingAttachments'
 import { dedupeInFlightAssistantMessage } from './in-flight-message-dedupe'
 import { shouldShowPermissionApproval } from './permission-approval-utils'
+import { navigateToForkedSession } from './fork-session-navigation'
 
 // PERFORMANCE: Stable empty array references to prevent infinite render loops
 // When Zustand selectors return [], a new reference is created each time
@@ -248,7 +277,8 @@ export function ChatWindow({
       state.autoInvestigatePRWorktreeIds.has(activeWorktreeId) ||
       state.autoInvestigateSecurityAlertWorktreeIds.has(activeWorktreeId) ||
       state.autoInvestigateAdvisoryWorktreeIds.has(activeWorktreeId) ||
-      state.autoInvestigateLinearIssueWorktreeIds.has(activeWorktreeId)
+      state.autoInvestigateLinearIssueWorktreeIds.has(activeWorktreeId) ||
+      state.autoInvestigateSentryIssueWorktreeIds.has(activeWorktreeId)
     )
   })
 
@@ -292,16 +322,6 @@ export function ChatWindow({
   )
   // Review sidebar state
   const reviewSidebarVisible = useChatStore(state => state.reviewSidebarVisible)
-  const hasReviewResults = useChatStore(state =>
-    activeSessionId ? !!state.reviewResults[activeSessionId] : false
-  )
-  const showReviewFullWidth = hasReviewResults && reviewSidebarVisible
-  // Whether session is in review state (used to hide "restored session" indicator after prompt finishes)
-  const isSessionReviewing = useChatStore(state =>
-    activeSessionId
-      ? (state.reviewingSessions[activeSessionId] ?? false)
-      : false
-  )
   // Terminal panel visibility (per-worktree)
   const terminalVisible = useTerminalStore(state => state.terminalVisible)
   const terminalPanelOpen = useTerminalStore(state =>
@@ -339,18 +359,6 @@ export function ChatWindow({
   const handleTerminalExpand = useCallback(() => {
     setTerminalVisible(true)
   }, [setTerminalVisible])
-
-  // Sync review sidebar panel with reviewSidebarVisible state
-  useEffect(() => {
-    const panel = reviewPanelRef.current
-    if (!panel) return
-
-    if (reviewSidebarVisible) {
-      panel.expand()
-    } else {
-      panel.collapse()
-    }
-  }, [reviewSidebarVisible])
 
   // Review sidebar collapse/expand handlers
   const handleReviewSidebarCollapse = useCallback(() => {
@@ -426,19 +434,79 @@ export function ChatWindow({
     activeWorktreePath
   )
 
+  const hasReviewResults = useChatStore(state =>
+    deferredSessionId ? !!state.reviewResults[deferredSessionId] : false
+  )
+  // Whether session is in review state (used to hide "restored session" indicator after prompt finishes)
+  const isSessionReviewing = useChatStore(state =>
+    deferredSessionId
+      ? (state.reviewingSessions[deferredSessionId] ?? false)
+      : false
+  )
+  const isCodeReviewLoadingPanel = shouldShowCodeReviewLoadingPanel({
+    session,
+    isSessionReviewing,
+    hasReviewResults,
+  })
+  const hasReviewPanel = hasReviewResults || isCodeReviewLoadingPanel
+  // Dedicated Code Review tabs have no transcript (background job). On mobile
+  // web those used to render as empty chat + loading sidebar — full-width instead.
+  // Normal sessions on mobile keep chat mounted; findings stay via inline blocks.
+  const isDedicatedEmptyCodeReview = isDedicatedEmptyCodeReviewSession(session)
+  const showReviewFullWidth = shouldShowReviewFullWidth({
+    hasReviewPanel,
+    reviewSidebarVisible,
+    isMobile,
+    session,
+  })
+
+  // Auto-open review panel when a review is active. On mobile, only for
+  // dedicated empty Code Review sessions (full-width surface).
+  useEffect(() => {
+    if (isMobile && !isDedicatedEmptyCodeReview) return
+    if (hasReviewPanel && !reviewSidebarVisible) {
+      useChatStore.getState().setReviewSidebarVisible(true)
+    }
+  }, [
+    hasReviewPanel,
+    reviewSidebarVisible,
+    isMobile,
+    isDedicatedEmptyCodeReview,
+  ])
+
+  useEffect(() => {
+    const panel = reviewPanelRef.current
+    if (!panel) return
+
+    if (reviewSidebarVisible) {
+      panel.expand()
+    } else {
+      panel.collapse()
+    }
+  }, [reviewSidebarVisible])
+
   // Rebuild streamingContentBlocks from snapshot when opening a session whose
   // last message is still running. Covers web-access click-to-open, sidebar
   // navigation, and any other entry that bypasses App.tsx auto-resume.
   useEffect(() => {
     if (!deferredSessionId || !session) return
-    // Skip hydration while THIS client is actively sending — live chat:chunk
-    // rebuilds streaming state incrementally. Injecting a refetched running
-    // snapshot mid-send duplicates the prior assistant bubble (see answer
-    // submission flow in handleQuestionAnswer).
-    if (useChatStore.getState().sendingSessionIds[deferredSessionId]) return
     const lastMsg = session.messages.at(-1)
     if (lastMsg?.role === 'assistant' && lastMsg.id.startsWith('running-')) {
-      hydrateRunningSnapshot(deferredSessionId, lastMsg)
+      const store = useChatStore.getState()
+      const isSending = !!store.sendingSessionIds[deferredSessionId]
+      const hasLiveStreamingState =
+        !!store.streamingContents[deferredSessionId] ||
+        (store.streamingContentBlocks[deferredSessionId]?.length ?? 0) > 0 ||
+        (store.activeToolCalls[deferredSessionId]?.length ?? 0) > 0
+
+      // A live sender already has the incremental event state. A restored web
+      // session is also marked sending, but starts without that state and must
+      // hydrate the persisted running snapshot (including prior tool calls).
+      if (isSending && hasLiveStreamingState) return
+      hydrateRunningSnapshot(deferredSessionId, lastMsg, {
+        allowWhileSending: true,
+        dedupeReplayedOutput: true,
+      })
     }
   }, [deferredSessionId, session])
 
@@ -625,6 +693,57 @@ export function ChatWindow({
 
   // Run scripts for this worktree (used by CMD+R keybinding)
   const { data: runScripts = [] } = useRunScripts(activeWorktreePath ?? null)
+  const { data: packageScripts = [] } = usePackageScripts(
+    activeWorktreePath ?? null
+  )
+  const handleRunCommand = useCallback(
+    (command: string) => {
+      if (!activeWorktreeId) return
+      useTerminalStore.getState().startRun(activeWorktreeId, command)
+      useUIStore.getState().setSessionChatModalOpen(true, activeWorktreeId)
+      useTerminalStore.getState().setModalTerminalOpen(activeWorktreeId, true)
+    },
+    [activeWorktreeId]
+  )
+  const handleRunPackageScript = useCallback(
+    (script: PackageScript) => {
+      if (!activeWorktreeId) return
+      useTerminalStore
+        .getState()
+        .addTerminal(activeWorktreeId, script.command, script.name, {
+          commandArgs: script.args,
+        })
+      useUIStore.getState().setSessionChatModalOpen(true, activeWorktreeId)
+      useTerminalStore.getState().setModalTerminalOpen(activeWorktreeId, true)
+    },
+    [activeWorktreeId]
+  )
+  const favoritePackageScripts = useMemo(() => {
+    const projectId = worktree?.project_id
+    if (!projectId) return []
+    const prefix = `${projectId}:`
+    return (preferences?.favorite_package_scripts ?? [])
+      .filter(key => key.startsWith(prefix))
+      .map(key => key.slice(prefix.length))
+  }, [preferences?.favorite_package_scripts, worktree?.project_id])
+  const handleToggleFavoritePackageScript = useCallback(
+    (scriptName: string) => {
+      const projectId = worktree?.project_id
+      if (!projectId) return
+      const key = `${projectId}:${scriptName}`
+      const favorites = preferences?.favorite_package_scripts ?? []
+      patchPreferences.mutate({
+        favorite_package_scripts: favorites.includes(key)
+          ? favorites.filter(favorite => favorite !== key)
+          : [...favorites, key],
+      })
+    },
+    [
+      patchPreferences,
+      preferences?.favorite_package_scripts,
+      worktree?.project_id,
+    ]
+  )
 
   // Per-session provider selection: persisted session → zustand → project default → global default
   const projectDefaultProvider = project?.default_provider ?? null
@@ -682,6 +801,7 @@ export function ChatWindow({
       ? (installedBackends[0] as CliBackend)
       : resolvedBackend)
   const isCodexBackend = selectedBackend === 'codex'
+  const isGrokBackend = selectedBackend === 'grok'
   const isCursorBackend = selectedBackend === 'cursor'
 
   // Per-session model selection, falls back to preferences default (backend-aware)
@@ -726,7 +846,17 @@ export function ChatWindow({
           xhigh: 'xhigh',
         } as Record<string, EffortLevel>
       )[preferences?.default_codex_reasoning_effort ?? 'high'] ?? 'high')
-    : ((preferences?.default_effort_level as EffortLevel) ?? 'high')
+    : isGrokBackend
+      ? ((
+          {
+            low: 'low',
+            medium: 'medium',
+            high: 'high',
+            xhigh: 'xhigh',
+            max: 'max',
+          } as Record<string, EffortLevel>
+        )[preferences?.default_grok_reasoning_effort ?? 'high'] ?? 'high')
+      : ((preferences?.default_effort_level as EffortLevel) ?? 'high')
   const sessionEffortLevel = useChatStore(state =>
     deferredSessionId ? state.effortLevels[deferredSessionId] : undefined
   )
@@ -734,13 +864,7 @@ export function ChatWindow({
     (session?.selected_effort_level as EffortLevel | undefined) ??
     sessionEffortLevel ??
     defaultEffortLevel
-  const selectedEffortLevel: EffortLevel = isCodexBackend
-    ? rawSelectedEffortLevel === 'max'
-      ? 'high'
-      : rawSelectedEffortLevel === 'ultracode'
-        ? 'xhigh'
-        : rawSelectedEffortLevel
-    : rawSelectedEffortLevel
+  const selectedEffortLevel: EffortLevel = rawSelectedEffortLevel
 
   // MCP servers: resolve enabled servers cascade (session → project → global)
   // Fetches from ALL installed backends so toolbar shows grouped sections
@@ -754,10 +878,22 @@ export function ChatWindow({
 
   // CLI version for adaptive thinking feature detection
   const { data: cliStatus } = useClaudeCliStatus()
+  const { data: modelCatalog } = useModelCatalog()
+  const selectedModelReasoning = getCatalogModelReasoning(
+    modelCatalog,
+    selectedBackend,
+    selectedModel
+  )
   // Custom providers don't support Opus 4.6 adaptive thinking — use thinking levels instead
   const useAdaptiveThinkingFlag =
     !isCustomProvider &&
-    supportsAdaptiveThinking(selectedModel, cliStatus?.version ?? null)
+    supportsAdaptiveThinking(
+      selectedModel,
+      cliStatus?.version ?? null,
+      selectedModelReasoning === undefined
+        ? undefined
+        : selectedModelReasoning?.type === 'effort'
+    )
 
   // Hide thinking level UI entirely for providers that don't support it
   const customCliProfiles = preferences?.custom_cli_profiles ?? []
@@ -955,6 +1091,18 @@ export function ChatWindow({
     }
     return undefined
   }, [session?.messages])
+
+  const activeCodexUserInputToolCallId = activeCodexUserInputRequest
+    ? getCodexUserInputRequestId(activeCodexUserInputRequest)
+    : null
+  const hasInlineCodexUserInput = Boolean(
+    activeCodexUserInputToolCallId &&
+    (isSending ? currentToolCalls : lastAssistantMessage?.tool_calls)?.some(
+      toolCall =>
+        toolCall.id === activeCodexUserInputToolCallId &&
+        isAskUserQuestion(toolCall)
+    )
+  )
 
   // Check if there are pending (unanswered) questions
   // Look at the last assistant message's tool_calls since streaming tool calls
@@ -1221,9 +1369,9 @@ export function ChatWindow({
         override?.model ??
         yoloModelRef.current ??
         (yoloBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : yoloBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : yoloBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : yoloBackend === 'pi'
@@ -1231,7 +1379,11 @@ export function ChatWindow({
                 : yoloBackend === 'commandcode'
                   ? (preferences?.selected_commandcode_model ??
                     'commandcode/default')
-                  : selectedModelRef.current)
+                  : yoloBackend === 'grok'
+                    ? (preferences?.selected_grok_model ?? 'grok/grok-4.5')
+                    : yoloBackend === 'kimi'
+                      ? (preferences?.selected_kimi_model ?? 'kimi/default')
+                      : selectedModelRef.current)
       const yoloOverride =
         override || yoloModelRef.current || yoloBackend
           ? [yoloBackend, yoloModel].filter(Boolean).join(' / ')
@@ -1407,9 +1559,9 @@ export function ChatWindow({
         override?.model ??
         buildModelRef.current ??
         (buildBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : buildBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : buildBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : buildBackend === 'pi'
@@ -1417,7 +1569,11 @@ export function ChatWindow({
                 : buildBackend === 'commandcode'
                   ? (preferences?.selected_commandcode_model ??
                     'commandcode/default')
-                  : selectedModelRef.current)
+                  : buildBackend === 'grok'
+                    ? (preferences?.selected_grok_model ?? 'grok/grok-4.5')
+                    : buildBackend === 'kimi'
+                      ? (preferences?.selected_kimi_model ?? 'kimi/default')
+                      : selectedModelRef.current)
       const buildOverride =
         override || buildModelRef.current || buildBackend
           ? [buildBackend, buildModel].filter(Boolean).join(' / ')
@@ -1676,9 +1832,9 @@ export function ChatWindow({
         override?.model ??
         modeModelRef.current ??
         (modeBackend === 'codex'
-          ? (preferences?.selected_codex_model ?? 'gpt-5.5')
+          ? (preferences?.selected_codex_model ?? 'gpt-5.6-sol')
           : modeBackend === 'opencode'
-            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
+            ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol')
             : modeBackend === 'cursor'
               ? (preferences?.selected_cursor_model ?? 'cursor/auto')
               : modeBackend === 'pi'
@@ -1686,7 +1842,11 @@ export function ChatWindow({
                 : modeBackend === 'commandcode'
                   ? (preferences?.selected_commandcode_model ??
                     'commandcode/default')
-                  : selectedModelRef.current)
+                  : modeBackend === 'grok'
+                    ? (preferences?.selected_grok_model ?? 'grok/grok-4.5')
+                    : modeBackend === 'kimi'
+                      ? (preferences?.selected_kimi_model ?? 'kimi/default')
+                      : selectedModelRef.current)
       const modeOverride =
         override || modeModelRef.current || modeBackend
           ? [modeBackend, modeModel].filter(Boolean).join(' / ')
@@ -1825,20 +1985,24 @@ export function ChatWindow({
       const store = useChatStore.getState()
       store.setSessionReviewing(activeSessionId, false)
 
+      const backend = resolveMagicPromptBackend(
+        preferences?.magic_prompt_backends,
+        'code_review_backend',
+        preferences?.default_backend
+      )
+
       // Create new session
       let newSession: Session
       try {
         newSession = await createSession.mutateAsync({
           worktreeId: activeWorktreeId,
           worktreePath: activeWorktreePath,
+          backend: backend ?? undefined,
         })
       } catch (err) {
         toast.error(`Failed to create session: ${err}`)
         return
       }
-
-      // Switch to new session
-      store.setActiveSession(activeWorktreeId, newSession.id)
 
       const model =
         preferences?.magic_prompt_models?.code_review_model ??
@@ -1848,6 +2012,9 @@ export function ChatWindow({
       store.setError(newSession.id, null)
       store.addSendingSession(newSession.id)
       store.setSelectedModel(newSession.id, model)
+      if (backend) {
+        store.setSelectedBackend(newSession.id, backend)
+      }
       store.setExecutingMode(newSession.id, executionMode)
 
       sendMessage.mutate({
@@ -1856,6 +2023,7 @@ export function ChatWindow({
         worktreePath: activeWorktreePath,
         message,
         model,
+        backend: backend ?? undefined,
         executionMode,
         thinkingLevel: selectedThinkingLevelRef.current,
       })
@@ -1919,6 +2087,7 @@ export function ChatWindow({
     handleRevertLastCommit,
     handleOpenPr,
     handleReview,
+    handleFinalReview,
     handleCodeRabbitReview,
     handleCodeRabbitPrReview,
     handleMerge,
@@ -2090,11 +2259,84 @@ export function ChatWindow({
     useUIStore.getState().setLinkedProjectsModalOpen(open)
   }, [])
 
+  const handleForkSession = useCallback(async () => {
+    if (!activeWorktreeId || !activeSessionId) {
+      toast.error('No active session to fork')
+      return
+    }
+
+    const toastId = toast.loading('Forking session to a new worktree...')
+    try {
+      const result = await invoke<ForkSessionToWorktreeResponse>(
+        'fork_session_to_worktree',
+        {
+          sourceWorktreeId: activeWorktreeId,
+          sourceSessionId: activeSessionId,
+        }
+      )
+
+      const { worktree: forkedWorktree, session: forkedSession } = result
+      queryClient.setQueryData<Worktree>(
+        [...projectsQueryKeys.all, 'worktree', forkedWorktree.id],
+        forkedWorktree
+      )
+      queryClient.setQueryData<Session>(
+        chatQueryKeys.session(forkedSession.id),
+        forkedSession
+      )
+      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.worktrees(forkedWorktree.project_id),
+      })
+      queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.sessions(forkedWorktree.id),
+      })
+
+      const projectsStore = useProjectsStore.getState()
+      const chatStore = useChatStore.getState()
+      navigateToForkedSession(
+        forkedWorktree,
+        forkedSession,
+        {
+          activeWorktreePath,
+          sessionChatModalOpen: isModal || sessionModalOpen,
+        },
+        {
+          expandProject: projectsStore.expandProject,
+          selectWorktree: projectsStore.selectWorktree,
+          registerWorktreePath: chatStore.registerWorktreePath,
+          setActiveWorktree: chatStore.setActiveWorktree,
+          setActiveSession: chatStore.setActiveSession,
+          addUserInitiatedSession: chatStore.addUserInitiatedSession,
+          openWorktreeModal: (worktreeId, worktreePath) => {
+            window.dispatchEvent(
+              new CustomEvent('open-worktree-modal', {
+                detail: { worktreeId, worktreePath },
+              })
+            )
+          },
+        }
+      )
+
+      toast.success(`Forked session to ${forkedWorktree.name}`, { id: toastId })
+    } catch (err) {
+      toast.error(`Failed to fork session: ${err}`, { id: toastId })
+    }
+  }, [
+    activeSessionId,
+    activeWorktreeId,
+    activeWorktreePath,
+    isModal,
+    queryClient,
+    sessionModalOpen,
+  ])
+
   // Listen for magic-command events from MagicModal
   useMagicCommands({
     handleSaveContext,
     handleLoadContext,
     handleLinkedProjects,
+    handleForkSession,
     handleCommit,
     handleCommitAndPush: handleCommitAndPushWithPicker,
     handlePull: handlePullWithPicker,
@@ -2133,6 +2375,8 @@ export function ChatWindow({
       handleInvestigate('advisory')
     } else if (uiStore.consumeAutoInvestigateLinearIssue(activeWorktreeId)) {
       handleInvestigate('linear-issue')
+    } else if (uiStore.consumeAutoInvestigateSentryIssue(activeWorktreeId)) {
+      handleInvestigate('sentry-issue')
     }
   }, [
     activeSessionId,
@@ -2197,6 +2441,58 @@ export function ChatWindow({
     pendingPlanMessage,
     projectIdRef,
   })
+
+  const handleResolvedQuestionAnswer = useCallback(
+    (toolCallId: string, answers: QuestionAnswer[], questions: Question[]) => {
+      const sessionId = activeSessionIdRef.current
+      if (
+        sessionId &&
+        useChatStore.getState().isQuestionAnswered(sessionId, toolCallId)
+      ) {
+        return
+      }
+      const pendingRequest = sessionId
+        ? findCodexUserInputRequest(
+            useChatStore.getState().pendingCodexUserInputRequests[sessionId] ??
+              [],
+            toolCallId
+          )
+        : undefined
+
+      if (pendingRequest) {
+        handleCodexUserInputAnswer(pendingRequest, answers)
+        return
+      }
+      handleQuestionAnswer(toolCallId, answers, questions)
+    },
+    [handleCodexUserInputAnswer, handleQuestionAnswer]
+  )
+
+  const handleResolvedQuestionSkip = useCallback(
+    (toolCallId: string) => {
+      const sessionId = activeSessionIdRef.current
+      if (
+        sessionId &&
+        useChatStore.getState().isQuestionAnswered(sessionId, toolCallId)
+      ) {
+        return
+      }
+      const pendingRequest = sessionId
+        ? findCodexUserInputRequest(
+            useChatStore.getState().pendingCodexUserInputRequests[sessionId] ??
+              [],
+            toolCallId
+          )
+        : undefined
+
+      if (pendingRequest) {
+        handleCodexUserInputAnswer(pendingRequest, [])
+        return
+      }
+      handleSkipQuestion(toolCallId)
+    },
+    [handleCodexUserInputAnswer, handleSkipQuestion]
+  )
 
   // Copy a sent user message to the clipboard with attachment metadata
   // When pasted back, ChatInput detects the custom format and restores attachments
@@ -2353,8 +2649,11 @@ export function ChatWindow({
   )
 
   // Queued prompts panel actions (remove / send-now)
-  const { handleRemoveQueuedMessage, handleSendQueuedNow } =
-    useQueuedPromptActions()
+  const {
+    handleRemoveQueuedMessage,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+  } = useQueuedPromptActions()
 
   // Pending attachment removal, slash command execution
   const {
@@ -2517,6 +2816,7 @@ export function ChatWindow({
           open={reviewMethodModalOpen}
           onOpenChange={setReviewMethodModalOpen}
           onAiReview={handleReview}
+          onFinalReview={handleFinalReview}
           onCodeRabbitCliReview={handleCodeRabbitReview}
           onCodeRabbitPrReview={handleCodeRabbitPrReview}
           codeRabbitPrAvailable={Boolean(worktree?.pr_number)}
@@ -2563,18 +2863,30 @@ export function ChatWindow({
           <div className="flex-1 min-h-0">
             <ReviewResultsPanel
               sessionId={activeSessionId}
+              isReviewing={isCodeReviewLoadingPanel}
               onSendFix={handleReviewFix}
             />
           </div>
         ) : (
-          <ResizablePanelGroup direction="horizontal" className="flex-1">
-            <ResizablePanel defaultSize={100} minSize={40}>
-              <ResizablePanelGroup direction="vertical" className="h-full">
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="min-h-0 flex-1"
+          >
+            <ResizablePanel
+              defaultSize={100}
+              minSize={isMobile ? 0 : 40}
+              className="min-h-0"
+            >
+              <ResizablePanelGroup
+                direction="vertical"
+                className="h-full min-h-0"
+              >
                 <ResizablePanel
                   defaultSize={terminalVisible ? 70 : 100}
-                  minSize={30}
+                  minSize={isMobile || isModal ? 0 : 30}
+                  className="min-h-0"
                 >
-                  <div className="flex h-full flex-col">
+                  <div className="flex h-full min-h-0 flex-col">
                     {/* Messages area */}
                     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
                       {/* Session label badge - absolute positioned to avoid covering content */}
@@ -2710,8 +3022,10 @@ export function ChatWindow({
                                         ? handleWorktreeYoloApproval
                                         : undefined
                                     }
-                                    onQuestionAnswer={handleQuestionAnswer}
-                                    onQuestionSkip={handleSkipQuestion}
+                                    onQuestionAnswer={
+                                      handleResolvedQuestionAnswer
+                                    }
+                                    onQuestionSkip={handleResolvedQuestionSkip}
                                     onFileClick={setViewingFilePath}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
@@ -2783,8 +3097,10 @@ export function ChatWindow({
                                         ? handleWorktreeYoloApproval
                                         : undefined
                                     }
-                                    onQuestionAnswer={handleQuestionAnswer}
-                                    onQuestionSkip={handleSkipQuestion}
+                                    onQuestionAnswer={
+                                      handleResolvedQuestionAnswer
+                                    }
+                                    onQuestionSkip={handleResolvedQuestionSkip}
                                     onFileClick={setViewingFilePath}
                                     onFixFinding={handleFixFinding}
                                     onFixAllFindings={handleFixAllFindings}
@@ -2820,8 +3136,12 @@ export function ChatWindow({
                                       }
                                       toolCalls={currentToolCalls}
                                       streamingContent={streamingContent}
-                                      onQuestionAnswer={handleQuestionAnswer}
-                                      onQuestionSkip={handleSkipQuestion}
+                                      onQuestionAnswer={
+                                        handleResolvedQuestionAnswer
+                                      }
+                                      onQuestionSkip={
+                                        handleResolvedQuestionSkip
+                                      }
                                       onFileClick={setViewingFilePath}
                                       worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
@@ -2837,8 +3157,12 @@ export function ChatWindow({
                                       }
                                       toolCalls={currentToolCalls}
                                       streamingContent={streamingContent}
-                                      onQuestionAnswer={handleQuestionAnswer}
-                                      onQuestionSkip={handleSkipQuestion}
+                                      onQuestionAnswer={
+                                        handleResolvedQuestionAnswer
+                                      }
+                                      onQuestionSkip={
+                                        handleResolvedQuestionSkip
+                                      }
                                       onFileClick={setViewingFilePath}
                                       worktreePath={activeWorktreePath}
                                       isQuestionAnswered={isQuestionAnswered}
@@ -2927,17 +3251,23 @@ export function ChatWindow({
                             )}
 
                             {activeCodexUserInputRequest &&
+                              !hasInlineCodexUserInput &&
                               activeCodexUserInputQuestions.length > 0 && (
                                 <AskUserQuestion
                                   toolCallId={
-                                    activeCodexUserInputRequest.item_id ||
-                                    `codex-user-input-${activeCodexUserInputRequest.rpc_id}`
+                                    activeCodexUserInputToolCallId as string
                                   }
                                   questions={activeCodexUserInputQuestions}
                                   onSubmit={(_toolCallId, answers) =>
                                     handleCodexUserInputAnswer(
                                       activeCodexUserInputRequest,
                                       answers
+                                    )
+                                  }
+                                  onSkip={() =>
+                                    handleCodexUserInputAnswer(
+                                      activeCodexUserInputRequest,
+                                      []
                                     )
                                   }
                                   isSkipped={false}
@@ -3035,6 +3365,7 @@ export function ChatWindow({
                                 isSessionBusy={isSending || isWaitingForInput}
                                 onRemove={handleRemoveQueuedMessage}
                                 onSendNow={handleSendQueuedNow}
+                                onEdit={handleEditQueuedMessage}
                               />
                             )}
                           {/* Input area - unified container with textarea and toolbar */}
@@ -3055,35 +3386,6 @@ export function ChatWindow({
                                 : undefined
                             }
                           >
-                            {/* Loaded context preview (# mentions) */}
-                            <ContextPreview
-                              sessionId={activeSessionId}
-                              worktreeId={null}
-                              worktreePath={activeWorktreePath}
-                              projectId={worktree?.project_id ?? null}
-                              disabled={isSending}
-                              excludeIssueNumber={
-                                worktree?.issue_number ?? null
-                              }
-                              excludePrNumber={
-                                worktree?.issue_number ||
-                                worktree?.security_alert_number ||
-                                worktree?.advisory_ghsa_id ||
-                                worktree?.linear_issue_identifier
-                                  ? null
-                                  : (worktree?.pr_number ?? null)
-                              }
-                              excludeSecurityAlertNumber={
-                                worktree?.security_alert_number ?? null
-                              }
-                              excludeAdvisoryGhsaId={
-                                worktree?.advisory_ghsa_id ?? null
-                              }
-                              excludeLinearIssueIdentifier={
-                                worktree?.linear_issue_identifier ?? null
-                              }
-                            />
-
                             {/* Pending file preview (@ mentions) */}
                             <FilePreview
                               files={currentPendingFiles}
@@ -3238,6 +3540,7 @@ export function ChatWindow({
                                 worktreeId={activeWorktreeId ?? null}
                                 activeSessionId={activeSessionId}
                                 projectId={worktree?.project_id}
+                                runScripts={runScripts}
                                 loadedIssueContexts={loadedIssueContexts ?? []}
                                 loadedPRContexts={loadedPRContexts ?? []}
                                 loadedSecurityContexts={
@@ -3295,6 +3598,13 @@ export function ChatWindow({
                                 onToggleMcpServer={handleToggleMcpServer}
                                 onOpenProjectSettings={
                                   handleOpenProjectSettings
+                                }
+                                onRunCommand={handleRunCommand}
+                                packageScripts={packageScripts}
+                                favoritePackageScripts={favoritePackageScripts}
+                                onRunPackageScript={handleRunPackageScript}
+                                onToggleFavoritePackageScript={
+                                  handleToggleFavoritePackageScript
                                 }
                               />
                             </div>
@@ -3370,8 +3680,9 @@ export function ChatWindow({
               </ResizablePanelGroup>
             </ResizablePanel>
 
-            {/* Review sidebar - shown when active session has review results */}
-            {hasReviewResults && (
+            {/* Review sidebar — desktop split only. Mobile dedicated Code Review
+                uses full-width branch above; other mobile sessions keep chat. */}
+            {hasReviewPanel && !isMobile && (
               <>
                 <ResizableHandle withHandle />
                 <ResizablePanel
@@ -3386,6 +3697,7 @@ export function ChatWindow({
                   {activeSessionId && (
                     <ReviewResultsPanel
                       sessionId={activeSessionId}
+                      isReviewing={isCodeReviewLoadingPanel}
                       onSendFix={handleReviewFix}
                     />
                   )}

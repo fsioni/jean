@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { screen, waitFor, render } from '@/test/test-utils'
 import { useUIStore } from '@/store/ui-store'
-import { GitHubDashboardModal } from './GitHubDashboardModal'
+import { useProjectsStore } from '@/store/projects-store'
+import { GitHubDashboardModal, InvestigateButton } from './GitHubDashboardModal'
 
 const mockInvoke = vi.hoisted(() => vi.fn())
 const mockUseProjects = vi.hoisted(() => vi.fn())
 const mockUseGhCliAuth = vi.hoisted(() => vi.fn())
+const mockIsMobile = vi.hoisted(() => ({ value: false }))
 
 vi.mock('@/lib/transport', () => ({
   invoke: mockInvoke,
@@ -25,6 +28,10 @@ vi.mock('@/hooks/useGhLogin', () => ({
 
 vi.mock('@/services/gh-cli', () => ({
   useGhCliAuth: mockUseGhCliAuth,
+}))
+
+vi.mock('@/hooks/use-mobile', () => ({
+  useIsMobile: () => mockIsMobile.value,
 }))
 
 vi.mock('@/components/shared/GhAuthError', () => ({
@@ -48,6 +55,15 @@ const project = {
   name: 'Project 1',
   path: '/tmp/project-1',
 }
+
+const favoriteProject = {
+  id: 'project-2',
+  name: 'Favorite Project',
+  path: '/tmp/project-2',
+}
+
+const longIssueTitle =
+  'This is a very long GitHub issue title that should wrap across multiple lines on mobile instead of being unreadable'
 
 function renderDashboard() {
   useUIStore.setState({ githubDashboardOpen: true })
@@ -74,10 +90,18 @@ describe('GitHubDashboardModal auth error handling', () => {
       unobserve = vi.fn()
       disconnect = vi.fn()
     }
+    Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+    Element.prototype.setPointerCapture ??= vi.fn()
+    Element.prototype.releasePointerCapture ??= vi.fn()
+    Element.prototype.scrollIntoView ??= vi.fn()
 
     mockInvoke.mockReset()
     mockUseProjects.mockReset()
     mockUseGhCliAuth.mockReset()
+    mockIsMobile.value = false
+    useProjectsStore.setState({
+      githubDashboardFavoriteProjectIds: [],
+    })
 
     mockUseProjects.mockReturnValue({ data: [project] })
     mockUseGhCliAuth.mockReturnValue({
@@ -158,5 +182,169 @@ describe('GitHubDashboardModal auth error handling', () => {
     expect(
       await screen.findByTestId('gh-auth-error', {}, { timeout: 3000 })
     ).toBeInTheDocument()
+  })
+
+  it('renders as a padded large modal instead of full-screen or the old smaller modal', () => {
+    mockInvoke.mockImplementation(resolveEmptyDashboardCommand)
+
+    renderDashboard()
+
+    const dashboard = screen.getByRole('dialog', { name: 'GitHub Dashboard' })
+    expect(dashboard).toHaveClass(
+      '!w-[calc(100vw-4rem)]',
+      '!h-[calc(100dvh-6rem)]',
+      '!max-w-[calc(100vw-4rem)]',
+      '!max-h-[calc(100dvh-6rem)]',
+      '!rounded-lg'
+    )
+    expect(dashboard.className).not.toContain('!w-screen')
+    expect(dashboard.className).not.toContain('!h-dvh')
+    expect(dashboard.className).not.toContain('sm:!w-[90vw]')
+    expect(dashboard.className).not.toContain('sm:!h-[85vh]')
+  })
+
+  it('stacks the title above the filter controls on mobile', () => {
+    mockInvoke.mockImplementation(resolveEmptyDashboardCommand)
+
+    renderDashboard()
+
+    expect(screen.getByTestId('github-dashboard-header-row')).toHaveClass(
+      'flex-col',
+      'sm:flex-row'
+    )
+    expect(screen.getByTestId('github-dashboard-header-controls')).toHaveClass(
+      'flex-col',
+      'sm:flex-row'
+    )
+  })
+
+  it('sorts projects by name in the searchable project picker', async () => {
+    const user = userEvent.setup()
+    mockUseProjects.mockReturnValue({
+      data: [
+        { id: 'zebra', name: 'zebra', path: '/tmp/zebra' },
+        { id: 'alpha', name: 'alpha', path: '/tmp/alpha' },
+        favoriteProject,
+      ],
+    })
+    mockInvoke.mockImplementation(resolveEmptyDashboardCommand)
+
+    renderDashboard()
+
+    await user.click(
+      screen.getByRole('combobox', { name: /select github dashboard project/i })
+    )
+
+    expect(
+      screen.getByPlaceholderText('Search projects...')
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('option').map(option => option.textContent)
+    ).toEqual(['alpha', 'Favorite Project', 'zebra'])
+
+    await user.type(screen.getByPlaceholderText('Search projects...'), 'fav')
+    expect(
+      screen.getByRole('option', { name: 'Favorite Project' })
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'alpha' })).toBeNull()
+  })
+
+  it('lets projects be favorited from inside the project picker and keeps favorites at the top', async () => {
+    const user = userEvent.setup()
+    mockUseProjects.mockReturnValue({ data: [project, favoriteProject] })
+    mockInvoke.mockImplementation(resolveEmptyDashboardCommand)
+
+    renderDashboard()
+
+    await user.click(
+      screen.getByRole('combobox', { name: /select github dashboard project/i })
+    )
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Favorite Favorite Project in GitHub dashboard',
+      })
+    )
+
+    const favoriteIds =
+      useProjectsStore.getState().githubDashboardFavoriteProjectIds
+    expect(favoriteIds).toEqual(['project-2'])
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Unfavorite Favorite Project in GitHub dashboard',
+      })
+    ).toBeInTheDocument()
+
+    const options = screen
+      .getAllByRole('option')
+      .map(option => option.textContent)
+    expect(options).toEqual(['Favorite Project', 'Project 1'])
+  })
+
+  it('allows long issue titles to wrap on mobile', async () => {
+    mockIsMobile.value = true
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'list_github_issues') {
+        return Promise.resolve({
+          issues: [
+            {
+              number: 101,
+              title: longIssueTitle,
+              body: '',
+              state: 'OPEN',
+              labels: [],
+              created_at: '2026-01-01T00:00:00Z',
+              author: { login: 'octocat' },
+            },
+          ],
+          totalCount: 1,
+        })
+      }
+      return resolveEmptyDashboardCommand(command)
+    })
+
+    renderDashboard()
+
+    expect(await screen.findByText(longIssueTitle)).toHaveClass(
+      'whitespace-normal',
+      'break-words',
+      'sm:truncate'
+    )
+  })
+})
+
+describe('GitHubDashboardModal mobile investigate actions', () => {
+  beforeEach(() => {
+    mockIsMobile.value = true
+  })
+
+  it('puts investigate and background investigate behind the wand menu', async () => {
+    const user = userEvent.setup()
+    const onPreview = vi.fn()
+    const onInvestigate = vi.fn()
+
+    render(
+      <InvestigateButton
+        label="Issue"
+        isCreating={false}
+        tooltip="Investigate issue"
+        onPreview={onPreview}
+        onInvestigate={onInvestigate}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /issue actions/i }))
+    await user.click(screen.getByRole('menuitem', { name: /preview/i }))
+    expect(onPreview).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: /issue actions/i }))
+    await user.click(screen.getByRole('menuitem', { name: /^investigate$/i }))
+    expect(onInvestigate).toHaveBeenLastCalledWith(false)
+
+    await user.click(screen.getByRole('button', { name: /issue actions/i }))
+    await user.click(
+      screen.getByRole('menuitem', { name: /investigate in background/i })
+    )
+    expect(onInvestigate).toHaveBeenLastCalledWith(true)
   })
 })

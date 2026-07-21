@@ -57,7 +57,6 @@ function renderDesktopToolbarControls(
     activeWorktreePath: undefined,
     availableMcpServers: [],
     enabledMcpServers: [],
-    activeMcpCount: 0,
     isHealthChecking: false,
     mcpStatuses: undefined,
     loadedIssueContexts: [],
@@ -213,6 +212,53 @@ describe('DesktopToolbarControls', () => {
     expect(screen.getByText('xHigh')).toBeInTheDocument()
     expect(screen.queryByText('Max')).not.toBeInTheDocument()
     expect(screen.queryByText('Ultracode')).not.toBeInTheDocument()
+  })
+
+  it('renders effort levels supplied by the selected model catalog entry', () => {
+    renderDesktopToolbarControls({
+      selectedBackend: 'codex',
+      selectedModel: 'gpt-5.6-sol',
+      selectedEffortLevel: 'ultra',
+      thinkingDropdownOpen: true,
+      modelReasoning: {
+        type: 'effort',
+        default: 'medium',
+        levels: [
+          { value: 'medium', label: 'Medium', description: 'Balanced' },
+          {
+            value: 'ultra',
+            label: 'Ultra',
+            description: 'Automatic delegation',
+          },
+        ],
+      },
+    })
+
+    expect(screen.getAllByText('Ultra').length).toBeGreaterThan(0)
+    expect(screen.getByText('Automatic delegation')).toBeInTheDocument()
+    expect(screen.queryByText('xHigh')).not.toBeInTheDocument()
+  })
+
+  it('renders thinking levels supplied by the selected model catalog entry', () => {
+    renderDesktopToolbarControls({
+      selectedBackend: 'claude',
+      selectedModel: 'claude-legacy',
+      isCodex: false,
+      selectedThinkingLevel: 'megathink',
+      thinkingDropdownOpen: true,
+      modelReasoning: {
+        type: 'thinking',
+        default: 'think',
+        levels: [
+          { value: 'think', label: 'Think', description: '4K' },
+          { value: 'megathink', label: 'Mega', description: '10K' },
+        ],
+      },
+    })
+
+    expect(screen.getAllByText('Mega').length).toBeGreaterThan(0)
+    expect(screen.getByText('10K')).toBeInTheDocument()
+    expect(screen.queryByText('Ultrathink')).not.toBeInTheDocument()
   })
 
   it('shows PI effort options instead of Claude thinking on desktop', () => {

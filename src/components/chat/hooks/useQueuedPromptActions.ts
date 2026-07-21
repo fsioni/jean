@@ -3,10 +3,13 @@ import {
   cancelChatMessage,
   persistMoveQueuedFront,
   persistRemoveQueued,
+  persistUpdateQueued,
   steerCodexTurn,
+  steerGrokTurn,
   steerOpencodeTurn,
   steerPiTurn,
 } from '@/services/chat'
+import { buildMessageWithRefs } from '@/components/chat/message-with-refs'
 import { useChatStore } from '@/store/chat-store'
 import { logger } from '@/lib/logger'
 import type { QueuedMessage } from '@/types/chat'
@@ -18,12 +21,27 @@ function resolveWorktree(sessionId: string) {
   return { worktreeId, worktreePath }
 }
 
+/**
+ * Any attachment kind serializes to a path ref via buildMessageWithRefs, so
+ * text-only mid-turn steer (Grok/Pi/OpenCode) can carry all of them. Codex
+ * also accepts structured attachment input when present.
+ */
 function hasAttachments(msg: QueuedMessage): boolean {
   return (
     msg.pendingImages.length > 0 ||
     msg.pendingFiles.length > 0 ||
     msg.pendingSkills.length > 0 ||
     msg.pendingTextFiles.length > 0
+  )
+}
+
+function supportsSteering(msg: QueuedMessage): boolean {
+  const backend = msg.backend ?? 'claude'
+  return (
+    backend === 'codex' ||
+    backend === 'opencode' ||
+    backend === 'pi' ||
+    backend === 'grok'
   )
 }
 
@@ -48,6 +66,45 @@ export function useQueuedPromptActions() {
       const { worktreeId, worktreePath } = resolveWorktree(sessionId)
       if (worktreeId && worktreePath) {
         persistRemoveQueued(worktreeId, worktreePath, sessionId, messageId)
+      }
+    },
+    []
+  )
+
+  const handleEditQueuedMessage = useCallback(
+    async (sessionId: string, messageId: string, message: string) => {
+      const trimmed = message.trim()
+      if (!trimmed) return
+
+      const store = useChatStore.getState()
+      const msg = store
+        .getQueuedMessages(sessionId)
+        .find(m => m.id === messageId)
+      if (!msg || supportsSteering(msg)) return
+
+      const { worktreeId, worktreePath } = resolveWorktree(sessionId)
+      if (!worktreeId || !worktreePath) return
+
+      try {
+        const updated = await persistUpdateQueued(
+          worktreeId,
+          worktreePath,
+          sessionId,
+          messageId,
+          trimmed
+        )
+        if (!updated) {
+          // Another client already dequeued it — drop the stale local copy.
+          store.removeQueuedMessage(sessionId, messageId)
+          return
+        }
+        store.updateQueuedMessage(sessionId, messageId, trimmed)
+      } catch (error) {
+        logger.error('Failed to persist queued edit', {
+          error,
+          sessionId,
+          messageId,
+        })
       }
     },
     []
@@ -82,28 +139,34 @@ export function useQueuedPromptActions() {
         return
       }
 
-      // Busy Codex/OpenCode/Pi session: steer the running turn. Codex accepts
-      // structured attachment input; other backends still use text-only steer.
+      // Busy Codex/OpenCode/Pi/Grok session: steer the running turn. All
+      // attachments become path refs via buildMessageWithRefs; Codex also gets
+      // structured attachment input when present.
       const backend = store.selectedBackends[sessionId] ?? 'claude'
       if (
-        (backend === 'codex' || backend === 'opencode' || backend === 'pi') &&
-        isSending &&
-        (backend === 'codex' || !hasAttachments(msg))
+        (backend === 'codex' ||
+          backend === 'opencode' ||
+          backend === 'pi' ||
+          backend === 'grok') &&
+        isSending
       ) {
         try {
+          const steerMessage = buildMessageWithRefs(msg)
           if (backend === 'pi') {
-            await steerPiTurn(worktreeId, sessionId, msg.message)
+            await steerPiTurn(worktreeId, sessionId, steerMessage)
+          } else if (backend === 'grok') {
+            await steerGrokTurn(worktreeId, sessionId, steerMessage)
           } else if (backend === 'opencode') {
             await steerOpencodeTurn(
               worktreeId,
               worktreePath,
               sessionId,
-              msg.message
+              steerMessage
             )
           } else if (hasAttachments(msg)) {
-            await steerCodexTurn(worktreeId, sessionId, msg.message, msg)
+            await steerCodexTurn(worktreeId, sessionId, steerMessage, msg)
           } else {
-            await steerCodexTurn(worktreeId, sessionId, msg.message)
+            await steerCodexTurn(worktreeId, sessionId, steerMessage)
           }
           handleRemoveQueuedMessage(sessionId, messageId)
           return
@@ -138,5 +201,9 @@ export function useQueuedPromptActions() {
     [handleRemoveQueuedMessage]
   )
 
-  return { handleRemoveQueuedMessage, handleSendQueuedNow }
+  return {
+    handleRemoveQueuedMessage,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+  }
 }

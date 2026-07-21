@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { isTodoWrite, isPlanToolCall } from '@/types/chat'
+import { getTodoWriteTodos, isPlanToolCall } from '@/types/chat'
 import type {
   ToolCall,
   ChatMessage,
@@ -37,6 +37,127 @@ function extractPlanTodos(toolCalls: ToolCall[]): Todo[] {
   return []
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function stringField(
+  input: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string
+): string | undefined {
+  const value = input[snakeKey] ?? input[camelKey]
+  return typeof value === 'string' ? value : undefined
+}
+
+function stringArrayField(
+  input: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string
+): string[] {
+  const value = input[snakeKey] ?? input[camelKey]
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+function agentStatesField(
+  input: Record<string, unknown>
+): Record<string, Record<string, unknown>> {
+  const value = input.agents_states ?? input.agentsStates
+  const record = asRecord(value)
+  if (!record) return {}
+
+  const states: Record<string, Record<string, unknown>> = {}
+  for (const [threadId, state] of Object.entries(record)) {
+    const stateRecord = asRecord(state)
+    if (stateRecord) states[threadId] = stateRecord
+  }
+  return states
+}
+
+function normalizeCodexAgentStatus(
+  agentStatus: unknown,
+  toolCallStatus?: unknown
+): CodexAgent['status'] {
+  if (agentStatus === 'completed' || agentStatus === 'shutdown') {
+    return 'completed'
+  }
+  if (
+    agentStatus === 'errored' ||
+    agentStatus === 'interrupted' ||
+    agentStatus === 'notFound' ||
+    toolCallStatus === 'failed'
+  ) {
+    return 'errored'
+  }
+  return 'in_progress'
+}
+
+function truncateAgentPrompt(prompt: string): string {
+  return prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt
+}
+
+export function extractCodexAgents(
+  toolCalls: ToolCall[],
+  isSending: boolean
+): CodexAgent[] {
+  const agents = new Map<string, CodexAgent>()
+
+  for (const tc of toolCalls) {
+    const input = asRecord(tc.input)
+    if (!input) continue
+
+    const receiverThreadIds = stringArrayField(
+      input,
+      'receiver_thread_ids',
+      'receiverThreadIds'
+    )
+    const agentsStates = agentStatesField(input)
+    const toolCallStatus = input.status
+
+    if (tc.name === 'SpawnAgent') {
+      const prompt = stringField(input, 'prompt', 'prompt') ?? ''
+      const threadId = receiverThreadIds[0] ?? tc.id
+      const state = agentsStates[threadId]
+      agents.set(threadId, {
+        id: threadId,
+        prompt: truncateAgentPrompt(prompt),
+        status: normalizeCodexAgentStatus(state?.status, toolCallStatus),
+        message: typeof state?.message === 'string' ? state.message : undefined,
+      })
+    }
+
+    for (const threadId of receiverThreadIds) {
+      if (!agents.has(threadId)) {
+        agents.set(threadId, {
+          id: threadId,
+          prompt: threadId,
+          status: 'in_progress',
+        })
+      }
+    }
+
+    for (const [threadId, state] of Object.entries(agentsStates)) {
+      const existing = agents.get(threadId)
+      agents.set(threadId, {
+        id: existing?.id ?? threadId,
+        prompt: existing?.prompt ?? threadId,
+        status: normalizeCodexAgentStatus(state.status, toolCallStatus),
+        message:
+          typeof state.message === 'string' ? state.message : existing?.message,
+      })
+    }
+  }
+
+  return Array.from(agents.values()).map(agent => {
+    if (isSending || agent.status !== 'in_progress') return agent
+    return { ...agent, status: 'completed' }
+  })
+}
+
 interface UseActiveTodosAndAgentsParams {
   activeSessionId: string | null | undefined
   isSending: boolean
@@ -69,12 +190,14 @@ export function useActiveTodosAndAgents({
       return { todos: [], sourceMessageId: null, isFromStreaming: false }
 
     if (isSending && currentToolCalls.length > 0) {
-      // Prefer TodoWrite tool calls
+      // Prefer TodoWrite tool calls (Claude TodoWrite, Grok todo_write / TodoWrite)
       for (let i = currentToolCalls.length - 1; i >= 0; i--) {
         const tc = currentToolCalls[i]
-        if (tc && isTodoWrite(tc)) {
+        if (!tc) continue
+        const todos = getTodoWriteTodos(tc)
+        if (todos.length > 0) {
           return {
-            todos: tc.input.todos,
+            todos,
             sourceMessageId: null,
             isFromStreaming: true,
           }
@@ -92,12 +215,14 @@ export function useActiveTodosAndAgents({
     }
 
     if (lastAssistantMessage?.tool_calls) {
-      // Prefer TodoWrite tool calls
+      // Prefer TodoWrite tool calls (Claude TodoWrite, Grok todo_write / TodoWrite)
       for (let i = lastAssistantMessage.tool_calls.length - 1; i >= 0; i--) {
         const tc = lastAssistantMessage.tool_calls[i]
-        if (tc && isTodoWrite(tc)) {
+        if (!tc) continue
+        const todos = getTodoWriteTodos(tc)
+        if (todos.length > 0) {
           return {
-            todos: tc.input.todos,
+            todos,
             sourceMessageId: lastAssistantMessage.id,
             isFromStreaming: false,
           }
@@ -122,7 +247,7 @@ export function useActiveTodosAndAgents({
     string | null
   >(null)
 
-  // Get active agents from SpawnAgent tool calls
+  // Get active agents from Codex collab tool calls
   const {
     agents: activeAgents,
     sourceMessageId: agentSourceMessageId,
@@ -136,25 +261,7 @@ export function useActiveTodosAndAgents({
         ? currentToolCalls
         : (lastAssistantMessage?.tool_calls ?? [])
 
-    const agents: CodexAgent[] = []
-    for (const tc of toolCalls) {
-      if (tc.name === 'SpawnAgent') {
-        const input = tc.input as Record<string, unknown>
-        const prompt = (input.prompt as string) ?? ''
-        const truncated =
-          prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt
-        let status: CodexAgent['status'] = 'in_progress'
-        if (tc.output && !isSending) {
-          const out = tc.output as string
-          if (out.includes('errored')) {
-            status = 'errored'
-          } else {
-            status = 'completed'
-          }
-        }
-        agents.push({ id: tc.id, prompt: truncated, status })
-      }
-    }
+    const agents = extractCodexAgents(toolCalls, isSending)
 
     const sourceId =
       isSending && currentToolCalls.length > 0

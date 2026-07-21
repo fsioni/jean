@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderHook, waitFor } from '@testing-library/react'
 
 const setWsConnectedMock = vi.fn()
 
@@ -36,6 +37,8 @@ class MockWebSocket {
 async function flushAsync() {
   await Promise.resolve()
   await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 function getWs(index: number): MockWebSocket {
@@ -49,6 +52,38 @@ async function loadTransportModule() {
   vi.doMock('./environment', () => ({
     isNativeApp: () => false,
     setWsConnected: setWsConnectedMock,
+    setWebAccessEnabled: vi.fn(),
+  }))
+  return import('./transport')
+}
+
+async function loadNativeTransportModule(
+  tauriInvoke: ReturnType<typeof vi.fn>
+) {
+  vi.resetModules()
+  vi.doMock('./environment', () => ({
+    isNativeApp: () => true,
+    setWsConnected: setWsConnectedMock,
+    setWebAccessEnabled: vi.fn(),
+  }))
+  vi.doMock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+  return import('./transport')
+}
+
+async function loadRemoteNativeTransportModule() {
+  vi.resetModules()
+  vi.doMock('./environment', () => ({
+    isNativeApp: () => true,
+    setWsConnected: setWsConnectedMock,
+    setWebAccessEnabled: vi.fn(),
+  }))
+  vi.doMock('./remote-connections', () => ({
+    getActiveRemoteConnection: () => ({
+      id: 'remote-1',
+      name: 'Server',
+      url: 'https://jean.example.com',
+      token: 'secret',
+    }),
   }))
   return import('./transport')
 }
@@ -72,71 +107,100 @@ describe('transport bootstrap', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.doUnmock('./environment')
+    vi.doUnmock('@tauri-apps/api/core')
+    vi.doUnmock('@tauri-apps/api/event')
+    vi.doUnmock('./remote-connections')
   })
 
+  it('routes native shared commands to the selected remote Jean', async () => {
+    const transport = await loadRemoteNativeTransportModule()
 
-  it('uses reconnect mode when refetching initial data after reconnect', async () => {
-    const transport = await loadTransportModule()
+    transport.connectTransport()
+    await flushAsync()
+    const ws = getWs(0)
 
-    await transport.refetchInitialData({ 'worktree-1': 'session-1' }, 'project-1')
+    const request = transport.invoke('list_projects')
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
+      'https://jean.example.com/api/auth?token=secret',
+      expect.objectContaining({ signal: expect.anything() })
     )
+    expect(ws.url).toBe('wss://jean.example.com/ws?token=secret')
+    expect(ws.send).toHaveBeenCalledWith(
+      expect.stringContaining('"command":"list_projects"')
+    )
+    const sent = JSON.parse(String(ws.send.mock.calls.at(-1)?.[0]))
+    ws.receive({ type: 'response', id: sent.id, data: [] })
+    await request
   })
 
-  it('starts reconnect init fetch before websocket comes back and reuses it', async () => {
-    const transport = await loadTransportModule()
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockClear()
+  it('keeps native menu listeners on the local shell for remote connections', async () => {
+    const tauriListen = vi.fn().mockResolvedValue(() => {
+      /* noop cleanup */
+    })
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: tauriListen }))
+    const transport = await loadRemoteNativeTransportModule()
+    const handler = vi.fn()
 
-    const prefetch = transport.prefetchReconnectInitialData(
-      { 'worktree-1': 'session-1' },
-      'project-1'
-    )
+    await transport.listenLocal('menu-quick-menu', handler)
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/init?mode=reconnect&selected_project=project-1&active_sessions=worktree-1%3Asession-1'
-    )
+    expect(tauriListen).toHaveBeenCalledWith('menu-quick-menu', handler)
+    expect(MockWebSocket.instances).toHaveLength(0)
+  })
 
-    await expect(
-      transport.consumeReconnectInitialData(
-        { 'worktree-1': 'session-1' },
-        'project-1'
+  it('makes native listener cleanup idempotent and contains teardown errors', async () => {
+    const cleanup = vi
+      .fn()
+      .mockRejectedValue(new Error('listener already gone'))
+    const tauriListen = vi.fn().mockResolvedValue(cleanup)
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: tauriListen }))
+    const transport = await loadNativeTransportModule(vi.fn())
+
+    const unlisten = await transport.listen('chat:chunk', vi.fn())
+
+    expect(unlisten()).toBeUndefined()
+    expect(unlisten()).toBeUndefined()
+    await flushAsync()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('explains how to troubleshoot a reachable remote rejected by the desktop client', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Load failed'))
+    const transport = await loadRemoteNativeTransportModule()
+    const { result } = renderHook(() => transport.useWsAuthError())
+
+    transport.connectTransport()
+
+    await waitFor(() =>
+      expect(result.current).toBe(
+        "Jean could not reach the server's authentication endpoint. Check that the server is running and the URL and port are correct. If the address opens in a browser, update and restart the remote Jean server so it allows desktop connections (CORS)."
       )
-    ).resolves.toEqual({})
-    await prefetch
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('retries reconnect init fetch on consume when the prefetch failed', async () => {
-    const transport = await loadTransportModule()
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockReset()
-    fetchMock
-      .mockResolvedValueOnce({ ok: false } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ projects: [] }),
-      } as Response)
-
-    await transport.prefetchReconnectInitialData(
-      { 'worktree-1': 'session-1' },
-      'project-1'
     )
-
-    await expect(
-      transport.consumeReconnectInitialData(
-        { 'worktree-1': 'session-1' },
-        'project-1'
-      )
-    ).resolves.toEqual({ projects: [] })
-
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.current).not.toContain('secret')
   })
 
+  it('routes shared native commands through the jean-core dispatcher', async () => {
+    const tauriInvoke = vi.fn().mockResolvedValue([{ id: 'project-1' }])
+    const transport = await loadNativeTransportModule(tauriInvoke)
+
+    await transport.invoke('list_projects')
+
+    expect(tauriInvoke).toHaveBeenCalledWith('dispatch_core_command', {
+      command: 'list_projects',
+      args: {},
+    })
+  })
+
+  it('keeps desktop-only commands on their native Tauri handlers', async () => {
+    const tauriInvoke = vi.fn().mockResolvedValue(undefined)
+    const transport = await loadNativeTransportModule(tauriInvoke)
+
+    await transport.invoke('set_window_vibrancy', { enabled: true })
+
+    expect(tauriInvoke).toHaveBeenCalledWith('set_window_vibrancy', {
+      enabled: true,
+    })
+  })
   it('does not open websocket until bootstrap explicitly connects it', async () => {
     const transport = await loadTransportModule()
 
@@ -147,6 +211,24 @@ describe('transport bootstrap', () => {
     await flushAsync()
 
     expect(fetch).toHaveBeenCalledTimes(1)
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(setWsConnectedMock).toHaveBeenCalledWith(true)
+  })
+
+  it('retries while establishing the initial connection', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock
+      .mockRejectedValueOnce(new Error('server starting'))
+      .mockResolvedValueOnce({ ok: true } as Response)
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+    expect(MockWebSocket.instances).toHaveLength(0)
+
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await flushAsync()
+
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(setWsConnectedMock).toHaveBeenCalledWith(true)
   })
@@ -247,6 +329,24 @@ describe('transport bootstrap', () => {
     vi.useRealTimers()
   })
 
+  it('replaces a stale websocket immediately when the page returns', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      value: false,
+    })
+    const transport = await loadTransportModule()
+
+    transport.connectTransport()
+    await flushAsync()
+    const ws = getWs(0)
+
+    vi.advanceTimersByTime(51_000)
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(ws.close).toHaveBeenCalledTimes(1)
+  })
+
   it('uses extended timeout for terminal lifecycle commands', async () => {
     vi.useFakeTimers()
     const transport = await loadTransportModule()
@@ -314,73 +414,30 @@ describe('transport bootstrap', () => {
     )
   })
 
-  it('requests terminal_replay for active terminals after websocket reconnect', async () => {
+  it('does not open a second socket after an established connection closes', async () => {
     const transport = await loadTransportModule()
 
     transport.connectTransport()
     await flushAsync()
 
     const firstWs = getWs(0)
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:started',
-      payload: { terminal_id: 'term-1', cols: 120, rows: 40 },
-      seq: 20,
-    })
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:output',
-      payload: { terminal_id: 'term-1', data: 'running' },
-      seq: 21,
-    })
-
     firstWs.close()
     await new Promise(resolve => setTimeout(resolve, 150))
     await flushAsync()
 
-    const secondWs = getWs(1)
-    expect(secondWs).toBeDefined()
-    expect(secondWs.send).toHaveBeenCalledWith(
-      JSON.stringify({
-        type: 'terminal_replay',
-        terminal_id: 'term-1',
-        last_seq: 21,
-      })
-    )
+    expect(MockWebSocket.instances).toHaveLength(1)
   })
 
-  it('does not request terminal_replay after terminal stopped event', async () => {
+  it('notifies established disconnect listeners synchronously', async () => {
     const transport = await loadTransportModule()
+    const onDisconnect = vi.fn()
 
+    transport.onEstablishedWsDisconnect(onDisconnect)
     transport.connectTransport()
     await flushAsync()
 
-    const firstWs = getWs(0)
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:started',
-      payload: { terminal_id: 'term-1', cols: 120, rows: 40 },
-      seq: 20,
-    })
-    firstWs.receive({
-      type: 'event',
-      event: 'terminal:stopped',
-      payload: { terminal_id: 'term-1', exit_code: 0, signal: null },
-      seq: 21,
-    })
+    getWs(0).close()
 
-    firstWs.close()
-    await new Promise(resolve => setTimeout(resolve, 150))
-    await flushAsync()
-
-    const secondWs = getWs(1)
-    expect(secondWs).toBeDefined()
-    expect(secondWs.send).not.toHaveBeenCalledWith(
-      JSON.stringify({
-        type: 'terminal_replay',
-        terminal_id: 'term-1',
-        last_seq: 21,
-      })
-    )
+    expect(onDisconnect).toHaveBeenCalledOnce()
   })
 })

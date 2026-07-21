@@ -1,13 +1,14 @@
 import { Kbd } from '@/components/ui/kbd'
 import { isNativeApp } from '@/lib/environment'
+import { isClientMacOS } from '@/lib/platform'
 
 export const TOAST_ACTION_SHORTCUT = {
   shortcut: 'alt+enter',
-  label:
-    typeof navigator !== 'undefined' && navigator.platform.includes('Mac')
-      ? '⌥↩'
-      : 'Alt+Enter',
 } as const
+
+export function getToastActionShortcutLabel(): string {
+  return isClientMacOS ? '⌥↩' : 'Alt+Enter'
+}
 
 function shouldShowToastActionShortcut(): boolean {
   return (
@@ -21,7 +22,7 @@ export function ToastActionLabel({ children }: { children: React.ReactNode }) {
       <span>{children}</span>
       {shouldShowToastActionShortcut() && (
         <Kbd className="h-4 min-w-0 bg-primary-foreground/20 px-1 text-[10px] text-primary-foreground">
-          {TOAST_ACTION_SHORTCUT.label}
+          {getToastActionShortcutLabel()}
         </Kbd>
       )}
     </span>

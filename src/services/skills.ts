@@ -25,6 +25,10 @@ export const skillQueryKeys = {
   codexSkills: () => [...skillQueryKeys.all, 'codex', 'skills'] as const,
   opencodeSkills: () => [...skillQueryKeys.all, 'opencode', 'skills'] as const,
   cursorSkills: () => [...skillQueryKeys.all, 'cursor', 'skills'] as const,
+  piSkills: () => [...skillQueryKeys.all, 'pi', 'skills'] as const,
+  commandcodeSkills: () =>
+    [...skillQueryKeys.all, 'commandcode', 'skills'] as const,
+  grokSkills: () => [...skillQueryKeys.all, 'grok', 'skills'] as const,
   pluginSkills: () => [...skillQueryKeys.all, 'plugin', 'skills'] as const,
 }
 
@@ -77,8 +81,14 @@ export function useClaudeCommands(worktreePath?: string | null) {
 }
 
 function useBackendSkills(
-  backend: 'codex' | 'opencode' | 'cursor',
-  command: 'list_codex_skills' | 'list_opencode_skills' | 'list_cursor_skills',
+  backend: Exclude<CliBackend, 'claude'>,
+  command:
+    | 'list_codex_skills'
+    | 'list_opencode_skills'
+    | 'list_cursor_skills'
+    | 'list_pi_skills'
+    | 'list_commandcode_skills'
+    | 'list_grok_skills',
   queryKey: readonly unknown[],
   label: string
 ) {
@@ -129,6 +139,33 @@ export function useCursorSkills() {
   )
 }
 
+export function usePiSkills() {
+  return useBackendSkills(
+    'pi',
+    'list_pi_skills',
+    skillQueryKeys.piSkills(),
+    'Pi'
+  )
+}
+
+export function useCommandCodeSkills() {
+  return useBackendSkills(
+    'commandcode',
+    'list_commandcode_skills',
+    skillQueryKeys.commandcodeSkills(),
+    'Command Code'
+  )
+}
+
+export function useGrokSkills() {
+  return useBackendSkills(
+    'grok',
+    'list_grok_skills',
+    skillQueryKeys.grokSkills(),
+    'Grok'
+  )
+}
+
 export interface BackendSkillsGroup {
   backend: CliBackend
   label: string
@@ -171,6 +208,9 @@ export function useAllBackendSkills(
   const codexSkills = useCodexSkills()
   const opencodeSkills = useOpenCodeSkills()
   const cursorSkills = useCursorSkills()
+  const piSkills = usePiSkills()
+  const commandcodeSkills = useCommandCodeSkills()
+  const grokSkills = useGrokSkills()
   const pluginSkillGroups = usePluginSkills()
 
   return useMemo(() => {
@@ -229,6 +269,32 @@ export function useAllBackendSkills(
       }
     }
 
+    if (installed.has('pi')) {
+      const skills = piSkills.data ?? []
+      if (skills.length > 0) {
+        groups.push({ backend: 'pi', label: 'Pi', skills, commands: [] })
+      }
+    }
+
+    if (installed.has('commandcode')) {
+      const skills = commandcodeSkills.data ?? []
+      if (skills.length > 0) {
+        groups.push({
+          backend: 'commandcode',
+          label: 'Command Code',
+          skills,
+          commands: [],
+        })
+      }
+    }
+
+    if (installed.has('grok')) {
+      const skills = grokSkills.data ?? []
+      if (skills.length > 0) {
+        groups.push({ backend: 'grok', label: 'Grok', skills, commands: [] })
+      }
+    }
+
     return groups
   }, [
     claudeSkills.data,
@@ -236,6 +302,9 @@ export function useAllBackendSkills(
     codexSkills.data,
     opencodeSkills.data,
     cursorSkills.data,
+    piSkills.data,
+    commandcodeSkills.data,
+    grokSkills.data,
     pluginSkillGroups.data,
     installedBackends,
   ])

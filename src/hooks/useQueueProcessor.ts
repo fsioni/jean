@@ -9,6 +9,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { DEFAULT_PARALLEL_EXECUTION_PROMPT } from '@/types/preferences'
 import { isTauri } from '@/services/projects'
+import { isLocalBackend } from '@/lib/environment'
 import { useWsConnectionStatus } from '@/lib/transport'
 import { logger } from '@/lib/logger'
 import { buildMessageWithRefs } from '@/components/chat/message-with-refs'
@@ -58,6 +59,12 @@ export function useQueueProcessor(): void {
 
   useEffect(() => {
     if (!hasProcessableQueue || !isTauri()) return
+
+    // In web access, Rust owns queued-message draining. A browser client can
+    // disconnect between an atomic dequeue and the follow-up send request,
+    // making the prompt disappear without executing. Native app processing is
+    // kept for desktop-local queues; web clients only mirror queue updates.
+    if (!isLocalBackend()) return
 
     // Read fresh state inside effect to avoid subscribing to full records.
     // Store actions are accessed via getState() inside the async callback

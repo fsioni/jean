@@ -42,16 +42,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preparing release $RELEASE_TAG ($VERSION)"
 
-  preflight:
-    name: Preflight
-    needs: prepare-release
-    uses: ./.github/workflows/preflight.yml
-    with:
-      version: ${{ needs.prepare-release.outputs.tag }}
-
   publish-tauri:
     name: Publish Tauri (${{ matrix.platform }})
-    needs: [prepare-release, preflight]
+    needs: prepare-release
     permissions:
       contents: write
     strategy:

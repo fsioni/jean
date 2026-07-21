@@ -236,6 +236,15 @@ const handleBackgroundOperation = useCallback(async () => {
 - `handleCommit` - creates commit with AI-generated message
 - `handleReview` - runs AI code review
 
+Operations that must survive a web/mobile disconnect use a backend-owned job
+instead of keeping the original `invoke()` pending. In web access, Magic Commit
+starts through `POST /api/commit-jobs` using both `sendBeacon` and Fetch
+`keepalive` so iOS can finish delivering the start request while the page is
+being suspended. The client supplies an idempotency id, preventing the two
+requests or later retries from starting duplicate work.
+Native access uses `start_commit_job`. Completion is reported through
+`commit-job:updated`; `get_commit_job` closes the listener-registration race.
+
 ## Integration Points
 
 ### Command Palette

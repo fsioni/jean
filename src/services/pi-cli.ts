@@ -13,11 +13,11 @@ import type {
   PiModelInfo,
   PiReleaseInfo,
 } from '@/types/pi-cli'
-import { hasBackend } from '@/lib/environment'
+import { hasBackendTransport } from '@/lib/environment'
 import { preferencesQueryKeys } from '@/services/preferences'
 import type { AppPreferences } from '@/types/preferences'
 
-const isTauri = hasBackend
+const isTauri = hasBackendTransport
 
 export const piCliQueryKeys = {
   all: ['pi-cli'] as const,
@@ -204,6 +204,9 @@ export function usePiCliSetup() {
     })
   }
 
+  const checkManualVersion = (version: string) =>
+    invoke<boolean>('check_pi_cli_version_exists', { version })
+
   return {
     status: status.data,
     isStatusLoading: status.isLoading,
@@ -216,6 +219,7 @@ export function usePiCliSetup() {
     installError: installMutation.error,
     progress: null,
     install,
+    checkManualVersion,
     refetchStatus: status.refetch,
   }
 }

@@ -1,10 +1,9 @@
 /**
  * CLI Version Check Hook
  *
- * Checks for CLI updates on application startup and shows toast notifications.
- * Depending on the user's `auto_update_ai_backends` preference, updates are
- * either installed automatically in the background, or surfaced via a toast
- * with an "Update in background" action.
+ * Checks for CLI updates on application startup. Depending on the user's
+ * `auto_update_ai_backends` preference, updates are either installed
+ * automatically in the background or surfaced in the titlebar badge.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -47,6 +46,11 @@ import {
   useCodeRabbitPathDetection,
   coderabbitCliQueryKeys,
 } from '@/services/coderabbit-cli'
+import {
+  useCommandCodeCliStatus,
+  useAvailableCommandCodeVersions,
+  commandcodeCliQueryKeys,
+} from '@/services/commandcode-cli'
 import { useUIStore } from '@/store/ui-store'
 import { isNewerVersion } from '@/lib/version-utils'
 import { logger } from '@/lib/logger'
@@ -75,6 +79,7 @@ const JEAN_INSTALL_COMMANDS: Record<CliType, string> = {
   pi: 'install_pi_cli',
   gh: 'install_gh_cli',
   coderabbit: 'install_coderabbit_cli',
+  commandcode: 'install_commandcode_cli',
 }
 
 const CLI_QUERY_KEY_GETTERS: Record<CliType, () => readonly unknown[]> = {
@@ -84,6 +89,7 @@ const CLI_QUERY_KEY_GETTERS: Record<CliType, () => readonly unknown[]> = {
   pi: () => piCliQueryKeys.all,
   gh: () => ghCliQueryKeys.all,
   coderabbit: () => coderabbitCliQueryKeys.all,
+  commandcode: () => commandcodeCliQueryKeys.all,
 }
 
 /**
@@ -131,7 +137,7 @@ function resolveCliInfo(
 
 /**
  * Hook that checks for CLI updates on startup and periodically (every hour).
- * Shows toast notifications when updates are detected.
+ * Surfaces pending manual updates in the titlebar badge.
  * Should be called once in App.tsx.
  */
 export function useCliVersionCheck() {
@@ -153,7 +159,7 @@ export function useCliVersionCheck() {
     enabled: shouldCheck,
   })
 
-  // Defer version fetches (GitHub API) by 10s — they're only for update toasts,
+  // Defer version fetches (GitHub API) by 10s — they're only for update checks,
   // no reason to compete with startup-critical queries.
   const [versionCheckReady, setVersionCheckReady] = useState(false)
   useEffect(() => {
@@ -178,6 +184,10 @@ export function useCliVersionCheck() {
   })
   const { data: coderabbitStatus, isLoading: coderabbitLoading } =
     useCodeRabbitCliStatus({ enabled: shouldCheck && versionCheckReady })
+  const { data: commandcodeStatus, isLoading: commandcodeLoading } =
+    useCommandCodeCliStatus({
+      enabled: shouldCheck && versionCheckReady,
+    })
   const { data: claudeVersions, isLoading: claudeVersionsLoading } =
     useAvailableCliVersions({ enabled: shouldCheck && versionCheckReady })
   const { data: ghVersions, isLoading: ghVersionsLoading } =
@@ -190,6 +200,10 @@ export function useCliVersionCheck() {
     useAvailablePiVersions({ enabled: shouldCheck && versionCheckReady })
   const { data: coderabbitVersions, isLoading: coderabbitVersionsLoading } =
     useAvailableCodeRabbitVersions({
+      enabled: shouldCheck && versionCheckReady,
+    })
+  const { data: commandcodeVersions, isLoading: commandcodeVersionsLoading } =
+    useAvailableCommandCodeVersions({
       enabled: shouldCheck && versionCheckReady,
     })
 
@@ -207,16 +221,19 @@ export function useCliVersionCheck() {
       opencodeLoading ||
       piLoading ||
       coderabbitLoading ||
+      commandcodeLoading ||
       claudeVersionsLoading ||
       ghVersionsLoading ||
       codexVersionsLoading ||
       opencodeVersionsLoading ||
       piVersionsLoading ||
       coderabbitVersionsLoading ||
+      commandcodeVersionsLoading ||
       preferencesLoading
     if (isLoading) return
 
     const updates: CliUpdateInfo[] = []
+    const currentlyOutdated = new Set<CliType>()
 
     // Resolve effective CLI info (falls back to path detection when Jean binary is missing)
     const claude = resolveCliInfo(
@@ -241,6 +258,11 @@ export function useCliVersionCheck() {
       coderabbitPathInfo,
       preferences?.coderabbit_cli_source
     )
+    const commandcode = resolveCliInfo(
+      commandcodeStatus,
+      undefined,
+      preferences?.commandcode_cli_source
+    )
 
     const checks: {
       type: CliUpdateInfo['type']
@@ -254,12 +276,18 @@ export function useCliVersionCheck() {
       { type: 'pi', info: pi, versions: piVersions },
       { type: 'coderabbit', info: coderabbit, versions: coderabbitVersions },
     ]
+    checks.push({
+      type: 'commandcode',
+      info: commandcode,
+      versions: commandcodeVersions,
+    })
 
     for (const { type, info, versions } of checks) {
       if (!info.version || !versions?.length) continue
       const latestStable = versions.find(v => !v.prerelease)
       if (!latestStable || !isNewerVersion(latestStable.version, info.version))
         continue
+      currentlyOutdated.add(type)
       const key = `${type}:${info.version}→${latestStable.version}`
       if (notifiedRef.current.has(key)) continue
       notifiedRef.current.add(key)
@@ -273,26 +301,44 @@ export function useCliVersionCheck() {
       })
     }
 
-    if (updates.length > 0) {
-      logger.info('CLI updates available', { updates })
-      const autoUpdate = preferences?.auto_update_ai_backends ?? true
+    // Sync store: remove CLIs no longer outdated (e.g. user updated manually),
+    // merge in newly detected updates for the titlebar badge.
+    const { setAvailableCliUpdates, availableCliUpdates } =
+      useUIStore.getState()
+    const nextUpdates = availableCliUpdates.filter(u =>
+      currentlyOutdated.has(u.type)
+    )
+    for (const update of updates) {
+      const index = nextUpdates.findIndex(
+        existing => existing.type === update.type
+      )
+      if (index >= 0) nextUpdates[index] = update
+      else nextUpdates.push(update)
+    }
+
+    if (
+      nextUpdates.length !== availableCliUpdates.length ||
+      updates.length > 0
+    ) {
+      if (updates.length > 0) logger.info('CLI updates available', { updates })
+      setAvailableCliUpdates(nextUpdates)
+    }
+
+    const autoUpdate = preferences?.auto_update_ai_backends ?? true
+    if (autoUpdate && updates.length > 0) {
       const handleUpdates = () => {
-        if (autoUpdate) {
-          for (const update of updates) {
-            void runBackgroundUpdate(
-              update,
-              queryClient,
-              true,
-              notifiedRef.current
-            )
-          }
-        } else {
-          showUpdateToasts(updates, queryClient)
+        for (const update of updates) {
+          void runBackgroundUpdate(
+            update,
+            queryClient,
+            true,
+            notifiedRef.current
+          )
         }
       }
 
       if (isInitialCheckRef.current) {
-        // Delay initial notification to let the app settle
+        // Delay initial background updates to let the app settle
         setTimeout(handleUpdates, 5000)
       } else {
         handleUpdates()
@@ -307,6 +353,7 @@ export function useCliVersionCheck() {
     opencodeStatus,
     piStatus,
     coderabbitStatus,
+    commandcodeStatus,
     claudePathInfo,
     ghPathInfo,
     codexPathInfo,
@@ -319,18 +366,21 @@ export function useCliVersionCheck() {
     opencodeVersions,
     piVersions,
     coderabbitVersions,
+    commandcodeVersions,
     claudeLoading,
     ghLoading,
     codexLoading,
     opencodeLoading,
     piLoading,
     coderabbitLoading,
+    commandcodeLoading,
     claudeVersionsLoading,
     ghVersionsLoading,
     codexVersionsLoading,
     opencodeVersionsLoading,
     piVersionsLoading,
     coderabbitVersionsLoading,
+    commandcodeVersionsLoading,
     preferencesLoading,
     preferences?.auto_update_ai_backends,
     preferences?.claude_cli_source,
@@ -339,6 +389,7 @@ export function useCliVersionCheck() {
     preferences?.pi_cli_source,
     preferences?.gh_cli_source,
     preferences?.coderabbit_cli_source,
+    preferences?.commandcode_cli_source,
     queryClient,
   ])
 
@@ -356,42 +407,14 @@ export function useCliVersionCheck() {
         queryClient.invalidateQueries({
           queryKey: coderabbitCliQueryKeys.all,
         })
+        queryClient.invalidateQueries({
+          queryKey: commandcodeCliQueryKeys.all,
+        })
       },
       60 * 60 * 1000
     )
     return () => clearInterval(id)
   }, [shouldCheck, queryClient])
-}
-
-/**
- * Show toast notifications for each CLI update.
- * The "Update" action runs the install in the background; failures fall back
- * to the existing modal flow so the user can see raw output.
- */
-function showUpdateToasts(updates: CliUpdateInfo[], queryClient: QueryClient) {
-  for (const update of updates) {
-    const cliName = CLI_DISPLAY_NAMES[update.type]
-    const toastId = `cli-update-${update.type}`
-
-    toast.info(`${cliName} update available`, {
-      id: toastId,
-      description: `v${update.currentVersion} → v${update.latestVersion}`,
-      duration: Infinity,
-      action: {
-        label: 'Update',
-        onClick: () => {
-          toast.dismiss(toastId)
-          void runBackgroundUpdate(update, queryClient, false)
-        },
-      },
-      cancel: {
-        label: 'Cancel',
-        onClick: () => {
-          toast.dismiss(toastId)
-        },
-      },
-    })
-  }
 }
 
 /**
@@ -429,7 +452,7 @@ async function runBackgroundUpdate(
       })
       return
     }
-    showUpdateToasts([update], queryClient)
+    // Keep the badge visible so the user can retry manually after sessions stop.
   }
 
   toast.loading(`Updating ${cliName}…`, {
@@ -519,6 +542,7 @@ async function runBackgroundUpdate(
     queryClient.invalidateQueries({
       queryKey: CLI_QUERY_KEY_GETTERS[update.type](),
     })
+    useUIStore.getState().dismissCliUpdateNotice(update.type)
     toast.success(`${cliName} updated to v${update.latestVersion}`, {
       id: toastId,
       duration: 5000,

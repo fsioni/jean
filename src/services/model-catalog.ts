@@ -13,7 +13,19 @@ const MODEL_CATALOG_CACHE_KEY = 'jean:model-catalog:v1'
 const MODEL_CATALOG_REFRESH_MS = 1000 * 60 * 60
 const MODEL_CATALOG_TIMEOUT_MS = 8000
 
-type CatalogBackend = Extract<CliBackend, 'claude' | 'codex'>
+type CatalogBackend = CliBackend
+
+export interface ModelReasoningLevel {
+  value: string
+  label: string
+  description?: string
+}
+
+export interface ModelReasoningCapability {
+  type: 'effort' | 'thinking'
+  default: string
+  levels: ModelReasoningLevel[]
+}
 
 export interface ModelCatalogModel {
   id: string
@@ -22,6 +34,7 @@ export interface ModelCatalogModel {
   supports_fast?: boolean
   supports_images?: boolean
   supports_thinking?: boolean
+  reasoning?: ModelReasoningCapability | null
   recommended?: boolean
   deprecated?: boolean
   hidden?: boolean
@@ -53,29 +66,90 @@ export const modelCatalogQueryKeys = {
   all: ['model-catalog'] as const,
 }
 
-const fallbackModelCatalog: ModelCatalog = {
-  version: 1,
-  updated_at: 'bundled',
-  defaults: {
-    claude: 'claude-opus-4-8[1m]',
-    codex: 'gpt-5.5',
+const THINKING_LEVELS: ModelReasoningLevel[] = [
+  { value: 'off', label: 'Off', description: 'Disabled' },
+  { value: 'think', label: 'Think', description: '4K' },
+  { value: 'megathink', label: 'Megathink', description: '10K' },
+  { value: 'ultrathink', label: 'Ultrathink', description: '32K' },
+]
+
+const STANDARD_EFFORT_LEVELS: ModelReasoningLevel[] = [
+  { value: 'low', label: 'Low', description: 'Light' },
+  { value: 'medium', label: 'Medium', description: 'Moderate' },
+  { value: 'high', label: 'High', description: 'Deep' },
+  { value: 'xhigh', label: 'Extra high', description: 'Extra deep' },
+]
+
+const BASIC_EFFORT_LEVELS = STANDARD_EFFORT_LEVELS.filter(
+  level => level.value !== 'xhigh'
+)
+
+const GPT_5_6_EFFORT_LEVELS: ModelReasoningLevel[] = [
+  { value: 'low', label: 'Low', description: 'Fast responses' },
+  { value: 'medium', label: 'Medium', description: 'Balanced' },
+  { value: 'high', label: 'High', description: 'Greater depth' },
+  { value: 'xhigh', label: 'Extra high', description: 'Complex problems' },
+  { value: 'max', label: 'Max', description: 'Maximum depth' },
+  {
+    value: 'ultra',
+    label: 'Ultra',
+    description: 'Automatic delegation',
   },
-  backends: {
-    claude: {
-      models: modelOptions.map(option => ({
-        id: option.value,
-        label: option.label,
-        ...fastMetadataFor('claude', option.value),
-      })),
-    },
-    codex: {
-      models: codexModelOptions.map(option => ({
-        id: option.value,
-        label: option.label,
-        ...fastMetadataFor('codex', option.value),
-      })),
-    },
+]
+
+const GPT_5_6_LUNA_EFFORT_LEVELS = GPT_5_6_EFFORT_LEVELS.filter(
+  level => level.value !== 'ultra'
+)
+
+const CLAUDE_EFFORT_LEVELS: ModelReasoningLevel[] = [
+  ...STANDARD_EFFORT_LEVELS,
+  { value: 'max', label: 'Max', description: 'No limits' },
+  {
+    value: 'ultracode',
+    label: 'Ultracode',
+    description: 'Extra high + workflows',
   },
+]
+
+function getBundledReasoning(
+  backend: CatalogBackend,
+  model: string
+): ModelReasoningCapability | undefined {
+  if (backend === 'codex') {
+    const isGpt56 = model.startsWith('gpt-5.6')
+    const levels = isGpt56
+      ? model.includes('luna')
+        ? GPT_5_6_LUNA_EFFORT_LEVELS
+        : GPT_5_6_EFFORT_LEVELS
+      : STANDARD_EFFORT_LEVELS
+    return {
+      type: 'effort',
+      default: isGpt56 ? 'medium' : 'high',
+      levels,
+    }
+  }
+
+  if (backend !== 'claude' || model === 'haiku') return undefined
+  const usesEffort =
+    model.includes('fable-5') ||
+    model.includes('sonnet-5') ||
+    model.includes('opus-4-8') ||
+    model.includes('opus-4-7') ||
+    model.includes('opus-4-6') ||
+    model.includes('sonnet-4-6') ||
+    model.includes('opus-4-5')
+  if (!usesEffort) {
+    return { type: 'thinking', default: 'ultrathink', levels: THINKING_LEVELS }
+  }
+  const levels = model.includes('4-6')
+    ? [
+        ...BASIC_EFFORT_LEVELS,
+        { value: 'max', label: 'Max', description: 'No limits' },
+      ]
+    : model.includes('opus-4-5')
+      ? BASIC_EFFORT_LEVELS
+      : CLAUDE_EFFORT_LEVELS
+  return { type: 'effort', default: 'high', levels }
 }
 
 function fastMetadataFor(backend: CatalogBackend, model: string) {
@@ -83,6 +157,35 @@ function fastMetadataFor(backend: CatalogBackend, model: string) {
   return info.supportsFast && info.fastModel
     ? { supports_fast: true, fast_id: info.fastModel }
     : { supports_fast: false }
+}
+
+const fallbackModelCatalog: ModelCatalog = {
+  version: 1,
+  updated_at: 'bundled',
+  defaults: {
+    claude: 'claude-opus-4-8[1m]',
+    codex: 'gpt-5.6-sol',
+    opencode: 'opencode/gpt-5.6-sol',
+    grok: 'grok/grok-4.5',
+  },
+  backends: {
+    claude: {
+      models: modelOptions.map(option => ({
+        id: option.value,
+        label: option.label,
+        ...fastMetadataFor('claude', option.value),
+        reasoning: getBundledReasoning('claude', option.value),
+      })),
+    },
+    codex: {
+      models: codexModelOptions.map(option => ({
+        id: option.value,
+        label: option.label,
+        ...fastMetadataFor('codex', option.value),
+        reasoning: getBundledReasoning('codex', option.value),
+      })),
+    },
+  },
 }
 
 function getDefaultStorage() {
@@ -94,6 +197,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function parseReasoning(
+  value: unknown
+): ModelReasoningCapability | null | undefined {
+  if (value === null) return null
+  if (!isRecord(value)) return undefined
+  if (value.type !== 'effort' && value.type !== 'thinking') return undefined
+  if (typeof value.default !== 'string' || !Array.isArray(value.levels)) {
+    return undefined
+  }
+
+  const seen = new Set<string>()
+  const levels: ModelReasoningLevel[] = []
+  for (const level of value.levels) {
+    if (!isRecord(level)) return undefined
+    if (
+      typeof level.value !== 'string' ||
+      !level.value.trim() ||
+      typeof level.label !== 'string' ||
+      !level.label.trim() ||
+      seen.has(level.value)
+    ) {
+      return undefined
+    }
+    seen.add(level.value)
+    levels.push({
+      value: level.value,
+      label: level.label,
+      ...(typeof level.description === 'string'
+        ? { description: level.description }
+        : {}),
+    })
+  }
+  if (!levels.length || !seen.has(value.default)) return undefined
+  return { type: value.type, default: value.default, levels }
+}
+
 function parseModelCatalog(value: unknown): ModelCatalog | null {
   if (!isRecord(value)) return null
   if (value.version !== 1) return null
@@ -102,7 +241,15 @@ function parseModelCatalog(value: unknown): ModelCatalog | null {
   if (!isRecord(value.defaults)) return null
 
   const backends: Partial<Record<CatalogBackend, ModelCatalogBackend>> = {}
-  for (const backend of ['claude', 'codex'] as const) {
+  for (const backend of [
+    'claude',
+    'codex',
+    'opencode',
+    'cursor',
+    'pi',
+    'commandcode',
+    'grok',
+  ] as const) {
     const rawBackend = value.backends[backend]
     if (!isRecord(rawBackend)) continue
     const rawModels = rawBackend.models
@@ -126,6 +273,10 @@ function parseModelCatalog(value: unknown): ModelCatalog | null {
       if (typeof model.supports_thinking === 'boolean') {
         parsed.supports_thinking = model.supports_thinking
       }
+      if ('reasoning' in model) {
+        const reasoning = parseReasoning(model.reasoning)
+        if (reasoning !== undefined) parsed.reasoning = reasoning
+      }
       if (typeof model.recommended === 'boolean') {
         parsed.recommended = model.recommended
       }
@@ -138,7 +289,15 @@ function parseModelCatalog(value: unknown): ModelCatalog | null {
   }
 
   const defaults: Partial<Record<CatalogBackend, string>> = {}
-  for (const backend of ['claude', 'codex'] as const) {
+  for (const backend of [
+    'claude',
+    'codex',
+    'opencode',
+    'cursor',
+    'pi',
+    'commandcode',
+    'grok',
+  ] as const) {
     const rawDefault = value.defaults[backend]
     if (typeof rawDefault === 'string') defaults[backend] = rawDefault
   }
@@ -257,7 +416,9 @@ export function getCatalogModelOptions(
   const source = catalog ?? fallbackModelCatalog
   const models = source.backends[backend]?.models
   if (!models?.length) {
-    return getCatalogModelOptions(fallbackModelCatalog, backend)
+    return source === fallbackModelCatalog
+      ? []
+      : getCatalogModelOptions(fallbackModelCatalog, backend)
   }
   return models
     .filter(model => !model.hidden)
@@ -272,7 +433,9 @@ export function getCatalogDefaultModelOptions(
   const source = catalog ?? fallbackModelCatalog
   const models = source.backends[backend]?.models
   if (!models?.length) {
-    return getCatalogDefaultModelOptions(fallbackModelCatalog, backend)
+    return source === fallbackModelCatalog
+      ? []
+      : getCatalogDefaultModelOptions(fallbackModelCatalog, backend)
   }
 
   for (const model of models) {
@@ -294,10 +457,6 @@ export function getCatalogModelFastInfo(
   backend: CatalogBackend | CliBackend,
   model: string
 ) {
-  if (backend !== 'claude' && backend !== 'codex') {
-    return getModelFastInfo(backend, model)
-  }
-
   const source = catalog ?? fallbackModelCatalog
   const models = source.backends[backend]?.models ?? []
   const base = models.find(entry => entry.id === model)
@@ -324,4 +483,20 @@ export function getCatalogModelFastInfo(
   }
 
   return getModelFastInfo(backend, model)
+}
+
+export function getCatalogModelReasoning(
+  catalog: ModelCatalog | null | undefined,
+  backend: CatalogBackend,
+  model: string
+): ModelReasoningCapability | null | undefined {
+  const find = (source: ModelCatalog) => {
+    const models = source.backends[backend]?.models ?? []
+    return models.find(entry => entry.id === model || entry.fast_id === model)
+  }
+  const remoteModel = catalog ? find(catalog) : undefined
+  if (remoteModel && 'reasoning' in remoteModel) {
+    return remoteModel.reasoning ?? null
+  }
+  return find(fallbackModelCatalog)?.reasoning ?? undefined
 }

@@ -32,3 +32,8 @@ dist-ssr
 test-results
 playwright-report
 playwright/.cache
+
+# Rust build artifacts for standalone server wrapper
+src-server/target/
+jean-core/target/
+jean-core/Cargo.lock

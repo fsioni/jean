@@ -15,6 +15,11 @@ import {
   Loader2,
   AlertCircle,
   Wand2,
+  Star,
+  Check,
+  ChevronDown,
+  Eye,
+  MoreHorizontal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getModifierSymbol } from '@/lib/platform'
@@ -27,19 +32,24 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from '@/components/ui/tooltip'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/store/ui-store'
+import { useProjectsStore } from '@/store/projects-store'
 import { useProjects, isTauri, useCreateWorktree } from '@/services/projects'
 import { isFolder } from '@/types/projects'
 import {
@@ -50,6 +60,7 @@ import {
 import { GhAuthError } from '@/components/shared/GhAuthError'
 import { IssuePreviewModal } from '@/components/worktree/IssuePreviewModal'
 import { useGhLogin } from '@/hooks/useGhLogin'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useGhCliAuth } from '@/services/gh-cli'
 import { invoke } from '@/lib/transport'
 import type {
@@ -81,6 +92,26 @@ interface PreviewState {
 function getDashboardErrorMessage(error: unknown): string {
   if (!error) return 'Failed to load GitHub dashboard data'
   return error instanceof Error ? error.message : String(error)
+}
+
+const PROJECT_NAME_COLLATOR = new Intl.Collator(undefined, {
+  sensitivity: 'base',
+})
+
+function sortProjectsByFavorites(
+  projects: Project[],
+  favoriteProjectIds: string[]
+): Project[] {
+  const favoriteIds = new Set(favoriteProjectIds)
+
+  return [...projects].sort((a, b) => {
+    const aIsFavorite = favoriteIds.has(a.id)
+    const bIsFavorite = favoriteIds.has(b.id)
+
+    if (aIsFavorite) return -1
+    if (bIsFavorite) return 1
+    return PROJECT_NAME_COLLATOR.compare(a.name, b.name)
+  })
 }
 
 // =============================================================================
@@ -134,20 +165,64 @@ function DashboardTabBar({
 // Investigate button (shared by all item rows)
 // =============================================================================
 
-function InvestigateButton({
+export function InvestigateButton({
+  label,
   isCreating,
   tooltip,
-  onClick,
+  onPreview,
+  onInvestigate,
 }: {
+  label: string
   isCreating: boolean
   tooltip: string
-  onClick: (e: React.MouseEvent) => void
+  onPreview: () => void
+  onInvestigate: (background: boolean) => void
 }) {
+  const isMobile = useIsMobile()
+
+  if (isMobile) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${label} actions`}
+            disabled={isCreating}
+            className="inline-flex h-8 w-8 items-center justify-center rounded px-1 text-foreground/80 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            {isCreating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MoreHorizontal className="h-4 w-4" />
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onClick={onPreview}>
+            <Eye className="h-4 w-4" />
+            Preview
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onInvestigate(false)}>
+            <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+            Investigate
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onInvestigate(true)}>
+            <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+            Investigate in Background
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          onClick={onClick}
+          onClick={e => {
+            e.stopPropagation()
+            onInvestigate(e.metaKey || e.ctrlKey)
+          }}
           disabled={isCreating}
           className="inline-flex h-6 w-6 items-center justify-center rounded px-1 text-foreground/80 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -211,7 +286,9 @@ function IssueRow({
       >
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">#{issue.number}</span>
-          <span className="text-sm font-medium truncate">{issue.title}</span>
+          <span className="text-sm font-medium whitespace-normal break-words sm:truncate">
+            {issue.title}
+          </span>
         </div>
         {issue.labels.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
@@ -245,12 +322,11 @@ function IssueRow({
       </button>
       <div className="shrink-0 self-center">
         <InvestigateButton
+          label="Issue"
           isCreating={isCreating}
           tooltip={`Investigate issue (${getModifierSymbol()}+Click = background)`}
-          onClick={e => {
-            e.stopPropagation()
-            onInvestigate(e.metaKey || e.ctrlKey)
-          }}
+          onPreview={onClick}
+          onInvestigate={onInvestigate}
         />
       </div>
     </div>
@@ -298,7 +374,9 @@ function PRRow({
       >
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">#{pr.number}</span>
-          <span className="text-sm font-medium truncate">{pr.title}</span>
+          <span className="text-sm font-medium whitespace-normal break-words sm:truncate">
+            {pr.title}
+          </span>
           {pr.isDraft && (
             <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
               Draft
@@ -340,12 +418,11 @@ function PRRow({
       </button>
       <div className="shrink-0 self-center">
         <InvestigateButton
+          label="PR"
           isCreating={isCreating}
           tooltip={`Investigate PR (${getModifierSymbol()}+Click = background)`}
-          onClick={e => {
-            e.stopPropagation()
-            onInvestigate(e.metaKey || e.ctrlKey)
-          }}
+          onPreview={onClick}
+          onInvestigate={onInvestigate}
         />
       </div>
     </div>
@@ -409,12 +486,11 @@ function SecurityAlertRow({
       </button>
       <div className="shrink-0 self-center">
         <InvestigateButton
+          label="Alert"
           isCreating={isCreating}
           tooltip={`Investigate alert (${getModifierSymbol()}+Click = background)`}
-          onClick={e => {
-            e.stopPropagation()
-            onInvestigate(e.metaKey || e.ctrlKey)
-          }}
+          onPreview={onClick}
+          onInvestigate={onInvestigate}
         />
       </div>
     </div>
@@ -479,12 +555,11 @@ function AdvisoryRow({
       </button>
       <div className="shrink-0 self-center">
         <InvestigateButton
+          label="Advisory"
           isCreating={isCreating}
           tooltip={`Investigate advisory (${getModifierSymbol()}+Click = background)`}
-          onClick={e => {
-            e.stopPropagation()
-            onInvestigate(e.metaKey || e.ctrlKey)
-          }}
+          onPreview={onClick}
+          onInvestigate={onInvestigate}
         />
       </div>
     </div>
@@ -530,7 +605,15 @@ export function GitHubDashboardModal() {
   )
   const [activeTab, setActiveTab] = useState<DashboardTab>('issues')
   const [searchQuery, setSearchQuery] = useState('')
-  const [projectFilter, setProjectFilter] = useState<string>('all')
+  const [projectFilter, setProjectFilter] = useState<string>('')
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false)
+  const [projectPickerSearch, setProjectPickerSearch] = useState('')
+  const githubDashboardFavoriteProjectIds = useProjectsStore(
+    state => state.githubDashboardFavoriteProjectIds
+  )
+  const toggleGitHubDashboardFavoriteProject = useProjectsStore(
+    state => state.toggleGitHubDashboardFavoriteProject
+  )
 
   const handleLabelClick = useCallback((labelName: string) => {
     const token = `label:"${labelName}"`
@@ -539,6 +622,13 @@ export function GitHubDashboardModal() {
     )
   }, [])
   const [preview, setPreview] = useState<PreviewState | null>(null)
+  const handleDashboardOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && preview) return
+      setGitHubDashboardOpen(open)
+    },
+    [preview, setGitHubDashboardOpen]
+  )
   // Track which item is being created (number for issues/prs/alerts, ghsaId for advisories)
   const [creatingId, setCreatingId] = useState<string | null>(null)
 
@@ -561,6 +651,37 @@ export function GitHubDashboardModal() {
     () => allProjects.filter(p => !isFolder(p) && p.path),
     [allProjects]
   )
+
+  const sortedProjects = useMemo(
+    () => sortProjectsByFavorites(projects, githubDashboardFavoriteProjectIds),
+    [projects, githubDashboardFavoriteProjectIds]
+  )
+  const selectedProject = useMemo(
+    () => projects.find(p => p.id === projectFilter) ?? null,
+    [projects, projectFilter]
+  )
+  const projectPickerResults = useMemo(() => {
+    const query = projectPickerSearch.trim().toLowerCase()
+    if (!query) return sortedProjects
+    return sortedProjects.filter(project =>
+      project.name.toLowerCase().includes(query)
+    )
+  }, [sortedProjects, projectPickerSearch])
+
+  useEffect(() => {
+    if (sortedProjects.length === 0) {
+      if (projectFilter) setProjectFilter('')
+      return
+    }
+
+    const firstProject = sortedProjects[0]
+    if (
+      firstProject &&
+      !sortedProjects.some(project => project.id === projectFilter)
+    ) {
+      setProjectFilter(firstProject.id)
+    }
+  }, [sortedProjects, projectFilter])
 
   // Fetch issues for all projects in parallel
   const issueResults = useQueries({
@@ -905,11 +1026,8 @@ export function GitHubDashboardModal() {
       : undefined
 
   const filteredProjects = useMemo(
-    () =>
-      projectFilter === 'all'
-        ? projects
-        : projects.filter(p => p.id === projectFilter),
-    [projects, projectFilter]
+    () => sortedProjects.filter(p => p.id === projectFilter),
+    [sortedProjects, projectFilter]
   )
 
   const { labels: labelFilters, textQuery: q } = useMemo(
@@ -1006,35 +1124,127 @@ export function GitHubDashboardModal() {
   )
 
   return (
-    <Dialog open={githubDashboardOpen} onOpenChange={setGitHubDashboardOpen}>
+    <Dialog open={githubDashboardOpen} onOpenChange={handleDashboardOpenChange}>
       <DialogContent
-        className="!w-screen !h-dvh !max-w-screen !max-h-none !rounded-none sm:!w-[90vw] sm:!max-w-[90vw] sm:!h-[85vh] sm:!max-h-[85vh] sm:!rounded-lg p-0 flex flex-col overflow-hidden"
+        className="!w-[calc(100vw-4rem)] !h-[calc(100dvh-6rem)] !max-w-[calc(100vw-4rem)] !max-h-[calc(100dvh-6rem)] !rounded-lg p-0 flex flex-col overflow-hidden"
         aria-describedby={undefined}
       >
         <DialogHeader className="px-4 pt-5 pb-2 flex-shrink-0">
-          <div className="flex items-center gap-3 pr-6">
+          <div
+            data-testid="github-dashboard-header-row"
+            className="flex flex-col gap-2 pr-6 sm:flex-row sm:items-center sm:gap-3"
+          >
             <DialogTitle className="shrink-0">GitHub Dashboard</DialogTitle>
-            <Select value={projectFilter} onValueChange={setProjectFilter}>
-              <SelectTrigger className="!h-7 py-0 text-xs w-44 shrink-0">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Projects</SelectItem>
-                {projects.map(p => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="relative max-w-xs flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              <Input
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search..."
-                className="pl-8 !h-7 py-0 text-base md:text-xs"
-              />
+            <div
+              data-testid="github-dashboard-header-controls"
+              className="flex w-full flex-col gap-2 sm:flex-row sm:items-center"
+            >
+              <div className="flex w-full gap-2 sm:w-auto">
+                <Popover
+                  open={projectPickerOpen}
+                  onOpenChange={open => {
+                    setProjectPickerOpen(open)
+                    if (!open) setProjectPickerSearch('')
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      role="combobox"
+                      aria-expanded={projectPickerOpen}
+                      aria-label="Select GitHub Dashboard project"
+                      className="border-input focus-visible:border-ring focus-visible:ring-ring/50 flex h-7 w-full shrink-0 items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-0 text-xs whitespace-nowrap shadow-xs outline-none transition-[color,box-shadow] hover:bg-accent focus-visible:ring-[3px] sm:w-44"
+                    >
+                      <span className="truncate">
+                        {selectedProject?.name ?? 'No projects'}
+                      </span>
+                      <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-80 max-w-[80vw] p-0"
+                  >
+                    <div className="border-b p-2">
+                      <Input
+                        value={projectPickerSearch}
+                        onChange={e => setProjectPickerSearch(e.target.value)}
+                        placeholder="Search projects..."
+                        className="h-8"
+                      />
+                    </div>
+                    <div
+                      role="listbox"
+                      className="max-h-[50dvh] overflow-y-auto p-1"
+                    >
+                      {projectPickerResults.map(project => {
+                        const isFavorite =
+                          githubDashboardFavoriteProjectIds.includes(project.id)
+                        const isSelected = projectFilter === project.id
+                        return (
+                          <div
+                            key={project.id}
+                            className={cn(
+                              'flex items-center rounded-sm hover:bg-accent',
+                              isSelected && 'bg-accent'
+                            )}
+                          >
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={isSelected}
+                              className="min-w-0 flex-1 px-2 py-2 text-left text-sm"
+                              onClick={() => {
+                                setProjectFilter(project.id)
+                                setProjectPickerOpen(false)
+                              }}
+                            >
+                              <span className="block truncate">
+                                {project.name}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`${isFavorite ? 'Unfavorite' : 'Favorite'} ${project.name} in GitHub dashboard`}
+                              className={cn(
+                                'mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground',
+                                isFavorite &&
+                                  'text-yellow-500 hover:text-yellow-500'
+                              )}
+                              onClick={e => {
+                                e.stopPropagation()
+                                toggleGitHubDashboardFavoriteProject(project.id)
+                              }}
+                            >
+                              <Star
+                                className="h-4 w-4"
+                                fill={isFavorite ? 'currentColor' : 'none'}
+                              />
+                            </button>
+                            {isSelected && (
+                              <Check className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                            )}
+                          </div>
+                        )
+                      })}
+                      {projectPickerResults.length === 0 && (
+                        <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                          No projects found
+                        </div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="relative w-full sm:max-w-xs sm:flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search..."
+                  className="pl-8 !h-7 py-0 text-base md:text-xs"
+                />
+              </div>
             </div>
           </div>
         </DialogHeader>

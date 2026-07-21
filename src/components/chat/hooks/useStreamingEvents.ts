@@ -17,9 +17,11 @@ import {
 } from '@/types/preferences'
 import { triggerImmediateGitPoll } from '@/services/git-status'
 import {
+  getCodexUserInputRequestId,
   isAskUserQuestion,
   isPlanToolCall,
   normalizeCodexQuestions,
+  upsertCodexUserInputRequest,
 } from '@/types/chat'
 import { playNotificationSound } from '@/lib/sounds'
 import { notifyIfBackground } from '@/lib/session-notifications'
@@ -278,11 +280,10 @@ export default function useStreamingEvents({
     if (!isTauri()) return
 
     const {
-      appendStreamingContent,
+      appendStreamingChunk,
       addToolCall,
       updateToolCallOutput,
       appendToolEvent,
-      addTextBlock,
       addToolBlock,
       addThinkingBlock,
       addUserInputBlock,
@@ -410,8 +411,10 @@ export default function useStreamingEvents({
     function flushChunkBuffer() {
       chunkRafId = null
       for (const [sid, buffered] of Object.entries(chunkBuffer)) {
-        appendStreamingContent(sid, buffered)
-        addTextBlock(sid, buffered)
+        // Single atomic set() updates both streamingContents (string fallback,
+        // load-bearing for resume/dedupe/error paths) and streamingContentBlocks
+        // — one subscriber sweep per frame instead of two.
+        appendStreamingChunk(sid, buffered)
       }
       chunkBuffer = {}
     }
@@ -440,7 +443,7 @@ export default function useStreamingEvents({
           .getState()
           .consumeStreamingReplayText(session_id, content) ?? ''
       if (!replayFilteredContent) return
-      // Ensure session is marked as sending (recovers state after reconnect/refresh)
+      // Ensure session is marked as sending (recovers state after refresh)
       addSendingSession(session_id)
       // Accumulate into buffer
       chunkBuffer[session_id] =
@@ -521,6 +524,13 @@ export default function useStreamingEvents({
       text: string
     }>('chat:steered', event => {
       const { session_id, text } = event.payload
+      if (
+        useChatStore
+          .getState()
+          .consumeStreamingReplayUserInput(session_id, text)
+      ) {
+        return
+      }
       addUserInputBlock(session_id, text)
     })
 
@@ -717,19 +727,21 @@ export default function useStreamingEvents({
         const current =
           useChatStore.getState().pendingCodexUserInputRequests[session_id] ??
           []
-        const next = [...current, request]
+        const next = upsertCodexUserInputRequest(current, request)
         setPendingCodexUserInputRequests(session_id, next)
         setWaitingForInput(session_id, true)
 
         const questions = normalizeCodexQuestions(request.questions)
 
         const toolCall = {
-          id: request.item_id || `codex-user-input-${request.rpc_id}`,
+          id: getCodexUserInputRequestId(request),
           name: 'AskUserQuestion',
           input: { questions },
         }
         addToolCall(session_id, toolCall)
         addToolBlock(session_id, toolCall.id)
+
+        if (next === current) return
 
         notifySession(session_id, 'Needs your input')
         persistCodexPendingState(session_id, worktree_id, {
@@ -858,20 +870,47 @@ export default function useStreamingEvents({
       )
 
       // Capture streaming state to local variables BEFORE clearing
-      // This ensures we have the data for the optimistic message
-      const rawContent = streamingContents[sessionId]
+      // This ensures we have the data for the optimistic message.
+      // Prefer backend-authoritative final text when present (Grok sends this
+      // so leading-space word fragments cannot stick as a glued message).
+      const authoritativeContent =
+        typeof event.payload.content === 'string' &&
+        event.payload.content.length > 0
+          ? event.payload.content
+          : null
+      const streamedContent = streamingContents[sessionId]
       const toolCalls = activeToolCalls[sessionId]
-      const contentBlocks = streamingContentBlocks[sessionId]
+      const streamedBlocks = streamingContentBlocks[sessionId]
+      const rawContent = authoritativeContent ?? streamedContent
+      // Keep structural blocks (tools, thinking, mid-turn steers). Replacing with
+      // a single authoritative text block would drop steered `user_input` bubbles
+      // after the turn finishes (Grok/Codex steer).
+      const hasNonTextBlocks = (streamedBlocks ?? []).some(
+        b =>
+          b.type === 'tool_use' ||
+          b.type === 'thinking' ||
+          b.type === 'user_input'
+      )
+      // Text-only turns: replace blocks with authoritative string (spaces intact).
+      // Tool/thinking/steer turns: keep streamed block order; Grok hydration repairs text.
+      const contentBlocks =
+        authoritativeContent != null && !hasNonTextBlocks
+          ? [{ type: 'text' as const, text: authoritativeContent }]
+          : streamedBlocks
       const content = rawContent || getTextContentFromBlocks(contentBlocks)
       const hasMeaningfulPayload = hasMeaningfulAssistantPayload(
         content ?? '',
         contentBlocks ?? [],
         toolCalls ?? []
       )
+      const sessionBackend = queryClient.getQueryData<Session>(
+        chatQueryKeys.session(sessionId)
+      )?.backend
       const needsBackendHydration = shouldHydrateCompletedSessionFromBackend(
         content ?? '',
         contentBlocks ?? [],
-        toolCalls ?? []
+        toolCalls ?? [],
+        { backend: sessionBackend }
       )
 
       if (needsBackendHydration) {
@@ -1088,7 +1127,7 @@ export default function useStreamingEvents({
                     last_run_status: 'completed',
                     waiting_for_input: false,
                     waiting_for_input_type: undefined,
-                    is_reviewing: true,
+                    is_reviewing: false,
                   }
                 : old
           )
@@ -1105,7 +1144,7 @@ export default function useStreamingEvents({
                         last_run_status: 'completed' as const,
                         waiting_for_input: false,
                         waiting_for_input_type: undefined,
-                        is_reviewing: true,
+                        is_reviewing: false,
                       }
                     : s
                 ),
@@ -1304,8 +1343,11 @@ export default function useStreamingEvents({
           notifySession(sessionId, 'Needs your input')
         } else {
           // 2. Update last_run_status + session state in caches so UI reflects immediately.
-          // CRITICAL: Include waiting_for_input/is_reviewing so useSessionStatePersistence's
-          // load effect doesn't overwrite Zustand with stale cache values.
+          // CRITICAL: Include waiting_for_input/is_reviewing so
+          // useSessionStatePersistence's load effect doesn't overwrite Zustand
+          // with stale cache values. A normal completed chat turn is not a code
+          // review; only the backend-created review session should carry
+          // is_reviewing=true while its review job is running.
           queryClient.setQueryData<Session>(
             chatQueryKeys.session(sessionId),
             old =>
@@ -1314,7 +1356,7 @@ export default function useStreamingEvents({
                     ...old,
                     last_run_status: 'completed',
                     waiting_for_input: false,
-                    is_reviewing: true,
+                    is_reviewing: false,
                   }
                 : old
           )
@@ -1330,7 +1372,7 @@ export default function useStreamingEvents({
                         ...s,
                         last_run_status: 'completed' as const,
                         waiting_for_input: false,
-                        is_reviewing: true,
+                        is_reviewing: false,
                       }
                     : s
                 ),
@@ -1862,9 +1904,11 @@ export default function useStreamingEvents({
           const runIds = cancelledRunIds.get(session_id) ?? new Set<string>()
           runIds.add(eventRunId)
           cancelledRunIds.set(session_id, runIds)
-        } else {
-          cancelledUntaggedSessionIds.add(session_id)
         }
+        // Some backends (including Grok ACP) do not tag chunks with run_id.
+        // Block their delayed output too; chat:sending clears this guard when a
+        // legitimate next run starts for the session.
+        cancelledUntaggedSessionIds.add(session_id)
 
         // Override reviewing state based on whether visible messages remain.
         const updatedSession = queryClient.getQueryData<Session>(
@@ -2069,7 +2113,7 @@ export default function useStreamingEvents({
         case 'effortLevel':
           store.setEffortLevel(
             session_id,
-            value as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+            value as 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'ultracode'
           )
           break
         case 'executionMode':

@@ -11,8 +11,10 @@ export function isUnreadSession(session: Session): boolean {
     FINISHED_UNREAD_STATUSES.includes(session.last_run_status)
   const isWaiting = session.waiting_for_input
   const isReviewing = session.is_reviewing
+  const hasReviewResults = !!session.review_results
 
-  if (!hasFinishedRun && !isWaiting && !isReviewing) return false
+  if (!hasFinishedRun && !isWaiting && !isReviewing && !hasReviewResults)
+    return false
 
   if (!session.last_opened_at) return true
   return session.last_opened_at < session.updated_at
