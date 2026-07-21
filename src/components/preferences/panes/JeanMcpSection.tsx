@@ -138,11 +138,12 @@ export const JeanMcpSection: React.FC = () => {
   const checkingServer =
     enabled && !snippet && (isSnippetLoading || isSnippetFetching)
   const modeLabel = (snippet?.mode ?? 'prod') === 'dev' ? 'Dev' : 'Prod'
-  const installableBackends = installedBackends.filter(backend =>
-    INSTALLABLE_BACKENDS.includes(backend)
+  const installableBackends = installedBackends.filter(
+    (backend): backend is (typeof INSTALLABLE_BACKENDS)[number] =>
+      (INSTALLABLE_BACKENDS as readonly CliBackend[]).includes(backend)
   )
   const installableLabels = installableBackends
-    .map(backend => BACKEND_LABELS[backend as keyof typeof BACKEND_LABELS])
+    .map(backend => BACKEND_LABELS[backend])
     .filter(Boolean)
 
   const snippetTargets = useMemo<SnippetTarget[]>(
