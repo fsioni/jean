@@ -3269,10 +3269,15 @@ pub async fn dispatch_command(
             let result = crate::ai_pipeline::list_ai_pipeline_prs(app.clone(), project_id).await?;
             to_value(result)
         }
-        "list_ai_pipeline_review_tasks" => {
+        "set_ai_pipeline_project" => {
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            crate::ai_pipeline::set_ai_pipeline_project(app.clone(), project_id).await?;
+            Ok(Value::Null)
+        }
+        "list_ai_pipeline_tasks" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
             let result =
-                crate::ai_pipeline::list_ai_pipeline_review_tasks(app.clone(), project_id).await?;
+                crate::ai_pipeline::list_ai_pipeline_tasks(app.clone(), project_id).await?;
             to_value(result)
         }
         "assign_pr_to_me" => {
@@ -3282,12 +3287,19 @@ pub async fn dispatch_command(
                 crate::ai_pipeline::assign_pr_to_me(app.clone(), project_id, pr_number).await?;
             to_value(result)
         }
-        "resume_ai_pipeline_pr" => {
+        "resume_ai_pipeline_task" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
-            let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
-            let result =
-                crate::ai_pipeline::resume_ai_pipeline_pr(app.clone(), project_id, pr_number)
-                    .await?;
+            let task_id: String = field(&args, "taskId", "task_id")?;
+            let pr_number: Option<u32> = field_opt(&args, "prNumber", "pr_number")?;
+            let target_status: Option<String> = field_opt(&args, "targetStatus", "target_status")?;
+            let result = crate::ai_pipeline::resume_ai_pipeline_task(
+                app.clone(),
+                project_id,
+                task_id,
+                pr_number,
+                target_status,
+            )
+            .await?;
             emit_cache_invalidation(app, &["projects"]);
             to_value(result)
         }

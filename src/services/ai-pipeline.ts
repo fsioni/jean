@@ -3,12 +3,13 @@ import { invoke } from '@/lib/transport'
 import type {
   AiPipelineConfig,
   AiPipelinePr,
-  AiPipelineReviewTask,
+  AiPipelineTaskLists,
   FinishResult,
   ResumeResult,
   StepResult,
 } from '@/types/ai-pipeline'
-import { isTauri, projectsQueryKeys } from './projects'
+import { isTauri, projectsQueryKeys, useProjects } from './projects'
+import { useProjectsStore } from '@/store/projects-store'
 import { useClickUpConfig } from './clickup'
 
 function hasValue(value: string | null | undefined): boolean {
@@ -21,8 +22,8 @@ export const aiPipelineQueryKeys = {
   config: () => [...aiPipelineQueryKeys.all, 'config'] as const,
   prs: (projectId: string) =>
     [...aiPipelineQueryKeys.all, 'prs', projectId] as const,
-  reviewTasks: (projectId: string) =>
-    [...aiPipelineQueryKeys.all, 'review-tasks', projectId] as const,
+  tasks: (projectId: string) =>
+    [...aiPipelineQueryKeys.all, 'tasks', projectId] as const,
 }
 
 /**
@@ -74,11 +75,14 @@ export function useAiPipelinePrs(
   })
 }
 
+const EMPTY_TASK_LISTS: AiPipelineTaskLists = { review: [], stuck: [] }
+
 /**
- * List the ClickUp `TO REVIEW` tickets ready to pick up (unassigned or mine),
- * joined with their PR in this project's repo. ClickUp is the source of truth.
+ * List the pickable ClickUp tickets for a project, in two buckets: the review
+ * columns (PR ready) and the `stuck` column (PR optional). ClickUp is the
+ * source of truth.
  */
-export function useAiPipelineReviewTasks(
+export function useAiPipelineTasks(
   projectId: string | null,
   options?: { enabled?: boolean }
 ) {
@@ -86,10 +90,10 @@ export function useAiPipelineReviewTasks(
   const enabled = (options?.enabled ?? true) && !!projectId && hasAccess
 
   return useQuery({
-    queryKey: aiPipelineQueryKeys.reviewTasks(projectId ?? ''),
-    queryFn: async (): Promise<AiPipelineReviewTask[]> => {
-      if (!isTauri() || !projectId) return []
-      return invoke<AiPipelineReviewTask[]>('list_ai_pipeline_review_tasks', {
+    queryKey: aiPipelineQueryKeys.tasks(projectId ?? ''),
+    queryFn: async (): Promise<AiPipelineTaskLists> => {
+      if (!isTauri() || !projectId) return EMPTY_TASK_LISTS
+      return invoke<AiPipelineTaskLists>('list_ai_pipeline_tasks', {
         projectId,
       })
     },
@@ -97,6 +101,49 @@ export function useAiPipelineReviewTasks(
     staleTime: 1000 * 30,
     gcTime: 1000 * 60 * 5,
     retry: 1,
+  })
+}
+
+/**
+ * The project the pipeline lists are scoped to: the pinned one when it still
+ * exists, else the caller's context (the project the modal was opened from),
+ * else the selected project. Keeps the lists stable whatever the entry point.
+ */
+export function useAiPipelineProjectId(contextProjectId?: string | null) {
+  const { data: config } = useAiPipelineConfig()
+  const { data: projects } = useProjects()
+  const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
+
+  const pinnedId = config?.projectId
+  const pinnedExists = !!pinnedId && !!projects?.some(p => p.id === pinnedId)
+  const projectId =
+    (pinnedExists ? pinnedId : null) ??
+    contextProjectId ??
+    selectedProjectId ??
+    null
+
+  return {
+    projectId,
+    /** `true` when the project comes from the persisted pin, not the context. */
+    isPinned: pinnedExists && pinnedId === projectId,
+    project: projects?.find(p => p.id === projectId) ?? null,
+  }
+}
+
+/**
+ * Mutation: pin (or unpin with `null`) the project the pipeline lists use.
+ */
+export function useSetAiPipelineProject() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (projectId: string | null) => {
+      await invoke('set_ai_pipeline_project', {
+        projectId: projectId ?? undefined,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.config() })
+    },
   })
 }
 
@@ -115,23 +162,33 @@ export function useAssignPrToMe(projectId: string | null) {
 }
 
 /**
- * Mutation: resume a pipeline PR — create a worktree, self-assign the GitHub PR,
- * and claim the linked ClickUp task (self-assign + move to IN REVIEW). Refreshes
- * worktree/clickup caches.
+ * Mutation: resume a pipeline ticket — create a worktree (from its PR when it
+ * has one, else on a fresh `CU-<id>` branch), self-assign the PR, and claim the
+ * ClickUp task (self-assign + status move). Refreshes worktree/clickup/pipeline
+ * caches so a resumed ticket leaves the list without closing it.
  */
-export function useResumeAiPipelinePr(projectId: string | null) {
+export function useResumeAiPipelineTask(projectId: string | null) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (vars: { prNumber: number }): Promise<ResumeResult> => {
-      return invoke<ResumeResult>('resume_ai_pipeline_pr', {
+    mutationFn: async (vars: {
+      taskId: string
+      prNumber?: number
+      targetStatus?: string
+    }): Promise<ResumeResult> => {
+      return invoke<ResumeResult>('resume_ai_pipeline_task', {
         projectId: projectId ?? undefined,
+        taskId: vars.taskId,
         prNumber: vars.prNumber,
+        targetStatus: vars.targetStatus,
       })
     },
     onSuccess: () => {
       if (projectId) {
         queryClient.invalidateQueries({
           queryKey: projectsQueryKeys.worktrees(projectId),
+        })
+        queryClient.invalidateQueries({
+          queryKey: aiPipelineQueryKeys.tasks(projectId),
         })
       }
       queryClient.invalidateQueries({ queryKey: ['clickup'] })

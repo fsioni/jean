@@ -51,6 +51,31 @@ pub struct ClickUpTask {
     pub assignees: Vec<ClickUpAssignee>,
     #[serde(default)]
     pub url: Option<String>,
+    /// Tags carried by the task (`ai-done`, `ai-escalade`, …). The API sends
+    /// them as objects, hence the dedicated struct.
+    #[serde(default)]
+    pub tags: Vec<ClickUpTag>,
+    /// Priority object (`{ "priority": "high", … }`) or `null`.
+    #[serde(default)]
+    pub priority: Option<ClickUpPriority>,
+    /// Last update, epoch milliseconds as a string. The API key is snake_case,
+    /// so it is renamed explicitly (this struct is otherwise camelCase).
+    #[serde(default, rename = "date_updated")]
+    pub date_updated: Option<String>,
+}
+
+/// A ClickUp tag (only the name matters to us).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickUpTag {
+    pub name: String,
+}
+
+/// A ClickUp priority (`urgent` | `high` | `normal` | `low`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickUpPriority {
+    pub priority: String,
 }
 
 /// The authenticated ClickUp user (from `GET /user`).
@@ -92,6 +117,7 @@ const PLANEXPO_STATUSES: &[(&str, &str)] = &[
     ("on standby", "ON STANDBY"),
     ("in progress ia", "IN PROGRESS IA"),
     ("in progress", "IN PROGRESS"),
+    ("stuck", "STUCK"),
     ("to review", "TO REVIEW"),
     ("in review", "IN REVIEW"),
     ("to deploy", "TO DEPLOY"),
