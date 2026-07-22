@@ -2,7 +2,7 @@
 
 # Jean
 
-A desktop AI assistant for managing multiple projects, worktrees, and chat sessions with Claude CLI, Codex CLI, Cursor CLI, and OpenCode.
+A desktop AI assistant for managing multiple projects, worktrees, and chat sessions with Claude CLI, Codex CLI, Cursor CLI, OpenCode, PI, Command Code, Grok, and Kimi Code.
 
 Tauri v2 · React 19 · Rust · TypeScript · Tailwind CSS v4 · shadcn/ui v4 · Zustand v5 · TanStack Query · CodeMirror 6 · xterm.js
 
@@ -10,9 +10,9 @@ Tauri v2 · React 19 · Rust · TypeScript · Tailwind CSS v4 · shadcn/ui v4 ·
 
 ## About the Project
 
-Jean is an opinionated native desktop app built with Tauri that gives you a powerful interface for working with Claude CLI, Codex CLI, Cursor CLI, and OpenCode across multiple projects. It has strong opinions about how AI-assisted development should work — managing git worktrees, chat sessions, terminals, GitHub and Linear integrations in one cohesive workflow.
+Jean is an opinionated native desktop app built with Tauri that gives you a powerful interface for working with Claude CLI, Codex CLI, Cursor CLI, OpenCode, PI, Command Code, Grok, and Kimi Code across multiple projects. It has strong opinions about how AI-assisted development should work - managing git worktrees, chat sessions, terminals, GitHub and Linear integrations in one cohesive workflow.
 
-No vendor lock-in. Everything runs locally on your machine with your own Claude CLI, Codex CLI, Cursor CLI, or OpenCode installation.
+No vendor lock-in. Everything runs locally on your machine with your own CLI installations.
 
 For more information, take a look at [jean.build](https://jean.build).
 
@@ -39,15 +39,15 @@ For more information, take a look at [jean.build](https://jean.build).
 
 ## Features
 
-- **Project & Worktree Management** — Multi-project support, linked projects for cross-project context, git worktree automation (create, archive, restore, delete), custom project avatars
-- **Session Management** — Multiple sessions per worktree, execution modes (Plan, Build, Yolo) with plan approval flows, session recap/digest, saved contexts with AI summarization, archiving with retention settings, recovery, auto-naming, canvas views
-- **AI Chat (Claude CLI, Codex CLI, Cursor CLI, OpenCode)** — Model selection (Opus 4.5, Opus 4.6, Opus 4.6 1M, Sonnet 4.6, Haiku), thinking/effort levels with per-mode overrides, MCP server support, Codex multi-agent collaboration, file picker & image attachments, chat search, notification sounds, custom system prompts, custom CLI profiles
-- **Magic Commands** — Investigate issues/PRs/workflows, code review with finding tracking, AI commit messages, PR content generation, merge conflict resolution, release notes generation, customizable per-prompt model/backend/effort selection
-- **GitHub Integration** — Dashboard with Issues, PRs, Security Alerts, and Advisories tabs, Dependabot investigation, checkout PRs as worktrees, auto-archive on PR merge, workflow investigation
-- **Linear Integration** — Issue investigation, context loading, per-project API key and team configuration
-- **Developer Tools** — Multi-dock terminal (floating, left, right, bottom), command palette, open in editor (Zed, VS Code, Cursor, Xcode, IntelliJ), git operations (status, stash, revert, fetch/merge with conflict detection), diff viewer (unified & side-by-side), file tree with preview, debug panel with token usage tracking
-- **Web Access** — Every Jean instance (desktop or headless server) can expose the full UI over HTTP/WebSocket with token auth so you can use it from a browser on your network
-- **Customization** — Themes (light/dark/system), custom fonts, customizable AI prompts, configurable keybindings, mobile swipe gestures
+- **Project & Worktree Management** - Multi-project support, linked projects for cross-project context, git worktree automation (create, archive, restore, delete), custom project avatars
+- **Session Management** - Multiple sessions per worktree, execution modes (Plan, Build, Yolo) with plan approval flows, session recap/digest, saved contexts with AI summarization, archiving with retention settings, recovery, auto-naming, canvas views
+- **AI Chat (Claude, Codex, Cursor, OpenCode, PI, Command Code, Grok, Kimi)** - Model selection and thinking/effort levels with per-mode overrides, MCP server support, multi-agent collaboration, file picker & image attachments, chat search, notification sounds, custom system prompts, custom CLI profiles
+- **Magic Commands** - Investigate issues/PRs/workflows, code review with finding tracking, AI commit messages, PR content generation, merge conflict resolution, release notes generation, customizable per-prompt model/backend/effort selection
+- **GitHub Integration** - Dashboard with Issues, PRs, Security Alerts, and Advisories tabs, Dependabot investigation, checkout PRs as worktrees, auto-archive on PR merge, workflow investigation
+- **Linear Integration** - Issue investigation, context loading, per-project API key and team configuration
+- **Developer Tools** - Multi-dock terminal (floating, left, right, bottom), command palette, open in editor (Zed, VS Code, Cursor, Xcode, IntelliJ), git operations (status, stash, revert, fetch/merge with conflict detection), diff viewer (unified & side-by-side), file tree with preview, debug panel with token usage tracking
+- **Web Access** - Every Jean instance (desktop or headless server) can expose the full UI over HTTP/WebSocket with token auth so you can use it from a browser on your network
+- **Customization** - Themes (light/dark/system), custom fonts, customizable AI prompts, configurable keybindings, mobile swipe gestures
 
 ## Installation
 
@@ -85,8 +85,8 @@ that serves the same UI in a browser. That applies to both:
 
 | Mode | How you get Web Access |
 | --- | --- |
-| **Native desktop** (macOS / Windows / Linux) | Settings → **Web Access** — enable the HTTP server, set port/bind address, copy the token URL |
-| **Headless server** (`jean-server`) | Always on — the process *is* the Web Access endpoint |
+| **Native desktop** (macOS / Windows / Linux) | Settings → **Web Access** - enable the HTTP server, set port/bind address, copy the token URL |
+| **Headless server** (`jean-server`) | Always on - the process *is* the Web Access endpoint |
 
 Use it to open Jean from another machine on your LAN, a phone/tablet browser,
 or a remote host. Token authentication is on by default; keep it enabled for
@@ -98,7 +98,7 @@ Web Access binds a normal TCP port (default **3456**). For access beyond the
 local machine, prefer a private mesh VPN rather than exposing the port to the
 public internet:
 
-- **[Tailscale](https://tailscale.com/)** (recommended) — bind Jean to the
+- **[Tailscale](https://tailscale.com/)** (recommended) - bind Jean to the
   Tailscale IP (or use the installer's `--host tailscale` preset) and open the
   URL from any device on your tailnet
 - Other options: WireGuard, ZeroTier, SSH tunnel, or a reverse proxy with TLS
@@ -122,7 +122,7 @@ server icon → **Add remote**) while keeping the desktop shell.
 
 ### Headless server (`jean-server`)
 
-Run Jean as a standalone Linux server with browser Web Access — no desktop
+Run Jean as a standalone Linux server with browser Web Access - no desktop
 window, GTK, or WebView required. Linux **amd64** and **arm64** only
 (glibc + OpenSSL 3; Ubuntu 22.04+ / Debian 12+ recommended).
 
@@ -160,7 +160,7 @@ sudo ./scripts/install-jean-server.sh \
   --token "$(openssl rand -base64 32)" \
   -y
 
-# Tailscale-only bind (auto-detect Tailscale IPv4) — recommended for remote use
+# Tailscale-only bind (auto-detect Tailscale IPv4) - recommended for remote use
 sudo ./scripts/install-jean-server.sh --host tailscale -y
 
 # Current user only (user systemd unit)
