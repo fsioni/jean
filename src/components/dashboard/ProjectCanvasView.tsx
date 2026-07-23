@@ -474,7 +474,8 @@ function WorktreeSectionHeader({
   const stackedBaseBranch = getStackedBaseBranch(
     worktree.base_branch,
     worktree.branch,
-    defaultBranch
+    defaultBranch,
+    worktree.base_remote
   )
   const stackedOnPR = stackedBaseBranch
     ? openPRs?.find(pr => pr.headRefName === stackedBaseBranch)

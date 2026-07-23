@@ -2005,6 +2005,7 @@ pub async fn restore_session_with_base(
         path: project.path.clone(),
         branch: project.default_branch.clone(),
         base_branch: None,
+        base_remote: None,
         created_at: now(),
         setup_output: None,
         setup_script: None,
