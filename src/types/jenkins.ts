@@ -39,7 +39,7 @@ export interface PreviewFreshness {
 
 /** A single stage within a Jenkins pipeline build. */
 export interface JenkinsStage {
-  /** e.g. "Integration tests", "Unit tests" */
+  /** e.g. "Cypress Unified", "Rust unit tests" */
   name: string
   /** "SUCCESS" | "FAILED" | "IN_PROGRESS" | "NOT_EXECUTED" | "ABORTED" */
   status: string
@@ -47,23 +47,20 @@ export interface JenkinsStage {
 }
 
 /**
- * One run (retry attempt) of the downstream `integration-tests` job for a
- * pipeline build.
+ * One attempt of the flaky end-to-end stage within a pipeline build.
  *
- * The flaky "Integration tests" stage auto-retries up to 3× on failure, each
- * retry launching a fresh `integration-tests` build. These surface "which try
- * are we on" plus the per-iteration build number/result.
+ * The stage retries in place on failure — each try is another step inside the
+ * same stage — so these surface "which try are we on" plus each try's own
+ * result, duration and log link.
  */
 export interface JenkinsAttempt {
-  /** 1-based attempt index within the pipeline build ("essai N"). */
+  /** 1-based attempt index within the stage ("essai N"). */
   attempt: number
-  /** `integration-tests` job build number. */
-  number: number
   /** "SUCCESS" | "FAILURE" | "ABORTED" | null (still running). */
   result: string | null
   building: boolean
   durationMs: number
-  /** Direct link to the `integration-tests` build on Jenkins. */
+  /** Direct link to this attempt's console log on Jenkins. */
   url: string
 }
 
@@ -83,11 +80,11 @@ export interface JenkinsFailedTest {
  * several Jenkins round-trips, so it is only fetched when the user asks.
  */
 export interface JenkinsFailureReport {
-  /** `build-and-test` build the report was computed from. */
+  /** Pipeline build the report was computed from. */
   pipelineNumber: number
-  /** First failed stage, e.g. "Elm tests" (null when nothing looks failed). */
+  /** First failed stage, e.g. "Cypress Unified" (null when nothing looks failed). */
   stage: string | null
-  /** Downstream job the stage delegated to, e.g. "elm-tests". */
+  /** Downstream job the stage delegated to, e.g. "unified-deploy-preview". */
   downstreamJob: string | null
   downstreamNumber: number | null
   /** Best link to the actually-failing console on Jenkins. */
@@ -118,17 +115,16 @@ export interface JenkinsQueueItem {
 export interface JenkinsWorktreeStatus {
   worktreeId: string
   prId: string | null
-  /** Latest "build-and-test" build for the PR. */
+  /** Latest unified pipeline build for the PR. */
   pipeline: JenkinsBuild | null
   /** Per-stage breakdown of the pipeline. */
   stages: JenkinsStage[]
   /**
-   * Retry attempts of the "Integration tests" stage (the downstream
-   * `integration-tests` runs), oldest first. Empty until the build reaches
-   * that stage.
+   * Attempts of the flaky end-to-end stage, oldest first. Empty until the
+   * build reaches that stage.
    */
   integrationAttempts: JenkinsAttempt[]
-  /** Latest "deploy-preview" build for the PR. */
+  /** Latest preview-deploy build for the PR. */
   preview: JenkinsBuild | null
   /** e.g. "https://3959.preview.example.com/admin" */
   previewUrl: string | null

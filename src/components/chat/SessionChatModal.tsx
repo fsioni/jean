@@ -1085,7 +1085,7 @@ export function SessionChatModal({
                       projectId={project.id}
                     />
                     <FailedRunsBadge projectPath={project.path} />
-                    {/* --- perso/jenkins --- build-and-test verdict + preview freshness for this worktree's PR */}
+                    {/* --- perso/jenkins --- CI verdict + preview freshness for this worktree's PR */}
                     {worktree && (
                       <>
                         <JenkinsStatusBadge

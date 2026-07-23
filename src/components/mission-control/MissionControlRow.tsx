@@ -29,6 +29,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
 import type { JenkinsStage } from '@/types/jenkins'
+import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'
 import type { MissionControlRow as Row } from './useMissionControlRows'
 
 /** Re-render every second while `active`, so the running clock ticks smoothly. */
@@ -376,7 +377,7 @@ export function MissionControlRow({ row }: { row: Row }) {
               className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
               title="Ouvrir le build sur Jenkins"
             >
-              build-and-test #{pipeline.number}
+              {PIPELINE_JOB} #{pipeline.number}
               <ExternalLink className="size-3" />
             </button>
           )}

@@ -23,35 +23,33 @@ pub struct JenkinsBuild {
     pub url: String,
     /// `PR_ID` build parameter, when set (empty parameter → `None`).
     pub pr_id: Option<String>,
-    /// `BRANCH` build parameter, when set (empty parameter → `None`).
+    /// Source branch parameter, when set — `APP_BRANCH` on the unified pipeline,
+    /// `BRANCH` on the router (empty parameter → `None`).
     pub branch: Option<String>,
     /// Triggering upstream build number (from the `CauseAction`). Internal join
-    /// key only — used to attribute `integration-tests` runs to their
-    /// `build-and-test` build; never serialized to the frontend.
+    /// key only, never serialized to the frontend.
     #[serde(skip)]
     pub upstream_build: Option<u64>,
 }
 
-/// One run of the downstream `integration-tests` job for a pipeline build —
-/// i.e. one retry attempt of the flaky `Integration tests` stage.
+/// One attempt of the flaky end-to-end stage within a pipeline build.
 ///
-/// The stage retries automatically up to 3× on failure, each retry launching a
-/// fresh `integration-tests` build. These surface "which try are we on" (the
-/// total) plus the per-iteration build number/result to the UI.
+/// The stage retries **in place** on failure: each try is another step
+/// (`stageFlowNodes` entry) inside the same stage, so a retried stage shows
+/// several nodes running the same command. These surface "which try are we on"
+/// (the total) plus each try's own result/duration/log link.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct JenkinsAttempt {
-    /// 1-based attempt index within the pipeline build ("essai N").
+    /// 1-based attempt index within the stage ("essai N").
     pub attempt: u32,
-    /// `integration-tests` job build number ("le compteur de chaque itération").
-    pub number: u64,
     /// `SUCCESS` / `FAILURE` / `ABORTED`; `None` while still running.
     pub result: Option<String>,
     /// Whether this attempt is currently running.
     pub building: bool,
     /// Attempt duration in milliseconds (0 while running).
     pub duration_ms: u64,
-    /// Direct link to the `integration-tests` build on Jenkins.
+    /// Direct link to this attempt's console log on Jenkins.
     pub url: String,
 }
 
@@ -59,7 +57,7 @@ pub struct JenkinsAttempt {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct JenkinsStage {
-    /// Stage name, e.g. `"Integration tests"`.
+    /// Stage name, e.g. `"Cypress Unified"`.
     pub name: String,
     /// `SUCCESS` / `FAILED` / `IN_PROGRESS` / `NOT_EXECUTED` / `ABORTED` / `PAUSED_PENDING_INPUT`.
     pub status: String,
@@ -82,20 +80,21 @@ pub struct JenkinsFailedTest {
 /// Why a pipeline build failed — the diagnostic Mission Control shows instead of
 /// sending the user to Jenkins.
 ///
-/// Built by drilling from the pipeline build into its first failed stage, then
-/// into the downstream job that stage delegated to (Planexpo's `build-and-test`
-/// mostly orchestrates `elm-tests` / `integration-tests` / AIO builds, so the
-/// stage's own log only says "Starting building: elm-tests #6377").
+/// Built by drilling from the pipeline build into its first failed stage, then —
+/// when that stage only orchestrates another job (`"Starting building:
+/// unified-deploy-preview #24"`) — into that downstream build. Test stages run
+/// their commands inline, so there the stage's own log and the pipeline build's
+/// own JUnit report are the real output.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct JenkinsFailureReport {
-    /// `build-and-test` build the report was computed from.
+    /// Pipeline build the report was computed from.
     pub pipeline_number: u64,
-    /// Name of the first failed stage, e.g. `"Elm tests"`.
+    /// Name of the first failed stage, e.g. `"Cypress Unified"`.
     pub stage: Option<String>,
-    /// Downstream job the stage delegated to, when it did (`"elm-tests"`).
+    /// Downstream job the stage delegated to, when it did.
     pub downstream_job: Option<String>,
-    /// Downstream build number (`6377`).
+    /// Downstream build number.
     pub downstream_number: Option<u64>,
     /// Best link to open the actually-failing console on Jenkins.
     pub console_url: Option<String>,
@@ -133,15 +132,14 @@ pub struct JenkinsWorktreeStatus {
     pub worktree_id: String,
     /// PR number the status was resolved for, if any.
     pub pr_id: Option<String>,
-    /// Latest `build-and-test` build for this PR.
+    /// Latest unified pipeline build for this PR.
     pub pipeline: Option<JenkinsBuild>,
-    /// Stage breakdown of `pipeline` (unit / elm / integration / …).
+    /// Stage breakdown of `pipeline` (tests / build / deploys).
     pub stages: Vec<JenkinsStage>,
-    /// Retry attempts of the `Integration tests` stage for `pipeline` (the
-    /// downstream `integration-tests` runs), oldest first. Empty when the build
-    /// hasn't reached that stage yet.
+    /// Attempts of the flaky end-to-end stage for `pipeline`, oldest first.
+    /// Empty when the build hasn't reached that stage yet.
     pub integration_attempts: Vec<JenkinsAttempt>,
-    /// Latest `deploy-preview` build for this PR.
+    /// Latest preview-deploy build for this PR.
     pub preview: Option<JenkinsBuild>,
     /// Preview admin URL, e.g. `https://3959.preview.example.com/admin`.
     pub preview_url: Option<String>,

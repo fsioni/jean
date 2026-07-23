@@ -13,27 +13,36 @@ use super::freshness::{self, PreviewFreshness};
 use super::gh_checks::{self, PrChecks};
 use super::parse;
 use super::types::{
-    JenkinsAttempt, JenkinsBuild, JenkinsFailureReport, JenkinsStage, JenkinsWorktreeStatus,
-    SOURCE_GITHUB, SOURCE_JENKINS, SOURCE_NONE,
+    JenkinsBuild, JenkinsFailureReport, JenkinsStage, JenkinsWorktreeStatus, SOURCE_GITHUB,
+    SOURCE_JENKINS, SOURCE_NONE,
 };
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::platform::silent_command;
 use crate::projects::storage::{load_projects_data, save_projects_data};
 use crate::projects::types::Project;
 
-/// Umbrella pipeline job for a PR (covers unit / elm / integration / deploy stages).
-pub const PIPELINE_JOB: &str = "build-and-test";
+// A PR build runs through three chained jobs: the ghprb launcher triggers the
+// router, which dispatches to the unified pipeline (tests + build + deploys),
+// which in turn triggers the preview deploy. The verdict, stages and preview all
+// come from the last two.
+//
+/// Unified pipeline job: tests, single build, and the optional deploys
+/// (preview / testing / preprod / prod).
+pub const PIPELINE_JOB: &str = "unified-build-test-deploy";
 /// FreeStyle entry job triggered by the GitHub PR (serializes; queues first).
+/// Still the ghprb entry point, and still what the PR's commit status links to.
 pub const LAUNCHER_JOB: &str = "build-and-test_Launcher-on-pr";
-/// Standalone job that deploys the PR preview environment.
-pub const PREVIEW_JOB: &str = "deploy-preview";
-/// Downstream job the `Integration tests` stage launches once per attempt
-/// (auto-retried up to 3× on failure). Each run is one [`JenkinsAttempt`].
-pub const INTEGRATION_JOB: &str = "integration-tests";
-/// The flaky stage that gets re-run most often.
-pub const INTEGRATION_STAGE: &str = "Integration tests";
+/// Job the launcher triggers, which dispatches to [`PIPELINE_JOB`] (or, on
+/// explicit opt-in, to the legacy pipeline — those builds have no unified build,
+/// so the status falls back to the GitHub commit status).
+pub const ROUTER_JOB: &str = "pr-build-router";
+/// Job the pipeline's `Deploy preview` stage launches to deploy the PR preview.
+pub const PREVIEW_JOB: &str = "unified-deploy-preview";
+/// The flaky stage that gets re-run most often — it retries in place, so its
+/// steps are the [`JenkinsAttempt`]s.
+pub const FLAKY_STAGE: &str = "Cypress Unified";
 /// Jobs whose queue items mean "the PR's pipeline is waiting to start".
-const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, LAUNCHER_JOB];
+const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, ROUTER_JOB, LAUNCHER_JOB];
 /// The ghprb "retest" trigger phrase (Jenkins global config regex
 /// `.*test\W+this\W+please.*`). Posted as a PR comment, it makes ghprb
 /// re-trigger the Launcher build — see [`rerun_jenkins_pipeline`].
@@ -76,7 +85,8 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// Match a build to a worktree: prefer the `PR_ID` parameter, fall back to `BRANCH`.
+/// Match a build to a worktree: prefer the `PR_ID` parameter, fall back to the
+/// branch one.
 fn match_build<'a>(
     builds: &'a [JenkinsBuild],
     pr_id: Option<&str>,
@@ -93,40 +103,12 @@ fn match_build<'a>(
     None
 }
 
-/// Group the `integration-tests` runs triggered by `pipeline_number` into
-/// numbered retry attempts, oldest first ("essai 1", "essai 2", …).
-///
-/// Returns empty when the pipeline build hasn't reached the Integration tests
-/// stage yet, or when its runs scrolled off the fetched `integration-tests`
-/// window (best-effort detail, never an error).
-pub fn integration_attempts_for(
-    integration_builds: &[JenkinsBuild],
-    pipeline_number: u64,
-) -> Vec<JenkinsAttempt> {
-    let mut runs: Vec<&JenkinsBuild> = integration_builds
-        .iter()
-        .filter(|b| b.upstream_build == Some(pipeline_number))
-        .collect();
-    // Oldest first → attempt 1, 2, 3 in trigger order (the list is newest-first).
-    runs.sort_by_key(|b| b.number);
-    runs.iter()
-        .enumerate()
-        .map(|(i, b)| JenkinsAttempt {
-            attempt: (i + 1) as u32,
-            number: b.number,
-            result: b.result.clone(),
-            building: b.building,
-            duration_ms: b.duration_ms,
-            url: b.url.clone(),
-        })
-        .collect()
-}
-
 /// Assemble the full status for one worktree from already-fetched build lists.
 ///
-/// Only the matched pipeline build's stages are fetched (one extra request).
-/// Shared by [`get_jenkins_status`] and the background poller so the matching
-/// logic stays in one place.
+/// Only the matched pipeline build's stages are fetched (one extra request,
+/// which also carries the flaky stage's attempts). Shared by
+/// [`get_jenkins_status`] and the background poller so the matching logic stays
+/// in one place.
 ///
 /// `gh_verdict` is the GitHub commit-status fallback for this PR (see
 /// [`gh_checks`]): used only when Jenkins has no matching build left, which on a
@@ -135,7 +117,6 @@ pub async fn assemble_status(
     client: &JenkinsClient,
     pipeline_builds: &[JenkinsBuild],
     preview_builds: &[JenkinsBuild],
-    integration_builds: &[JenkinsBuild],
     queue_json: &str,
     worktree_id: &str,
     pr_id: Option<&str>,
@@ -145,19 +126,18 @@ pub async fn assemble_status(
 ) -> JenkinsWorktreeStatus {
     let pipeline = match_build(pipeline_builds, pr_id, branch).cloned();
 
-    let stages: Vec<JenkinsStage> = match &pipeline {
+    // One `wfapi/describe?fullStages=true` gives both the stage breakdown and
+    // the per-attempt detail of the flaky stage (which retries in place).
+    let stages_json = match &pipeline {
         Some(build) => client
-            .fetch_stages(PIPELINE_JOB, build.number)
+            .fetch_stages_json(PIPELINE_JOB, build.number)
             .await
             .unwrap_or_default(),
-        None => Vec::new(),
+        None => String::new(),
     };
-
-    // Per-attempt breakdown of the (flaky, auto-retried) Integration tests stage.
-    let integration_attempts = pipeline
-        .as_ref()
-        .map(|build| integration_attempts_for(integration_builds, build.number))
-        .unwrap_or_default();
+    let stages: Vec<JenkinsStage> = parse::parse_stages(&stages_json).unwrap_or_default();
+    let integration_attempts =
+        parse::parse_stage_attempts(&stages_json, FLAKY_STAGE, client.base_url());
 
     let preview = match_build(preview_builds, pr_id, branch).cloned();
 
@@ -246,10 +226,6 @@ pub async fn get_jenkins_status(
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
     let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
-    let integration_builds = client
-        .fetch_builds(INTEGRATION_JOB)
-        .await
-        .unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
 
     let worktree = data.worktrees.iter().find(|w| w.id == worktree_id);
@@ -264,7 +240,6 @@ pub async fn get_jenkins_status(
         &client,
         &pipeline_builds,
         &preview_builds,
-        &integration_builds,
         &queue_json,
         &worktree_id,
         pr_id.as_deref(),
@@ -338,10 +313,6 @@ pub async fn get_jenkins_statuses(
 
     let pipeline_builds = client.fetch_builds(PIPELINE_JOB).await?;
     let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
-    let integration_builds = client
-        .fetch_builds(INTEGRATION_JOB)
-        .await
-        .unwrap_or_default();
     let queue_json = client.fetch_queue().await.unwrap_or_default();
     // These PRs are the likeliest to have been rotated out of Jenkins' short
     // build history, so the GitHub fallback verdict matters even more here.
@@ -360,7 +331,6 @@ pub async fn get_jenkins_statuses(
                 &client,
                 &pipeline_builds,
                 &preview_builds,
-                &integration_builds,
                 &queue_json,
                 &target.key,
                 target.pr_id.as_deref(),
@@ -374,15 +344,15 @@ pub async fn get_jenkins_statuses(
     Ok(out)
 }
 
-/// Re-run a PR's `build-and-test` pipeline by asking ghprb to retest it.
+/// Re-run a PR's pipeline by asking ghprb to retest it.
 ///
-/// Neither Jenkins job can be re-triggered directly with the right effect:
+/// No Jenkins job in the chain can be re-triggered directly with the right effect:
 /// - [`LAUNCHER_JOB`] (the ghprb entry point) is a FreeStyle job with **no build
 ///   parameters** — its ghprb context (`sha1`, `ghprbPullId`, …) is injected at
 ///   trigger time — so `POST …/buildWithParameters` answers **HTTP 500** ("Oops!
 ///   A problem occurred…"). That is the bug behind the original re-run error.
-/// - Triggering [`PIPELINE_JOB`] directly *works*, but bypasses ghprb, so the
-///   GitHub PR check / commit status never updates.
+/// - Triggering [`ROUTER_JOB`] or [`PIPELINE_JOB`] directly *works*, but bypasses
+///   ghprb, so the GitHub PR check / commit status never updates.
 ///
 /// The supported re-run is therefore the ghprb **retest phrase**: a PR comment
 /// ([`GHPRB_RETEST_PHRASE`]) that ghprb honors for repo admins and re-triggers
@@ -479,9 +449,10 @@ const CONSOLE_TAIL_BYTES: u64 = 256 * 1024;
 /// Diagnose why a PR's pipeline failed, WITHOUT opening Jenkins.
 ///
 /// Drills down: pipeline build → first FAILED stage → the failing step's log →
-/// (usually) the downstream job that step delegated to. Returns that job's
-/// failing tests plus a cleaned log excerpt, ready to read inline or hand to the
-/// agent.
+/// the downstream job that step delegated to, when it delegated at all (deploy
+/// stages do; test stages run inline, and publish their JUnit report on the
+/// pipeline build itself). Returns the failing tests plus a cleaned log excerpt,
+/// ready to read inline or hand to the agent.
 ///
 /// Errors only when Jenkins is unreachable / misconfigured; a build with no
 /// identifiable failure still returns a report with empty fields.
@@ -539,7 +510,7 @@ pub async fn get_jenkins_failure_report(
         None => String::new(),
     };
 
-    // 3. Most stages just orchestrate a downstream job — follow it for the real
+    // 3. A stage that only orchestrates a downstream job — follow it for the real
     //    output. Otherwise the stage's own log IS the output.
     let (log_job, log_build) =
         match parse::find_downstream_build(&parse::strip_log_markup(&raw_log)) {
@@ -587,7 +558,8 @@ fn absolute_jenkins_url(base: &str, href: &str) -> String {
     }
 }
 
-/// Restart only the flaky `Integration tests` stage of a pipeline build.
+/// Restart a pipeline build from its flaky end-to-end stage ([`FLAKY_STAGE`]),
+/// skipping the test/build stages that already passed.
 ///
 /// On failure, surfaces an error suggesting a full re-run (no silent 37-min rebuild).
 pub async fn restart_jenkins_integration(
@@ -599,9 +571,13 @@ pub async fn restart_jenkins_integration(
     let client = JenkinsClient::new(&cfg.url, &cfg.user, &cfg.token);
 
     client
-        .restart_stage(PIPELINE_JOB, build_number, INTEGRATION_STAGE)
+        .restart_stage(PIPELINE_JOB, build_number, FLAKY_STAGE)
         .await
-        .map_err(|e| format!("Could not restart the Integration tests stage ({e}). Use “Re-run pipeline” instead."))
+        .map_err(|e| {
+            format!(
+                "Could not restart the {FLAKY_STAGE} stage ({e}). Use “Re-run pipeline” instead."
+            )
+        })
 }
 
 /// Persist per-project Jenkins config (URL + user + token + preview template).
@@ -666,52 +642,13 @@ mod tests {
         }
     }
 
-    /// One `integration-tests` run triggered by pipeline build `upstream`.
-    fn attempt_build(
-        number: u64,
-        upstream: u64,
-        result: Option<&str>,
-        building: bool,
-    ) -> JenkinsBuild {
-        JenkinsBuild {
-            number,
-            result: result.map(str::to_string),
-            building,
-            timestamp_ms: 0,
-            duration_ms: 1000,
-            url: format!("http://jenkins/job/integration-tests/{number}/"),
-            pr_id: None,
-            branch: None,
-            upstream_build: Some(upstream),
-        }
-    }
-
     #[test]
-    fn groups_integration_runs_into_numbered_attempts_oldest_first() {
-        // Newest-first list (as Jenkins returns it), mixing two pipeline builds.
-        let runs = vec![
-            attempt_build(6854, 6386, None, true), // PR build 6386, attempt 2 (running)
-            attempt_build(6853, 6386, Some("FAILURE"), false), // PR build 6386, attempt 1
-            attempt_build(6852, 6385, Some("FAILURE"), false), // PR build 6385, attempt 3
-            attempt_build(6851, 6385, Some("FAILURE"), false),
-            attempt_build(6850, 6385, Some("FAILURE"), false),
-        ];
-
-        // 6385 exhausted all three retries.
-        let a = integration_attempts_for(&runs, 6385);
-        assert_eq!(a.len(), 3);
-        assert_eq!((a[0].attempt, a[0].number), (1, 6850));
-        assert_eq!((a[2].attempt, a[2].number), (3, 6852));
-
-        // 6386 is mid-retry: attempt 1 failed, attempt 2 still running.
-        let b = integration_attempts_for(&runs, 6386);
-        assert_eq!(b.len(), 2);
-        assert_eq!(b[0].result.as_deref(), Some("FAILURE"));
-        assert!(b[1].building && b[1].result.is_none());
-        assert_eq!(b[1].attempt, 2);
-
-        // A build that never reached the stage has no attempts.
-        assert!(integration_attempts_for(&runs, 9999).is_empty());
+    fn queue_jobs_cover_the_whole_pr_chain() {
+        // A PR waits at whichever of the three chained jobs hasn't started yet;
+        // missing one would show "no build" instead of "queued".
+        assert!(QUEUE_JOBS.contains(&LAUNCHER_JOB));
+        assert!(QUEUE_JOBS.contains(&ROUTER_JOB));
+        assert!(QUEUE_JOBS.contains(&PIPELINE_JOB));
     }
 
     #[test]
@@ -823,7 +760,6 @@ mod tests {
             &client,
             &[],
             &[],
-            &[],
             "{}",
             "wt-1",
             Some("4143"),
@@ -868,7 +804,6 @@ mod tests {
         let status = assemble_status(
             &client,
             &builds,
-            &[],
             &[],
             "{}",
             "wt-1",

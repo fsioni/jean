@@ -97,7 +97,7 @@ Le code Jenkins/workflows vit dans l'app (Rust + React), donc isole-le pour que
 les merge-forward ne génèrent presque jamais de conflits :
 
 - **Fichiers/modules neufs** plutôt que des edits dans le cœur. Un nouveau
-  fichier ne conflicte jamais. Ex. `src-tauri/src/jenkins/`, des composants React dédiés.
+  fichier ne conflicte jamais. Ex. `jean-core/src/jenkins/`, des composants React dédiés.
 - **Minimise les points de contact** dans les fichiers partagés. Les
   incontournables (cf. `CLAUDE.md`) : enregistrement des commandes dans
   `src-tauri/src/lib.rs` (`generate_handler![]`) **et** `http_server/dispatch.rs`.

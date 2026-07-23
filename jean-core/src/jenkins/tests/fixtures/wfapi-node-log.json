@@ -1,8 +1,8 @@
 {
-  "nodeId": "28",
+  "nodeId": "107",
   "nodeStatus": "FAILED",
-  "length": 935,
+  "length": 1103,
   "hasMore": false,
-  "text": "Scheduling project: <a href='/job/elm-tests/' class='jenkins-table__link model-link model-link--float'>elm-tests</a>\nStarting building: <a href='/job/elm-tests/6377/' class='jenkins-table__link model-link model-link--float'>elm-tests #6377</a>\nBuild <a href='/job/elm-tests/6377/' class='jenkins-table__link model-link model-link--float'>elm-tests #6377</a> completed: FAILURE\n",
-  "consoleUrl": "/job/build-and-test/7139/execution/node/28/log"
+  "text": "<span class=\"timestamp\"><b>05:23:50</b> </span><span style=\"display: none\">[2026-07-23T05:23:50.329Z]</span> Scheduling project: <a href='/job/unified-deploy-preview/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview</a>\n<span class=\"timestamp\"><b>05:23:57</b> </span><span style=\"display: none\">[2026-07-23T05:23:57.701Z]</span> Starting building: <a href='/job/unified-deploy-preview/24/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview #24</a>\n<span class=\"timestamp\"><b>05:26:28</b> </span><span style=\"display: none\">[2026-07-23T05:26:28.013Z]</span> Build <a href='/job/unified-deploy-preview/24/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview #24</a> completed: FAILURE\n",
+  "consoleUrl": "/job/unified-build-test-deploy/61/execution/node/107/log"
 }

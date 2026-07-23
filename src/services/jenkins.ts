@@ -312,8 +312,9 @@ export function useRerunJenkinsPipeline() {
 }
 
 /**
- * Mutation to restart only the integration tests for a given build.
- * Invalidates the worktree's Jenkins status on success.
+ * Mutation to restart a build from the flaky end-to-end stage, skipping the
+ * stages that already passed. Invalidates the worktree's Jenkins status on
+ * success.
  */
 export function useRestartJenkinsIntegration() {
   const queryClient = useQueryClient()
@@ -332,18 +333,18 @@ export function useRestartJenkinsIntegration() {
       })
     },
     onMutate: () => {
-      const toastId = toast.loading('Restarting integration tests...')
+      const toastId = toast.loading('Restarting the end-to-end stage...')
       return { toastId }
     },
     onSuccess: (_data, variables, context) => {
-      toast.success('Integration tests restarted', { id: context?.toastId })
+      toast.success('End-to-end stage restarted', { id: context?.toastId })
       queryClient.invalidateQueries({
         queryKey: jenkinsQueryKeys.status(variables.worktreeId),
       })
     },
     onError: (error, _variables, context) => {
       toast.error(
-        `Failed to restart integration tests: ${getErrorMessage(error)}`,
+        `Failed to restart the end-to-end stage: ${getErrorMessage(error)}`,
         { id: context?.toastId }
       )
     },

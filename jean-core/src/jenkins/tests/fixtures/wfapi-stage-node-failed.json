@@ -1,45 +1,72 @@
 {
   "_links": {
     "self": {
-      "href": "/job/build-and-test/7139/execution/node/25/wfapi/describe"
+      "href": "/job/unified-build-test-deploy/52/execution/node/79/wfapi/describe"
     }
   },
-  "id": "25",
-  "name": "Elm tests",
+  "id": "79",
+  "name": "Cypress Unified",
   "execNode": "",
   "status": "FAILED",
   "error": {
-    "message": null,
-    "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+    "message": "script returned exit code 1",
+    "type": "hudson.AbortException"
   },
-  "startTimeMillis": 1784632539298,
-  "durationMillis": 71024,
+  "startTimeMillis": 1784742799490,
+  "durationMillis": 1048013,
   "pauseDurationMillis": 0,
   "stageFlowNodes": [
     {
       "_links": {
         "self": {
-          "href": "/job/build-and-test/7139/execution/node/28/wfapi/describe"
+          "href": "/job/unified-build-test-deploy/52/execution/node/84/wfapi/describe"
         },
         "log": {
-          "href": "/job/build-and-test/7139/execution/node/28/wfapi/log"
+          "href": "/job/unified-build-test-deploy/52/execution/node/84/wfapi/log"
         },
         "console": {
-          "href": "/job/build-and-test/7139/execution/node/28/log"
+          "href": "/job/unified-build-test-deploy/52/execution/node/84/log"
         }
       },
-      "id": "28",
-      "name": "Building elm-tests",
+      "id": "84",
+      "name": "Shell Script",
       "execNode": "",
       "status": "FAILED",
       "error": {
-        "message": null,
-        "type": "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+        "message": "script returned exit code 1",
+        "type": "hudson.AbortException"
       },
-      "startTimeMillis": 1784632539376,
-      "durationMillis": 70857,
+      "startTimeMillis": 1784742799530,
+      "durationMillis": 526565,
+      "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
       "pauseDurationMillis": 0,
-      "parentNodes": ["27"]
+      "parentNodes": ["83"]
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/87/wfapi/describe"
+        },
+        "log": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/87/wfapi/log"
+        },
+        "console": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/87/log"
+        }
+      },
+      "id": "87",
+      "name": "Shell Script",
+      "execNode": "",
+      "status": "FAILED",
+      "error": {
+        "message": "script returned exit code 1",
+        "type": "hudson.AbortException"
+      },
+      "startTimeMillis": 1784743326095,
+      "durationMillis": 521013,
+      "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
+      "pauseDurationMillis": 0,
+      "parentNodes": ["86"]
     }
   ]
 }

@@ -1,10 +1,10 @@
 //! Preview freshness: is the live PR preview up to date with the PR head?
 //!
-//! Jenkins exposes no commit SHA for these builds (no git `BuildData`, no
-//! changesets, and the `deploy-preview` job is unused — the preview is deployed
-//! by the `Deploy preview` stage of `build-and-test`). So instead of asking
-//! Jenkins, we ask the **preview itself**: every preview serves a `/version`
-//! endpoint whose first line is `commit <sha>` (a `git log -1` dump). We compare
+//! Rather than ask Jenkins what it *deployed*, we ask the **preview itself**
+//! what it is *actually serving* — the only source that can tell a deploy that
+//! reported success from one that silently didn't land. Every preview serves a
+//! `/version` endpoint whose first line is `commit <sha>` (a `git log -1`
+//! dump). We compare
 //! that deployed SHA to the PR head (`headRefOid` from GitHub) and get three
 //! actionable states:
 //!
@@ -16,6 +16,10 @@
 //! Classification ([`classify`]) and parsing ([`parse_version_sha`]) are pure
 //! and unit-tested. The PR head read shells out to `gh` like
 //! `projects::pr_status`, so it runs inside `spawn_blocking` from async callers.
+//!
+//! (The preview-deploy job also carries a `REVISION` parameter holding the full
+//! SHA it was asked to deploy — a possible fallback when a preview is
+//! unreachable, but it says what was *requested*, not what is live.)
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

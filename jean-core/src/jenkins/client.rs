@@ -84,9 +84,18 @@ impl JenkinsClient {
 
     /// Raw `wfapi/describe` body — keeps the per-stage `id` the failure report
     /// needs to drill into a stage (`parse_stages` drops it).
+    ///
+    /// `fullStages=true` inlines each stage's `stageFlowNodes`, so the retry
+    /// attempts of the flaky stage come along for free instead of costing one
+    /// extra request per worktree per poll cycle.
     pub async fn fetch_stages_json(&self, job: &str, build: u64) -> Result<String, String> {
         let url = format!("{}/{build}/wfapi/describe", self.job_url(job));
-        self.get_text(&url, &[]).await
+        self.get_text(&url, &[("fullStages", "true")]).await
+    }
+
+    /// Base URL of the controller, for absolutizing its relative `_links`.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// Raw `wfapi/describe` of ONE stage node: its `stageFlowNodes` are the
@@ -207,7 +216,7 @@ impl JenkinsClient {
         Ok(())
     }
 
-    /// Restart a declarative pipeline from a given stage (e.g. `"Integration tests"`).
+    /// Restart a declarative pipeline from a given stage (e.g. `"Cypress Unified"`).
     pub async fn restart_stage(&self, job: &str, build: u64, stage: &str) -> Result<(), String> {
         let url = format!("{}/{build}/restart/restart", self.job_url(job));
         self.post_form(&url, &[("stageName", stage.to_string())])
@@ -226,8 +235,8 @@ mod tests {
         assert_eq!(client.user, "ci-user");
         assert_eq!(client.token, "tok");
         assert_eq!(
-            client.job_url("build-and-test"),
-            "https://jenkins.example.com/job/build-and-test"
+            client.job_url("unified-build-test-deploy"),
+            "https://jenkins.example.com/job/unified-build-test-deploy"
         );
     }
 }
