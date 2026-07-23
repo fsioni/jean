@@ -1106,6 +1106,7 @@ pub async fn get_worktree_changes(
             worktree_id: worktree.id.clone(),
             worktree_path: worktree.path.clone(),
             base_branch: base_branch.clone(),
+            base_remote: worktree.base_remote.clone(),
             pr_number: worktree.pr_number,
             pr_url: worktree.pr_url.clone(),
             pr_push_remote: worktree.pr_push_remote.clone(),
@@ -1151,6 +1152,7 @@ pub async fn get_worktree_diff(
         .clamp(1, MAX_DIFF_BYTES);
     let (worktree, project_default_branch) =
         resolve_worktree_and_project_default(&app, &worktree_id)?;
+    let base_remote = worktree.base_remote.clone();
     let base_branch = worktree.base_branch.unwrap_or(project_default_branch);
     let has_head = git_has_head(&worktree.path);
     let mut args = match diff_type.as_str() {
@@ -1169,7 +1171,10 @@ pub async fn get_worktree_diff(
         "branch" => vec![
             "diff".to_string(),
             "--unified=3".to_string(),
-            format!("origin/{base_branch}...HEAD"),
+            format!(
+                "{}...HEAD",
+                super::git_status::base_ref(base_remote.as_deref(), &base_branch)
+            ),
         ],
         other => {
             return Err(format!(
@@ -6560,10 +6565,16 @@ pub async fn get_git_diff(
     worktree_path: String,
     diff_type: String,
     base_branch: Option<String>,
+    base_remote: Option<String>,
 ) -> Result<super::git_status::GitDiff, String> {
     log::trace!("Getting {diff_type} diff for {worktree_path}");
 
-    super::git_status::get_git_diff(&worktree_path, &diff_type, base_branch.as_deref())
+    super::git_status::get_git_diff(
+        &worktree_path,
+        &diff_type,
+        base_branch.as_deref(),
+        base_remote.as_deref(),
+    )
 }
 
 /// Get paginated commit history for a branch
@@ -12108,6 +12119,7 @@ pub async fn fetch_worktrees_status(app: AppHandle, project_id: String) -> Resul
                 worktree_id: worktree.id.clone(),
                 worktree_path: worktree.path.clone(),
                 base_branch: base_branch_clone.clone(),
+                base_remote: worktree.base_remote.clone(),
                 pr_number: worktree.pr_number,
                 pr_url: worktree.pr_url.clone(),
                 pr_push_remote: worktree.pr_push_remote.clone(),
