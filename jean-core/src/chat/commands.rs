@@ -52,20 +52,22 @@ const CODEX_DEFAULT_PLAN_MODE_PROMPT: &str = "\
 ## Plan Mode
 
 - You are in PLAN MODE. Do not implement yet.
-- Inspect the project as needed, then present the plan with the native Codex plan tool (`update_plan` / `CodexPlan`) so Jean can show the approval UI.
-- Every plan-mode response that contains or revises a plan must use `update_plan` / `CodexPlan`; do not provide a plain-text-only plan.
-- If questions block the plan, prefer Codex `request_user_input`; after the user answers, call `update_plan` / `CodexPlan` again with the **full revised plan**, not only short step titles.
+- Explore with non-mutating tools only. Do not edit or write files (including `plan.md`, `.ai/todo.md`, or code) until the user approves the plan.
+- When the plan is decision-complete, present it with Codex native plan finalization: wrap the plan in a `<proposed_plan>...</proposed_plan>` block (Jean maps this to the approval UI / CodexPlan).
+- Do not use the `update_plan` checklist tool while in plan mode — it errors in collaboration Plan mode and is not Jean's plan approval flow.
+- Every plan-mode response that contains or revises a plan must use a complete `<proposed_plan>` block; do not provide a plain-text-only plan.
+- If questions block the plan, prefer Codex `request_user_input`; after the user answers, emit a revised complete `<proposed_plan>` block with the **full revised plan**, not only short step titles.
 - Do not call implementation tools or make file changes until the user approves the plan.
 
 ### Plan quality (required for YOLO/Build handoff)
 
 Jean may hand this plan to a zero-context agent in a new worktree. Status lines like \"Plan created and ready for approval.\" are not a plan.
 
-- `update_plan` step titles are a short checklist only (a few words each is fine).
-- The authoritative plan body must be detailed enough to implement without re-scanning the repo or re-asking answered questions.
+- Checklist-style step titles (if any) are a short checklist only (a few words each is fine).
+- The authoritative plan body inside `<proposed_plan>` must be detailed enough to implement without re-scanning the repo or re-asking answered questions.
 - Include: goal/outcome, key decisions from the interview, concrete files/areas to touch, ordered implementation steps with enough approach detail, risks/edge cases, and how to verify.
 - Prefer a structured body (headings/bullets). Concise writing is good; incomplete handoff plans are not.
-- After answering questions, re-emit the full detailed body with `update_plan` / plan item text — never end on explanation-only or checklist-only content.";
+- After answering questions, re-emit the full detailed body in a complete `<proposed_plan>` block — never end on explanation-only or checklist-only content.";
 const DEFAULT_PARALLEL_EXECUTION_PROMPT: &str = r#"In plan mode, structure plans so subagents can work simultaneously. In build/execute mode, use subagents in parallel for faster implementation.
 
 When launching multiple Task subagents, prefer sending them in a single message rather than sequentially. Group independent work items (e.g., editing separate files, researching unrelated questions) into parallel Task calls. Only sequence Tasks when one depends on another's output.
@@ -192,19 +194,19 @@ fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'st
              This current BUILD MODE instruction supersedes any earlier plan-mode \
              instructions remembered from conversation history; treat the approved plan \
              as authorization to implement now. \
-             Do NOT call update_plan/emit CodexPlan unless the user explicitly asks \
-             for a new plan. If a required decision is missing, use request_user_input \
-             instead of switching back to plan mode.",
+             Do NOT emit <proposed_plan> blocks or wait for plan approval unless the user \
+             explicitly asks for a new plan. If a required decision is missing, use \
+             request_user_input instead of switching back to plan mode.",
         ),
         "yolo" => Some(
             "You are in YOLO EXECUTION MODE. Start implementing immediately. \
              This current YOLO EXECUTION MODE instruction supersedes any earlier plan-mode \
              instructions remembered from conversation history; treat the approved plan \
              as authorization to implement now. \
-             Do NOT call update_plan/emit CodexPlan unless the user explicitly asks \
-             for a new plan. Do not ask for confirmation before routine implementation steps. \
-             If a required decision is missing, use request_user_input instead of \
-             switching back to plan mode.",
+             Do NOT emit <proposed_plan> blocks or wait for plan approval unless the user \
+             explicitly asks for a new plan. Do not ask for confirmation before routine \
+             implementation steps. If a required decision is missing, use request_user_input \
+             instead of switching back to plan mode.",
         ),
         _ => None,
     }
@@ -9831,9 +9833,10 @@ mod tests {
         let plan_prompt = codex_default_global_system_prompt(Some("plan"));
         assert!(plan_prompt.contains("## Plan Mode"));
         assert!(plan_prompt.contains("PLAN MODE"));
-        assert!(plan_prompt.contains("update_plan"));
-        assert!(plan_prompt.contains("CodexPlan"));
+        assert!(plan_prompt.contains("<proposed_plan>"));
         assert!(plan_prompt.contains("approval UI"));
+        assert!(plan_prompt.contains("Do not use the `update_plan` checklist tool"));
+        assert!(plan_prompt.contains("Do not edit or write files"));
         assert!(plan_prompt.contains("Plan quality"));
         assert!(plan_prompt.contains("zero-context"));
         assert!(plan_prompt.contains("Plan created and ready for approval"));
@@ -9842,7 +9845,7 @@ mod tests {
 
         let build_prompt = codex_default_global_system_prompt(Some("build"));
         assert!(!build_prompt.contains("## Plan Mode"));
-        assert!(!build_prompt.contains("update_plan"));
+        assert!(!build_prompt.contains("<proposed_plan>"));
         assert!(!build_prompt.contains("CodexPlan"));
         assert!(build_prompt.contains("## Not Plan Mode"));
         assert!(build_prompt.contains("Jean Worktree Policy"));
@@ -9855,7 +9858,7 @@ mod tests {
 
         let yolo_prompt = codex_default_global_system_prompt(Some("yolo"));
         assert!(!yolo_prompt.contains("## Plan Mode"));
-        assert!(!yolo_prompt.contains("update_plan"));
+        assert!(!yolo_prompt.contains("<proposed_plan>"));
         assert!(!yolo_prompt.contains("CodexPlan"));
         assert!(yolo_prompt.contains("## Not Plan Mode"));
         assert!(yolo_prompt.contains("VERY IMPORTANT: Keep Code Simple"));
@@ -9877,7 +9880,7 @@ mod tests {
 
         let plan_prompt = resolve_codex_global_system_prompt(Some(legacy_default), Some("plan"));
         assert!(plan_prompt.contains("## Plan Mode"));
-        assert!(plan_prompt.contains("CodexPlan"));
+        assert!(plan_prompt.contains("<proposed_plan>"));
     }
 
     #[test]
@@ -9892,7 +9895,8 @@ mod tests {
     #[test]
     fn test_codex_execution_mode_instruction_is_last_authoritative_part() {
         let mut parts = vec![
-            "Custom prompt still says Every Codex plan-mode response must use update_plan/CodexPlan.".to_string(),
+            "Custom prompt still says Every Codex plan-mode response must use STALE_PLAN_MARKER."
+                .to_string(),
             crate::chat::RECAP_INSTRUCTION.to_string(),
         ];
 
@@ -9900,7 +9904,7 @@ mod tests {
         let combined = parts.join("\n");
 
         let stale_plan_rule = combined
-            .rfind("update_plan/CodexPlan")
+            .rfind("STALE_PLAN_MARKER")
             .expect("stale plan rule is present in custom prompt");
         let mode_override = combined
             .rfind("YOLO EXECUTION MODE")
@@ -9922,14 +9926,14 @@ mod tests {
         let build = codex_execution_mode_instruction(Some("build")).unwrap();
         assert!(build.contains("BUILD MODE"));
         assert!(build.contains("Start implementing immediately"));
-        assert!(build.contains("Do NOT call update_plan/emit CodexPlan"));
+        assert!(build.contains("Do NOT emit <proposed_plan>"));
         assert!(build.contains("supersedes any earlier plan-mode"));
         assert!(build.contains("approved plan"));
 
         let yolo = codex_execution_mode_instruction(Some("yolo")).unwrap();
         assert!(yolo.contains("YOLO EXECUTION MODE"));
         assert!(yolo.contains("Start implementing immediately"));
-        assert!(yolo.contains("Do NOT call update_plan/emit CodexPlan"));
+        assert!(yolo.contains("Do NOT emit <proposed_plan>"));
         assert!(yolo.contains("Do not ask for confirmation"));
         assert!(yolo.contains("supersedes any earlier plan-mode"));
         assert!(yolo.contains("approved plan"));
