@@ -86,3 +86,30 @@ Types TS : interface `PreviewFreshness`, `previewFreshness` sur `JenkinsWorktree
 - Pas d'état « déploiement en cours » dédié (pendant un redeploy la preview reste STALE puis
   bascule UP_TO_DATE) ; pas de bouton « redéployer ».
 - `behind_by` best-effort : si le compare échoue, on affiche quand même **STALE**.
+
+---
+
+## Mise à jour 2026-07-23 — CI unifiée : `/version` a changé de forme
+
+Vérifié en direct sur les previews des PR ouvertes + l'API Jenkins (`unified-deploy-preview`).
+Depuis que les déploiements passent par `docker compose` (pipeline unifié), une preview répond
+`/version` de **trois** façons, et le parsing d'origine n'en gérait qu'une :
+
+| Réponse observée                     | Signification                      | Avant                                     | Maintenant          |
+| ------------------------------------ | ---------------------------------- | ----------------------------------------- | ------------------- |
+| `200` + SHA nu 40 hex (`text/plain`) | déploiement unifié récent          | UNKNOWN (gris)                            | comparé normalement |
+| `200` + dump `commit <sha>`          | ancien déploiement encore en place | comparé                                   | inchangé            |
+| `404` (« Cannot GET /version »)      | app **up**, fichier non publié     | DOWN (rouge, bouton « Ouvrir » désactivé) | fallback Jenkins    |
+| `502` / timeout                      | env réellement éteint              | DOWN                                      | inchangé            |
+
+Trois conséquences dans `jenkins/freshness.rs` :
+
+1. `parse_version_sha` accepte le SHA nu (exigé complet — 40 hex — pour ne pas confondre avec
+   une chaîne de version) **et** l'ancien `commit <sha>`.
+2. Le probe distingue « injoignable » (erreur transport / 5xx → `DOWN`) de « joignable sans
+   version » (4xx → `Probe::Up(None)`). Un 404 ne doit plus griser une preview qui marche.
+3. Fallback : sans SHA servi, on prend le paramètre `REVISION` du dernier
+   `unified-deploy-preview` **réussi** de la PR (`commands::deployed_revision`). C'est ce que
+   Jenkins a _déployé_, pas ce qui est _servi_ — `PreviewFreshness.sha_source`
+   (`preview` | `jenkins`) porte la nuance jusqu'au badge, qui affiche alors « Déployé <sha> »
+   et « (d'après Jenkins) ».

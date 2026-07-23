@@ -70,6 +70,7 @@ describe('WorktreeCiDot', () => {
         previewFreshness: {
           status: 'DOWN',
           previewSha: null,
+          shaSource: null,
           prHeadSha: null,
           behindBy: null,
         },

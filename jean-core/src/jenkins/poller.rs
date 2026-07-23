@@ -16,7 +16,8 @@ use tokio::sync::Notify;
 
 use super::client::JenkinsClient;
 use super::commands::{
-    assemble_status, fetch_pr_checks_for, resolve_preview_freshness, PIPELINE_JOB, PREVIEW_JOB,
+    assemble_status, deployed_revision, fetch_pr_checks_for, resolve_preview_freshness,
+    PIPELINE_JOB, PREVIEW_JOB,
 };
 use super::parse::{self, Transition, STATUS_FAILURE, STATUS_SUCCESS};
 use super::{config, types::JenkinsWorktreeStatus};
@@ -190,6 +191,11 @@ async fn poll_cycle(app: &AppHandle, memory: &mut PollMemory) -> Result<bool, St
                 worktree.pr_number,
                 cfg.preview_url_template.as_deref(),
                 gh_check.head_sha,
+                deployed_revision(
+                    &preview_builds,
+                    status.pr_id.as_deref(),
+                    Some(&worktree.branch),
+                ),
             )
             .await;
 

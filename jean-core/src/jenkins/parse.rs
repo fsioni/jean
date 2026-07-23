@@ -62,6 +62,7 @@ pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
             &params,
             &["APP_BRANCH", "BRANCH", "ghprbSourceBranch"],
         )),
+        revision: non_empty(find_param(&params, &["REVISION"])),
         upstream_build: extract_upstream_build(build.get("actions")),
     })
 }
@@ -646,6 +647,12 @@ mod tests {
         assert_eq!(preview.number, 24);
         assert_eq!(preview.branch.as_deref(), Some("feat-login"));
         assert_eq!(preview.upstream_build, Some(61));
+        // `REVISION` is the commit this deploy was asked to put live — the
+        // freshness fallback for previews that publish no `/version`.
+        assert_eq!(
+            preview.revision.as_deref(),
+            Some("061b5ffe63e60dee88d2527f4f8c150053ce9a11")
+        );
     }
 
     #[test]
@@ -758,6 +765,7 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
+            revision: None,
             upstream_build: None,
         };
         assert_eq!(overall_status(Some(&building)), "BUILDING");
@@ -832,6 +840,7 @@ mod tests {
             url: String::new(),
             pr_id: None,
             branch: None,
+            revision: None,
             upstream_build: None,
         };
         // Running build wins even if something is also queued.

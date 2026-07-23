@@ -98,6 +98,7 @@ describe('WorktreeCiStatus', () => {
         previewFreshness: {
           status: 'STALE',
           previewSha: 'aaa',
+          shaSource: 'preview',
           prHeadSha: 'bbb',
           behindBy: 2,
         },
