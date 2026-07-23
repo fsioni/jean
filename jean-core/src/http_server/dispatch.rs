@@ -1769,6 +1769,12 @@ pub async fn dispatch_command(
             let result = crate::projects::get_git_remotes(repo_path).await?;
             to_value(result)
         }
+        "list_remotes_with_branch" => {
+            let repo_path: String = field(&args, "repoPath", "repo_path")?;
+            let branch: String = from_field(&args, "branch")?;
+            let result = crate::projects::list_remotes_with_branch(repo_path, branch).await?;
+            to_value(result)
+        }
         "get_github_remotes" => {
             let repo_path: String = field(&args, "repoPath", "repo_path")?;
             let result = crate::projects::get_github_remotes(repo_path).await?;
