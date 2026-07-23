@@ -224,6 +224,7 @@ import {
   type WorktreeReorderDragState,
 } from '@/lib/drag-and-drop/worktree-reorder-ux'
 import { openCanvasConflictResolution } from './conflict-resolution-navigation'
+import { getCanvasDiffRequest } from './canvas-diff-request'
 
 interface ProjectCanvasViewProps {
   projectId: string
@@ -463,11 +464,7 @@ function WorktreeSectionHeader({
   isSelected?: boolean
   shortcutNumber?: number
   onRowClick?: () => void
-  onDiffClick?: (
-    worktreePath: string,
-    baseBranch: string,
-    type: 'uncommitted' | 'branch'
-  ) => void
+  onDiffClick?: (request: DiffRequest) => void
   onSetLabels?: () => void
   onResolveConflicts?: (worktree: Worktree) => void
   disableTextSelection?: boolean
@@ -559,11 +556,13 @@ function WorktreeSectionHeader({
 
   const handleDiffClick = useCallback(() => {
     onDiffClick?.(
-      worktree.path,
-      defaultBranch,
-      isBase ? 'uncommitted' : 'branch'
+      getCanvasDiffRequest(
+        worktree,
+        defaultBranch,
+        isBase ? 'uncommitted' : 'branch'
+      )
     )
-  }, [onDiffClick, isBase, worktree.path, defaultBranch])
+  }, [onDiffClick, isBase, worktree, defaultBranch])
 
   const sessionMetrics = useMemo(
     () => (cards && cards.length > 0 ? getSessionMetrics(cards) : null),
@@ -2354,15 +2353,15 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
       if (!section) return
 
       const isBase = isBaseSession(section.worktree)
-      const baseBranch = project?.default_branch ?? 'main'
+      const defaultBranch = project?.default_branch ?? 'main'
 
       setCanvasDiffRequest(prev => {
         if (requestedType) {
-          return {
-            type: requestedType,
-            worktreePath: section.worktree.path,
-            baseBranch,
-          }
+          return getCanvasDiffRequest(
+            section.worktree,
+            defaultBranch,
+            requestedType
+          )
         }
         if (prev) {
           return {
@@ -2370,11 +2369,11 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
             type: prev.type === 'uncommitted' ? 'branch' : 'uncommitted',
           }
         }
-        return {
-          type: isBase ? 'uncommitted' : 'branch',
-          worktreePath: section.worktree.path,
-          baseBranch,
-        }
+        return getCanvasDiffRequest(
+          section.worktree,
+          defaultBranch,
+          isBase ? 'uncommitted' : 'branch'
+        )
       })
     }
 
@@ -3539,13 +3538,7 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                               section.worktree.path
                             )
                           }}
-                          onDiffClick={(worktreePath, baseBranch, type) => {
-                            setCanvasDiffRequest({
-                              type,
-                              worktreePath,
-                              baseBranch,
-                            })
-                          }}
+                          onDiffClick={setCanvasDiffRequest}
                           onSetLabels={
                             showWorktreeLabelContextMenu
                               ? () => openWorktreeLabelModal(section.worktree)
