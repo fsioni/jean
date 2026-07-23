@@ -873,69 +873,82 @@ function ConnectionRow({
   onEdit?: () => void
   onDelete?: () => void
 }) {
+  const hasActions = Boolean(onEdit || onDelete)
+
   return (
-    <div className="flex items-center gap-2 rounded-md border p-2">
+    <div className="rounded-md border p-2">
+      {/* Top row: name + version always share full width so versions align */}
       <button
         type="button"
-        className="min-w-0 flex-1 text-left disabled:opacity-60"
+        className="flex w-full items-center gap-2 text-left text-sm font-medium disabled:opacity-60"
         onClick={onSelect}
         disabled={connecting}
       >
-        <span className="flex items-center gap-2 text-sm font-medium">
-          <span
-            className={`size-2 rounded-full ${active ? 'bg-green-500' : 'bg-muted-foreground/35'}`}
-          />
-          {name}
-          {active && <Check className="size-3.5 text-green-500" />}
-          {connecting && (
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-          )}
-          <span
-            className={`ml-auto shrink-0 text-xs font-normal ${
-              versionWarning
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-muted-foreground'
-            }`}
-            title={
-              versionWarning
-                ? 'Remote version differs from this app'
-                : undefined
-            }
-          >
-            {versionLabel}
-            {versionWarning ? ' · mismatch' : ''}
-          </span>
-        </span>
-        <span className="ml-4 block truncate text-xs text-muted-foreground">
-          {detail}
+        <span
+          className={`size-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-muted-foreground/35'}`}
+        />
+        {name}
+        {active && <Check className="size-3.5 shrink-0 text-green-500" />}
+        {connecting && (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        )}
+        <span
+          className={`ml-auto shrink-0 text-xs font-normal ${
+            versionWarning
+              ? 'text-amber-600 dark:text-amber-400'
+              : 'text-muted-foreground'
+          }`}
+          title={
+            versionWarning
+              ? 'Remote version differs from this app'
+              : undefined
+          }
+        >
+          {versionLabel}
+          {versionWarning ? ' · mismatch' : ''}
         </span>
       </button>
-      {onEdit && (
-        <Button
+      {/* Second row: detail URL + edit/delete actions */}
+      <div className="ml-4 flex items-center gap-1">
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label={`Edit ${name}`}
-          onClick={onEdit}
+          className="min-w-0 flex-1 truncate text-left text-xs text-muted-foreground disabled:opacity-60"
+          onClick={onSelect}
           disabled={connecting}
         >
-          <Pencil className="size-3.5" />
-        </Button>
-      )}
-      {onDelete && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 text-destructive"
-          aria-label={`Delete ${name}`}
-          onClick={onDelete}
-          disabled={connecting}
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
-      )}
+          {detail}
+        </button>
+        {hasActions && (
+          <div className="flex shrink-0 items-center gap-0.5">
+            {onEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={`Edit ${name}`}
+                onClick={onEdit}
+                disabled={connecting}
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 text-destructive"
+                aria-label={`Delete ${name}`}
+                onClick={onDelete}
+                disabled={connecting}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
