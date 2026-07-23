@@ -54,6 +54,8 @@ export interface ChatToolbarProps {
   providerLocked?: boolean
 
   baseBranch: string
+  /** Remote the base branch lives on when explicitly picked (e.g. "fork") */
+  baseRemote?: string
   uncommittedAdded: number
   uncommittedRemoved: number
   branchDiffAdded: number

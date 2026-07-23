@@ -1515,8 +1515,9 @@ pub async fn create_worktree(
 
     // Use provided base branch or project's default branch, with validation.
     // A base may be remote-qualified ("fork/main") to start from another remote
-    // than origin. Only the git start point uses the qualified ref: the worktree
-    // stores the short branch name so diff/ahead-behind keep working unchanged.
+    // than origin. The git start point uses the qualified ref; the worktree stores
+    // the short branch name plus base_remote so status/diff/pull compare against
+    // the same remote later.
     let preferred_base = base_branch.unwrap_or_else(|| project.default_branch.clone());
     let (base_remote, preferred_base) =
         match git::split_remote_qualified_base(&project.path, &preferred_base) {
@@ -1530,7 +1531,14 @@ pub async fn create_worktree(
             }
             None => (None, preferred_base),
         };
-    let base = git::get_valid_base_branch(&project.path, &preferred_base)?;
+    // Remote-qualified bases were already verified via remote-tracking refs.
+    // Do not run get_valid_base_branch — it only checks local/origin and would
+    // silently fall back to main when the branch exists only on e.g. fork.
+    let base = if base_remote.is_some() {
+        preferred_base
+    } else {
+        git::get_valid_base_branch(&project.path, &preferred_base)?
+    };
 
     // Resolve auto-pull preference now (async), but defer the actual pull to background thread
     let should_auto_pull = if pr_context.is_none() {
@@ -5755,8 +5763,8 @@ pub async fn update_project_settings(
 ///
 /// This command:
 /// 1. Commits any uncommitted changes (if commit_message provided)
-/// 2. Fetches from origin
-/// 3. Rebases onto origin/{base_branch}
+/// 2. Fetches from the worktree's base remote (or origin)
+/// 3. Rebases onto {remote}/{base_branch}
 /// 4. Force pushes with lease
 pub async fn rebase_worktree(
     app: AppHandle,
@@ -5775,10 +5783,17 @@ pub async fn rebase_worktree(
         .find_project(&worktree.project_id)
         .ok_or_else(|| format!("Project not found: {}", worktree.project_id))?;
 
+    let base_branch = worktree
+        .base_branch
+        .clone()
+        .unwrap_or_else(|| project.default_branch.clone());
+    let base_remote = worktree.base_remote.clone();
+
     let result = git::rebase_onto_base(
         &worktree.path,
-        &project.default_branch,
+        &base_branch,
         commit_message.as_deref(),
+        base_remote.as_deref(),
     )?;
 
     log::trace!("Successfully rebased worktree: {}", worktree.name);
@@ -11320,6 +11335,9 @@ pub async fn get_merge_conflicts(
 /// Used when a PR has merge conflicts on GitHub. This creates the conflict
 /// state locally so the user can resolve conflicts with AI assistance.
 /// If the merge is clean (no conflicts), the merge commit is kept.
+///
+/// Uses the worktree's stored base branch/remote when present so a session
+/// started from e.g. `fork/main` merges that ref, not a hardcoded origin/main.
 pub async fn fetch_and_merge_base(
     app: AppHandle,
     worktree_id: String,
@@ -11334,23 +11352,28 @@ pub async fn fetch_and_merge_base(
         .find_project(&worktree.project_id)
         .ok_or_else(|| format!("Project not found: {}", worktree.project_id))?;
 
-    let base_branch = &project.default_branch;
+    let base_branch = worktree
+        .base_branch
+        .as_deref()
+        .unwrap_or(project.default_branch.as_str());
+    let remote = worktree.base_remote.as_deref().unwrap_or("origin");
     let worktree_path = &worktree.path;
+    let qualified_base = super::git_status::base_ref(Some(remote), base_branch);
 
-    // Fetch the latest base branch from origin
+    // Fetch the latest base branch from the remote it belongs to
     let fetch_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
-        .args(["fetch", "origin", base_branch])
+        .args(["fetch", remote, base_branch])
         .output()
-        .map_err(|e| format!("Failed to fetch origin: {e}"))?;
+        .map_err(|e| format!("Failed to fetch {remote}: {e}"))?;
 
     if !fetch_output.status.success() {
         let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-        return Err(format!("Failed to fetch origin/{base_branch}: {stderr}"));
+        return Err(format!("Failed to fetch {qualified_base}: {stderr}"));
     }
 
-    // Merge origin/<base_branch> into current branch
+    // Merge <remote>/<base_branch> into current branch
     let merge_output = wsl_aware_command("git", Some(Path::new(worktree_path)))
-        .args(["merge", &format!("origin/{base_branch}")])
+        .args(["merge", &qualified_base])
         .output()
         .map_err(|e| format!("Failed to merge: {e}"))?;
 

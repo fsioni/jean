@@ -3517,7 +3517,14 @@ export function ChatWindow({
                                 selectedEffortLevel={selectedEffortLevel}
                                 useAdaptiveThinking={useAdaptiveThinkingFlag}
                                 hideThinkingLevel={hideThinkingLevel}
-                                baseBranch={gitStatus?.base_branch ?? 'main'}
+                                baseBranch={
+                                  gitStatus?.base_branch ??
+                                  worktree?.base_branch ??
+                                  'main'
+                                }
+                                baseRemote={
+                                  gitStatus?.base_remote ?? worktree?.base_remote
+                                }
                                 uncommittedAdded={uncommittedAdded}
                                 uncommittedRemoved={uncommittedRemoved}
                                 branchDiffAdded={branchDiffAdded}

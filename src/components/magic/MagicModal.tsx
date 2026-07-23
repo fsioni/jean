@@ -1164,10 +1164,11 @@ export function MagicModal() {
             await performGitPull({
               worktreeId: selectedWorktreeId,
               worktreePath: worktree.path,
-              baseBranch: project?.default_branch ?? 'main',
+              baseBranch:
+                worktree.base_branch ?? project?.default_branch ?? 'main',
               branchLabel: worktree.branch,
               projectId: worktree.project_id ?? undefined,
-              remote,
+              remote: remote ?? worktree.base_remote,
               onMergeConflict: () => executeGitDirectly('resolve-conflicts'),
             })
           })
@@ -1453,12 +1454,14 @@ export function MagicModal() {
               const diffSection = prResult.conflict_diff
                 ? `\n\nHere is the diff showing the conflict details:\n\n\`\`\`diff\n${prResult.conflict_diff}\n\`\`\``
                 : ''
-              const baseBranch = project?.default_branch || 'main'
+              const baseBranch =
+                worktree.base_branch || project?.default_branch || 'main'
+              const baseRemote = worktree.base_remote || 'origin'
               const resolveInstructions =
                 preferences?.magic_prompts?.resolve_conflicts ??
                 DEFAULT_RESOLVE_CONFLICTS_PROMPT
 
-              const conflictPrompt = `I merged \`origin/${baseBranch}\` into this branch to resolve PR conflicts, but there are merge conflicts.
+              const conflictPrompt = `I merged \`${baseRemote}/${baseBranch}\` into this branch to resolve PR conflicts, but there are merge conflicts.
 
 Conflicts in these files:
 - ${conflictFiles}${diffSection}

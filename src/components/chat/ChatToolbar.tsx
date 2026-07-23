@@ -92,6 +92,7 @@ export const ChatToolbar = memo(function ChatToolbar({
   sessionHasMessages,
   providerLocked,
   baseBranch,
+  baseRemote,
   prUrl,
   prNumber,
   displayStatus,
@@ -344,11 +345,13 @@ export const ChatToolbar = memo(function ChatToolbar({
       worktreePath: activeWorktreePath,
       baseBranch,
       projectId,
+      remote: baseRemote,
       onMergeConflict: onResolveConflicts,
     })
   }, [
     activeWorktreePath,
     baseBranch,
+    baseRemote,
     worktreeId,
     projectId,
     onResolveConflicts,

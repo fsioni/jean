@@ -2160,12 +2160,12 @@ pub fn has_uncommitted_changes(repo_path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Rebase the current branch onto a base branch from origin
+/// Rebase the current branch onto a base branch from a remote
 ///
 /// This performs:
 /// 1. Commits any uncommitted changes with the provided message
-/// 2. Fetches from origin
-/// 3. Rebases onto origin/{base_branch}
+/// 2. Fetches from the given remote (defaults to origin)
+/// 3. Rebases onto {remote}/{base_branch}
 /// 4. Force pushes with lease
 ///
 /// Returns an error message if any step fails
@@ -2173,8 +2173,11 @@ pub fn rebase_onto_base(
     repo_path: &str,
     base_branch: &str,
     commit_message: Option<&str>,
+    base_remote: Option<&str>,
 ) -> Result<String, String> {
-    log::trace!("Starting rebase onto {base_branch} in {repo_path}");
+    let remote = base_remote.unwrap_or("origin");
+    let qualified_base = format!("{remote}/{base_branch}");
+    log::trace!("Starting rebase onto {qualified_base} in {repo_path}");
 
     // Step 1: Check for uncommitted changes and commit if needed
     if has_uncommitted_changes(repo_path) {
@@ -2207,22 +2210,22 @@ pub fn rebase_onto_base(
         }
     }
 
-    // Step 2: Fetch from origin
-    log::trace!("Fetching from origin...");
+    // Step 2: Fetch from the base remote
+    log::trace!("Fetching from {remote}...");
     let fetch_output = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args(["fetch", "origin", base_branch])
+        .args(["fetch", remote, base_branch])
         .output()
-        .map_err(|e| format!("Failed to fetch from origin: {e}"))?;
+        .map_err(|e| format!("Failed to fetch from {remote}: {e}"))?;
 
     if !fetch_output.status.success() {
         let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-        return Err(format!("Failed to fetch from origin: {stderr}"));
+        return Err(format!("Failed to fetch from {remote}: {stderr}"));
     }
 
-    // Step 3: Rebase onto origin/{base_branch}
-    log::trace!("Rebasing onto origin/{base_branch}...");
+    // Step 3: Rebase onto {remote}/{base_branch}
+    log::trace!("Rebasing onto {qualified_base}...");
     let rebase_output = wsl_aware_command("git", Some(Path::new(repo_path)))
-        .args(["rebase", &format!("origin/{base_branch}")])
+        .args(["rebase", &qualified_base])
         .output()
         .map_err(|e| format!("Failed to rebase: {e}"))?;
 
@@ -2966,5 +2969,26 @@ mod tests {
             &["update-ref", "refs/remotes/origin/fork/head", "HEAD"],
         );
         assert_eq!(split_remote_qualified_base(path, "fork/head"), None);
+    }
+
+    #[test]
+    fn test_split_remote_qualified_base_keeps_remote_only_branches() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        // Branch exists only on the fork remote — not locally, not on origin.
+        // get_valid_base_branch would fall back to main if we stripped the
+        // remote prefix and re-validated against local/origin only.
+        run_git(
+            dir.path(),
+            &["update-ref", "refs/remotes/fork/feature-x", "HEAD"],
+        );
+        assert_eq!(
+            split_remote_qualified_base(path, "fork/feature-x"),
+            Some(("fork".to_string(), "feature-x".to_string()))
+        );
+        assert!(remote_tracking_branch_exists(path, "fork", "feature-x"));
+        // Local/origin checks that get_valid_base_branch uses must both fail.
+        assert!(!branch_exists(path, "feature-x"));
+        assert!(!remote_branch_exists(path, "feature-x"));
     }
 }

@@ -513,19 +513,13 @@ function WorktreeSectionHeader({
       await performGitPull({
         worktreeId: worktree.id,
         worktreePath: worktree.path,
-        baseBranch: defaultBranch,
+        baseBranch: worktree.base_branch ?? defaultBranch,
         projectId,
+        remote: worktree.base_remote,
         onMergeConflict: () => onResolveConflicts?.(worktree),
       })
     },
-    [
-      worktree,
-      worktree.id,
-      worktree.path,
-      defaultBranch,
-      projectId,
-      onResolveConflicts,
-    ]
+    [worktree, defaultBranch, projectId, onResolveConflicts]
   )
 
   const handlePush = useCallback(

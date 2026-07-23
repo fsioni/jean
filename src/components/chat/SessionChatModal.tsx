@@ -839,11 +839,19 @@ export function SessionChatModal({
       await performGitPull({
         worktreeId,
         worktreePath,
-        baseBranch: defaultBranch,
+        baseBranch: worktree?.base_branch ?? defaultBranch,
         projectId: project?.id,
+        remote: worktree?.base_remote,
       })
     },
-    [worktreeId, worktreePath, defaultBranch, project?.id]
+    [
+      worktreeId,
+      worktreePath,
+      worktree?.base_branch,
+      worktree?.base_remote,
+      defaultBranch,
+      project?.id,
+    ]
   )
 
   const pickRemoteOrRun = useRemotePicker(worktreePath)
