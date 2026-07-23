@@ -24,6 +24,31 @@ describe('getStackedBaseBranch', () => {
       getStackedBaseBranch('feature-parent', 'feature-child', 'main')
     ).toBe('feature-parent')
   })
+
+  it('qualifies the base with the remote it was picked from', () => {
+    // Without the remote this would be hidden as "just the default branch",
+    // which on a multi-remote project loses which repository it came from.
+    expect(getStackedBaseBranch('main', 'feature', 'main', 'fork')).toBe(
+      'fork/main'
+    )
+  })
+
+  it('qualifies a non-default base branch too', () => {
+    expect(
+      getStackedBaseBranch(
+        'feature-parent',
+        'feature-child',
+        'main',
+        'upstream'
+      )
+    ).toBe('upstream/feature-parent')
+  })
+
+  it('ignores the remote when there is no base branch', () => {
+    expect(
+      getStackedBaseBranch(undefined, 'feature', 'main', 'fork')
+    ).toBeNull()
+  })
 })
 
 describe('shouldShowWorktreeBranchBadge', () => {

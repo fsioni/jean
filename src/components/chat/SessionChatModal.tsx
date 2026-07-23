@@ -361,7 +361,8 @@ export function SessionChatModal({
   const stackedBaseBranch = getStackedBaseBranch(
     worktree?.base_branch,
     worktree?.branch,
-    project?.default_branch
+    project?.default_branch,
+    worktree?.base_remote
   )
   const { data: openPRs } = useGitHubPRs(project?.path ?? null, 'open')
   const stackedOnPR = stackedBaseBranch
