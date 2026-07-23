@@ -635,11 +635,11 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `### 1. Planning Guidance
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
 - Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
-- Make the plan extremely concise. Sacrifice grammar for the sake of concision.
-- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex update_plan/CodexPlan, Cursor/OpenCode equivalent), not plain text only.
+- Keep plans concise but complete enough for zero-context handoff (YOLO/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.
+- When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex \`<proposed_plan>\` / collaboration Plan mode, Cursor/OpenCode equivalent), not plain text only.
 - For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/\`--print\` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
-- For Codex specifically, when the current execution mode is plan: after the user answers native \`request_user_input\`/open questions, immediately call \`update_plan\`/emit \`CodexPlan\` again with the revised plan before any implementation.
-- Every Codex response that contains or revises a plan while the current execution mode is plan must use \`update_plan\`/\`CodexPlan\`; do not provide plain-text-only plans.
+- For Codex specifically, when the current execution mode is plan: do not write plan files or code; when the plan is ready wrap it in \`<proposed_plan>...</proposed_plan>\` so Jean can show the approval UI. Do not use the \`update_plan\` checklist tool in plan mode.
+- Every Codex response that contains or revises a plan while the current execution mode is plan must use a complete \`<proposed_plan>\` block (or a native plan item); do not provide plain-text-only plans, and do not attempt file writes.
 - Use a plain-text Unresolved Questions section only for non-actionable notes or when the backend cannot ask interactively.
 
 ### 2. Documentation First
@@ -1172,7 +1172,7 @@ export interface AppPreferences {
   terminal_renderer?: TerminalRenderer // Embedded terminal renderer: 'xterm' or 'ghostty-web' (experimental)
   terminal_font?: TerminalFont // Embedded terminal font
   terminal_font_size?: number // Embedded terminal font size in pixels
-  editor: EditorApp // Editor app: 'zed' | 'vscode' | 'cursor' | 'xcode'
+  editor: EditorApp // Editor app: 'zed' | 'vscode' | 'vscodium' | 'cursor' | 'xcode' | 'intellij'
   open_in: OpenInDefault // Default Open In action: 'editor' | 'terminal' | 'finder' | 'github'
   auto_branch_naming: boolean // Automatically generate branch names from first message
   branch_naming_model: ClaudeModel // Model for generating branch names
@@ -1227,7 +1227,13 @@ export interface AppPreferences {
   mobile_zoom_level?: number // Mobile zoom level percentage (50-200, default 90)
   sync_zoom_levels?: boolean // Keep desktop and mobile zoom levels in sync (default true)
   custom_cli_profiles: CustomCliProfile[] // Custom CLI settings profiles (e.g., OpenRouter, MiniMax)
-  default_provider: string | null // Default provider profile name (null = Anthropic direct)
+  default_provider: string | null // Default Claude provider profile name (null = Anthropic direct)
+  /** Codex custom model_provider profiles (OpenRouter, OpenAI-compatible, etc.) */
+  custom_codex_providers: CodexProviderProfile[]
+  /** Default Codex provider profile name (null = Codex default / ChatGPT OpenAI) */
+  default_codex_provider: string | null
+  /** PI custom providers mirrored into ~/.pi/agent/models.json */
+  custom_pi_providers: PiProviderProfile[]
   favorite_models: string[] // Favourited model keys ("backend:model") shown at top of picker
   favorite_package_scripts?: string[] // Favourited package script keys ("project_id:script")
   fast_mode_models: string[] // Model keys ("backend:baseModel") with fast tier last enabled
@@ -1244,6 +1250,7 @@ export interface AppPreferences {
   selected_grok_model: GrokModel // Default Grok model
   selected_kimi_model?: KimiModel // Default Kimi Code model
   default_codex_reasoning_effort: CodexReasoningEffort // Default reasoning effort for Codex: 'low' | 'medium' | 'high' | 'xhigh'
+  default_codex_model_verbosity: CodexModelVerbosity // Default model verbosity for Codex chat: 'low' | 'medium' | 'high'
   default_grok_reasoning_effort: GrokReasoningEffort // Default reasoning effort for Grok: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
   codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
@@ -1306,6 +1313,58 @@ export interface CustomCliProfile {
   file_path?: string // Path to settings file on disk (e.g. ~/.claude/settings.jean.openrouter.json)
   supports_thinking?: boolean // Whether this provider supports thinking/effort levels (default: true)
 }
+
+/** Codex custom model_provider profile (injected via app-server config / -c overrides). */
+export interface CodexProviderProfile {
+  name: string // Display + session id, e.g. "OpenRouter"
+  provider_id: string // Codex model_provider slug, e.g. "openrouter"
+  base_url: string // e.g. https://openrouter.ai/api/v1
+  env_key: string // Env var holding the API key, e.g. OPENROUTER_API_KEY
+  wire_api?: 'chat' | 'responses' // Optional wire protocol
+}
+
+/** PI custom provider (merged into ~/.pi/agent/models.json providers map). */
+export interface PiProviderProfile {
+  name: string // Provider id in models.json, e.g. "openrouter-custom"
+  base_url: string
+  api:
+    | 'openai-completions'
+    | 'openai-responses'
+    | 'anthropic-messages'
+    | 'google-generative-ai'
+  /** Env var name; written to models.json as $ENV_NAME (never store secrets in prefs) */
+  api_key_env?: string
+  models: { id: string; name?: string }[]
+}
+
+export const PREDEFINED_CODEX_PROVIDERS: CodexProviderProfile[] = [
+  {
+    name: 'OpenRouter',
+    provider_id: 'openrouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    env_key: 'OPENROUTER_API_KEY',
+    wire_api: 'responses',
+  },
+]
+
+export const PREDEFINED_PI_PROVIDERS: PiProviderProfile[] = [
+  {
+    name: 'openrouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    api: 'openai-completions',
+    api_key_env: 'OPENROUTER_API_KEY',
+    models: [
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+      { id: 'openai/gpt-4.1', name: 'GPT-4.1' },
+    ],
+  },
+  {
+    name: 'ollama',
+    base_url: 'http://localhost:11434/v1',
+    api: 'openai-completions',
+    models: [{ id: 'llama3.2', name: 'Llama 3.2' }],
+  },
+]
 
 export const PREDEFINED_CLI_PROFILES: CustomCliProfile[] = [
   {
@@ -1670,6 +1729,9 @@ export function normalizeCodexModel(model: string): CodexModel {
 
 export type CodexReasoningEffort = string
 
+/** Codex Responses API model_verbosity: controls output length/detail */
+export type CodexModelVerbosity = 'low' | 'medium' | 'high'
+
 export type GrokReasoningEffort = string
 
 export type MagicPromptReasoningEffort = string | null
@@ -1736,6 +1798,28 @@ export const codexReasoningOptions: {
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'xHigh' },
+]
+
+export const codexModelVerbosityOptions: {
+  value: CodexModelVerbosity
+  label: string
+  description: string
+}[] = [
+  {
+    value: 'low',
+    label: 'Low',
+    description: 'Terse answers; fewer mid-turn progress notes',
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    description: 'Balanced narration between tools and final answer',
+  },
+  {
+    value: 'high',
+    label: 'High',
+    description: 'More detailed explanations and intermediate updates',
+  },
 ]
 
 export const grokReasoningOptions: {
@@ -1813,7 +1897,13 @@ export function getTerminalOptions(): { value: TerminalApp; label: string }[] {
 export const terminalOptions: { value: TerminalApp; label: string }[] =
   getTerminalOptions()
 
-export type EditorApp = 'zed' | 'vscode' | 'cursor' | 'xcode' | 'intellij'
+export type EditorApp =
+  | 'zed'
+  | 'vscode'
+  | 'vscodium'
+  | 'cursor'
+  | 'xcode'
+  | 'intellij'
 
 const allEditorOptions: {
   value: EditorApp
@@ -1824,6 +1914,11 @@ const allEditorOptions: {
   {
     value: 'vscode',
     label: 'VS Code',
+    platforms: ['mac', 'windows', 'linux'],
+  },
+  {
+    value: 'vscodium',
+    label: 'VSCodium',
     platforms: ['mac', 'windows', 'linux'],
   },
   {
@@ -2152,6 +2247,9 @@ export const defaultPreferences: AppPreferences = {
   sync_zoom_levels: true,
   custom_cli_profiles: [],
   default_provider: null,
+  custom_codex_providers: [],
+  default_codex_provider: null,
+  custom_pi_providers: [],
   favorite_models: [],
   favorite_package_scripts: [],
   fast_mode_models: [],
@@ -2167,6 +2265,7 @@ export const defaultPreferences: AppPreferences = {
   selected_grok_model: 'grok/grok-4.5', // Default Grok model
   selected_kimi_model: 'kimi/default', // Use Kimi Code's configured default model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
+  default_codex_model_verbosity: 'medium', // Default: medium verbosity (not low — Jean #535)
   default_grok_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
   codex_multi_agent_enabled: true, // Default: enabled to match parallel execution prompting

@@ -157,9 +157,19 @@ bun run install:local:server
 | `--token <token>`         | `JEAN_TOKEN`                   | saved/generated token                  |
 | `--no-token`              | `JEAN_NO_TOKEN=1`              | off                                    |
 | `--allow-unsafe-no-token` | `JEAN_ALLOW_UNSAFE_NO_TOKEN=1` | off                                    |
+| `--allow-native-open`     | `JEAN_ALLOW_NATIVE_OPEN=1`     | off (auto-on under WSL)                |
 | n/a                       | `JEAN_ALLOWED_ORIGINS`         | same-origin only                       |
 
 By default a token is required (using `--token`, `JEAN_TOKEN`, or an auto-generated one); pass `--no-token` to disable it. `--token` and `--no-token` are mutually exclusive. Jean rejects `--no-token` with `--host 0.0.0.0` or `--host ::` unless `--allow-unsafe-no-token` is also set.
+
+### Native open actions (editor / file manager / terminal)
+
+HTTP/WebSocket clients can trigger **Open in editor**, **Open worktrees folder**, and related actions only when native open is allowed:
+
+- **Auto-enabled under WSL** — headless Jean inside WSL routes folders through `explorer.exe` and editors through the Linux CLI binaries on PATH (same as #490 / #522).
+- **Opt-in elsewhere** — pass `--allow-native-open` or set `JEAN_ALLOW_NATIVE_OPEN=1` for a local headless server that should open host apps.
+- **Desktop Web Access** — automatically allowed when the desktop app hosts the HTTP server.
+- **Remote/VPS headless** — left off by default so a browser client cannot spawn GUI tools on the server.
 
 ## Health checks
 
@@ -316,3 +326,8 @@ same dialog to return to the desktop app's local backend.
 
 Native Jean client origins are allowed automatically. HTTP and HTTPS server
 URLs are both supported; keep token authentication enabled on remote servers.
+
+The connection picker shows each remote's `appVersion` (from `/api/auth`) next
+to Local's client version. When the versions differ, Jean shows a warning toast
+and highlights the mismatch in the picker, but still allows the connection so
+you are not locked out. Prefer matching versions for the best experience.

@@ -341,6 +341,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     fix_macos_path();
 
+    // Must run before tauri::Builder creates the WebKitGTK webview.
+    // Policy: DMABUF off by default; full software compositing is opt-in
+    // via JEAN_SAFE_GRAPHICS=1 (see platform/linux_webkit.rs, issue #129).
+    #[cfg(target_os = "linux")]
+    platform::apply_linux_webkit_env();
+
     let log_targets = vec![
         tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
         tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
