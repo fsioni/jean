@@ -1981,6 +1981,63 @@ export function useGitHubRemotes(repoPath: string | null, enabled: boolean) {
   })
 }
 
+export interface ProjectRemote {
+  name: string
+  /** `owner/repo` when the remote points at GitHub, undefined otherwise */
+  repo?: string
+}
+
+/** Extract `owner/repo` from a normalized GitHub remote URL. */
+function githubRepoFromUrl(url: string): string | undefined {
+  const match = url.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/)
+  return match?.[1]
+}
+
+/**
+ * Hook to fetch the git remotes that can serve as a start point for `branch`
+ * (origin first), enriched with `owner/repo` for remotes pointing at GitHub.
+ *
+ * Remotes without that branch fetched locally are left out, so the New Worktree
+ * modal never offers a start point that cannot resolve.
+ */
+export function useProjectRemotes(
+  repoPath: string | null | undefined,
+  branch: string | null | undefined
+) {
+  return useQuery({
+    queryKey: ['project-remotes', repoPath ?? null, branch ?? null] as const,
+    queryFn: async (): Promise<ProjectRemote[]> => {
+      if (!repoPath || !branch) return []
+
+      const [names, githubRemotes] = await Promise.all([
+        invoke<string[]>('list_remotes_with_branch', { repoPath, branch }),
+        invoke<GitHubRemote[]>('get_github_remotes', { repoPath }).catch(
+          () => [] as GitHubRemote[]
+        ),
+      ])
+
+      const repoByRemote = new Map(
+        githubRemotes.map(remote => [
+          remote.name,
+          githubRepoFromUrl(remote.url),
+        ])
+      )
+      const remotes = names.map(name => ({
+        name,
+        repo: repoByRemote.get(name),
+      }))
+
+      // origin first, then the other remotes in git's own order
+      const origin = remotes.find(remote => remote.name === 'origin')
+      return origin
+        ? [origin, ...remotes.filter(remote => remote.name !== 'origin')]
+        : remotes
+    },
+    enabled: isTauri() && !!repoPath && !!branch,
+    staleTime: 30_000,
+  })
+}
+
 /**
  * Hook to open a worktree in Finder
  */

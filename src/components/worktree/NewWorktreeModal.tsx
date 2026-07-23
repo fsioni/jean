@@ -119,6 +119,15 @@ export function NewWorktreeModal() {
     setPreviewItem({ type: 'advisory', number: 0, ghsaId: advisory.ghsaId })
   }
 
+  // With several remotes the quick actions are per-remote, so the "N" shortcut
+  // targets the first one (origin) instead of the project default branch.
+  const defaultBranch = data.selectedProject?.default_branch
+  const primaryRemote = data.remotes?.[0]?.name
+  const quickCreateBase =
+    defaultBranch && (data.remotes?.length ?? 0) > 1 && primaryRemote
+      ? `${primaryRemote}/${defaultBranch}`
+      : undefined
+
   const { handleKeyDown } = useNewWorktreeKeyboard({
     activeTab,
     setActiveTab,
@@ -129,7 +138,8 @@ export function NewWorktreeModal() {
     selectedItemIndex,
     setSelectedItemIndex,
     creatingFromNumber: handlers.creatingFromNumber,
-    handleCreateWorktree: handlers.handleCreateWorktree,
+    handleCreateWorktree: () =>
+      handlers.handleCreateWorktree(undefined, quickCreateBase),
     handleBaseSession: handlers.handleBaseSession,
     handleSelectIssue: handlers.handleSelectIssue,
     handleSelectIssueAndInvestigate: handlers.handleSelectIssueAndInvestigate,
@@ -269,6 +279,8 @@ export function NewWorktreeModal() {
                 }
                 projectId={data.selectedProjectId}
                 jeanConfig={data.jeanConfig}
+                remotes={data.remotes}
+                defaultBranch={defaultBranch}
               />
             )}
 

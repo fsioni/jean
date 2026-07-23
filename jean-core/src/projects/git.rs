@@ -484,6 +484,59 @@ pub fn remote_branch_exists(repo_path: &str, branch_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Check if a remote with this name is configured for the repository
+pub fn remote_exists(repo_path: &str, remote: &str) -> bool {
+    wsl_aware_command("git", Some(Path::new(repo_path)))
+        .args(["remote", "get-url", remote])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if a specific remote-tracking branch exists (refs/remotes/<remote>/<branch>)
+pub fn remote_tracking_branch_exists(repo_path: &str, remote: &str, branch: &str) -> bool {
+    wsl_aware_command("git", Some(Path::new(repo_path)))
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/remotes/{remote}/{branch}"),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Names of the remotes that already have `<remote>/<branch>` fetched locally.
+///
+/// Used to offer "create a worktree from <remote>/<branch>" only for remotes
+/// where that start point actually resolves.
+pub fn remotes_with_branch(repo_path: &str, branch: &str) -> Result<Vec<String>, String> {
+    Ok(get_git_remotes(repo_path)?
+        .into_iter()
+        .filter(|remote| remote_tracking_branch_exists(repo_path, &remote.name, branch))
+        .map(|remote| remote.name)
+        .collect())
+}
+
+/// Split a base spec like `fork/main` into `("fork", "main")` when the prefix is
+/// a configured remote other than the implicit origin resolution.
+///
+/// Returns `None` — so the historical origin-based resolution keeps applying —
+/// for plain branch names (`main`), local branches containing a slash
+/// (`feature/foo`) and PR head branches already tracked on origin.
+pub fn split_remote_qualified_base(repo_path: &str, base: &str) -> Option<(String, String)> {
+    if branch_exists(repo_path, base) || remote_branch_exists(repo_path, base) {
+        return None;
+    }
+
+    let (remote, branch) = base.split_once('/')?;
+    if remote.is_empty() || branch.is_empty() || !remote_exists(repo_path, remote) {
+        return None;
+    }
+
+    Some((remote.to_string(), branch.to_string()))
+}
+
 /// Check if a repository has any commits
 pub fn has_commits(repo_path: &str) -> bool {
     wsl_aware_command("git", Some(Path::new(repo_path)))
@@ -2788,5 +2841,130 @@ mod tests {
             repo: "my-project".to_string(),
         };
         assert_eq!(id.to_key(), "my-org-my-project");
+    }
+
+    // ========================================================================
+    // Remote-qualified base branch tests
+    // ========================================================================
+
+    fn run_git(repo: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("git command");
+        assert!(
+            status.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+    }
+
+    /// Repo with one commit on `main`, a `fork` remote and a `fork/main`
+    /// remote-tracking ref (created directly, no network needed).
+    fn repo_with_fork_remote() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        run_git(repo, &["init", "--initial-branch", "main"]);
+        run_git(repo, &["config", "user.email", "test@example.com"]);
+        run_git(repo, &["config", "user.name", "Test"]);
+        std::fs::write(repo.join("file.txt"), "hello\n").unwrap();
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "initial"]);
+        run_git(
+            repo,
+            &["remote", "add", "fork", "https://example.com/fork.git"],
+        );
+        run_git(repo, &["update-ref", "refs/remotes/fork/main", "HEAD"]);
+        dir
+    }
+
+    #[test]
+    fn test_remote_exists_only_for_configured_remotes() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        assert!(remote_exists(path, "fork"));
+        assert!(!remote_exists(path, "upstream"));
+    }
+
+    #[test]
+    fn test_remote_tracking_branch_exists() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        assert!(remote_tracking_branch_exists(path, "fork", "main"));
+        assert!(!remote_tracking_branch_exists(path, "fork", "missing"));
+    }
+
+    #[test]
+    fn test_remotes_with_branch_skips_remotes_missing_the_branch() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        // Only "fork" has main fetched; origin isn't even configured here.
+        assert_eq!(remotes_with_branch(path, "main").unwrap(), vec!["fork"]);
+
+        // A local-only branch must not make any remote eligible.
+        run_git(dir.path(), &["branch", "local-only"]);
+        assert!(remotes_with_branch(path, "local-only").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_remotes_with_branch_lists_every_matching_remote() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        run_git(
+            dir.path(),
+            &["remote", "add", "origin", "https://example.com/up.git"],
+        );
+        run_git(
+            dir.path(),
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+
+        let mut remotes = remotes_with_branch(path, "main").unwrap();
+        remotes.sort();
+        assert_eq!(remotes, vec!["fork", "origin"]);
+    }
+
+    #[test]
+    fn test_split_remote_qualified_base_splits_known_remote() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        assert_eq!(
+            split_remote_qualified_base(path, "fork/main"),
+            Some(("fork".to_string(), "main".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_split_remote_qualified_base_ignores_plain_and_local_branches() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        // Plain branch name: origin-based resolution must keep applying.
+        assert_eq!(split_remote_qualified_base(path, "main"), None);
+
+        // Local branch that happens to contain a slash must win over the split.
+        run_git(dir.path(), &["branch", "fork/feature"]);
+        assert_eq!(split_remote_qualified_base(path, "fork/feature"), None);
+    }
+
+    #[test]
+    fn test_split_remote_qualified_base_ignores_unknown_remote_prefix() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        // "feature" is not a remote, so this stays a regular branch name.
+        assert_eq!(split_remote_qualified_base(path, "feature/login"), None);
+    }
+
+    #[test]
+    fn test_split_remote_qualified_base_ignores_origin_tracked_branches() {
+        let dir = repo_with_fork_remote();
+        let path = dir.path().to_str().unwrap();
+        // A PR head fetched into origin resolves through the origin path, even
+        // when its name starts with a segment that matches a remote name.
+        run_git(
+            dir.path(),
+            &["update-ref", "refs/remotes/origin/fork/head", "HEAD"],
+        );
+        assert_eq!(split_remote_qualified_base(path, "fork/head"), None);
     }
 }
