@@ -22,13 +22,15 @@ function makeFakeAppDir(root) {
   mkdirSync(join(appDir, 'usr/lib/gstreamer-1.0'), { recursive: true })
   mkdirSync(join(appDir, 'apprun-hooks'), { recursive: true })
 
-  // Dummy binary that prints the GStreamer env Jean would inherit.
+  // Dummy binary that prints the env Jean would inherit.
   writeFileSync(
     join(appDir, 'usr/bin/jean'),
     `#!/usr/bin/env bash
 echo "GST_PLUGIN_PATH=\${GST_PLUGIN_PATH-}"
 echo "GST_PLUGIN_SYSTEM_PATH=\${GST_PLUGIN_SYSTEM_PATH-}"
 echo "LD_LIBRARY_PATH=\${LD_LIBRARY_PATH-}"
+echo "WEBKIT_DISABLE_DMABUF_RENDERER=\${WEBKIT_DISABLE_DMABUF_RENDERER-}"
+echo "WEBKIT_DISABLE_COMPOSITING_MODE=\${WEBKIT_DISABLE_COMPOSITING_MODE-}"
 `
   )
   chmodSync(join(appDir, 'usr/bin/jean'), 0o755)
@@ -84,4 +86,51 @@ test('AppRun points GST_PLUGIN_PATH at bundled plugins when system WebKit is abs
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
+})
+
+function runAppRun(env = {}) {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'jean-appimage-apprun-'))
+  try {
+    const appDir = makeFakeAppDir(tempRoot)
+    const output = execFileSync(join(appDir, 'AppRun'), {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        LD_LIBRARY_PATH: '',
+        GST_PLUGIN_PATH: '',
+        GST_PLUGIN_SYSTEM_PATH: '',
+        // Clear WebKit vars so defaults/overrides are observable.
+        WEBKIT_DISABLE_DMABUF_RENDERER: '',
+        WEBKIT_DISABLE_COMPOSITING_MODE: '',
+        JEAN_SAFE_GRAPHICS: '',
+        ...env,
+      },
+    })
+    return output
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+}
+
+test('AppRun defaults WEBKIT_DISABLE_DMABUF_RENDERER without software compositing', () => {
+  const output = runAppRun()
+  assert.match(output, /WEBKIT_DISABLE_DMABUF_RENDERER=1/)
+  // Unset compositing var should stay empty (not forced to 1).
+  assert.match(output, /WEBKIT_DISABLE_COMPOSITING_MODE=$/m)
+})
+
+test('AppRun enables software compositing when JEAN_SAFE_GRAPHICS is truthy', () => {
+  for (const value of ['1', 'true', 'TRUE', 'yes', 'Yes']) {
+    const output = runAppRun({ JEAN_SAFE_GRAPHICS: value })
+    assert.match(
+      output,
+      /WEBKIT_DISABLE_COMPOSITING_MODE=1/,
+      `expected JEAN_SAFE_GRAPHICS=${value} to enable software compositing`
+    )
+  }
+})
+
+test('AppRun preserves explicit WEBKIT_DISABLE_DMABUF_RENDERER override', () => {
+  const output = runAppRun({ WEBKIT_DISABLE_DMABUF_RENDERER: '0' })
+  assert.match(output, /WEBKIT_DISABLE_DMABUF_RENDERER=0/)
 })
