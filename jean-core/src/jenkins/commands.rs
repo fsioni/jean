@@ -187,12 +187,32 @@ pub async fn assemble_status(
     }
 }
 
+/// `REVISION` of the PR's last **successful** preview deploy — the commit
+/// Jenkins was asked to put live.
+///
+/// Only a fallback: some previews answer `/version` with a 404 (the compose
+/// deploys don't publish the file), and a deployed-but-unverified commit still
+/// beats showing nothing. Failed deploys are skipped — they put nothing live.
+pub(super) fn deployed_revision(
+    preview_builds: &[JenkinsBuild],
+    pr_id: Option<&str>,
+    branch: Option<&str>,
+) -> Option<String> {
+    let successful: Vec<JenkinsBuild> = preview_builds
+        .iter()
+        .filter(|b| b.result.as_deref() == Some(parse::STATUS_SUCCESS))
+        .cloned()
+        .collect();
+    match_build(&successful, pr_id, branch)?.revision.clone()
+}
+
 /// Resolve live preview freshness for a worktree's PR (probe `/version`, compare
 /// to the PR head). Returns `None` when there is no PR to attach a preview to.
 ///
 /// `pr_head_sha` is the head commit already known from the project-wide
 /// [`gh_checks`] call; when present it spares one `gh pr view` subprocess per
-/// worktree per poll cycle.
+/// worktree per poll cycle. `deployed_sha` is the [`deployed_revision`]
+/// fallback for previews that publish no `/version`.
 pub(super) async fn resolve_preview_freshness(
     app: &AppHandle,
     repo_path: &str,
@@ -200,12 +220,23 @@ pub(super) async fn resolve_preview_freshness(
     pr_number: Option<u32>,
     preview_url_template: Option<&str>,
     pr_head_sha: Option<String>,
+    deployed_sha: Option<String>,
 ) -> Option<PreviewFreshness> {
     let pr_id = pr_id.filter(|p| !p.is_empty())?;
     // No configured preview domain → nothing to probe (and nothing hardcoded).
     let version_url = format!("{}/version", preview_base_url(preview_url_template, pr_id)?);
     let gh = resolve_gh_binary(app);
-    Some(freshness::resolve_freshness(repo_path, pr_number, gh, &version_url, pr_head_sha).await)
+    Some(
+        freshness::resolve_freshness(
+            repo_path,
+            pr_number,
+            gh,
+            &version_url,
+            pr_head_sha,
+            deployed_sha,
+        )
+        .await,
+    )
 }
 
 /// Live Jenkins status for the worktree's PR/branch.
@@ -250,6 +281,8 @@ pub async fn get_jenkins_status(
     .await;
 
     if let Some(worktree) = worktree {
+        let deployed =
+            deployed_revision(&preview_builds, status.pr_id.as_deref(), branch.as_deref());
         status.preview_freshness = resolve_preview_freshness(
             &app,
             &worktree.path,
@@ -257,6 +290,7 @@ pub async fn get_jenkins_status(
             worktree.pr_number,
             cfg.preview_url_template.as_deref(),
             gh_check.head_sha,
+            deployed,
         )
         .await;
     }
@@ -638,8 +672,42 @@ mod tests {
             url: String::new(),
             pr_id: pr.map(str::to_string),
             branch: branch.map(str::to_string),
+            revision: None,
             upstream_build: None,
         }
+    }
+
+    #[test]
+    fn deployed_revision_takes_the_last_successful_deploy() {
+        // Newest-first, as Jenkins returns them: the latest deploy for the PR
+        // failed (nothing went live), so the previous successful one is what is
+        // actually deployed.
+        let builds = vec![
+            JenkinsBuild {
+                result: Some("FAILURE".into()),
+                revision: Some("f".repeat(40)),
+                ..build(3, Some("42"), Some("feat"))
+            },
+            JenkinsBuild {
+                revision: Some("a".repeat(40)),
+                ..build(2, Some("42"), Some("feat"))
+            },
+            JenkinsBuild {
+                revision: Some("b".repeat(40)),
+                ..build(1, Some("43"), Some("other"))
+            },
+        ];
+        assert_eq!(
+            deployed_revision(&builds, Some("42"), None).as_deref(),
+            Some("a".repeat(40).as_str())
+        );
+        // No deploy for that PR at all → nothing to fall back on.
+        assert_eq!(deployed_revision(&builds, Some("9999"), None), None);
+        // Matching by branch works too (PR id unknown).
+        assert_eq!(
+            deployed_revision(&builds, None, Some("other")).as_deref(),
+            Some("b".repeat(40).as_str())
+        );
     }
 
     #[test]

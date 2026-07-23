@@ -44,6 +44,16 @@ function behindText(behindBy: number | null | undefined): string {
     : 'en retard sur la PR'
 }
 
+/**
+ * The commit comes from Jenkins (last successful deploy), not from the preview
+ * itself: it says what was *deployed*, not what is *served*. Happens when the
+ * preview answers `/version` with a 404 — the compose-based deploys don't
+ * publish it.
+ */
+function isDeployedOnly(freshness: PreviewFreshness | null): boolean {
+  return freshness?.shaSource === 'jenkins'
+}
+
 interface FreshnessView {
   dot: string
   /** Short label shown inline in the badge (empty = dot only). */
@@ -134,13 +144,18 @@ export function PreviewBadge({
   const isStale = !deploying && freshness?.status === 'STALE'
   // Don't offer to open a preview that is offline (and not mid-deploy).
   const offline = !deploying && freshness?.status === 'DOWN'
+  // Keep the tooltip honest when the commit is Jenkins-sourced.
+  const deployedOnly = !deploying && isDeployedOnly(freshness)
+  const statusLabel = deployedOnly
+    ? `${view.statusLabel} (d'après Jenkins)`
+    : view.statusLabel
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          title={view.statusLabel}
+          title={statusLabel}
           className={cn(
             'inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-xs font-medium',
             'text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
@@ -160,16 +175,14 @@ export function PreviewBadge({
         {/* Status */}
         <div className="flex items-center gap-2">
           <span className={cn('h-2 w-2 shrink-0 rounded-full', view.dot)} />
-          <span className="font-medium text-foreground">
-            {view.statusLabel}
-          </span>
+          <span className="font-medium text-foreground">{statusLabel}</span>
         </div>
 
         {/* Deployed commit vs PR head */}
         {hasShas && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span>
-              Preview&nbsp;
+              {deployedOnly ? 'Déployé' : 'Preview'}&nbsp;
               <span className="font-mono text-foreground">
                 {short(previewSha)}
               </span>
@@ -180,6 +193,13 @@ export function PreviewBadge({
                 {short(prHeadSha)}
               </span>
             </span>
+          </div>
+        )}
+
+        {deployedOnly && (
+          <div className="mt-1 text-xs text-muted-foreground">
+            La preview ne publie pas <code>/version</code> — commit du dernier
+            déploiement Jenkins, pas forcément celui servi.
           </div>
         )}
 

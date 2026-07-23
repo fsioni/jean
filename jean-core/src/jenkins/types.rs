@@ -26,6 +26,12 @@ pub struct JenkinsBuild {
     /// Source branch parameter, when set — `APP_BRANCH` on the unified pipeline,
     /// `BRANCH` on the router (empty parameter → `None`).
     pub branch: Option<String>,
+    /// `REVISION` build parameter: the commit the deploy job was *asked* to
+    /// deploy. Only the deploy jobs carry it. Internal fallback for preview
+    /// freshness when the preview itself doesn't publish a `/version`, never
+    /// serialized to the frontend.
+    #[serde(skip)]
+    pub revision: Option<String>,
     /// Triggering upstream build number (from the `CauseAction`). Internal join
     /// key only, never serialized to the frontend.
     #[serde(skip)]

@@ -22,15 +22,22 @@ export interface JenkinsBuild {
 /**
  * Whether the live PR preview is up to date with the PR head.
  *
- * Resolved by probing the preview's `/version` endpoint (first line
- * `commit <sha>`) and comparing the deployed commit to the PR's GitHub head
- * (headRefOid).
+ * Resolved by probing the preview's `/version` endpoint (a bare SHA since the
+ * unified pipeline, a `commit <sha>` dump on older deploys) and comparing the
+ * deployed commit to the PR's GitHub head (headRefOid). When the preview is up
+ * but publishes no `/version`, the commit falls back to the last successful
+ * deploy build — see `shaSource`.
  */
 export interface PreviewFreshness {
   /** "UP_TO_DATE" | "STALE" | "DOWN" | "UNKNOWN" */
   status: string
-  /** Commit the preview is actually serving (from `/version`). */
+  /** Commit the preview is serving, per `shaSource`. */
   previewSha: string | null
+  /**
+   * Where `previewSha` came from: "preview" (live `/version` — what is really
+   * served) or "jenkins" (the deploy build's REVISION — only what was deployed).
+   */
+  shaSource: string | null
   /** Current PR head commit (headRefOid). */
   prHeadSha: string | null
   /** How many commits the PR head is ahead of the preview (best-effort). */
