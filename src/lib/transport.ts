@@ -322,6 +322,8 @@ export interface InitialData {
   uiState?: unknown
   appDataDir?: string
   serverPlatform?: 'mac' | 'windows' | 'linux'
+  /** Server can launch host editor/finder/terminal (WSL or --allow-native-open). */
+  nativeOpenAllowed?: boolean
   webBuildId?: string
   appVersion?: string
 }
