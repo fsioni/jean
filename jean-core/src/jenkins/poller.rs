@@ -16,8 +16,7 @@ use tokio::sync::Notify;
 
 use super::client::JenkinsClient;
 use super::commands::{
-    assemble_status, fetch_pr_checks_for, resolve_preview_freshness, INTEGRATION_JOB, PIPELINE_JOB,
-    PREVIEW_JOB,
+    assemble_status, fetch_pr_checks_for, resolve_preview_freshness, PIPELINE_JOB, PREVIEW_JOB,
 };
 use super::parse::{self, Transition, STATUS_FAILURE, STATUS_SUCCESS};
 use super::{config, types::JenkinsWorktreeStatus};
@@ -147,10 +146,6 @@ async fn poll_cycle(app: &AppHandle, memory: &mut PollMemory) -> Result<bool, St
             continue;
         };
         let preview_builds = client.fetch_builds(PREVIEW_JOB).await.unwrap_or_default();
-        let integration_builds = client
-            .fetch_builds(INTEGRATION_JOB)
-            .await
-            .unwrap_or_default();
         let queue_json = client.fetch_queue().await.unwrap_or_default();
         // One `gh` call for the whole project: the GitHub verdict that survives
         // Jenkins' build rotation, plus each PR head (reused by the freshness
@@ -179,7 +174,6 @@ async fn poll_cycle(app: &AppHandle, memory: &mut PollMemory) -> Result<bool, St
                 &client,
                 &pipeline_builds,
                 &preview_builds,
-                &integration_builds,
                 &queue_json,
                 &worktree.id,
                 Some(&pr_id),
@@ -338,7 +332,7 @@ fn now_ms() -> i64 {
 fn notify(app: &AppHandle, transition: Transition, pr_id: &str, status: &JenkinsWorktreeStatus) {
     let (title, body) = match transition {
         Transition::Broke => {
-            // Verdict is the global build-and-test result; name the failed stage as detail.
+            // Verdict is the whole pipeline's result; name the failed stage as detail.
             let detail = status
                 .stages
                 .iter()
@@ -347,10 +341,10 @@ fn notify(app: &AppHandle, transition: Transition, pr_id: &str, status: &Jenkins
                     || "Le pipeline a échoué".to_string(),
                     |s| format!("Stage en échec : « {} »", s.name),
                 );
-            (format!("❌ build-and-test en échec — PR #{pr_id}"), detail)
+            (format!("❌ {PIPELINE_JOB} en échec — PR #{pr_id}"), detail)
         }
         Transition::Recovered => (
-            format!("✅ build-and-test repassé au vert — PR #{pr_id}"),
+            format!("✅ {PIPELINE_JOB} repassé au vert — PR #{pr_id}"),
             "Le pipeline de la PR est de nouveau vert".to_string(),
         ),
     };

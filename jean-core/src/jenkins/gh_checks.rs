@@ -1,11 +1,14 @@
 //! GitHub commit-status fallback for the CI verdict.
 //!
 //! Jenkins keeps a *very* short build history on a busy controller (Planexpo
-//! retains ~23 `build-and-test` builds ≈ 6 h — asking for 300 still returns 23,
-//! the rest are physically rotated out). So [`super::parse::find_build_for_pr`]
-//! finds nothing for any PR that was built a few hours ago, and the worktree row
+//! retains ~27 pipeline builds ≈ 16 h — asking for 300 still returns 27, the
+//! rest are physically rotated out). So [`super::parse::find_build_for_pr`]
+//! finds nothing for any PR that was built the day before, and the worktree row
 //! ends up with `overall_status = UNKNOWN` and renders *nothing* — which reads
 //! as "the feature is broken" rather than "Jenkins forgot".
+//!
+//! It also covers PRs routed to the legacy pipeline, which produce no build of
+//! the unified job at all.
 //!
 //! The verdict itself is not lost: the ghprb trigger writes it to the PR head as
 //! a GitHub **commit status**, which GitHub keeps forever. One
@@ -164,6 +167,8 @@ mod tests {
     use super::*;
 
     /// Shape captured from the real `gh pr list` output on the Planexpo repo.
+    /// The context still names the legacy job: it comes from the ghprb *entry*
+    /// job, which the unified pipeline runs behind and which never got renamed.
     const FIXTURE: &str = r#"[
       {"number":4151,"headRefOid":"b2babcb0dc1c38b39b5d311d8841876006b65c59",
        "statusCheckRollup":[{"__typename":"StatusContext","context":"Execution du job 'build-and-test'",

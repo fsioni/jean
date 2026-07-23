@@ -39,6 +39,7 @@ vi.mock('@/store/ui-store', () => ({
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
 import { MissionControlRow } from './MissionControlRow'
+import { FLAKY_STAGE } from '@/components/jenkins/jenkins-jobs'
 
 function mkRow(
   overallStatus: string,
@@ -69,8 +70,8 @@ function mkRow(
 }
 
 const STAGES: JenkinsStage[] = [
-  { name: 'Unit tests', status: 'SUCCESS', durationMs: 1000 },
-  { name: 'Integration tests', status: 'IN_PROGRESS', durationMs: 0 },
+  { name: 'Rust unit tests', status: 'SUCCESS', durationMs: 1000 },
+  { name: FLAKY_STAGE, status: 'IN_PROGRESS', durationMs: 0 },
   { name: 'Deploy preview', status: 'NOT_EXECUTED', durationMs: 0 },
 ]
 
@@ -84,20 +85,20 @@ describe('MissionControlRow', () => {
     // Compact progress chip: running stage at position 2/3.
     expect(getByText('2/3')).toBeInTheDocument()
     // Stage status spelled out (colorblind-safe).
-    expect(getByTitle('Integration tests : en cours')).toBeInTheDocument()
+    expect(getByTitle(`${FLAKY_STAGE} : en cours`)).toBeInTheDocument()
   })
 
   it('keeps a finished build collapsed until the chevron is clicked', () => {
     const finished: JenkinsStage[] = [
-      { name: 'Unit tests', status: 'SUCCESS', durationMs: 1000 },
-      { name: 'Integration tests', status: 'SUCCESS', durationMs: 5000 },
+      { name: 'Rust unit tests', status: 'SUCCESS', durationMs: 1000 },
+      { name: FLAKY_STAGE, status: 'SUCCESS', durationMs: 5000 },
     ]
     const { queryByText, getByLabelText, getByText } = render(
       <MissionControlRow row={mkRow('SUCCESS', false, finished)} />
     )
-    expect(queryByText('Unit tests')).toBeNull()
+    expect(queryByText('Rust unit tests')).toBeNull()
     fireEvent.click(getByLabelText('Déplier les étapes'))
-    expect(getByText('Unit tests')).toBeInTheDocument()
+    expect(getByText('Rust unit tests')).toBeInTheDocument()
   })
 
   it('shows no expand toggle when there are no stages', () => {

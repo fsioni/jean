@@ -741,7 +741,7 @@ export function WorktreeItem({
             )}
           </div>
 
-          {/* Jenkins build-and-test + preview freshness pills (cache-only,
+          {/* Jenkins CI verdict + preview freshness pills (cache-only,
               shaped + labelled so they're readable without color). Second line;
               renders nothing for non-PR rows. */}
           <WorktreeCiStatus

@@ -1,14 +1,129 @@
 {
-  "name": "build-and-test",
-  "status": "FAILED",
+  "name": "#61 feat-login@061b5ffe63e6",
+  "status": "IN_PROGRESS",
   "stages": [
-    { "name": "Checkout", "status": "SUCCESS", "durationMillis": 5000 },
-    { "name": "Unit tests", "status": "SUCCESS", "durationMillis": 60000 },
-    { "name": "Lint", "status": "SUCCESS", "durationMillis": 15000 },
-    { "name": "Build", "status": "SUCCESS", "durationMillis": 120000 },
-    { "name": "Integration tests", "status": "FAILED", "durationMillis": 300000 },
-    { "name": "Deploy preview", "status": "NOT_EXECUTED", "durationMillis": 0 },
-    { "name": "E2E tests", "status": "NOT_EXECUTED", "durationMillis": 0 },
-    { "name": "Cleanup", "status": "SUCCESS", "durationMillis": 3000 }
+    {
+      "id": "12",
+      "name": "Checkout branches",
+      "status": "SUCCESS",
+      "durationMillis": 30430,
+      "stageFlowNodes": [
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/61/execution/node/16/log"
+            }
+          },
+          "id": "16",
+          "name": "Git",
+          "status": "SUCCESS",
+          "durationMillis": 26048,
+          "parameterDescription": "git checkout"
+        }
+      ]
+    },
+    {
+      "id": "54",
+      "name": "Rust unit tests",
+      "status": "SUCCESS",
+      "durationMillis": 67499,
+      "stageFlowNodes": [
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/61/execution/node/55/log"
+            }
+          },
+          "id": "55",
+          "name": "Shell Script",
+          "status": "SUCCESS",
+          "durationMillis": 315,
+          "parameterDescription": "docker pull \"$RUST_TOOLCHAIN_IMAGE\"",
+          "parentNodes": ["54"]
+        },
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/61/execution/node/60/log"
+            }
+          },
+          "id": "60",
+          "name": "Shell Script",
+          "status": "SUCCESS",
+          "durationMillis": 66907,
+          "parameterDescription": "deploy/ci/unified/run-rust-tests.sh app",
+          "parentNodes": ["59"]
+        }
+      ]
+    },
+    {
+      "id": "68",
+      "name": "Elm unit tests",
+      "status": "SUCCESS",
+      "durationMillis": 57298,
+      "stageFlowNodes": []
+    },
+    {
+      "id": "74",
+      "name": "Build Rust + Elm runtime",
+      "status": "SUCCESS",
+      "durationMillis": 294360,
+      "stageFlowNodes": []
+    },
+    {
+      "id": "79",
+      "name": "Cypress Unified",
+      "status": "IN_PROGRESS",
+      "durationMillis": 1048013,
+      "stageFlowNodes": [
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/61/execution/node/84/log"
+            }
+          },
+          "id": "84",
+          "name": "Shell Script",
+          "status": "FAILED",
+          "durationMillis": 526565,
+          "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
+          "parentNodes": ["83"]
+        },
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/61/execution/node/87/log"
+            }
+          },
+          "id": "87",
+          "name": "Shell Script",
+          "status": "IN_PROGRESS",
+          "durationMillis": 0,
+          "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
+          "parentNodes": ["86"]
+        }
+      ]
+    },
+    {
+      "id": "92",
+      "name": "Build front + back images",
+      "status": "NOT_EXECUTED",
+      "durationMillis": 0,
+      "stageFlowNodes": []
+    },
+    {
+      "id": "106",
+      "name": "Deploy preview",
+      "status": "NOT_EXECUTED",
+      "durationMillis": 0,
+      "stageFlowNodes": []
+    },
+    {
+      "id": "123",
+      "name": "Declarative: Post Actions",
+      "status": "SUCCESS",
+      "durationMillis": 10729,
+      "stageFlowNodes": []
+    }
   ]
 }

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'
 
 /**
  * Read-only pipeline verdict — icon **and** label, so the state never depends on
@@ -34,7 +35,7 @@ export function JenkinsVerdict({
       )}
       title={
         build
-          ? `build-and-test #${build.number} — ${verdict.label}`
+          ? `${PIPELINE_JOB} #${build.number} — ${verdict.label}`
           : verdict.label
       }
     >

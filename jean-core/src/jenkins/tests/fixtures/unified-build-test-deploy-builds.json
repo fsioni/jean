@@ -1,0 +1,103 @@
+{
+  "builds": [
+    {
+      "number": 62,
+      "result": null,
+      "building": true,
+      "timestamp": 1718900000000,
+      "duration": 0,
+      "url": "http://jenkins.example.internal/job/unified-build-test-deploy/62/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "APP_BRANCH", "value": "feat-pagination" },
+            { "name": "DEPLOY_BRANCH", "value": "master" },
+            { "name": "PR_ID", "value": "3960" },
+            { "name": "DEPLOY_PREVIEW", "value": true }
+          ]
+        },
+        {},
+        {
+          "causes": [
+            {
+              "shortDescription": "Started by upstream project \"pr-build-router\" build number 60",
+              "upstreamProject": "pr-build-router",
+              "upstreamBuild": 60
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "number": 61,
+      "result": "FAILURE",
+      "building": false,
+      "timestamp": 1718890000000,
+      "duration": 1200000,
+      "url": "http://jenkins.example.internal/job/unified-build-test-deploy/61/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "APP_BRANCH", "value": "feat-login" },
+            { "name": "DEPLOY_BRANCH", "value": "master" },
+            { "name": "PR_ID", "value": "3959" },
+            { "name": "DEPLOY_PREVIEW", "value": true }
+          ]
+        },
+        {
+          "causes": [
+            {
+              "shortDescription": "Started by upstream project \"pr-build-router\" build number 59",
+              "upstreamProject": "pr-build-router",
+              "upstreamBuild": 59
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "number": 60,
+      "result": "SUCCESS",
+      "building": false,
+      "timestamp": 1718880000000,
+      "duration": 1100000,
+      "url": "http://jenkins.example.internal/job/unified-build-test-deploy/60/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "APP_BRANCH", "value": "feat-login" },
+            { "name": "PR_ID", "value": "3959" },
+            { "name": "DEPLOY_PREVIEW", "value": true }
+          ]
+        }
+      ]
+    },
+    {
+      "number": 59,
+      "result": "SUCCESS",
+      "building": false,
+      "timestamp": 1718870000000,
+      "duration": 1000000,
+      "url": "http://jenkins.example.internal/job/unified-build-test-deploy/59/",
+      "actions": [
+        {
+          "parameters": [
+            { "name": "APP_BRANCH", "value": "master" },
+            { "name": "DEPLOY_BRANCH", "value": "master" },
+            { "name": "PR_ID", "value": "" },
+            { "name": "DEPLOY_PREVIEW", "value": false }
+          ]
+        },
+        {
+          "causes": [
+            {
+              "shortDescription": "Started by upstream project \"deploy-preprod-master-hook\" build number 3",
+              "upstreamProject": "deploy-preprod-master-hook",
+              "upstreamBuild": 3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

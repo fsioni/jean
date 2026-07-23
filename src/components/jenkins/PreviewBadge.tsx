@@ -20,7 +20,7 @@ interface PreviewBadgeProps {
   branch?: string | null
 }
 
-/** Pipeline stage that deploys the preview (see the build-and-test pipeline). */
+/** Pipeline stage that deploys the preview. */
 const DEPLOY_PREVIEW_STAGE = 'Deploy preview'
 
 /** Short SHA for display (first 7 chars). */

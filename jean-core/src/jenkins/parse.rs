@@ -5,7 +5,7 @@
 //! heterogeneous (mixes `{}` placeholders with typed action objects), so we
 //! walk it as `Value` rather than deriving `Deserialize` on a brittle shape.
 
-use super::types::{JenkinsBuild, JenkinsQueueItem, JenkinsStage};
+use super::types::{JenkinsAttempt, JenkinsBuild, JenkinsQueueItem, JenkinsStage};
 use serde_json::Value;
 
 /// Overall state of a worktree's pipeline build.
@@ -58,16 +58,18 @@ pub fn parse_build(build: &Value) -> Option<JenkinsBuild> {
             .unwrap_or_default()
             .to_string(),
         pr_id: non_empty(find_param(&params, &["PR_ID", "ghprbPullId"])),
-        branch: non_empty(find_param(&params, &["BRANCH", "ghprbSourceBranch"])),
+        branch: non_empty(find_param(
+            &params,
+            &["APP_BRANCH", "BRANCH", "ghprbSourceBranch"],
+        )),
         upstream_build: extract_upstream_build(build.get("actions")),
     })
 }
 
 /// The triggering upstream build number from a `CauseAction` in `actions[]`.
 ///
-/// `integration-tests` runs are launched by the `build-and-test` pipeline, so
-/// their `causes[].upstreamBuild` ties each run back to the pipeline build that
-/// spawned it — the join key behind the per-attempt breakdown.
+/// Ties a downstream run (e.g. a preview deploy) back to the pipeline build that
+/// spawned it.
 fn extract_upstream_build(actions: Option<&Value>) -> Option<u64> {
     let actions = actions.and_then(Value::as_array)?;
     for action in actions {
@@ -86,10 +88,10 @@ fn extract_upstream_build(actions: Option<&Value>) -> Option<u64> {
 /// First present value among `names`, in priority order.
 ///
 /// Lets one [`JenkinsBuild`] model the PR/branch regardless of how the job
-/// labels its parameters: the `build-and-test` pipeline carries `PR_ID` /
-/// `BRANCH`, while the ghprb `*_Launcher-on-pr` entry carries `ghprbPullId` /
-/// `ghprbSourceBranch`. Without this, Launcher builds parse with no PR id and
-/// the re-run can never find the build to replay.
+/// labels its parameters along the PR chain: the unified pipeline carries
+/// `PR_ID` / `APP_BRANCH`, the router in front of it `PR_ID` / `BRANCH`, and the
+/// ghprb `*_Launcher-on-pr` entry `ghprbPullId` / `ghprbSourceBranch`. Without
+/// this, builds of the other two jobs parse with no PR id at all.
 fn find_param<'a>(params: &'a [(String, String)], names: &[&str]) -> Option<&'a String> {
     names
         .iter()
@@ -158,6 +160,85 @@ pub fn parse_stages(json: &str) -> Result<Vec<JenkinsStage>, String> {
             })
         })
         .collect())
+}
+
+/// The retry attempts of one stage, from a `wfapi/describe?fullStages=true`
+/// response, oldest first.
+///
+/// The flaky end-to-end stage retries **in place**: every try is another step
+/// inside the same stage, running the same command. So the attempts are the
+/// stage's `stageFlowNodes` — minus any setup step, which is told apart by
+/// running a *different* command (`parameterDescription`). Verified on a
+/// pipeline build whose stage went FAILED → SUCCESS over two identical nodes.
+///
+/// `base_url` absolutizes the controller-relative `_links.console.href`.
+/// Returns empty when the stage is absent or has no steps yet.
+pub fn parse_stage_attempts(json: &str, stage_name: &str, base_url: &str) -> Vec<JenkinsAttempt> {
+    let Ok(root) = serde_json::from_str::<Value>(json) else {
+        return Vec::new();
+    };
+    let Some(nodes) = root
+        .get("stages")
+        .and_then(Value::as_array)
+        .and_then(|stages| {
+            stages
+                .iter()
+                .find(|s| s.get("name").and_then(Value::as_str) == Some(stage_name))
+        })
+        .and_then(|stage| stage.get("stageFlowNodes"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    // The last step is the latest try; earlier steps running the same command
+    // are its previous tries, anything else is setup.
+    let command = nodes
+        .last()
+        .and_then(|n| n.get("parameterDescription"))
+        .and_then(Value::as_str);
+    nodes
+        .iter()
+        .filter(|node| {
+            command.is_none_or(|cmd| {
+                node.get("parameterDescription").and_then(Value::as_str) == Some(cmd)
+            })
+        })
+        .enumerate()
+        .map(|(i, node)| {
+            let status = node
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            JenkinsAttempt {
+                attempt: (i + 1) as u32,
+                result: attempt_result(status),
+                building: status == "IN_PROGRESS",
+                duration_ms: node
+                    .get("durationMillis")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                url: node
+                    .get("_links")
+                    .and_then(|l| l.get("console"))
+                    .and_then(|c| c.get("href"))
+                    .and_then(Value::as_str)
+                    .map(|href| format!("{}{href}", base_url.trim_end_matches('/')))
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// Map a pipeline step status onto the build-result vocabulary the UI speaks.
+fn attempt_result(status: &str) -> Option<String> {
+    match status {
+        "SUCCESS" => Some(STATUS_SUCCESS.to_string()),
+        "FAILED" => Some(STATUS_FAILURE.to_string()),
+        "ABORTED" => Some("ABORTED".to_string()),
+        // IN_PROGRESS / NOT_EXECUTED / QUEUED: no verdict yet.
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,9 +311,10 @@ pub fn parse_node_log(json: &str) -> (String, Option<String>) {
 
 /// The downstream build a stage delegated to, as `(job, number)`.
 ///
-/// Planexpo's `build-and-test` mostly orchestrates other jobs, so a failing
-/// stage's own log is just `Starting building: elm-tests #6377` (wrapped in
-/// Jenkins link markup — call this on the HTML-stripped text).
+/// Deploy stages only orchestrate another job, so their log is just
+/// `Starting building: unified-deploy-preview #24` (wrapped in Jenkins link
+/// markup — call this on the HTML-stripped text). Test stages run inline and
+/// match nothing here, which is how the caller knows to use the stage's own log.
 pub fn find_downstream_build(log: &str) -> Option<(String, u64)> {
     // Scan bottom-up: the last mention is the attempt that actually failed.
     log.lines().rev().find_map(|line| {
@@ -401,7 +483,8 @@ fn truncate_chars(value: &str, max: usize) -> String {
 ///
 /// Queue item `params` are a newline-separated `key=value` blob (different from
 /// the `parameters[name,value]` array on builds). The PR is carried as `PR_ID`
-/// (build-and-test) or `ghprbPullId` (the `*_Launcher-on-pr` entry).
+/// (router and unified pipeline) or `ghprbPullId` (the `*_Launcher-on-pr`
+/// entry) — any of the three jobs being queued means the PR is waiting.
 pub fn find_queued_for_pr(json: &str, pr_id: &str, jobs: &[&str]) -> Option<JenkinsQueueItem> {
     if pr_id.is_empty() {
         return None;
@@ -506,17 +589,24 @@ pub fn detect_transition(prev: Option<&str>, new: &str) -> Option<Transition> {
 mod tests {
     use super::*;
 
-    const BUILDS_FIXTURE: &str = include_str!("tests/fixtures/build-and-test-builds.json");
+    const BUILDS_FIXTURE: &str =
+        include_str!("tests/fixtures/unified-build-test-deploy-builds.json");
+    const PREVIEW_FIXTURE: &str = include_str!("tests/fixtures/unified-deploy-preview-builds.json");
     const LAUNCHER_FIXTURE: &str = include_str!("tests/fixtures/launcher-on-pr-builds.json");
-    const INTEGRATION_FIXTURE: &str = include_str!("tests/fixtures/integration-tests-builds.json");
+    // A build mid-retry: the flaky stage's first try failed, the second is running.
     const WFAPI_FIXTURE: &str = include_str!("tests/fixtures/wfapi-describe.json");
     const QUEUE_FIXTURE: &str = include_str!("tests/fixtures/queue.json");
-    const QUEUE_JOBS: &[&str] = &["build-and-test", "build-and-test_Launcher-on-pr"];
+    const FLAKY_STAGE: &str = "Cypress Unified";
+    const QUEUE_JOBS: &[&str] = &[
+        "unified-build-test-deploy",
+        "pr-build-router",
+        "build-and-test_Launcher-on-pr",
+    ];
 
-    // Failure-diagnosis fixtures. Captured from a real controller (build
-    // `build-and-test` #7139 → `elm-tests` #6377, plus a `unit-tests` JUnit
-    // report with two failures) and anonymised — hosts, paths and test names
-    // are neutral, the SHAPE is untouched.
+    // Failure-diagnosis fixtures. Captured from a real controller (unified build
+    // #52, whose flaky stage failed twice, and #61's `Deploy preview` step, plus
+    // a JUnit report with two failures) and anonymised — hosts, paths and test
+    // names are neutral, the SHAPE is untouched.
     const DESCRIBE_FAILED: &str = include_str!("tests/fixtures/wfapi-describe-failed.json");
     const STAGE_NODE_FAILED: &str = include_str!("tests/fixtures/wfapi-stage-node-failed.json");
     const NODE_LOG: &str = include_str!("tests/fixtures/wfapi-node-log.json");
@@ -529,21 +619,33 @@ mod tests {
         assert_eq!(builds.len(), 4);
 
         let latest = &builds[0];
-        assert_eq!(latest.number, 6386);
+        assert_eq!(latest.number, 62);
         assert!(latest.building);
         assert_eq!(latest.result, None);
         assert_eq!(latest.pr_id.as_deref(), Some("3960"));
+        // The unified pipeline names the branch parameter APP_BRANCH.
         assert_eq!(latest.branch.as_deref(), Some("feat-pagination"));
     }
 
     #[test]
     fn empty_pr_id_parameter_is_treated_as_absent() {
         let builds = parse_builds(BUILDS_FIXTURE).expect("parse");
-        // build #6383 is a master deploy with PR_ID="".
-        let master = builds.iter().find(|b| b.number == 6383).expect("6383");
+        // build #59 is a master deploy with PR_ID="".
+        let master = builds.iter().find(|b| b.number == 59).expect("59");
         assert_eq!(master.pr_id, None);
         assert_eq!(master.branch.as_deref(), Some("master"));
         assert_eq!(master.result.as_deref(), Some("SUCCESS"));
+    }
+
+    #[test]
+    fn preview_builds_match_the_pr_they_deployed() {
+        // The preview deploy is a downstream job of the pipeline and repeats the
+        // PR/branch parameters, so the same matching works on both lists.
+        let builds = parse_builds(PREVIEW_FIXTURE).expect("parse preview builds");
+        let preview = find_build_for_pr(&builds, "3959").expect("3959 preview");
+        assert_eq!(preview.number, 24);
+        assert_eq!(preview.branch.as_deref(), Some("feat-login"));
+        assert_eq!(preview.upstream_build, Some(61));
     }
 
     #[test]
@@ -562,32 +664,10 @@ mod tests {
     }
 
     #[test]
-    fn integration_builds_carry_their_upstream_pipeline_build() {
-        // Each `integration-tests` run records the `build-and-test` build that
-        // triggered it via `causes[].upstreamBuild` — the join key for attempts.
-        let builds = parse_builds(INTEGRATION_FIXTURE).expect("parse integration builds");
-        assert_eq!(builds.len(), 6);
-
-        // PR 3959's pipeline (#6385) retried 3× — all three runs point back to it.
-        let for_6385: Vec<u64> = builds
-            .iter()
-            .filter(|b| b.upstream_build == Some(6385))
-            .map(|b| b.number)
-            .collect();
-        assert_eq!(for_6385, vec![6852, 6851, 6850]);
-
-        // The in-flight run has no result yet but still knows its upstream build.
-        let running = builds.iter().find(|b| b.number == 6854).expect("6854");
-        assert!(running.building);
-        assert_eq!(running.result, None);
-        assert_eq!(running.upstream_build, Some(6386));
-    }
-
-    #[test]
     fn finds_latest_build_for_a_pr() {
         let builds = parse_builds(BUILDS_FIXTURE).expect("parse");
         let build = find_build_for_pr(&builds, "3959").expect("3959");
-        assert_eq!(build.number, 6385);
+        assert_eq!(build.number, 61);
         assert_eq!(build.result.as_deref(), Some("FAILURE"));
     }
 
@@ -603,18 +683,68 @@ mod tests {
         let stages = parse_stages(WFAPI_FIXTURE).expect("parse");
         assert_eq!(stages.len(), 8);
 
-        let integration = stages
+        let flaky = stages
             .iter()
-            .find(|s| s.name == "Integration tests")
-            .expect("integration stage");
-        assert_eq!(integration.status, "FAILED");
-        assert!(integration.duration_ms > 0);
+            .find(|s| s.name == FLAKY_STAGE)
+            .expect("flaky stage");
+        assert_eq!(flaky.status, "IN_PROGRESS");
+        assert!(flaky.duration_ms > 0);
 
         let unit = stages
             .iter()
-            .find(|s| s.name == "Unit tests")
+            .find(|s| s.name == "Rust unit tests")
             .expect("unit");
         assert_eq!(unit.status, "SUCCESS");
+    }
+
+    #[test]
+    fn reads_the_flaky_stage_retries_as_attempts() {
+        // The stage retries in place: try 1 failed, try 2 is still running.
+        let attempts = parse_stage_attempts(
+            WFAPI_FIXTURE,
+            FLAKY_STAGE,
+            "http://jenkins.example.internal/",
+        );
+        assert_eq!(attempts.len(), 2);
+
+        assert_eq!(attempts[0].attempt, 1);
+        assert_eq!(attempts[0].result.as_deref(), Some("FAILURE"));
+        assert!(!attempts[0].building);
+        assert_eq!(
+            attempts[0].url,
+            "http://jenkins.example.internal/job/unified-build-test-deploy/61/execution/node/84/log"
+        );
+
+        assert_eq!(attempts[1].attempt, 2);
+        assert!(attempts[1].building);
+        assert_eq!(attempts[1].result, None);
+    }
+
+    #[test]
+    fn setup_steps_do_not_count_as_attempts() {
+        // "Rust unit tests" runs a setup step then the test command — two nodes,
+        // but a single attempt. Only the steps repeating the LAST command count.
+        let attempts = parse_stage_attempts(WFAPI_FIXTURE, "Rust unit tests", "http://jenkins");
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].result.as_deref(), Some("SUCCESS"));
+        assert_eq!(attempts[0].duration_ms, 66907);
+    }
+
+    #[test]
+    fn no_attempts_for_an_unknown_or_unstarted_stage() {
+        assert!(parse_stage_attempts(WFAPI_FIXTURE, "Deploy prod", "http://jenkins").is_empty());
+        assert!(parse_stage_attempts(WFAPI_FIXTURE, "Deploy preview", "http://jenkins").is_empty());
+        assert!(parse_stage_attempts("not json", FLAKY_STAGE, "http://jenkins").is_empty());
+    }
+
+    #[test]
+    fn counts_every_failed_try_of_the_flaky_stage() {
+        // Same stage on a build that exhausted its retries: two failed tries.
+        let attempts = parse_stage_attempts(DESCRIBE_FAILED, FLAKY_STAGE, "http://jenkins");
+        assert_eq!(attempts.len(), 2);
+        assert!(attempts
+            .iter()
+            .all(|a| a.result.as_deref() == Some("FAILURE") && !a.building));
     }
 
     #[test]
@@ -656,7 +786,8 @@ mod tests {
 
     #[test]
     fn finds_queued_item_for_a_pr() {
-        // PR 3959 is queued in the fixture (Launcher-on-pr, serialized behind a running build).
+        // PR 3959 is queued in the fixture (the router, serialized behind a
+        // running build).
         let item = find_queued_for_pr(QUEUE_FIXTURE, "3959", QUEUE_JOBS).expect("queued");
         assert!(item.blocked);
         assert!(item.since_ms > 0);
@@ -665,6 +796,15 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("already in progress"));
+    }
+
+    #[test]
+    fn finds_a_pr_still_queued_at_the_ghprb_entry_job() {
+        // Before the router runs, the PR waits as a launcher item, which carries
+        // the PR as `ghprbPullId` instead of `PR_ID`.
+        let item = find_queued_for_pr(QUEUE_FIXTURE, "3954", QUEUE_JOBS).expect("queued");
+        assert!(!item.blocked);
+        assert_eq!((item.position, item.total), (2, 2));
     }
 
     #[test]
@@ -677,8 +817,8 @@ mod tests {
 
     #[test]
     fn queue_respects_job_filter() {
-        // Fixture items are `build-and-test_Launcher-on-pr`; a disjoint job set finds nothing.
-        assert!(find_queued_for_pr(QUEUE_FIXTURE, "3959", &["deploy-preview"]).is_none());
+        // A disjoint job set finds nothing — the preview deploy queues on its own.
+        assert!(find_queued_for_pr(QUEUE_FIXTURE, "3959", &["unified-deploy-preview"]).is_none());
     }
 
     #[test]
@@ -734,8 +874,8 @@ mod tests {
         // Two PRs waiting on the serialized pipeline: the one that entered the
         // queue first is 1/2, the other 2/2.
         let json = r#"{"items":[
-            {"task":{"name":"build-and-test"},"params":"\nPR_ID=200\n","inQueueSince":2000},
-            {"task":{"name":"build-and-test"},"params":"\nPR_ID=100\n","inQueueSince":1000},
+            {"task":{"name":"unified-build-test-deploy"},"params":"\nPR_ID=200\n","inQueueSince":2000},
+            {"task":{"name":"unified-build-test-deploy"},"params":"\nPR_ID=100\n","inQueueSince":1000},
             {"task":{"name":"some-other-job"},"params":"\nPR_ID=300\n","inQueueSince":500}
         ]}"#;
         let first = find_queued_for_pr(json, "100", QUEUE_JOBS).expect("100 queued");
@@ -750,23 +890,24 @@ mod tests {
 
     #[test]
     fn finds_the_first_failed_stage_not_the_cascade() {
-        // #7139 fails from "Elm tests" onwards; every later stage fails as a
+        // #52 fails at the flaky stage; every later stage fails as a
         // consequence. The report must point at the root cause.
         let (node_id, name) = find_failed_stage(DESCRIBE_FAILED).expect("a failed stage");
-        assert_eq!(name, "Elm tests");
-        assert_eq!(node_id, "25");
+        assert_eq!(name, FLAKY_STAGE);
+        assert_eq!(node_id, "79");
     }
 
     #[test]
     fn no_failed_stage_on_a_green_build() {
         assert_eq!(find_failed_stage(BUILDS_FIXTURE), None); // wrong shape → None
-        let green = r#"{"stages":[{"id":"4","name":"Unit tests","status":"SUCCESS"}]}"#;
+        let green = r#"{"stages":[{"id":"4","name":"Rust unit tests","status":"SUCCESS"}]}"#;
         assert_eq!(find_failed_stage(green), None);
     }
 
     #[test]
     fn finds_the_failing_step_inside_a_stage() {
-        assert_eq!(find_failed_node(STAGE_NODE_FAILED).as_deref(), Some("28"));
+        // The first failed try of the stage, not the retry that followed it.
+        assert_eq!(find_failed_node(STAGE_NODE_FAILED).as_deref(), Some("84"));
     }
 
     #[test]
@@ -785,24 +926,25 @@ mod tests {
         assert!(text.contains("Starting building:"));
         assert_eq!(
             console.as_deref(),
-            Some("/job/build-and-test/7139/execution/node/28/log")
+            Some("/job/unified-build-test-deploy/61/execution/node/107/log")
         );
     }
 
     #[test]
     fn follows_the_downstream_build_a_stage_delegates_to() {
-        // The stage log is pure Jenkins link markup; the real output lives in
-        // the downstream job it scheduled.
+        // A deploy stage's log is pure Jenkins link markup; the real output
+        // lives in the job it scheduled.
         let (text, _) = parse_node_log(NODE_LOG);
         let plain = strip_log_markup(&text);
         assert_eq!(
             find_downstream_build(&plain),
-            Some(("elm-tests".to_string(), 6377))
+            Some(("unified-deploy-preview".to_string(), 24))
         );
     }
 
     #[test]
     fn no_downstream_build_when_the_stage_ran_its_own_steps() {
+        // Test stages run inline: nothing to follow, their own log is the output.
         assert_eq!(find_downstream_build("+ yarn test\nFAILED 3 specs"), None);
     }
 

@@ -3,9 +3,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { cn } from '@/lib/utils'
 import { ExternalLink, FlaskConical } from 'lucide-react'
 import type { JenkinsAttempt, JenkinsStage } from '@/types/jenkins'
-
-/** The flaky stage we highlight everywhere it's listed. */
-export const INTEGRATION_TESTS_STAGE = 'Integration tests'
+import { FLAKY_STAGE } from '@/components/jenkins/jenkins-jobs'
 
 /** Format a duration in ms as mm:ss. */
 export function formatDuration(ms: number): string {
@@ -56,15 +54,15 @@ function StageRow({
   attemptCount = 0,
 }: {
   stage: JenkinsStage
-  /** Number of `integration-tests` retry attempts (only on the flaky stage). */
+  /** Number of tries of the stage (only on the flaky one). */
   attemptCount?: number
 }) {
-  const isIntegration = stage.name === INTEGRATION_TESTS_STAGE
+  const isFlaky = stage.name === FLAKY_STAGE
   return (
     <div
       className={cn(
         'flex items-center gap-2 rounded px-1.5 py-1 text-xs',
-        isIntegration && 'bg-muted/60 font-medium'
+        isFlaky && 'bg-muted/60 font-medium'
       )}
       // Spells out the status in text so it isn't conveyed by the dot color alone.
       title={`${stage.name} : ${stageStatusLabel(stage.status)}`}
@@ -77,13 +75,13 @@ function StageRow({
       />
       <span className="min-w-0 flex-1 truncate text-foreground">
         {stage.name}
-        {isIntegration && (
+        {isFlaky && (
           <FlaskConical className="ml-1 inline-block h-3 w-3 text-muted-foreground" />
         )}
         {attemptCount > 0 && (
           <span
             className="ml-1.5 rounded bg-muted px-1 text-[10px] font-normal tabular-nums text-muted-foreground"
-            title={`Integration tests lancé ${attemptCount} fois (essais ci-dessous)`}
+            title={`${stage.name} lancé ${attemptCount} fois (essais ci-dessous)`}
           >
             {attemptCount} essai{attemptCount > 1 ? 's' : ''}
           </span>
@@ -126,7 +124,7 @@ function attemptStatusLabel(attempt: JenkinsAttempt): string {
   }
 }
 
-/** One retry attempt of the Integration tests stage (a downstream run). */
+/** One try of the flaky stage (the stage retries in place). */
 function AttemptRow({ attempt }: { attempt: JenkinsAttempt }) {
   const handleOpen = useCallback(() => {
     if (attempt.url) openUrl(attempt.url)
@@ -135,7 +133,7 @@ function AttemptRow({ attempt }: { attempt: JenkinsAttempt }) {
     <div
       className="flex items-center gap-2 rounded px-1.5 py-0.5 text-[11px]"
       // Status spelled out in text — not conveyed by the dot color alone.
-      title={`Essai ${attempt.attempt} (#${attempt.number}) : ${attemptStatusLabel(attempt)}`}
+      title={`Essai ${attempt.attempt} : ${attemptStatusLabel(attempt)}`}
     >
       <span
         className={cn(
@@ -146,15 +144,6 @@ function AttemptRow({ attempt }: { attempt: JenkinsAttempt }) {
       <span className="shrink-0 text-muted-foreground">
         essai {attempt.attempt}
       </span>
-      <button
-        type="button"
-        onClick={handleOpen}
-        className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground transition-colors hover:text-foreground"
-        title="Ouvrir le build integration-tests sur Jenkins"
-      >
-        #{attempt.number}
-        <ExternalLink className="h-2.5 w-2.5" />
-      </button>
       <span className="min-w-0 flex-1 truncate text-muted-foreground">
         {attemptStatusLabel(attempt)}
       </span>
@@ -163,29 +152,40 @@ function AttemptRow({ attempt }: { attempt: JenkinsAttempt }) {
           {formatDuration(attempt.durationMs)}
         </span>
       )}
+      {attempt.url && (
+        <button
+          type="button"
+          onClick={handleOpen}
+          className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground transition-colors hover:text-foreground"
+          title={`Ouvrir le log de l'essai ${attempt.attempt} sur Jenkins`}
+        >
+          log
+          <ExternalLink className="h-2.5 w-2.5" />
+        </button>
+      )}
     </div>
   )
 }
 
-/** The retry attempts of the Integration tests stage, indented beneath it. */
-function IntegrationAttemptList({ attempts }: { attempts: JenkinsAttempt[] }) {
+/** The tries of the flaky stage, indented beneath it. */
+function AttemptList({ attempts }: { attempts: JenkinsAttempt[] }) {
   return (
     <div className="ml-3 mt-0.5 space-y-0.5 border-l border-border/60 pl-2">
       {attempts.map(attempt => (
-        <AttemptRow key={attempt.number} attempt={attempt} />
+        <AttemptRow key={attempt.attempt} attempt={attempt} />
       ))}
     </div>
   )
 }
 
 /**
- * Per-stage breakdown of a Jenkins `build-and-test` run, shared by the worktree
- * popover (`JenkinsStatusBadge`) and the inline Mission Control row. "Integration
- * tests" is highlighted as the important flaky step.
+ * Per-stage breakdown of a pipeline run, shared by the worktree popover
+ * (`JenkinsStatusBadge`) and the inline Mission Control row. The flaky
+ * end-to-end stage is highlighted as the important step.
  *
- * When `attempts` are supplied, the flaky stage also shows its retry counter
- * ("N essais") and, indented beneath it, each `integration-tests` run (build
- * number + per-iteration result) so "which try are we on" is visible inline.
+ * When `attempts` are supplied, that stage also shows its retry counter
+ * ("N essais") and, indented beneath it, each try (result, duration, log link)
+ * so "which try are we on" is visible inline.
  */
 export function JenkinsStageList({
   stages,
@@ -198,15 +198,14 @@ export function JenkinsStageList({
   return (
     <div className="space-y-0.5">
       {stages.map(stage => {
-        const showAttempts =
-          stage.name === INTEGRATION_TESTS_STAGE && attempts.length > 0
+        const showAttempts = stage.name === FLAKY_STAGE && attempts.length > 0
         return (
           <div key={stage.name}>
             <StageRow
               stage={stage}
               attemptCount={showAttempts ? attempts.length : 0}
             />
-            {showAttempts && <IntegrationAttemptList attempts={attempts} />}
+            {showAttempts && <AttemptList attempts={attempts} />}
           </div>
         )
       })}

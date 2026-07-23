@@ -17,6 +17,7 @@ import {
 import { useJenkinsStatusCached } from '@/services/jenkins'
 import { useProjects } from '@/services/projects'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'
 
 interface WorktreeCiStatusProps {
   projectId: string
@@ -58,7 +59,7 @@ const ICON = 'size-3 shrink-0'
 const GITHUB_SOURCE_NOTE =
   ' — verdict GitHub (build purgé de l’historique Jenkins)'
 
-/** build-and-test verdict → a shaped, labelled pill (or null for UNKNOWN). */
+/** Pipeline verdict → a shaped, labelled pill (or null for UNKNOWN). */
 function verdictPill(status: string): PillSpec | null {
   switch (status) {
     case 'SUCCESS':
@@ -67,7 +68,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <CheckCircle2 className={ICON} />,
         label: 'CI OK',
         tone: TONE.green,
-        tooltip: 'build-and-test : réussi',
+        tooltip: `${PIPELINE_JOB} : réussi`,
       }
     case 'FAILURE':
       return {
@@ -75,7 +76,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <XCircle className={ICON} />,
         label: 'CI échec',
         tone: TONE.red,
-        tooltip: 'build-and-test : en échec',
+        tooltip: `${PIPELINE_JOB} : en échec`,
       }
     case 'BUILDING':
       return {
@@ -83,7 +84,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <Loader2 className={cn(ICON, 'animate-spin')} />,
         label: 'CI en cours',
         tone: TONE.blue,
-        tooltip: 'build-and-test : en cours',
+        tooltip: `${PIPELINE_JOB} : en cours`,
       }
     case 'QUEUED':
       return {
@@ -91,7 +92,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <Hourglass className={ICON} />,
         label: 'CI en file',
         tone: TONE.amber,
-        tooltip: "build-and-test : en file d'attente",
+        tooltip: `${PIPELINE_JOB} : en file d'attente`,
       }
     default:
       return null
