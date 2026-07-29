@@ -1972,6 +1972,8 @@ pub async fn create_worktree(
         labels: Vec::new(),
         label: None,
         last_opened_at: None,
+        standby_reason: None,
+        standby_until: None,
     };
 
     // Clone values for the background thread
@@ -2636,6 +2638,8 @@ pub async fn create_worktree(
                     labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
+                    standby_reason: None,
+                    standby_until: None,
                 };
 
                 data.add_worktree(worktree.clone());
@@ -2870,6 +2874,8 @@ pub async fn fork_session_to_worktree(
         labels: source_worktree.labels.clone(),
         label: source_worktree.label.clone(),
         last_opened_at: Some(created_at),
+        standby_reason: None,
+        standby_until: None,
     };
 
     let result = (|| -> Result<ForkSessionToWorktreeResponse, String> {
@@ -3051,6 +3057,8 @@ pub async fn create_worktree_from_existing_branch(
         labels: Vec::new(),
         label: None,
         last_opened_at: None,
+        standby_reason: None,
+        standby_until: None,
     };
 
     // Clone values for the background thread
@@ -3463,6 +3471,8 @@ pub async fn create_worktree_from_existing_branch(
                     labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
+                    standby_reason: None,
+                    standby_until: None,
                 };
 
                 data.add_worktree(worktree.clone());
@@ -3715,6 +3725,8 @@ pub async fn checkout_pr(
         labels: Vec::new(),
         label: None,
         last_opened_at: None,
+        standby_reason: None,
+        standby_until: None,
     };
 
     // Clone values for background thread
@@ -4048,6 +4060,8 @@ pub async fn checkout_pr(
                     labels: Vec::new(),
                     label: None,
                     last_opened_at: None,
+                    standby_reason: None,
+                    standby_until: None,
                 };
 
                 data.add_worktree(worktree.clone());
@@ -4394,6 +4408,8 @@ pub async fn create_base_session(app: AppHandle, project_id: String) -> Result<W
         labels: Vec::new(),
         label: None,
         last_opened_at: None,
+        standby_reason: None,
+        standby_until: None,
     };
 
     data.add_worktree(session.clone());
@@ -4803,6 +4819,8 @@ pub async fn import_worktree(
         labels: Vec::new(),
         label: None,
         last_opened_at: None,
+        standby_reason: None,
+        standby_until: None,
     };
 
     data.add_worktree(worktree.clone());
@@ -5595,6 +5613,45 @@ pub async fn update_worktree_labels(
 
     log::trace!("Successfully updated worktree labels for: {worktree_id}");
     Ok(())
+}
+
+fn normalize_worktree_standby(
+    reason: Option<String>,
+    standby_until: Option<u64>,
+    current_time: u64,
+) -> Result<(Option<String>, Option<u64>), String> {
+    let reason = reason
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match (reason, standby_until) {
+        (None, None) => Ok((None, None)),
+        (Some(reason), Some(until)) if until > current_time => Ok((Some(reason), Some(until))),
+        (Some(_), Some(_)) => Err("Standby wake-up must be in the future".to_string()),
+        _ => Err("Standby reason and wake-up must be provided together".to_string()),
+    }
+}
+
+/// Park or wake a worktree that is waiting on a business dependency.
+pub async fn update_worktree_standby(
+    app: AppHandle,
+    worktree_id: String,
+    reason: Option<String>,
+    standby_until: Option<u64>,
+) -> Result<Worktree, String> {
+    let (reason, standby_until) = normalize_worktree_standby(reason, standby_until, now())?;
+    let mut data = load_projects_data(&app)?;
+
+    let worktree = data
+        .find_worktree_mut(&worktree_id)
+        .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?;
+
+    worktree.standby_reason = reason;
+    worktree.standby_until = standby_until;
+    let updated_worktree = worktree.clone();
+
+    save_projects_data(&app, &data)?;
+    Ok(updated_worktree)
 }
 
 /// Deprecated compatibility wrapper for old clients that only support one worktree label.
@@ -14841,6 +14898,39 @@ mod tests {
             parse_worktree_origin(Some("manual")),
             Ok(Some(WorktreeOrigin::Manual))
         );
+    }
+
+    #[test]
+    fn normalize_worktree_standby_accepts_future_wakeup_or_clear() {
+        assert_eq!(
+            normalize_worktree_standby(
+                Some("  Validation métier  ".to_string()),
+                Some(1_800_003_600),
+                1_800_000_000,
+            ),
+            Ok((Some("Validation métier".to_string()), Some(1_800_003_600)))
+        );
+        assert_eq!(
+            normalize_worktree_standby(None, None, 1_800_000_000),
+            Ok((None, None))
+        );
+    }
+
+    #[test]
+    fn normalize_worktree_standby_rejects_incomplete_or_expired_values() {
+        assert!(normalize_worktree_standby(
+            Some("Validation métier".to_string()),
+            None,
+            1_800_000_000
+        )
+        .is_err());
+        assert!(normalize_worktree_standby(None, Some(1_800_003_600), 1_800_000_000).is_err());
+        assert!(normalize_worktree_standby(
+            Some("Validation métier".to_string()),
+            Some(1_800_000_000),
+            1_800_000_000
+        )
+        .is_err());
     }
 
     #[test]

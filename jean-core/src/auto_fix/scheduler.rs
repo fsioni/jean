@@ -1053,6 +1053,8 @@ mod tests {
             labels: Vec::new(),
             label: None,
             last_opened_at: None,
+            standby_reason: None,
+            standby_until: None,
         }
     }
 
