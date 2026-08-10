@@ -10,7 +10,7 @@
 // is stored in UI state.
 // Review results are also stored in Session files (review_results field).
 
-import type { LabelData } from '@/types/chat'
+import type { LabelData, QueuedMessage } from '@/types/chat'
 
 export interface ProjectCanvasSettingsState {
   worktree_sort_mode?: 'created' | 'last_activity' | 'manual'
@@ -94,6 +94,10 @@ export interface UIState {
   active_session_ids: Record<string, string>
   /** Unsent chat textarea content per session */
   input_drafts?: Record<string, string>
+  /** Prompt waiting for a newly-created worktree setup to finish */
+  pending_setup_prompts?: Record<string, string>
+  /** Complete queued messages used to recover automatic sending after reload */
+  pending_setup_messages?: Record<string, QueuedMessage>
   /**
    * Unsent image attachments per session (files already on disk).
    * Only fully-saved images are persisted — loading placeholders are omitted.
@@ -191,6 +195,8 @@ export const defaultUIState: UIState = {
   zen_mode: false,
   active_session_ids: {},
   input_drafts: {},
+  pending_setup_prompts: {},
+  pending_setup_messages: {},
   pending_images: {},
   pending_text_files: {},
   pending_files: {},

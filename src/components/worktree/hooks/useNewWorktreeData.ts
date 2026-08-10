@@ -255,6 +255,7 @@ export function useNewWorktreeData(
 
   return {
     queryClient,
+    projects: projects ?? [],
     selectedProjectId,
     selectedProject,
     hasBaseSession,
