@@ -1,5 +1,6 @@
 import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as Environment from '@/lib/environment'
 import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { ChatInput } from './ChatInput'
 import { invoke } from '@/lib/transport'
@@ -34,7 +35,7 @@ vi.mock('@/hooks/use-mobile', () => ({
 }))
 
 vi.mock('@/lib/environment', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/environment')>()),
+  ...(await importOriginal<typeof Environment>()),
   isNativeApp: () => nativeState.value,
 }))
 
