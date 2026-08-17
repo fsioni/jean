@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   derivePrReadiness,
+  isAbortedJenkinsBuild,
   nextRecoveryAction,
   selectRecoverySessionId,
   type JenkinsRecoveryRecord,
@@ -51,6 +52,14 @@ describe('nextRecoveryAction', () => {
       kind: 'success',
       record: { ...record, lastHandledBuild: 43, cycleCount: 0 },
     })
+  })
+})
+
+describe('isAbortedJenkinsBuild', () => {
+  it('only identifies Jenkins aborted results', () => {
+    expect(isAbortedJenkinsBuild('ABORTED')).toBe(true)
+    expect(isAbortedJenkinsBuild('FAILURE')).toBe(false)
+    expect(isAbortedJenkinsBuild(null)).toBe(false)
   })
 })
 
