@@ -12,6 +12,10 @@ export type JenkinsRecoveryAction =
   | 'success'
   | 'intervention'
 
+export function isAbortedJenkinsBuild(result: string | null): boolean {
+  return result === 'ABORTED'
+}
+
 export function nextRecoveryAction(
   record: JenkinsRecoveryRecord,
   buildNumber: number,

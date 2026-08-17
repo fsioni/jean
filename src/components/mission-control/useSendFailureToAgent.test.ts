@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFailurePrompt } from './useSendFailureToAgent'
+import { buildFailurePrompt, isSessionBusy } from './useSendFailureToAgent'
 import type { JenkinsFailureReport } from '@/types/jenkins'
 
 function report(partial: Partial<JenkinsFailureReport>): JenkinsFailureReport {
@@ -17,6 +17,13 @@ function report(partial: Partial<JenkinsFailureReport>): JenkinsFailureReport {
 }
 
 const context = { branch: 'feat-widget', prId: '4143' }
+
+describe('isSessionBusy', () => {
+  it('detects a conversation that already has a message in progress', () => {
+    expect(isSessionBusy('session-1', { 'session-1': true })).toBe(true)
+    expect(isSessionBusy('session-2', { 'session-1': true })).toBe(false)
+  })
+})
 
 describe('buildFailurePrompt', () => {
   it('carries the evidence so the agent has nothing to fetch', () => {

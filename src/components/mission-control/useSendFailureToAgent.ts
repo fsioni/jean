@@ -38,6 +38,13 @@ import { selectRecoverySessionId } from '@/components/jenkins/automatic-recovery
 /** Log lines kept in the prompt — enough for a stack trace, not a whole build. */
 const PROMPT_LOG_LINES = 80
 
+export function isSessionBusy(
+  sessionId: string,
+  sendingSessionIds: Record<string, boolean>
+): boolean {
+  return sendingSessionIds[sessionId] ?? false
+}
+
 /**
  * Build the agent prompt from a failure report.
  *
@@ -166,7 +173,15 @@ export function useSendFailureToAgent() {
           setLastSentMessage,
           setError,
           addSendingSession,
+          sendingSessionIds,
         } = useChatStore.getState()
+
+        if (isSessionBusy(sessionId, sendingSessionIds)) {
+          logger.info('Jenkins failure → agent skipped: session already busy', {
+            sessionId,
+          })
+          return
+        }
 
         setActiveSession(worktree.id, sessionId)
         setLastSentMessage(sessionId, prompt)

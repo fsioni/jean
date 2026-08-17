@@ -13,6 +13,7 @@ import type {
 } from '@/types/jenkins'
 import type { Project, Worktree } from '@/types/projects'
 import {
+  isAbortedJenkinsBuild,
   nextRecoveryAction,
   type JenkinsRecoveryRecord,
 } from './automatic-recovery'
@@ -54,6 +55,10 @@ export function useAutomaticJenkinsRecovery() {
       if (!build || !prId) return
 
       const key = `${status.worktreeId}:${prId}`
+      if (isAbortedJenkinsBuild(build.result)) {
+        initializedRef.current.add(key)
+        return
+      }
       if (
         build.building ||
         !['SUCCESS', 'FAILURE'].includes(status.overallStatus)
