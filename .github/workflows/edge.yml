@@ -1,13 +1,7 @@
-name: 'Edge build (Linux)'
+name: 'Edge build (Linux + macOS)'
 
-# Canal "edge" : à chaque push sur main (code app), build d'un AppImage Linux signé
-# et publication sur une release roulante `edge`. L'app (endpoint updater pointé sur
-# cette release) se met à jour automatiquement vers le dernier build.
-#
-# Prérequis (secrets sur fsioni/jean) :
-#   - TAURI_PRIVATE_KEY                    : contenu de ~/.tauri/jean-edge.key
-#   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD   : contenu de ~/.tauri/jean-edge.pass
-# Voir docs/developer/edge-channel.md
+# Canal "edge" du fork : Linux et macOS sont construits depuis le meme commit,
+# avec exactement la meme version, puis publies ensemble sur la release roulante.
 
 on:
   push:
@@ -22,7 +16,6 @@ on:
       - '!.github/workflows/edge.yml'
   workflow_dispatch:
 
-# Une seule build edge à la fois : un nouveau push annule la précédente.
 concurrency:
   group: edge-build
   cancel-in-progress: true
@@ -33,26 +26,43 @@ env:
   EDGE_TAG: edge
 
 jobs:
-  build-edge:
-    name: Build & publish edge AppImage (linux-x86_64)
-    runs-on: ubuntu-22.04
+  version:
+    name: Compute edge version
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compute monotonic edge version
+        id: version
+        run: |
+          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          VERSION="${BASE}-edge.${{ github.run_number }}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Edge version: $VERSION"
+
+  build:
+    name: Build edge (${{ matrix.name }})
+    needs: version
     permissions:
-      contents: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-22.04
+            artifact: edge-linux
+          - name: macos-universal
+            runner: macos-latest
+            artifact: edge-macos
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Compute monotonic edge version
-        id: ver
-        run: |
-          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          # github.run_number est monotone croissant -> chaque build est "plus récent" en semver.
-          VERSION="${BASE}-edge.${{ github.run_number }}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Edge version: $VERSION"
-
-      - name: Inject edge version into tauri.conf.json
+      - name: Inject shared edge version
         env:
-          EDGE_VERSION: ${{ steps.ver.outputs.version }}
+          EDGE_VERSION: ${{ needs.version.outputs.value }}
         run: |
           node -e "
             const fs = require('fs');
@@ -63,6 +73,7 @@ jobs:
           "
 
       - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2
@@ -73,66 +84,131 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install macOS universal targets
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          shared-key: edge-linux
+          shared-key: edge-${{ matrix.name }}
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      # build-appimage.sh build, applique le fix WebKitGTK, crée le .tar.gz et le SIGNE
-      # dès que TAURI_SIGNING_PRIVATE_KEY est présent.
       - name: Build & sign AppImage
+        if: runner.os == 'Linux'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bash scripts/build-appimage.sh
 
-      - name: Publish to rolling "edge" release
+      - name: Build & sign universal macOS app
+        if: runner.os == 'macOS'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tauriScript: bun run tauri
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Stage Linux artifacts
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          mkdir artifacts
+          cp "src-tauri/target/release/bundle/appimage/Jean_${VERSION}_amd64.AppImage"* artifacts/
+
+      - name: Stage macOS artifacts
+        if: runner.os == 'macOS'
+        run: |
+          mkdir artifacts
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg artifacts/
+          cp src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz* artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/
+          if-no-files-found: error
+
+  publish:
+    name: Publish unified edge release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: edge-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish rolling release and updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.version.outputs.value }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          BUNDLE_DIR="src-tauri/target/release/bundle/appimage"
-          APPIMAGE="Jean_${VERSION}_amd64.AppImage"
-          APPIMAGE_TAR="${APPIMAGE}.tar.gz"
-          SIG_FILE="${BUNDLE_DIR}/${APPIMAGE_TAR}.sig"
 
-          if [ ! -f "$SIG_FILE" ]; then
-            echo "::error::Signature absente ($SIG_FILE). Le secret TAURI_PRIVATE_KEY est-il défini ?"
-            exit 1
-          fi
+          LINUX_TAR="Jean_${VERSION}_amd64.AppImage.tar.gz"
+          MAC_TAR="Jean_universal.app.tar.gz"
+          for file in "$LINUX_TAR" "${LINUX_TAR}.sig" "$MAC_TAR" "${MAC_TAR}.sig"; do
+            if [ ! -f "artifacts/$file" ]; then
+              echo "::error::Artefact obligatoire absent : $file"
+              exit 1
+            fi
+          done
 
-          # Crée la release roulante "edge" (prerelease) si elle n'existe pas encore.
-          if ! gh release view "$EDGE_TAG" >/dev/null 2>&1; then
-            gh release create "$EDGE_TAG" \
+          if ! /usr/bin/gh release view "$EDGE_TAG" >/dev/null 2>&1; then
+            /usr/bin/gh release create "$EDGE_TAG" \
               --prerelease \
               --title "Edge (rolling)" \
-              --notes "Build automatique du dernier main. Canal de dev — pas une release stable."
+              --notes "Build automatique Linux + macOS du dernier main. Canal de dev — pas une release stable."
           fi
 
-          # Upload AppImage + artefacts updater (écrase les précédents, URL stable).
-          gh release upload "$EDGE_TAG" \
-            "${BUNDLE_DIR}/${APPIMAGE}" \
-            "${BUNDLE_DIR}/${APPIMAGE_TAR}" \
-            "${SIG_FILE}" --clobber
+          /usr/bin/gh release upload "$EDGE_TAG" artifacts/* --clobber
 
-          # Génère latest.json (Linux x86_64 uniquement) pointant sur l'artefact .tar.gz.
-          URL="https://github.com/fsioni/jean/releases/download/${EDGE_TAG}/${APPIMAGE_TAR}"
-          SIG_CONTENT="$(cat "$SIG_FILE")" VERSION="$VERSION" URL="$URL" node -e "
-            const fs = require('fs');
-            const data = {
-              version: process.env.VERSION,
-              notes: 'Edge build (rolling) — dernier main',
-              pub_date: new Date().toISOString(),
-              platforms: {
-                'linux-x86_64': { signature: process.env.SIG_CONTENT, url: process.env.URL }
-              }
-            };
-            fs.writeFileSync('/tmp/latest.json', JSON.stringify(data, null, 2));
-          "
-          gh release upload "$EDGE_TAG" /tmp/latest.json --clobber
-          echo "✓ Edge publié : $VERSION"
+          LINUX_SIG="$(cat "artifacts/${LINUX_TAR}.sig")" \
+          MAC_SIG="$(cat "artifacts/${MAC_TAR}.sig")" \
+          VERSION="$VERSION" REPO="$REPO" EDGE_TAG="$EDGE_TAG" node <<'NODE'
+          const fs = require('fs')
+          const baseUrl = `https://github.com/${process.env.REPO}/releases/download/${process.env.EDGE_TAG}`
+          const linux = {
+            signature: process.env.LINUX_SIG,
+            url: `${baseUrl}/Jean_${process.env.VERSION}_amd64.AppImage.tar.gz`,
+          }
+          const macos = {
+            signature: process.env.MAC_SIG,
+            url: `${baseUrl}/Jean_universal.app.tar.gz`,
+          }
+          const data = {
+            version: process.env.VERSION,
+            notes: 'Edge build (rolling) — dernier main',
+            pub_date: new Date().toISOString(),
+            platforms: {
+              'linux-x86_64': linux,
+              'darwin-aarch64': macos,
+              'darwin-x86_64': macos,
+            },
+          }
+          fs.writeFileSync('/tmp/latest.json', JSON.stringify(data, null, 2))
+          NODE
+
+          /usr/bin/gh release upload "$EDGE_TAG" /tmp/latest.json --clobber
+          echo "✓ Edge Linux + macOS publié : $VERSION"
