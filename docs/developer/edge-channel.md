@@ -51,8 +51,9 @@ base (`tauri.conf.json` → `version`) montera (ex. `0.1.57`), `0.1.57-edge.1` r
   (cause de l'écran blanc / ENOEXEC). macOS utilise le même artefact universel pour Apple Silicon et Intel.
 - **Signature macOS.** La signature Tauri de l’updater utilise `TAURI_PRIVATE_KEY`. Le workflow edge
   ne charge pas de certificat Apple : un secret de certificat absent ou invalide ne doit pas bloquer
-  le build universel. La signature Developer ID et la notarisation restent réservées aux releases
-  officielles qui disposent d'identifiants Apple valides.
+  le build universel. Il neutralise aussi le `signingIdentity` officiel de `tauri.conf.json` pendant
+  ce build. La signature Developer ID et la notarisation restent réservées aux releases officielles
+  qui disposent du certificat Apple correspondant.
 - **Bascule d'équipe.** Quiconque rebuild `fork/main` obtient une app sur le canal edge avec ta
   clé. Nabil/Martin devront aussi faire le bootstrap (installer un build edge une fois).
 - **Fréquence.** Edge build à chaque push de code app (les changements `docs/**`, `*.md`, etc.

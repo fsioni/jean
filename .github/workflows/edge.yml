@@ -69,6 +69,9 @@ jobs:
             const p = 'src-tauri/tauri.conf.json';
             const d = JSON.parse(fs.readFileSync(p, 'utf8'));
             d.version = process.env.EDGE_VERSION;
+            if (process.env.RUNNER_OS === 'macOS') {
+              d.bundle.macOS.signingIdentity = null;
+            }
             fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
           "
 
