@@ -58,6 +58,9 @@ base (`tauri.conf.json` → `version`) montera (ex. `0.1.57`), `0.1.57-edge.1` r
   clé. Nabil/Martin devront aussi faire le bootstrap (installer un build edge une fois).
 - **Fréquence.** Edge build à chaque push de code app (les changements `docs/**`, `*.md`, etc.
   sont ignorés via `paths-ignore`). Build concurrente annulée par un nouveau push.
+- **Garde-fous CI.** Les téléchargements APT ont des délais réseau courts et sont retentés une fois.
+  Chaque build de plateforme est limité à 45 minutes, dont 35 minutes maximum pour le packaging
+  macOS, afin qu'un runner GitHub bloqué soit libéré automatiquement.
 
 ## Tester / vérifier
 
