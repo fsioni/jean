@@ -190,7 +190,7 @@ jobs:
           set -euo pipefail
 
           LINUX_TAR="Jean_${VERSION}_amd64.AppImage.tar.gz"
-          MAC_TAR="Jean_universal.app.tar.gz"
+          MAC_TAR="Jean.app.tar.gz"
           for file in "$LINUX_TAR" "${LINUX_TAR}.sig" "$MAC_TAR" "${MAC_TAR}.sig"; do
             if [ ! -f "artifacts/$file" ]; then
               echo "::error::Artefact obligatoire absent : $file"
@@ -218,7 +218,7 @@ jobs:
           }
           const macos = {
             signature: process.env.MAC_SIG,
-            url: `${baseUrl}/Jean_universal.app.tar.gz`,
+            url: `${baseUrl}/Jean.app.tar.gz`,
           }
           const data = {
             version: process.env.VERSION,
