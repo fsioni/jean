@@ -155,21 +155,26 @@ fn command_output(command: &mut std::process::Command, label: &str) -> Result<St
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn fetch_merged_prs(app: &AppHandle, repo: &str) -> Result<Vec<MergedPr>, String> {
+fn fetch_merged_prs(
+    app: &AppHandle,
+    project_path: &str,
+    repo: &str,
+) -> Result<Vec<MergedPr>, String> {
     let gh = resolve_gh_binary(app);
     let stdout = command_output(
-        silent_command(&gh).args([
-            "pr",
-            "list",
-            "--repo",
-            repo,
-            "--state",
-            "merged",
-            "--limit",
-            "500",
-            "--json",
-            "number,title,headRefName,url,mergedAt,mergeCommit",
-        ]),
+        crate::platform::resolved_gh_command(&gh, std::path::Path::new(project_path), Some(repo))
+            .args([
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--state",
+                "merged",
+                "--limit",
+                "500",
+                "--json",
+                "number,title,headRefName,url,mergedAt,mergeCommit",
+            ]),
         "gh pr list",
     )?;
     let value = serde_json::from_str(&stdout)
@@ -291,7 +296,7 @@ pub async fn get_deployment_overview(
         fetch_to_deploy_tasks(&app, &project_id)
     )?;
     git_fetch(&project.path, remote, &branch)?;
-    let prs = fetch_merged_prs(&app, &repo_slug(&project.path)?)?;
+    let prs = fetch_merged_prs(&app, &project.path, &repo_slug(&project.path)?)?;
     let prs_by_task: HashMap<String, MergedPr> = prs
         .into_iter()
         .map(|pr| (pr.task_id.to_ascii_lowercase(), pr))

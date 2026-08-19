@@ -26,7 +26,6 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::parse::{STATUS_BUILDING, STATUS_FAILURE, STATUS_SUCCESS};
-use crate::platform::silent_command;
 
 /// How many open PRs to ask GitHub about in one call.
 const PR_LIST_LIMIT: &str = "200";
@@ -130,7 +129,7 @@ pub fn parse_pr_checks(json: &str) -> PrChecks {
 /// Returns an empty map on any failure: the fallback degrades to today's
 /// behaviour instead of breaking the Jenkins status.
 pub fn fetch_pr_checks(repo_path: &str, gh_binary: &Path) -> PrChecks {
-    let output = silent_command(gh_binary)
+    let output = crate::platform::resolved_gh_command(gh_binary, Path::new(repo_path), None)
         .args([
             "pr",
             "list",
@@ -141,7 +140,6 @@ pub fn fetch_pr_checks(repo_path: &str, gh_binary: &Path) -> PrChecks {
             "--json",
             "number,headRefOid,statusCheckRollup",
         ])
-        .current_dir(repo_path)
         .output();
 
     let Ok(output) = output else {

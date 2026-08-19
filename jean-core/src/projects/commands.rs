@@ -58,7 +58,7 @@ use crate::platform::silent_command;
 use crate::platform::wsl_aware_command;
 
 fn gh_command(gh: &Path, project_path: &str) -> std::process::Command {
-    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+    crate::platform::resolved_gh_command(gh, Path::new(project_path), None)
 }
 
 static RELEASE_NOTES_PAREN_RE: Lazy<Regex> =

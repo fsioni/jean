@@ -35,8 +35,6 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::platform::silent_command;
-
 /// Preview is reachable and contains the current PR head commit.
 pub const FRESH_UP_TO_DATE: &str = "UP_TO_DATE";
 /// Preview is reachable but serving an older commit than the PR head.
@@ -255,7 +253,7 @@ async fn probe_preview(version_url: &str) -> Probe {
 /// Fetch the PR head commit via `gh pr view <n> --json headRefOid`.
 fn fetch_pr_head_sha(repo_path: &str, pr_number: Option<u32>, gh_binary: &Path) -> Option<String> {
     let pr_number = pr_number?;
-    let output = silent_command(gh_binary)
+    let output = crate::platform::resolved_gh_command(gh_binary, Path::new(repo_path), None)
         .args([
             "pr",
             "view",
@@ -265,7 +263,6 @@ fn fetch_pr_head_sha(repo_path: &str, pr_number: Option<u32>, gh_binary: &Path) 
             "--jq",
             ".headRefOid",
         ])
-        .current_dir(repo_path)
         .output()
         .ok()?;
 
@@ -285,9 +282,8 @@ fn fetch_pr_head_sha(repo_path: &str, pr_number: Option<u32>, gh_binary: &Path) 
 /// `gh` resolves the `{owner}`/`{repo}` placeholders from the worktree's repo.
 fn fetch_behind_by(repo_path: &str, base: &str, head: &str, gh_binary: &Path) -> Option<u32> {
     let path = format!("repos/{{owner}}/{{repo}}/compare/{base}...{head}");
-    let output = silent_command(gh_binary)
+    let output = crate::platform::resolved_gh_command(gh_binary, Path::new(repo_path), None)
         .args(["api", &path, "--jq", ".ahead_by"])
-        .current_dir(repo_path)
         .output()
         .ok()?;
 

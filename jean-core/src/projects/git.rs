@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{JeanConfig, MergeType};
 
 fn gh_command(gh: &Path, repo_path: &str) -> std::process::Command {
-    crate::platform::resolved_cli_command(gh, Some(Path::new(repo_path)))
+    crate::platform::resolved_gh_command(gh, Path::new(repo_path), None)
 }
 
 static WORKTREE_CREATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -368,13 +368,26 @@ pub struct GitHubRemote {
 
 /// Convert a raw git remote URL to a GitHub HTTPS URL, if possible
 fn normalize_github_url(remote_url: &str) -> Option<String> {
-    if remote_url.starts_with("git@github.com:") {
-        Some(
-            remote_url
-                .replace("git@github.com:", "https://github.com/")
-                .trim_end_matches(".git")
-                .to_string(),
-        )
+    if let Some((host, path)) = remote_url
+        .strip_prefix("git@")
+        .and_then(|url| url.split_once(':'))
+    {
+        if host == "github.com" || host.starts_with("github-") {
+            return Some(format!(
+                "https://github.com/{}",
+                path.trim_end_matches(".git")
+            ));
+        }
+        None
+    } else if let Some(rest) = remote_url.strip_prefix("ssh://git@") {
+        let (host, path) = rest.split_once('/')?;
+        if host == "github.com" || host.starts_with("github-") {
+            return Some(format!(
+                "https://github.com/{}",
+                path.trim_end_matches(".git")
+            ));
+        }
+        None
     } else if remote_url.starts_with("https://github.com/") {
         Some(remote_url.trim_end_matches(".git").to_string())
     } else {
@@ -403,6 +416,35 @@ pub fn get_github_url_for_remote(repo_path: &str, remote: &str) -> Result<String
 /// Get the GitHub URL for a repository (uses "origin" remote)
 pub fn get_github_url(repo_path: &str) -> Result<String, String> {
     get_github_url_for_remote(repo_path, "origin")
+}
+
+#[cfg(test)]
+mod github_url_tests {
+    use super::normalize_github_url;
+
+    #[test]
+    fn normalizes_github_ssh_aliases_and_https_urls() {
+        for (remote, expected) in [
+            (
+                "git@github.com:owner/repo.git",
+                "https://github.com/owner/repo",
+            ),
+            (
+                "git@github-fares-spottt:owner/repo.git",
+                "https://github.com/owner/repo",
+            ),
+            (
+                "ssh://git@github-fares-spottt/owner/repo.git",
+                "https://github.com/owner/repo",
+            ),
+            (
+                "https://github.com/owner/repo.git",
+                "https://github.com/owner/repo",
+            ),
+        ] {
+            assert_eq!(normalize_github_url(remote).as_deref(), Some(expected));
+        }
+    }
 }
 
 /// Get all GitHub remotes for a repository
