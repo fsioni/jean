@@ -17,7 +17,6 @@ use super::types::{
     SOURCE_JENKINS, SOURCE_NONE,
 };
 use crate::gh_cli::config::resolve_gh_binary;
-use crate::platform::silent_command;
 use crate::projects::storage::{load_projects_data, save_projects_data};
 use crate::projects::types::Project;
 
@@ -449,17 +448,17 @@ async fn post_ghprb_retest_comment(
     gh: std::path::PathBuf,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let output = silent_command(&gh)
-            .args([
-                "pr",
-                "comment",
-                &pr_number.to_string(),
-                "--body",
-                GHPRB_RETEST_PHRASE,
-            ])
-            .current_dir(&repo_path)
-            .output()
-            .map_err(|e| format!("Failed to run gh: {e}"))?;
+        let output =
+            crate::platform::resolved_gh_command(&gh, std::path::Path::new(&repo_path), None)
+                .args([
+                    "pr",
+                    "comment",
+                    &pr_number.to_string(),
+                    "--body",
+                    GHPRB_RETEST_PHRASE,
+                ])
+                .output()
+                .map_err(|e| format!("Failed to run gh: {e}"))?;
 
         if output.status.success() {
             Ok(())

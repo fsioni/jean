@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 fn gh_command(gh: &std::path::Path, project_path: &str) -> std::process::Command {
-    crate::platform::resolved_cli_command(gh, Some(std::path::Path::new(project_path)))
+    crate::platform::resolved_gh_command(gh, std::path::Path::new(project_path), None)
 }
 
 /// PR state from GitHub API

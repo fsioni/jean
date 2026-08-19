@@ -8,7 +8,7 @@ use super::git::get_repo_identifier;
 use crate::gh_cli::config::resolve_gh_binary;
 
 fn gh_command(gh: &Path, project_path: &str) -> Command {
-    crate::platform::resolved_cli_command(gh, Some(Path::new(project_path)))
+    crate::platform::resolved_gh_command(gh, Path::new(project_path), None)
 }
 
 // =============================================================================

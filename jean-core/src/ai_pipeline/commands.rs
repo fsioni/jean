@@ -14,11 +14,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use tauri::AppHandle;
 
 use super::config::load_ai_pipeline_config;
 use crate::gh_cli::config::resolve_gh_binary;
-use crate::platform::silent_command;
 use crate::projects::clickup_client::clickup_get;
 use crate::projects::git::get_github_url;
 use crate::projects::storage::load_projects_data;
@@ -445,9 +445,30 @@ fn repo_slug_for_path(project_path: &str) -> Result<String, String> {
 /// the former internal-dashboard `/prs` call: the PR state Jean needs (CI,
 /// draft, mergeable, branch, labels) all comes from GitHub directly, so no
 /// extra service/credential is required beyond the `gh` auth Jean already has.
-fn fetch_repo_prs_json(app: &AppHandle, repo_slug: &str) -> Result<serde_json::Value, String> {
+fn pipeline_gh_command(
+    app: &AppHandle,
+    project_path: &str,
+    repo_slug: &str,
+) -> std::process::Command {
     let gh = resolve_gh_binary(app);
-    let output = silent_command(&gh)
+    crate::platform::resolved_gh_command(&gh, Path::new(project_path), Some(repo_slug))
+}
+
+fn pipeline_gh_error(project_path: &str, repo_slug: &str, stderr: &str) -> String {
+    let identity =
+        crate::platform::select_github_account(Path::new(project_path), Some(repo_slug), None);
+    let account = identity
+        .map(|value| value.account)
+        .unwrap_or_else(|_| "unknown".to_string());
+    crate::platform::github_access_error(&account, Some(repo_slug), stderr)
+}
+
+fn fetch_repo_prs_json(
+    app: &AppHandle,
+    project_path: &str,
+    repo_slug: &str,
+) -> Result<serde_json::Value, String> {
+    let output = pipeline_gh_command(app, project_path, repo_slug)
         .args([
             "pr",
             "list",
@@ -464,22 +485,21 @@ fn fetch_repo_prs_json(app: &AppHandle, repo_slug: &str) -> Result<serde_json::V
         .map_err(|e| format!("Failed to run gh pr list: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh pr list failed: {stderr}"));
+        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse gh pr list output: {e}"))
 }
 
 /// Current GitHub login from `gh api user`.
-fn gh_login(app: &AppHandle) -> Result<String, String> {
-    let gh = resolve_gh_binary(app);
-    let output = silent_command(&gh)
+fn gh_login(app: &AppHandle, project_path: &str, repo_slug: &str) -> Result<String, String> {
+    let output = pipeline_gh_command(app, project_path, repo_slug)
         .args(["api", "user", "--jq", ".login"])
         .output()
         .map_err(|e| format!("Failed to run gh api user: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh api user failed: {stderr}"));
+        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
     }
     let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if login.is_empty() {
@@ -491,11 +511,11 @@ fn gh_login(app: &AppHandle) -> Result<String, String> {
 /// Read the PR's current assignee logins via `gh pr view`.
 fn gh_pr_assignees(
     app: &AppHandle,
+    project_path: &str,
     repo_slug: &str,
     pr_number: u32,
 ) -> Result<Vec<String>, String> {
-    let gh = resolve_gh_binary(app);
-    let output = silent_command(&gh)
+    let output = pipeline_gh_command(app, project_path, repo_slug)
         .args([
             "pr",
             "view",
@@ -509,7 +529,7 @@ fn gh_pr_assignees(
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh pr view failed: {stderr}"));
+        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
     }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse gh pr view output: {e}"))?;
@@ -527,15 +547,19 @@ fn gh_pr_assignees(
 
 /// Self-assign the PR via `gh pr edit --add-assignee @me`, guarded against
 /// stealing a PR already assigned to someone else. Returns a human message.
-fn assign_pr_guarded(app: &AppHandle, repo_slug: &str, pr_number: u32) -> Result<String, String> {
-    let me = gh_login(app)?;
-    let assignees = gh_pr_assignees(app, repo_slug, pr_number)?;
+fn assign_pr_guarded(
+    app: &AppHandle,
+    project_path: &str,
+    repo_slug: &str,
+    pr_number: u32,
+) -> Result<String, String> {
+    let me = gh_login(app, project_path, repo_slug)?;
+    let assignees = gh_pr_assignees(app, project_path, repo_slug, pr_number)?;
 
     match github_assign_decision(&me, &assignees)? {
         GithubAssign::AlreadyMine => Ok("PR déjà assignée à toi".to_string()),
         GithubAssign::Assign => {
-            let gh = resolve_gh_binary(app);
-            let output = silent_command(&gh)
+            let output = pipeline_gh_command(app, project_path, repo_slug)
                 .args([
                     "pr",
                     "edit",
@@ -549,7 +573,7 @@ fn assign_pr_guarded(app: &AppHandle, repo_slug: &str, pr_number: u32) -> Result
                 .map_err(|e| format!("Failed to run gh pr edit: {e}"))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("gh pr edit failed: {stderr}"));
+                return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
             }
             Ok("PR auto-assignée".to_string())
         }
@@ -706,7 +730,7 @@ pub async fn list_ai_pipeline_prs(
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
 
-    let value = fetch_repo_prs_json(&app, &slug)?;
+    let value = fetch_repo_prs_json(&app, &project_path, &slug)?;
     Ok(parse_gh_prs(&value, &slug, &label))
 }
 
@@ -728,7 +752,7 @@ pub async fn list_ai_pipeline_tasks(
     let label = config.effective_label();
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
-    let value = fetch_repo_prs_json(&app, &slug)?;
+    let value = fetch_repo_prs_json(&app, &project_path, &slug)?;
     let prs = parse_gh_prs(&value, &slug, &label);
     let pr_by_task = pr_by_task(&prs);
 
@@ -837,10 +861,12 @@ pub async fn assign_pr_to_me(
 ) -> Result<StepResult, String> {
     let project_path = project_path_for(&app, &project_id)?;
     let slug = repo_slug_for_path(&project_path)?;
-    Ok(match assign_pr_guarded(&app, &slug, pr_number) {
-        Ok(m) => StepResult::ok(m),
-        Err(e) => StepResult::fail(e),
-    })
+    Ok(
+        match assign_pr_guarded(&app, &project_path, &slug, pr_number) {
+            Ok(m) => StepResult::ok(m),
+            Err(e) => StepResult::fail(e),
+        },
+    )
 }
 
 /// Resume a pipeline ticket: get a worktree for it, self-assign the GitHub PR
@@ -870,7 +896,7 @@ pub async fn resume_ai_pipeline_task(
     let (worktree, github) = match pr_number {
         Some(number) => {
             let worktree = checkout_pr(app.clone(), project_id.clone(), number).await?;
-            let github = match assign_pr_guarded(&app, &slug, number) {
+            let github = match assign_pr_guarded(&app, &project_path, &slug, number) {
                 Ok(m) => StepResult::ok(m),
                 Err(e) => StepResult::fail(e),
             };
