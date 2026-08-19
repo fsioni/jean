@@ -49,10 +49,10 @@ base (`tauri.conf.json` → `version`) montera (ex. `0.1.57`), `0.1.57-edge.1` r
   au merge-forward si coollabsio touche son updater. Conflit minuscule : garde **tes** valeurs.
 - **Linux : AppImage uniquement** (x86_64). `latest.json` ne pointe **jamais** sur un `.deb`
   (cause de l'écran blanc / ENOEXEC). macOS utilise le même artefact universel pour Apple Silicon et Intel.
-- **Signature Apple.** La signature Tauri de l’updater utilise `TAURI_PRIVATE_KEY`. Pour distribuer
-  un DMG sans avertissement Gatekeeper, configurer aussi les secrets Apple utilisés par le workflow
-  (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
-  `APPLE_PASSWORD`, `APPLE_TEAM_ID`).
+- **Signature macOS.** La signature Tauri de l’updater utilise `TAURI_PRIVATE_KEY`. Le workflow edge
+  ne charge pas de certificat Apple : un secret de certificat absent ou invalide ne doit pas bloquer
+  le build universel. La signature Developer ID et la notarisation restent réservées aux releases
+  officielles qui disposent d'identifiants Apple valides.
 - **Bascule d'équipe.** Quiconque rebuild `fork/main` obtient une app sur le canal edge avec ta
   clé. Nabil/Martin devront aussi faire le bootstrap (installer un build edge une fois).
 - **Fréquence.** Edge build à chaque push de code app (les changements `docs/**`, `*.md`, etc.
