@@ -139,6 +139,29 @@ jobs:
             fi
           done
 
+      - name: Trust personal macOS signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          P12_PATH="$RUNNER_TEMP/jean-edge-signing.p12"
+          CERT_PATH="$RUNNER_TEMP/jean-edge-signing.pem"
+
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12_PATH"
+          openssl pkcs12 -legacy \
+            -in "$P12_PATH" \
+            -nokeys \
+            -out "$CERT_PATH" \
+            -passin "pass:$APPLE_CERTIFICATE_PASSWORD"
+          sudo security add-trusted-cert \
+            -d \
+            -r trustRoot \
+            -k /Library/Keychains/System.keychain \
+            "$CERT_PATH"
+          rm -f "$P12_PATH" "$CERT_PATH"
+
       - name: Build & sign AppImage
         if: runner.os == 'Linux'
         env:
