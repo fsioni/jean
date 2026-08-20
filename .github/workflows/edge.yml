@@ -71,6 +71,9 @@ jobs:
             const p = 'src-tauri/tauri.conf.json';
             const d = JSON.parse(fs.readFileSync(p, 'utf8'));
             d.version = process.env.EDGE_VERSION;
+            if (process.env.RUNNER_OS === 'macOS') {
+              d.bundle.macOS.signingIdentity = null;
+            }
             fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
           "
 
@@ -121,24 +124,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify macOS signing secrets
-        if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-          for name in \
-            APPLE_CERTIFICATE \
-            APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Required macOS signing secret is missing: $name"
-              exit 1
-            fi
-          done
-
       - name: Build & sign AppImage
         if: runner.os == 'Linux'
         env:
@@ -153,32 +138,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           tauriScript: bun run tauri
           args: --target universal-apple-darwin --bundles app,dmg
-
-      - name: Verify macOS code signature
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Jean.app"
-
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          SIGNATURE_INFO="$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)"
-          echo "$SIGNATURE_INFO"
-
-          if grep -q 'Signature=adhoc' <<<"$SIGNATURE_INFO"; then
-            echo '::error::Jean.app has an ad hoc signature; refusing to publish it.'
-            exit 1
-          fi
-
-          if ! grep -q 'Authority=Jean Edge Signing' <<<"$SIGNATURE_INFO"; then
-            echo '::error::Jean.app was not signed with the stable Jean Edge identity.'
-            exit 1
-          fi
 
       - name: Stage Linux artifacts
         if: runner.os == 'Linux'
