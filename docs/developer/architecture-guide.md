@@ -122,6 +122,7 @@ Each major system has focused documentation:
 - **[Notifications](./notifications.md)** - Toast and native notifications
 - **[Logging](./logging.md)** - Rust and TypeScript logging
 - **[Performance](./performance-patterns.md)** - Render optimization patterns
+- **[Managed Runs](./run-supervision.md)** - Run lifecycle, exclusivity, and workspace ports
 - **[Testing](./testing.md)** - Quality gates and test patterns
 - **[Releases](./releases.md)** - Automated release process
 - **[Auto-Updates](./auto-updates.md)** - Update system integration

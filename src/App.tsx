@@ -108,6 +108,7 @@ import { RemoteConnectionRecovery } from './components/remote/RemoteConnectionRe
 import { getStartupOnboardingAction } from './lib/startup-onboarding'
 import { dismissTransientUi } from './lib/dismiss-transient-ui'
 import { JeanLoadingScreen } from './components/shared/JeanLoadingScreen'
+import { useManagedRunEvents } from './services/managed-runs'
 
 interface AutoFixStoppedEvent {
   projectId: string
@@ -149,6 +150,7 @@ function App() {
   const [isPreloading, setIsPreloading] = useState(webBackend)
   const [platformVersion, setPlatformVersion] = useState(0)
   const queryClient = useQueryClient()
+  useManagedRunEvents()
   const { data: preferences } = usePreferences()
   const onboardingOpen = useUIStore(state => state.onboardingOpen)
   const featureTourOpen = useUIStore(state => state.featureTourOpen)

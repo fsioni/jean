@@ -4384,6 +4384,10 @@ pub fn initialize_runtime(context: &RuntimeContext) -> Result<(), String> {
     context.manage(task_manager);
     auto_fix::scheduler::start_auto_fix_scheduler(context.clone());
 
+    // Load and reconcile persisted Runs before any UI command can start a new
+    // one. Doing this in the background would let a new Run race with registry
+    // recovery and then be overwritten by the stale on-disk snapshot.
+    terminal::cleanup_orphaned_managed_runs(context);
     let cleanup_context = context.clone();
     async_runtime::spawn_blocking(move || {
         opencode_server::cleanup_orphaned_server(&cleanup_context);

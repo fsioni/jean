@@ -168,7 +168,10 @@ import {
   useCloseBaseSessionClean,
   useCloseBaseSessionArchive,
 } from '@/services/projects'
-import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
+import {
+  TerminalStatusIndicator,
+  WorkspacePortBadge,
+} from '@/hooks/useWorktreeTerminalStatus'
 import { usePreferences } from '@/services/preferences'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -714,7 +717,14 @@ function WorktreeSectionHeader({
           )}
           <TerminalStatusIndicator
             worktreeId={worktree.id}
+            projectId={projectId}
             iconSize="h-3 w-3"
+            showStopButton
+          />
+          <WorkspacePortBadge
+            worktreeId={worktree.id}
+            projectId={projectId}
+            worktreePath={worktree.path}
           />
           <span className="flex min-w-0 flex-1 flex-col gap-1 font-medium sm:flex-row sm:items-center sm:gap-1.5">
             <span className="flex min-w-0 items-center gap-1.5">

@@ -48,10 +48,13 @@ import {
   useWorktree,
   useProjects,
   useRunScripts,
+  useRunScriptEntries,
   usePackageScripts,
   type PackageScript,
+  type RunScriptEntry,
   projectsQueryKeys,
 } from '@/services/projects'
+import { startManagedRunForWorkspace } from '@/services/managed-runs'
 import { useProjectsStore } from '@/store/projects-store'
 import type {
   Worktree,
@@ -733,18 +736,43 @@ export function ChatWindow({
 
   // Run scripts for this worktree (used by CMD+R keybinding)
   const { data: runScripts = [] } = useRunScripts(activeWorktreePath ?? null)
+  const { data: runScriptEntries = [] } = useRunScriptEntries(
+    activeWorktreePath ?? null
+  )
   const { data: packageScripts = [] } = usePackageScripts(
     activeWorktreePath ?? null
   )
-  const handleRunCommand = useCallback(
-    (command: string) => {
-      if (!activeWorktreeId) return
-      useTerminalStore.getState().startRun(activeWorktreeId, command)
+  const handleRunScript = useCallback(
+    (script: RunScriptEntry) => {
+      const projectId = worktree?.project_id
+      if (!activeWorktreeId || !activeWorktreePath || !projectId) return
       useUIStore.getState().setSessionChatModalOpen(true, activeWorktreeId)
       useTerminalStore.getState().setModalTerminalOpen(activeWorktreeId, true)
+      void startManagedRunForWorkspace({
+        projectId,
+        worktreeId: activeWorktreeId,
+        worktreePath: activeWorktreePath,
+        script,
+      }).catch(error => toast.error(`Failed to start Run: ${String(error)}`))
     },
-    [activeWorktreeId]
+    [
+      activeWorktreeId,
+      activeWorktreePath,
+      worktree?.project_id,
+    ]
   )
+  const handleRunCommand = useCallback(
+    (command: string) => {
+      const script = runScriptEntries.find(entry => entry.command === command)
+      if (script) handleRunScript(script)
+    },
+    [handleRunScript, runScriptEntries]
+  )
+  const handleRunDefault = useCallback(() => {
+    const script =
+      runScriptEntries.find(entry => entry.isDefault) ?? runScriptEntries[0]
+    if (script) handleRunScript(script)
+  }, [handleRunScript, runScriptEntries])
   const handleRunPackageScript = useCallback(
     (script: PackageScript) => {
       if (!activeWorktreeId) return
@@ -2725,7 +2753,7 @@ export function ChatWindow({
     patchPreferences,
     handleSaveContext,
     handleLoadContext,
-    runScripts,
+    handleRunDefault,
     hasPendingPlanApproval,
     pendingPlanMessage,
     handlePlanApproval: isCursorBackend

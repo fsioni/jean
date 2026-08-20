@@ -3966,9 +3966,6 @@ pub async fn checkout_pr(
 pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), String> {
     log::trace!("Deleting worktree: {worktree_id}");
 
-    // Cancel any running Claude processes for this worktree FIRST
-    crate::chat::registry::cancel_processes_for_worktree(&app, &worktree_id);
-
     let data = load_projects_data(&app)?;
 
     let worktree = data
@@ -3997,11 +3994,17 @@ pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), 
         .ok_or_else(|| format!("Project not found: {}", worktree.project_id))?
         .clone();
 
+    // Stop owned processes only after validating that this worktree can be deleted.
+    crate::chat::registry::cancel_processes_for_worktree(&app, &worktree_id);
+    crate::terminal::stop_workspace_runs(app.clone(), worktree_id.clone()).await?;
+
     log::trace!("Found project: id={}, path={}", project.id, project.path);
 
     // Read jean.json teardown script from the newest project/worktree copy.
     let teardown_script = git::resolve_jean_config(&worktree.path, Some(&project.path))
         .and_then(|config| config.scripts.teardown);
+    let teardown_environment =
+        crate::terminal::run_supervisor::teardown_environment(&app, &project, &worktree)?;
 
     // Remove from storage SYNCHRONOUSLY to avoid race conditions with other operations
     // (e.g., archive/unarchive could be overwritten if we save in background thread)
@@ -4052,8 +4055,13 @@ pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), 
         let mut teardown_output: Option<String> = None;
         if let Some(ref script) = teardown_script {
             log::trace!("Background: Running teardown script for {worktree_name}");
-            match git::run_teardown_script(&worktree_path, &project_path, &worktree_branch, script)
-            {
+            match git::run_teardown_script_with_env(
+                &worktree_path,
+                &project_path,
+                &worktree_branch,
+                script,
+                &teardown_environment,
+            ) {
                 Ok(output) => {
                     if !output.is_empty() {
                         teardown_output = Some(output);
@@ -4159,6 +4167,11 @@ pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), 
         }
 
         // Emit success event
+        crate::terminal::run_supervisor::release_deleted_workspace_ports(
+            &app_clone,
+            &project_id_clone,
+            &worktree_id_clone,
+        );
         log::trace!("Background: Worktree deleted successfully: {worktree_name}");
         let deleted_event = WorktreeDeletedEvent {
             id: worktree_id_clone,
@@ -4439,8 +4452,54 @@ async fn close_base_session_internal(
 pub async fn archive_worktree(app: AppHandle, worktree_id: String) -> Result<(), String> {
     log::trace!("Archiving worktree: {worktree_id}");
 
-    // Cancel any running Claude processes for this worktree
+    let data = load_projects_data(&app)?;
+
+    let worktree_snapshot = data
+        .find_worktree(&worktree_id)
+        .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?
+        .clone();
+    let project_snapshot = data
+        .find_project(&worktree_snapshot.project_id)
+        .ok_or_else(|| format!("Project not found: {}", worktree_snapshot.project_id))?
+        .clone();
+    if worktree_snapshot.session_type == SessionType::Base {
+        return Err(
+            "Base sessions cannot be archived. Use close_base_session instead.".to_string(),
+        );
+    }
+    if worktree_snapshot.archived_at.is_some() {
+        return Err("Worktree is already archived".to_string());
+    }
+
     crate::chat::registry::cancel_processes_for_worktree(&app, &worktree_id);
+    crate::terminal::stop_workspace_runs(app.clone(), worktree_id.clone()).await?;
+    let teardown_script = git::read_jean_config(&worktree_snapshot.path)
+        .or_else(|| git::read_jean_config(&project_snapshot.path))
+        .and_then(|config| config.scripts.teardown);
+    let teardown_environment = crate::terminal::run_supervisor::teardown_environment(
+        &app,
+        &project_snapshot,
+        &worktree_snapshot,
+    )?;
+    let teardown_output = if let Some(script) = teardown_script {
+        let worktree_path = worktree_snapshot.path.clone();
+        let project_path = project_snapshot.path.clone();
+        let branch = worktree_snapshot.branch.clone();
+        let output = tauri::async_runtime::spawn_blocking(move || {
+            git::run_teardown_script_with_env(
+                &worktree_path,
+                &project_path,
+                &branch,
+                &script,
+                &teardown_environment,
+            )
+        })
+        .await
+        .map_err(|error| format!("Teardown task failed: {error}"))??;
+        (!output.is_empty()).then_some(output)
+    } else {
+        None
+    };
 
     let mut data = load_projects_data(&app)?;
 
@@ -4472,6 +4531,7 @@ pub async fn archive_worktree(app: AppHandle, worktree_id: String) -> Result<(),
     let event = WorktreeArchivedEvent {
         id: worktree_id.clone(),
         project_id,
+        teardown_output,
     };
     if let Err(e) = app.emit_all("worktree:archived", &event) {
         log::error!("Failed to emit worktree:archived event: {e}");
@@ -4701,6 +4761,11 @@ pub async fn permanently_delete_worktree(
     let mut data = load_projects_data(&app)?;
     data.remove_worktree(&worktree_id);
     save_projects_data(&app, &data)?;
+    crate::terminal::run_supervisor::release_deleted_workspace_ports(
+        &app,
+        &worktree.project_id,
+        &worktree_id,
+    );
     log::trace!("Worktree removed from storage: {worktree_id}");
 
     // Drop Jean-managed fork remotes for this PR when nothing else needs them.

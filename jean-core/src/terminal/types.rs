@@ -49,4 +49,6 @@ pub struct TerminalSession {
     pub command: Option<String>,
     pub command_args: Option<Vec<String>>,
     pub session_id: Option<String>,
+    /// Present only for terminals owned by the managed Run supervisor.
+    pub managed_run_id: Option<String>,
 }

@@ -19,7 +19,7 @@ use super::run_env::{
 use super::types::TerminalPortInfo;
 #[cfg(unix)]
 use crate::platform::silent_command;
-use crate::projects::git::resolve_jean_config;
+use crate::projects::git::{read_jean_config, resolve_jean_config};
 use crate::projects::types::SessionType;
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
@@ -120,6 +120,16 @@ pub async fn get_run_scripts(app: AppHandle, worktree_path: String) -> Vec<Strin
         .unwrap_or_default()
 }
 
+/// Get normalized Run script metadata, including stable IDs for managed Runs.
+pub async fn get_run_script_entries(
+    worktree_path: String,
+) -> Vec<crate::projects::types::RunScriptEntry> {
+    read_jean_config(&worktree_path)
+        .and_then(|config| config.scripts.run)
+        .map(|run| run.into_entries())
+        .unwrap_or_default()
+}
+
 /// Get executable package.json scripts for a project or worktree.
 pub async fn get_package_scripts(worktree_path: String) -> Vec<PackageScript> {
     read_package_scripts(Path::new(&worktree_path))
@@ -180,9 +190,7 @@ pub async fn get_ports(
     app: AppHandle,
     worktree_path: String,
 ) -> Vec<crate::projects::types::PortEntry> {
-    resolve_jean_config_for_worktree(&app, &worktree_path)
-        .and_then(|config| config.ports)
-        .unwrap_or_default()
+    super::run_supervisor::get_resolved_ports(&app, &worktree_path)
 }
 
 fn resolve_jean_config_for_worktree(
@@ -315,6 +323,10 @@ pub async fn terminal_resize(terminal_id: String, cols: u16, rows: u16) -> Resul
 /// Stop a terminal
 pub async fn stop_terminal(app: AppHandle, terminal_id: String) -> Result<bool, String> {
     log::trace!("stop_terminal called for terminal: {terminal_id}");
+    if let Some(run_id) = super::registry::terminal_managed_run_id(&terminal_id) {
+        super::run_supervisor::stop_managed_run(app, run_id).await?;
+        return Ok(true);
+    }
     kill_terminal(&app, &terminal_id)
 }
 

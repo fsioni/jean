@@ -61,9 +61,11 @@ import { usePreferences } from '@/services/preferences'
 import {
   useWorktree,
   useProjects,
-  useRunScripts,
+  useRunScriptEntries,
   type PackageScript,
+  type RunScriptEntry,
 } from '@/services/projects'
+import { startManagedRunForWorkspace } from '@/services/managed-runs'
 import { useGitHubPRs } from '@/services/github'
 import {
   useGitStatus,
@@ -264,7 +266,7 @@ export function SessionChatModal({
     [sessionsData?.sessions]
   )
   const { data: preferences } = usePreferences()
-  const { data: runScripts = [] } = useRunScripts(worktreePath)
+  const { data: runScriptEntries = [] } = useRunScriptEntries(worktreePath)
   const modalTerminalDockMode = useTerminalStore(
     state => state.modalTerminalDockMode
   )
@@ -962,23 +964,35 @@ export function SessionChatModal({
   }, [])
 
   const handleRun = useCallback(() => {
-    const first = runScripts[0]
-    if (!first) {
+    const script =
+      runScriptEntries.find(entry => entry.isDefault) ?? runScriptEntries[0]
+    if (!script || !project || !worktreePath) {
       notify('No run script configured in jean.json', undefined, {
         type: 'error',
       })
       return
     }
-    useTerminalStore.getState().startRun(worktreeId, first)
     useTerminalStore.getState().setModalTerminalOpen(worktreeId, true)
-  }, [worktreeId, runScripts])
+    void startManagedRunForWorkspace({
+      projectId: project.id,
+      worktreeId,
+      worktreePath,
+      script,
+    }).catch(error => toast.error(`Failed to start run: ${String(error)}`))
+  }, [project, runScriptEntries, worktreeId, worktreePath])
 
   const handleRunCommand = useCallback(
-    (cmd: string) => {
-      useTerminalStore.getState().startRun(worktreeId, cmd)
+    (script: RunScriptEntry) => {
+      if (!project || !worktreePath) return
       useTerminalStore.getState().setModalTerminalOpen(worktreeId, true)
+      void startManagedRunForWorkspace({
+        projectId: project.id,
+        worktreeId,
+        worktreePath,
+        script,
+      }).catch(error => toast.error(`Failed to start run: ${String(error)}`))
     },
-    [worktreeId]
+    [project, worktreeId, worktreePath]
   )
 
   const handlePackageScript = useCallback(
@@ -1274,7 +1288,7 @@ export function SessionChatModal({
                             <TooltipContent>Browser</TooltipContent>
                           </Tooltip>
                         )}
-                        {runScripts.length === 1 && (
+                        {runScriptEntries.length === 1 && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -1301,7 +1315,7 @@ export function SessionChatModal({
                             </TooltipContent>
                           </Tooltip>
                         )}
-                        {runScripts.length > 1 && (
+                        {runScriptEntries.length > 1 && (
                           <div className="flex items-center">
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1340,13 +1354,13 @@ export function SessionChatModal({
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                {runScripts.map(cmd => (
+                                {runScriptEntries.map(script => (
                                   <DropdownMenuItem
-                                    key={cmd}
-                                    onSelect={() => handleRunCommand(cmd)}
+                                    key={script.id}
+                                    onSelect={() => handleRunCommand(script)}
                                     className="font-mono text-xs"
                                   >
-                                    {cmd}
+                                    {script.label}
                                   </DropdownMenuItem>
                                 ))}
                               </DropdownMenuContent>

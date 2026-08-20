@@ -82,6 +82,67 @@ pub struct JeanConfig {
     pub scripts: JeanScripts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ports: Option<Vec<PortEntry>>,
+    #[serde(default, rename = "runPolicy", skip_serializing_if = "Option::is_none")]
+    pub run_policy: Option<RunPolicy>,
+}
+
+impl JeanConfig {
+    pub fn effective_run_policy(&self) -> EffectiveRunPolicy {
+        let policy = self.run_policy.clone().unwrap_or_default();
+        EffectiveRunPolicy {
+            mode: policy.mode,
+            port_allocation: policy.port_allocation,
+            ports_per_workspace: policy.ports_per_workspace.clamp(1, 50),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RunPolicyMode {
+    #[default]
+    Concurrent,
+    Exclusive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RunPortAllocation {
+    #[default]
+    None,
+    Workspace,
+}
+
+fn default_ports_per_workspace() -> u16 {
+    10
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunPolicy {
+    #[serde(default)]
+    pub mode: RunPolicyMode,
+    #[serde(default)]
+    pub port_allocation: RunPortAllocation,
+    #[serde(default = "default_ports_per_workspace")]
+    pub ports_per_workspace: u16,
+}
+
+impl Default for RunPolicy {
+    fn default() -> Self {
+        Self {
+            mode: RunPolicyMode::Concurrent,
+            port_allocation: RunPortAllocation::None,
+            ports_per_workspace: default_ports_per_workspace(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveRunPolicy {
+    pub mode: RunPolicyMode,
+    pub port_allocation: RunPortAllocation,
+    pub ports_per_workspace: u16,
 }
 
 /// Run script(s) — supports both a single string and an array of strings
@@ -90,6 +151,7 @@ pub struct JeanConfig {
 pub enum RunScript {
     Single(String),
     Multiple(Vec<String>),
+    Named(std::collections::BTreeMap<String, NamedRunScript>),
 }
 
 impl RunScript {
@@ -98,8 +160,61 @@ impl RunScript {
         match self {
             RunScript::Single(s) => vec![s],
             RunScript::Multiple(v) => v,
+            RunScript::Named(v) => v.into_values().map(|script| script.command).collect(),
         }
     }
+
+    pub fn into_entries(self) -> Vec<RunScriptEntry> {
+        match self {
+            RunScript::Single(command) => vec![RunScriptEntry {
+                id: "default".to_string(),
+                label: command.clone(),
+                command,
+                is_default: true,
+            }],
+            RunScript::Multiple(commands) => commands
+                .into_iter()
+                .enumerate()
+                .map(|(index, command)| RunScriptEntry {
+                    id: format!("run-{}", index + 1),
+                    label: command.clone(),
+                    command,
+                    is_default: index == 0,
+                })
+                .collect(),
+            RunScript::Named(scripts) => {
+                let has_default = scripts.values().any(|script| script.is_default);
+                scripts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (id, script))| RunScriptEntry {
+                        label: script.label.unwrap_or_else(|| id.clone()),
+                        id,
+                        command: script.command,
+                        is_default: script.is_default || (!has_default && index == 0),
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NamedRunScript {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, rename = "default")]
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunScriptEntry {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub is_default: bool,
 }
 
 /// Scripts section of jean.json
@@ -111,6 +226,73 @@ pub struct JeanScripts {
     pub teardown: Option<String>,
     /// Script(s) to run the dev environment — string or array of strings
     pub run: Option<RunScript>,
+}
+
+#[cfg(test)]
+mod run_config_tests {
+    use super::{JeanConfig, RunPolicyMode, RunPortAllocation};
+
+    #[test]
+    fn missing_run_policy_keeps_legacy_behavior() {
+        let config: JeanConfig = serde_json::from_str(r#"{"scripts":{"run":"bun dev"}}"#)
+            .expect("legacy jean.json should remain valid");
+
+        let policy = config.effective_run_policy();
+        assert_eq!(policy.mode, RunPolicyMode::Concurrent);
+        assert_eq!(policy.port_allocation, RunPortAllocation::None);
+        assert_eq!(policy.ports_per_workspace, 10);
+    }
+
+    #[test]
+    fn workspace_port_count_is_clamped_to_supported_range() {
+        let too_small: JeanConfig = serde_json::from_str(
+            r#"{"runPolicy":{"mode":"concurrent","portAllocation":"workspace","portsPerWorkspace":0}}"#,
+        )
+        .unwrap();
+        let too_large: JeanConfig = serde_json::from_str(
+            r#"{"runPolicy":{"mode":"exclusive","portAllocation":"workspace","portsPerWorkspace":99}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(too_small.effective_run_policy().ports_per_workspace, 1);
+        assert_eq!(too_large.effective_run_policy().ports_per_workspace, 50);
+    }
+
+    #[test]
+    fn named_run_scripts_preserve_ids_labels_and_default() {
+        let config: JeanConfig = serde_json::from_str(
+            r#"{
+              "scripts": {
+                "run": {
+                  "web": {"command":"bun dev","label":"Web","default":true},
+                  "worker": {"command":"bun worker"}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let scripts = config.scripts.run.unwrap().into_entries();
+        assert_eq!(scripts.len(), 2);
+        assert_eq!(scripts[0].id, "web");
+        assert_eq!(scripts[0].label, "Web");
+        assert!(scripts[0].is_default);
+        assert_eq!(scripts[1].id, "worker");
+        assert_eq!(scripts[1].label, "worker");
+        assert!(!scripts[1].is_default);
+    }
+
+    #[test]
+    fn legacy_run_arrays_receive_stable_compatibility_ids() {
+        let config: JeanConfig =
+            serde_json::from_str(r#"{"scripts":{"run":["bun dev","bun test --watch"]}}"#).unwrap();
+
+        let scripts = config.scripts.run.unwrap().into_entries();
+        assert_eq!(scripts[0].id, "run-1");
+        assert_eq!(scripts[0].label, "bun dev");
+        assert!(scripts[0].is_default);
+        assert_eq!(scripts[1].id, "run-2");
+    }
 }
 
 /// A git project that has been added to Jean, or a folder for organizing projects
@@ -616,6 +798,8 @@ pub struct WorktreeArchivedEvent {
     pub id: String,
     /// The project ID
     pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teardown_output: Option<String>,
 }
 
 /// Event emitted when worktree is unarchived (restored)

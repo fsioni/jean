@@ -12,7 +12,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useProjectsStore } from '@/store/projects-store'
-import { useProjects, useSaveJeanConfig } from '@/services/projects'
+import {
+  useProjects,
+  useSaveJeanConfig,
+  type RunPolicy,
+} from '@/services/projects'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 
 export function JeanConfigWizard() {
@@ -35,12 +39,16 @@ function JeanConfigWizardContent() {
 
   const [setupScript, setSetupScript] = useState('')
   const [teardownScript, setTeardownScript] = useState('')
-  const [runScripts, setRunScripts] = useState<
-    { id: string; value: string }[]
-  >(() => [{ id: crypto.randomUUID(), value: '' }])
+  const [runScripts, setRunScripts] = useState<{ id: string; value: string }[]>(
+    () => [{ id: crypto.randomUUID(), value: '' }]
+  )
   const [ports, setPorts] = useState<
     { id: string; port: string; label: string; host: string }[]
   >([])
+  const [runMode, setRunMode] = useState<RunPolicy['mode']>('concurrent')
+  const [portAllocation, setPortAllocation] =
+    useState<RunPolicy['portAllocation']>('none')
+  const [portsPerWorkspace, setPortsPerWorkspace] = useState('10')
 
   const markSeen = () => {
     if (preferences && !preferences.has_seen_jean_config_wizard) {
@@ -71,6 +79,27 @@ function JeanConfigWizardContent() {
         },
       ]
     })
+    const requestedPortCount = Number(portsPerWorkspace)
+    const portCount = Math.max(
+      Math.min(validPorts.length, 50),
+      Math.max(
+        1,
+        Math.min(
+          50,
+          Number.isFinite(requestedPortCount)
+            ? Math.round(requestedPortCount)
+            : 10
+        )
+      )
+    )
+    const runPolicy =
+      runMode !== 'concurrent' || portAllocation !== 'none'
+        ? {
+            mode: runMode,
+            portAllocation,
+            portsPerWorkspace: portCount,
+          }
+        : null
 
     await saveConfig.mutateAsync({
       projectPath: project.path,
@@ -81,6 +110,7 @@ function JeanConfigWizardContent() {
           run,
         },
         ports: validPorts.length > 0 ? validPorts : null,
+        runPolicy,
       },
     })
 
@@ -97,7 +127,9 @@ function JeanConfigWizardContent() {
     setupScript.trim() ||
     teardownScript.trim() ||
     runScripts.some(s => s.value.trim()) ||
-    ports.some(p => p.port.trim() && p.label.trim())
+    ports.some(p => p.port.trim() && p.label.trim()) ||
+    runMode !== 'concurrent' ||
+    portAllocation !== 'none'
 
   return (
     <Dialog
@@ -140,7 +172,8 @@ function JeanConfigWizardContent() {
                 </li>
                 <li>
                   <strong>Run</strong> launches your dev server via the run
-                  command
+                  command, optionally with one allocated port range per
+                  workspace
                 </li>
               </ul>
               <div className="space-y-0.5 pt-1">
@@ -157,6 +190,14 @@ function JeanConfigWizardContent() {
                 <p>
                   <code className="text-foreground/80">$JEAN_BRANCH</code>
                   {' — branch name'}
+                </p>
+                <p>
+                  <code className="text-foreground/80">$JEAN_PORT</code>
+                  {' — allocated base port when enabled'}
+                </p>
+                <p>
+                  <code className="text-foreground/80">$JEAN_PORT_COUNT</code>
+                  {' — allocated range size'}
                 </p>
               </div>
             </div>
@@ -245,9 +286,76 @@ function JeanConfigWizardContent() {
             </p>
           </div>
 
+          {/* Run management */}
+          <div className="space-y-3 rounded-lg border border-border/60 p-3">
+            <div>
+              <Label className="text-sm">Run Management</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Control project-wide concurrency and optional per-workspace port
+                allocation.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-run-mode" className="text-xs">
+                  Concurrency
+                </Label>
+                <select
+                  id="wizard-run-mode"
+                  value={runMode}
+                  onChange={event =>
+                    setRunMode(event.target.value as RunPolicy['mode'])
+                  }
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="concurrent">Multiple workspaces</option>
+                  <option value="exclusive">One Run per project</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-port-allocation" className="text-xs">
+                  Run ports
+                </Label>
+                <select
+                  id="wizard-port-allocation"
+                  value={portAllocation}
+                  onChange={event =>
+                    setPortAllocation(
+                      event.target.value as RunPolicy['portAllocation']
+                    )
+                  }
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="none">Use declared ports as-is</option>
+                  <option value="workspace">Allocate per workspace</option>
+                </select>
+              </div>
+            </div>
+            {portAllocation === 'workspace' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="wizard-ports-per-workspace" className="text-xs">
+                  Ports reserved per workspace
+                </Label>
+                <Input
+                  id="wizard-ports-per-workspace"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={portsPerWorkspace}
+                  onChange={event => setPortsPerWorkspace(event.target.value)}
+                  className="max-w-28 font-mono text-base md:text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Declared app ports below map in order to JEAN_PORT_1,
+                  JEAN_PORT_2, and label-based variables such as JEAN_PORT_WEB.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Ports */}
           <div className="space-y-1.5">
-            <Label className="text-sm">Ports</Label>
+            <Label className="text-sm">App Ports</Label>
             {ports.map((entry, i) => (
               <div key={entry.id} className="flex items-start gap-1">
                 <div
@@ -290,9 +398,7 @@ function JeanConfigWizardContent() {
                   variant="ghost"
                   size="icon"
                   className="size-11 shrink-0 sm:size-8"
-                  onClick={() =>
-                    setPorts(ports.filter(p => p.id !== entry.id))
-                  }
+                  onClick={() => setPorts(ports.filter(p => p.id !== entry.id))}
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -318,8 +424,10 @@ function JeanConfigWizardContent() {
               Add port
             </Button>
             <p className="text-xs text-muted-foreground">
-              Open configured ports in browser via CMD+O. Host defaults to
-              localhost.
+              These are the normal app ports and labels. Without allocation,
+              CMD+O opens them as-is. With workspace allocation, Jean maps them
+              in order onto the workspace range and CMD+O opens the mapped port.
+              Host defaults to localhost.
             </p>
           </div>
         </div>

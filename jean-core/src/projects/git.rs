@@ -2223,6 +2223,47 @@ pub fn run_teardown_script(
     run_jean_script("teardown", worktree_path, root_path, branch, script)
 }
 
+pub fn run_teardown_script_with_env(
+    worktree_path: &str,
+    root_path: &str,
+    branch: &str,
+    script: &str,
+    environment: &[(String, String)],
+) -> Result<String, String> {
+    run_jean_script_with_environment(
+        "teardown",
+        worktree_path,
+        root_path,
+        branch,
+        script,
+        environment,
+    )
+}
+
+#[cfg(all(test, unix))]
+mod managed_run_teardown_tests {
+    use super::run_teardown_script_with_env;
+
+    #[test]
+    fn teardown_receives_managed_run_environment() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let output = run_teardown_script_with_env(
+            workspace.path().to_str().unwrap(),
+            root.path().to_str().unwrap(),
+            "feature/test",
+            "printf '%s:%s' \"$JEAN_PORT\" \"$JEAN_PORT_COUNT\"",
+            &[
+                ("JEAN_PORT".into(), "55120".into()),
+                ("JEAN_PORT_COUNT".into(), "10".into()),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(output, "55120:10");
+    }
+}
+
 /// Validate that environment variables passed to jean.json scripts are safe.
 ///
 /// Rejects empty strings and non-absolute paths to prevent destructive commands
@@ -2314,12 +2355,24 @@ fn run_jean_script(
     branch: &str,
     script: &str,
 ) -> Result<String, String> {
+    run_jean_script_with_environment(kind, worktree_path, root_path, branch, script, &[])
+}
+
+fn run_jean_script_with_environment(
+    kind: &str,
+    worktree_path: &str,
+    root_path: &str,
+    branch: &str,
+    script: &str,
+    environment: &[(String, String)],
+) -> Result<String, String> {
     run_jean_script_with_timeout(
         kind,
         worktree_path,
         root_path,
         branch,
         script,
+        environment,
         JEAN_SCRIPT_TIMEOUT,
     )
 }
@@ -2330,6 +2383,7 @@ fn run_jean_script_with_timeout(
     root_path: &str,
     branch: &str,
     script: &str,
+    environment: &[(String, String)],
     timeout: Duration,
 ) -> Result<String, String> {
     log::trace!("Running {kind} script in {worktree_path}: {script}");
@@ -2347,6 +2401,9 @@ fn run_jean_script_with_timeout(
         .env("JEAN_BRANCH", branch)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, value) in environment {
+        cmd.env(key, value);
+    }
 
     // Give the shell its own process group so timing out also stops package
     // managers and other descendants that inherited the output pipes.
@@ -3077,6 +3134,7 @@ mod tests {
             path,
             "test-branch",
             "echo started; sleep 5",
+            &[],
             Duration::from_millis(100),
         )
         .unwrap_err();

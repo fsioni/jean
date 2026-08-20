@@ -7,12 +7,14 @@ import {
   useOpenWorktreeInFinder,
   useOpenWorktreeInTerminal,
   useOpenWorktreeInEditor,
-  useRunScripts,
+  useRunScriptEntries,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
+import { startManagedRunForWorkspace } from '@/services/managed-runs'
+import { toast } from 'sonner'
 
 interface UseWorktreeMenuActionsProps {
   worktree: Worktree
@@ -30,7 +32,7 @@ export function useWorktreeMenuActions({
   const openInFinder = useOpenWorktreeInFinder()
   const openInTerminal = useOpenWorktreeInTerminal()
   const openInEditor = useOpenWorktreeInEditor()
-  const { data: runScripts = [] } = useRunScripts(worktree.path)
+  const { data: runScripts = [] } = useRunScriptEntries(worktree.path)
   const { data: preferences } = usePreferences()
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
   const isBase = isBaseSession(worktree)
@@ -40,21 +42,31 @@ export function useWorktreeMenuActions({
   )
 
   const handleRun = useCallback(() => {
-    const first = runScripts[0]
+    const first = runScripts.find(script => script.isDefault) ?? runScripts[0]
     if (first) {
-      useTerminalStore.getState().startRun(worktree.id, first)
       useUIStore.getState().setSessionChatModalOpen(true, worktree.id)
       useTerminalStore.getState().setModalTerminalOpen(worktree.id, true)
+      void startManagedRunForWorkspace({
+        projectId,
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        script: first,
+      }).catch(error => toast.error(`Failed to start Run: ${String(error)}`))
     }
-  }, [runScripts, worktree.id])
+  }, [projectId, runScripts, worktree.id, worktree.path])
 
   const handleRunCommand = useCallback(
-    (cmd: string) => {
-      useTerminalStore.getState().startRun(worktree.id, cmd)
+    (script: (typeof runScripts)[number]) => {
       useUIStore.getState().setSessionChatModalOpen(true, worktree.id)
       useTerminalStore.getState().setModalTerminalOpen(worktree.id, true)
+      void startManagedRunForWorkspace({
+        projectId,
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        script,
+      }).catch(error => toast.error(`Failed to start Run: ${String(error)}`))
     },
-    [worktree.id]
+    [projectId, worktree.id, worktree.path]
   )
 
   const handleOpenTerminalPanel = useCallback(() => {

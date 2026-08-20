@@ -8,6 +8,9 @@ import {
   useJeanConfig,
   useSaveJeanConfig,
   normalizeRunScripts,
+  type RunPolicy,
+  type RunScripts,
+  type NamedRunScript,
 } from '@/services/projects'
 
 const SettingsSection: React.FC<{
@@ -34,12 +37,29 @@ export function JeanJsonPane({
 
   const [localSetup, setLocalSetup] = useState('')
   const [localTeardown, setLocalTeardown] = useState('')
-  const [localRun, setLocalRun] = useState<{ id: string; value: string }[]>(
-    () => [{ id: crypto.randomUUID(), value: '' }]
-  )
+  const [localRun, setLocalRun] = useState<
+    {
+      id: string
+      scriptId: string
+      value: string
+      label?: string | null
+      isDefault: boolean
+    }[]
+  >(() => [
+    {
+      id: crypto.randomUUID(),
+      scriptId: 'default',
+      value: '',
+      isDefault: true,
+    },
+  ])
   const [localPorts, setLocalPorts] = useState<
     { id: string; port: string; label: string; host: string }[]
   >([])
+  const [runMode, setRunMode] = useState<RunPolicy['mode']>('concurrent')
+  const [portAllocation, setPortAllocation] =
+    useState<RunPolicy['portAllocation']>('none')
+  const [portsPerWorkspace, setPortsPerWorkspace] = useState('10')
   const [synced, setSynced] = useState(false)
 
   // Sync from query data
@@ -48,11 +68,41 @@ export function JeanJsonPane({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalSetup(jeanConfig.scripts.setup ?? '')
       setLocalTeardown(jeanConfig.scripts.teardown ?? '')
-      const scripts = normalizeRunScripts(jeanConfig.scripts.run)
+      setRunMode(jeanConfig.runPolicy?.mode ?? 'concurrent')
+      setPortAllocation(jeanConfig.runPolicy?.portAllocation ?? 'none')
+      setPortsPerWorkspace(
+        String(jeanConfig.runPolicy?.portsPerWorkspace ?? 10)
+      )
+      const scriptEntries =
+        typeof jeanConfig.scripts.run === 'object' &&
+        jeanConfig.scripts.run !== null &&
+        !Array.isArray(jeanConfig.scripts.run)
+          ? Object.entries(jeanConfig.scripts.run).map(
+              ([scriptId, script]) => ({
+                scriptId,
+                value: script.command,
+                label: script.label,
+                isDefault: script.default === true,
+              })
+            )
+          : normalizeRunScripts(jeanConfig.scripts.run).map((value, index) => ({
+              scriptId: index === 0 ? 'default' : `run-${index + 1}`,
+              value,
+              isDefault: index === 0,
+            }))
       setLocalRun(
-        (scripts.length > 0 ? scripts : ['']).map(value => ({
+        (scriptEntries.length > 0
+          ? scriptEntries
+          : [
+              {
+                scriptId: 'default',
+                value: '',
+                isDefault: true,
+              },
+            ]
+        ).map(entry => ({
           id: crypto.randomUUID(),
-          value,
+          ...entry,
         }))
       )
 
@@ -91,13 +141,35 @@ export function JeanJsonPane({
     label: p.label,
     host: p.host ?? '',
   }))
+  const configuredRunPolicy = jeanConfig?.runPolicy
+  const originalRunPolicy: RunPolicy | null =
+    !configuredRunPolicy ||
+    (configuredRunPolicy.mode === 'concurrent' &&
+      configuredRunPolicy.portAllocation === 'none')
+      ? null
+      : {
+          ...configuredRunPolicy,
+          portsPerWorkspace: configuredRunPolicy.portsPerWorkspace ?? 10,
+        }
+  const currentRunPolicy: RunPolicy | null =
+    runMode === 'concurrent' && portAllocation === 'none'
+      ? null
+      : {
+          mode: runMode,
+          portAllocation,
+          portsPerWorkspace: Math.min(
+            50,
+            Math.max(1, Number(portsPerWorkspace) || 10)
+          ),
+        }
 
   const hasChanges = synced
     ? localSetup !== (jeanConfig?.scripts.setup ?? '') ||
       localTeardown !== (jeanConfig?.scripts.teardown ?? '') ||
       JSON.stringify(currentRunFiltered) !==
         JSON.stringify(originalRunScripts) ||
-      JSON.stringify(currentPortsFiltered) !== JSON.stringify(originalPorts)
+      JSON.stringify(currentPortsFiltered) !== JSON.stringify(originalPorts) ||
+      JSON.stringify(currentRunPolicy) !== JSON.stringify(originalRunPolicy)
     : localSetup.trim() !== '' ||
       localTeardown.trim() !== '' ||
       currentRunFiltered.length > 0 ||
@@ -108,9 +180,32 @@ export function JeanJsonPane({
     for (const s of localRun) {
       if (s.value.trim()) filtered.push(s.value)
     }
-    let run: string | string[] | null = null
-    if (filtered.length === 1) run = filtered[0] ?? null
-    else if (filtered.length > 1) run = filtered
+    const runCommandsChanged =
+      JSON.stringify(filtered) !== JSON.stringify(originalRunScripts)
+    let run: RunScripts | null = jeanConfig?.scripts.run ?? null
+    if (runCommandsChanged) {
+      run = null
+      const wasNamed =
+        typeof jeanConfig?.scripts.run === 'object' &&
+        jeanConfig.scripts.run !== null &&
+        !Array.isArray(jeanConfig.scripts.run)
+      if (wasNamed) {
+        const namedRun = localRun.reduce<Record<string, NamedRunScript>>(
+          (scripts, entry) => {
+            if (!entry.value.trim()) return scripts
+            scripts[entry.scriptId] = {
+              command: entry.value.trim(),
+              label: entry.label || undefined,
+              default: entry.isDefault || undefined,
+            }
+            return scripts
+          },
+          {}
+        )
+        run = Object.keys(namedRun).length > 0 ? namedRun : null
+      } else if (filtered.length === 1) run = filtered[0] ?? null
+      else if (filtered.length > 1) run = filtered
+    }
 
     const validPorts = localPorts.flatMap(p => {
       if (!p.port.trim() || !p.label.trim()) return []
@@ -134,6 +229,21 @@ export function JeanJsonPane({
           run,
         },
         ports: validPorts.length > 0 ? validPorts : null,
+        runPolicy:
+          runMode === 'concurrent' && portAllocation === 'none'
+            ? null
+            : {
+                mode: runMode,
+                portAllocation,
+                portsPerWorkspace: Math.min(
+                  50,
+                  Math.max(
+                    1,
+                    validPorts.length,
+                    Number(portsPerWorkspace) || 10
+                  )
+                ),
+              },
       },
     })
   }, [
@@ -141,6 +251,11 @@ export function JeanJsonPane({
     localTeardown,
     localRun,
     localPorts,
+    jeanConfig?.scripts.run,
+    originalRunScripts,
+    runMode,
+    portAllocation,
+    portsPerWorkspace,
     projectPath,
     saveJeanConfig,
   ])
@@ -203,7 +318,12 @@ export function JeanJsonPane({
               onClick={() =>
                 setLocalRun([
                   ...localRun,
-                  { id: crypto.randomUUID(), value: '' },
+                  {
+                    id: crypto.randomUUID(),
+                    scriptId: `run-${crypto.randomUUID().slice(0, 8)}`,
+                    value: '',
+                    isDefault: localRun.length === 0,
+                  },
                 ])
               }
             >
@@ -215,7 +335,7 @@ export function JeanJsonPane({
             </p>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-sm">Ports</Label>
+            <Label className="text-sm">App Ports</Label>
             {localPorts.map((entry, i) => (
               <div key={entry.id} className="flex items-center gap-1">
                 <Input
@@ -281,8 +401,9 @@ export function JeanJsonPane({
               Add port
             </Button>
             <p className="text-xs text-muted-foreground">
-              Open configured ports in browser via CMD+O. Host defaults to
-              localhost.
+              Normal app ports and labels. With workspace allocation Jean maps
+              them in order onto the allocated range; CMD+O opens the mapped
+              port. Host defaults to localhost.
             </p>
           </div>
           <div className="space-y-1.5">
@@ -313,19 +434,95 @@ export function JeanJsonPane({
               <code className="text-foreground/80">$JEAN_BRANCH</code>
               {' — branch name'}
             </p>
+            <p>
+              <code className="text-foreground/80">$JEAN_PORT</code>
+              {' — allocated base port when enabled'}
+            </p>
+            <p>
+              <code className="text-foreground/80">$JEAN_PORT_COUNT</code>
+              {' — allocated range size'}
+            </p>
           </div>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!hasChanges || saveJeanConfig.isPending}
-          >
-            {saveJeanConfig.isPending && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            Save
-          </Button>
         </div>
       </SettingsSection>
+      <SettingsSection title="Run Management">
+        <p className="text-xs text-muted-foreground">
+          Choose whether workspaces can run together and whether Jean assigns a
+          stable port range to each workspace.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="run-mode" className="text-sm">
+              Concurrency
+            </Label>
+            <select
+              id="run-mode"
+              value={runMode}
+              onChange={event =>
+                setRunMode(event.target.value as RunPolicy['mode'])
+              }
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="concurrent">Multiple workspaces</option>
+              <option value="exclusive">One Run per project</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Exclusive mode gracefully stops the previous project Run first.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="port-allocation" className="text-sm">
+              Ports
+            </Label>
+            <select
+              id="port-allocation"
+              value={portAllocation}
+              onChange={event =>
+                setPortAllocation(
+                  event.target.value as RunPolicy['portAllocation']
+                )
+              }
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="none">Project defaults</option>
+              <option value="workspace">Allocate per workspace</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Allocations stay stable across restarts and archives.
+            </p>
+          </div>
+        </div>
+        {portAllocation === 'workspace' && (
+          <div className="max-w-xs space-y-1.5">
+            <Label htmlFor="ports-per-workspace" className="text-sm">
+              Ports per workspace
+            </Label>
+            <Input
+              id="ports-per-workspace"
+              type="number"
+              min={1}
+              max={50}
+              value={portsPerWorkspace}
+              onChange={event => setPortsPerWorkspace(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              App ports map in order to JEAN_PORT_1, JEAN_PORT_2, and
+              label-based variables such as JEAN_PORT_WEB. The first is also
+              JEAN_PORT; the range size is JEAN_PORT_COUNT.
+            </p>
+          </div>
+        )}
+      </SettingsSection>
+      <Button
+        size="sm"
+        onClick={handleSave}
+        disabled={!hasChanges || saveJeanConfig.isPending}
+      >
+        {saveJeanConfig.isPending && (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        )}
+        Save jean.json
+      </Button>
     </div>
   )
 }

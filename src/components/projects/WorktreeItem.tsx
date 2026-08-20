@@ -710,7 +710,10 @@ export function WorktreeItem({
           />
 
           {/* Terminal running/failed indicator */}
-          <TerminalStatusIndicator worktreeId={worktree.id} />
+          <TerminalStatusIndicator
+            worktreeId={worktree.id}
+            projectId={projectId}
+          />
 
           {/* Workspace name - editable on double-click */}
           {isEditing ? (
