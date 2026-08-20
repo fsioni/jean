@@ -18,7 +18,8 @@ import {
   type SplitOrientation,
 } from '@/lib/terminal-split'
 import { useBrowserStore } from '@/store/browser-store'
-import { projectsQueryKeys } from '@/services/projects'
+import { projectsQueryKeys, type RunScriptEntry } from '@/services/projects'
+import { startManagedRunForWorkspace } from '@/services/managed-runs'
 import { chatQueryKeys } from '@/services/chat'
 import type {
   AllSessionsResponse,
@@ -26,7 +27,7 @@ import type {
   Session,
   WorktreeSessions,
 } from '@/types/chat'
-import { disposeTerminal, startHeadless } from '@/lib/terminal-instances'
+import { disposeTerminal } from '@/lib/terminal-instances'
 import { toast } from 'sonner'
 import { useCommandContext } from './use-command-context'
 import { usePreferences } from '@/services/preferences'
@@ -521,20 +522,21 @@ function executeKeybindingAction(
       }
 
       const resolvedWorktreePath = targetWorktreePath
+      const projectId = useProjectsStore.getState().selectedProjectId
 
       // Fetch run scripts - use fetchQuery to handle uncached dashboard worktrees
       ;(async () => {
-        let runScripts = queryClient.getQueryData<string[]>([
-          'run-scripts',
+        let runScripts = queryClient.getQueryData<RunScriptEntry[]>([
+          'run-script-entries',
           resolvedWorktreePath,
         ])
 
         if (runScripts === undefined) {
           try {
-            runScripts = await queryClient.fetchQuery<string[]>({
-              queryKey: ['run-scripts', resolvedWorktreePath],
+            runScripts = await queryClient.fetchQuery<RunScriptEntry[]>({
+              queryKey: ['run-script-entries', resolvedWorktreePath],
               queryFn: () =>
-                invoke<string[]>('get_run_scripts', {
+                invoke<RunScriptEntry[]>('get_run_script_entries', {
                   worktreePath: resolvedWorktreePath,
                 }),
             })
@@ -543,9 +545,9 @@ function executeKeybindingAction(
           }
         }
 
-        const firstScript = runScripts?.[0]
-        if (!firstScript) {
-          const projectId = useProjectsStore.getState().selectedProjectId
+        const firstScript =
+          runScripts?.find(script => script.isDefault) ?? runScripts?.[0]
+        if (!firstScript || !projectId) {
           toast.error('No run script configured in jean.json', {
             action: projectId
               ? {
@@ -560,23 +562,21 @@ function executeKeybindingAction(
           return
         }
 
-        // Start run
-        const terminalId = useTerminalStore
-          .getState()
-          .startRun(targetWorktreeId, firstScript)
-
         if (sessionModalOpen) {
           // Modal view: open terminal drawer
           useTerminalStore
             .getState()
             .setModalTerminalOpen(targetWorktreeId, true)
-        } else {
-          // Canvas view: start PTY headlessly (no terminal UI mounted yet)
-          startHeadless(terminalId, {
+        }
+        try {
+          await startManagedRunForWorkspace({
+            projectId,
             worktreeId: targetWorktreeId,
             worktreePath: resolvedWorktreePath,
-            command: firstScript,
+            script: firstScript,
           })
+        } catch (error) {
+          toast.error('Failed to start run', { description: String(error) })
         }
       })()
       break

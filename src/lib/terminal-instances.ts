@@ -68,6 +68,7 @@ interface PersistentTerminal {
   commandArgs: string[] | null
   /** Jean session id backing this terminal (session terminals only). */
   sessionId: string | null
+  deferStart: boolean
   initialized: boolean // PTY has been started
   replayRequested: boolean // Buffered web replay has been requested for an existing PTY
   opened: boolean // Terminal UI has been opened into hostElement
@@ -987,6 +988,7 @@ export function getOrCreateTerminal(
     command?: string | null
     commandArgs?: string[] | null
     sessionId?: string | null
+    deferStart?: boolean
   }
 ): PersistentTerminal {
   const existing = instances.get(terminalId)
@@ -1003,6 +1005,7 @@ export function getOrCreateTerminal(
     command = null,
     commandArgs = null,
     sessionId = null,
+    deferStart = false,
   } = options
 
   // Ensure the visibility/focus wake handler is running.
@@ -1024,6 +1027,7 @@ export function getOrCreateTerminal(
     command,
     commandArgs,
     sessionId,
+    deferStart,
     initialized: false,
     replayRequested: false,
     opened: false,
@@ -1165,7 +1169,7 @@ export async function attachToContainer(
         await invoke('terminal_resize', { terminalId, cols, rows }).catch(
           console.error
         )
-      } else {
+      } else if (!instance.deferStart) {
         // Start new PTY process
         await invoke('start_terminal', {
           terminalId,
@@ -1192,6 +1196,23 @@ export async function attachToContainer(
 
     terminal.focus()
   })
+}
+
+/** Prepare output buffering for a backend-owned managed Run without spawning
+ * the generic terminal command path. */
+export async function prepareManagedTerminal(
+  terminalId: string,
+  options: {
+    worktreeId: string
+    worktreePath: string
+    command: string
+  }
+): Promise<void> {
+  const instance = getOrCreateTerminal(terminalId, {
+    ...options,
+    deferStart: true,
+  })
+  await ensureTerminalCreated(terminalId, instance)
 }
 
 /**

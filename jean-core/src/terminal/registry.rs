@@ -32,6 +32,17 @@ pub fn get_all_terminal_ids() -> Vec<String> {
     sessions.keys().cloned().collect()
 }
 
+pub fn terminal_process_id(terminal_id: &str) -> Option<u32> {
+    let sessions = TERMINAL_SESSIONS.lock().unwrap();
+    sessions
+        .get(terminal_id)
+        .and_then(|session| session.child.process_id())
+}
+
+pub fn terminal_managed_run_id(terminal_id: &str) -> Option<String> {
+    with_terminal(terminal_id, |session| session.managed_run_id.clone()).flatten()
+}
+
 /// Execute a function with mutable access to a terminal session
 pub fn with_terminal<F, R>(terminal_id: &str, f: F) -> Option<R>
 where

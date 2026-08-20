@@ -16,7 +16,14 @@ const envMocks = vi.hoisted(() => ({
 const actionMocks = vi.hoisted(() => ({
   handleRun: vi.fn(),
   handleRunCommand: vi.fn(),
-  runScripts: ['bun run dev'] as string[],
+  runScripts: [
+    {
+      id: 'default',
+      label: 'bun run dev',
+      command: 'bun run dev',
+      isDefault: true,
+    },
+  ],
 }))
 
 vi.mock('@/lib/environment', async importOriginal => ({
@@ -87,7 +94,14 @@ describe('WorktreeDropdownMenu', () => {
     envMocks.canOpenNativeApps = false
     envMocks.canOpenInEditor = false
     envMocks.isMobile = true
-    actionMocks.runScripts = ['bun run dev']
+    actionMocks.runScripts = [
+      {
+        id: 'default',
+        label: 'bun run dev',
+        command: 'bun run dev',
+        isDefault: true,
+      },
+    ]
     actionMocks.handleRun.mockClear()
     actionMocks.handleRunCommand.mockClear()
   })

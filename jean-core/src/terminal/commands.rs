@@ -138,6 +138,16 @@ pub async fn get_run_scripts(worktree_path: String) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Get normalized Run script metadata, including stable IDs for managed Runs.
+pub async fn get_run_script_entries(
+    worktree_path: String,
+) -> Vec<crate::projects::types::RunScriptEntry> {
+    read_jean_config(&worktree_path)
+        .and_then(|config| config.scripts.run)
+        .map(|run| run.into_entries())
+        .unwrap_or_default()
+}
+
 /// Get executable package.json scripts for a project or worktree.
 pub async fn get_package_scripts(worktree_path: String) -> Vec<PackageScript> {
     read_package_scripts(Path::new(&worktree_path))
@@ -194,10 +204,11 @@ fn package_manager_binary(manager: &str) -> String {
 }
 
 /// Get configured ports from jean.json for a worktree
-pub async fn get_ports(worktree_path: String) -> Vec<crate::projects::types::PortEntry> {
-    read_jean_config(&worktree_path)
-        .and_then(|config| config.ports)
-        .unwrap_or_default()
+pub async fn get_ports(
+    app: AppHandle,
+    worktree_path: String,
+) -> Vec<crate::projects::types::PortEntry> {
+    super::run_supervisor::get_resolved_ports(&app, &worktree_path)
 }
 
 /// Write data to a terminal (stdin)
@@ -216,6 +227,10 @@ pub async fn terminal_resize(terminal_id: String, cols: u16, rows: u16) -> Resul
 /// Stop a terminal
 pub async fn stop_terminal(app: AppHandle, terminal_id: String) -> Result<bool, String> {
     log::trace!("stop_terminal called for terminal: {terminal_id}");
+    if let Some(run_id) = super::registry::terminal_managed_run_id(&terminal_id) {
+        super::run_supervisor::stop_managed_run(app, run_id).await?;
+        return Ok(true);
+    }
     kill_terminal(&app, &terminal_id)
 }
 

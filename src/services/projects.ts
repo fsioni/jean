@@ -1391,8 +1391,10 @@ export function useWorktreeEvents() {
     // Listen for successful archive
     unlistenPromises.push(
       listen<WorktreeArchivedEvent>('worktree:archived', event => {
-        const { id, project_id } = event.payload
+        const { id, project_id, teardown_output } = event.payload
         logger.info('Worktree archived', { id })
+
+        disposeAllWorktreeTerminals(id)
 
         // Remove worktree from cache (archived worktrees are filtered out)
         queryClient.setQueryData<Worktree[]>(
@@ -1415,6 +1417,24 @@ export function useWorktreeEvents() {
           useProjectsStore.getState()
         if (selectedWorktreeId === id) {
           selectWorktree(null)
+        }
+
+        if (teardown_output) {
+          toast.success('Teardown completed', {
+            description:
+              teardown_output.length > 200
+                ? teardown_output.slice(0, 200) + '…'
+                : teardown_output,
+            action: {
+              label: toastActionLabel('View Output'),
+              onClick: () =>
+                window.dispatchEvent(
+                  new CustomEvent('show-teardown-output', {
+                    detail: { output: teardown_output, success: true },
+                  })
+                ),
+            },
+          })
         }
       })
     )
@@ -2389,20 +2409,72 @@ export interface JeanConfig {
   scripts: {
     setup: string | null
     teardown: string | null
-    run: string | string[] | null
+    run: RunScripts | null
   }
   ports?: PortEntry[] | null
+  runPolicy?: RunPolicy | null
+}
+
+export interface NamedRunScript {
+  command: string
+  label?: string | null
+  default?: boolean
+}
+
+export type RunScripts = string | string[] | Record<string, NamedRunScript>
+
+export interface RunScriptEntry {
+  id: string
+  label: string
+  command: string
+  isDefault: boolean
+}
+
+export interface RunPolicy {
+  mode: 'concurrent' | 'exclusive'
+  portAllocation: 'none' | 'workspace'
+  portsPerWorkspace?: number
+}
+
+export function normalizeRunScriptEntries(
+  run: RunScripts | null | undefined
+): RunScriptEntry[] {
+  if (!run) return []
+  if (typeof run === 'string') {
+    return [
+      {
+        id: 'default',
+        label: run,
+        command: run,
+        isDefault: true,
+      },
+    ]
+  }
+  if (Array.isArray(run)) {
+    return run.map((command, index) => ({
+      id: `run-${index + 1}`,
+      label: command,
+      command,
+      isDefault: index === 0,
+    }))
+  }
+  const entries = Object.entries(run)
+  const hasDefault = entries.some(([, script]) => script.default === true)
+  return entries.map(([id, script], index) => ({
+    id,
+    label: script.label || id,
+    command: script.command,
+    isDefault: script.default === true || (!hasDefault && index === 0),
+  }))
 }
 
 /**
  * Normalize a run script value (string | string[] | null) into a string array
  */
 export function normalizeRunScripts(
-  run: string | string[] | null | undefined
+  run: RunScripts | null | undefined
 ): string[] {
-  if (!run) return []
-  if (typeof run === 'string') return [run]
-  return run
+  return normalizeRunScriptEntries(run).map(script => script.command)
 }
 
 /**
@@ -2442,6 +2514,7 @@ export function useSaveJeanConfig() {
     onSuccess: (_, { projectPath }) => {
       queryClient.invalidateQueries({ queryKey: ['jean-config', projectPath] })
       queryClient.invalidateQueries({ queryKey: ['run-scripts'] })
+      queryClient.invalidateQueries({ queryKey: ['run-script-entries'] })
       queryClient.invalidateQueries({ queryKey: ['ports'] })
     },
     onError: error => {
@@ -2471,6 +2544,22 @@ export function useRunScripts(worktreePath: string | null) {
     },
     enabled: !!worktreePath,
     staleTime: 30_000, // Cache for 30 seconds
+  })
+}
+
+export function useRunScriptEntries(worktreePath: string | null) {
+  return useQuery<RunScriptEntry[]>({
+    queryKey: ['run-script-entries', worktreePath],
+    queryFn: async () => {
+      if (!isTauri() || !worktreePath) return []
+      return (
+        (await invoke<RunScriptEntry[]>('get_run_script_entries', {
+          worktreePath,
+        })) ?? []
+      )
+    },
+    enabled: !!worktreePath,
+    staleTime: 30_000,
   })
 }
 

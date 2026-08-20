@@ -35,4 +35,6 @@ pub struct TerminalSession {
     pub child: Box<dyn Child + Send + Sync>,
     pub cols: u16,
     pub rows: u16,
+    /// Present only for terminals owned by the managed Run supervisor.
+    pub managed_run_id: Option<String>,
 }

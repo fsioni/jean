@@ -291,6 +291,7 @@ export interface WorktreeDeleteErrorEvent {
 export interface WorktreeArchivedEvent {
   id: string
   project_id: string
+  teardown_output?: string
 }
 
 /** Event payload when worktree is unarchived (restored) */

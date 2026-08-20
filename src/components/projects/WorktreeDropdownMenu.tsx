@@ -229,13 +229,13 @@ export function WorktreeDropdownMenu({
                 Run
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                {runScripts.map(cmd => (
+                {runScripts.map(script => (
                   <DropdownMenuItem
-                    key={cmd}
-                    onSelect={() => handleRunCommand(cmd)}
+                    key={script.id}
+                    onSelect={() => handleRunCommand(script)}
                     className="font-mono text-xs"
                   >
-                    {cmd}
+                    {script.label}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuSubContent>

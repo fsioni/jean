@@ -699,7 +699,10 @@ export function WorktreeItem({
             />
 
             {/* Terminal running/failed indicator */}
-            <TerminalStatusIndicator worktreeId={worktree.id} />
+            <TerminalStatusIndicator
+              worktreeId={worktree.id}
+              projectId={projectId}
+            />
 
             {/* Jenkins CI pastille — working / needs-me at a glance */}
             <WorktreeCiDot

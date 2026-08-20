@@ -2094,6 +2094,59 @@ pub async fn dispatch_command(
             let result = crate::terminal::get_run_scripts(parsed.worktree_path).await;
             to_value(result)
         }
+        "get_run_script_entries" => {
+            let parsed = parse_worktree_path_args(&args)?;
+            let result = crate::terminal::get_run_script_entries(parsed.worktree_path).await;
+            to_value(result)
+        }
+        "start_managed_run" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let script_id: String = field(&args, "scriptId", "script_id")?;
+            let terminal_id: String = field(&args, "terminalId", "terminal_id")?;
+            let cols: u16 = from_field(&args, "cols")?;
+            let rows: u16 = from_field(&args, "rows")?;
+            let result = crate::terminal::start_managed_run(
+                app.clone(),
+                worktree_id,
+                script_id,
+                terminal_id,
+                cols,
+                rows,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["managed-runs"]);
+            to_value(result)
+        }
+        "stop_managed_run" => {
+            let run_id: String = field(&args, "runId", "run_id")?;
+            let result = crate::terminal::stop_managed_run(app.clone(), run_id).await?;
+            emit_cache_invalidation(app, &["managed-runs"]);
+            to_value(result)
+        }
+        "stop_workspace_runs" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let result = crate::terminal::stop_workspace_runs(app.clone(), worktree_id).await?;
+            emit_cache_invalidation(app, &["managed-runs"]);
+            to_value(result)
+        }
+        "get_project_runs" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let result = crate::terminal::get_project_runs(project_id).await;
+            to_value(result)
+        }
+        "get_workspace_run_environment" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let result =
+                crate::terminal::get_workspace_run_environment(app.clone(), worktree_id).await?;
+            to_value(result)
+        }
+        "reallocate_workspace_ports" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let result =
+                crate::terminal::reallocate_managed_run_ports(app.clone(), worktree_id).await?;
+            emit_cache_invalidation(app, &["managed-runs"]);
+            to_value(result)
+        }
         "get_package_scripts" => {
             let parsed = parse_worktree_path_args(&args)?;
             let result = crate::terminal::get_package_scripts(parsed.worktree_path).await;
@@ -2101,7 +2154,7 @@ pub async fn dispatch_command(
         }
         "get_ports" => {
             let parsed = parse_worktree_path_args(&args)?;
-            let result = crate::terminal::get_ports(parsed.worktree_path).await;
+            let result = crate::terminal::get_ports(app.clone(), parsed.worktree_path).await;
             to_value(result)
         }
         "get_terminal_listening_ports" => {

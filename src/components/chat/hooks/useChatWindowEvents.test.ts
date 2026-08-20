@@ -82,7 +82,7 @@ describe('useChatWindowEvents worktree approval shortcuts', () => {
       },
       handleSaveContext: vi.fn(),
       handleLoadContext: vi.fn(),
-      runScripts: [],
+      handleRunDefault: vi.fn(),
       hasPendingPlanApproval: true,
       pendingPlanMessage: { id: 'msg-1' },
       handlePlanApproval: vi.fn(),

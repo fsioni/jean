@@ -370,6 +370,30 @@ fn collect_descendant_pids(root: u32) -> Vec<u32> {
     descendants
 }
 
+/// Snapshot a process tree before graceful termination can reparent children.
+/// Callers can use the returned PIDs for final escalation after a grace period.
+#[cfg(unix)]
+pub fn snapshot_process_tree(pid: u32) -> Vec<u32> {
+    let mut processes = collect_descendant_pids(pid);
+    processes.push(pid);
+    processes
+}
+
+#[cfg(windows)]
+pub fn snapshot_process_tree(pid: u32) -> Vec<u32> {
+    // Native Windows escalation uses taskkill /T while the root is alive.
+    // Keep the root as the portable fallback for WSL and already-exited trees.
+    vec![pid]
+}
+
+pub fn force_kill_processes(processes: &[u32]) {
+    for &pid in processes {
+        if is_process_alive(pid) {
+            let _ = kill_process(pid);
+        }
+    }
+}
+
 /// Kill a process and all its children (process tree)
 /// - Unix: process-group SIGKILL plus PPID-walk of descendants (job-control
 ///   children often live in a different process group than the shell)
@@ -395,6 +419,27 @@ pub fn kill_process_tree(pid: u32) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(_) if !is_process_alive(pid) => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+/// Ask a process tree to terminate gracefully without escalating to SIGKILL.
+/// Callers should wait for their grace period, then use [`kill_process_tree`]
+/// if any member remains alive.
+#[cfg(unix)]
+pub fn terminate_process_tree(pid: u32) -> Result<(), String> {
+    let descendants = collect_descendant_pids(pid);
+    let mut delivered = unsafe { libc::kill(-(pid as i32), libc::SIGTERM) } == 0;
+    for child_pid in descendants {
+        delivered |= unsafe { libc::kill(child_pid as i32, libc::SIGTERM) } == 0;
+    }
+    delivered |= unsafe { libc::kill(pid as i32, libc::SIGTERM) } == 0;
+    if delivered || !is_process_alive(pid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to terminate process tree {pid}: {}",
+            std::io::Error::last_os_error()
+        ))
     }
 }
 
@@ -428,6 +473,36 @@ pub fn kill_process_tree(pid: u32) -> Result<(), String> {
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("taskkill failed: {}", stderr))
+    }
+}
+
+#[cfg(windows)]
+pub fn terminate_process_tree(pid: u32) -> Result<(), String> {
+    let wsl = super::wsl::get_wsl_config();
+    if wsl.enabled {
+        let neg_pid = format!("-{pid}");
+        let output = silent_command("wsl.exe")
+            .args(["-d", &wsl.distro, "--", "kill", "-15", &neg_pid])
+            .output()
+            .map_err(|e| format!("Failed to run WSL terminate: {e}"))?;
+        return if output.status.success() {
+            Ok(())
+        } else {
+            terminate_process(pid)
+        };
+    }
+
+    let output = silent_command("taskkill")
+        .args(["/T", "/PID", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to run taskkill: {e}"))?;
+    if output.status.success() || !is_process_alive(pid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "taskkill failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }
 
@@ -523,7 +598,7 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
 
 #[cfg(all(test, unix))]
 mod process_tree_tests {
-    use super::{collect_descendant_pids, kill_process_tree};
+    use super::{collect_descendant_pids, kill_process_tree, terminate_process_tree};
     use std::process::{Command, Stdio};
     use std::thread;
     use std::time::Duration;
@@ -578,6 +653,34 @@ mod process_tree_tests {
                 "descendant pid {pid} should be dead after tree kill"
             );
         }
+    }
+
+    #[test]
+    fn terminate_process_tree_delivers_sigterm_to_descendants() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap 'exit 0' TERM; sleep 120 & wait"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn shell");
+        let root = child.id();
+        thread::sleep(Duration::from_millis(200));
+        let descendants = collect_descendant_pids(root);
+        assert!(!descendants.is_empty(), "precondition: child exists");
+
+        terminate_process_tree(root).expect("send SIGTERM to tree");
+        for _ in 0..20 {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let exited = child.try_wait().unwrap().is_some();
+        if !exited {
+            let _ = kill_process_tree(root);
+            let _ = child.wait();
+        }
+        assert!(exited, "tree should exit after SIGTERM");
     }
 }
 

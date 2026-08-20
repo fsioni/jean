@@ -143,6 +143,32 @@ pub fn spawn_terminal(
     command: Option<String>,
     command_args: Option<Vec<String>>,
 ) -> Result<(), String> {
+    spawn_terminal_with_env(
+        app,
+        terminal_id,
+        worktree_path,
+        cols,
+        rows,
+        command,
+        command_args,
+        Vec::new(),
+        None,
+    )
+    .map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_terminal_with_env(
+    app: &AppHandle,
+    terminal_id: String,
+    worktree_path: String,
+    cols: u16,
+    rows: u16,
+    command: Option<String>,
+    command_args: Option<Vec<String>>,
+    environment: Vec<(String, String)>,
+    managed_run_id: Option<String>,
+) -> Result<u32, String> {
     log::info!(
         "spawn_terminal {terminal_id}: cols={cols}, rows={rows}, cwd={worktree_path}, command={:?}, args={:?}",
         command, command_args
@@ -205,6 +231,19 @@ pub fn spawn_terminal(
             c.arg("--cd");
             c.arg(&unix_cwd);
             c.arg("--");
+            c.arg("env");
+            c.arg(format!(
+                "JEAN_WORKTREE_PATH={}",
+                crate::platform::win_to_wsl_path(&worktree_path)
+            ));
+            for (key, value) in &environment {
+                let value = if key.ends_with("_PATH") {
+                    crate::platform::win_to_wsl_path(value)
+                } else {
+                    value.clone()
+                };
+                c.arg(format!("{key}={value}"));
+            }
             if let Some(ref args) = command_args {
                 // Direct binary invocation inside WSL
                 c.arg(run_command);
@@ -297,6 +336,9 @@ pub fn spawn_terminal(
     #[cfg(unix)]
     apply_terminal_locale_env(&mut cmd);
     cmd.env("JEAN_WORKTREE_PATH", &worktree_path);
+    for (key, value) in environment {
+        cmd.env(key, value);
+    }
 
     // Spawn the shell
     let child = pair.slave.spawn_command(cmd).map_err(|e| {
@@ -323,6 +365,7 @@ pub fn spawn_terminal(
         .map_err(|e| format!("Failed to take writer: {e}"))?;
 
     // Register the session
+    let pid = child.process_id().unwrap_or(0);
     let session = TerminalSession {
         terminal_id: terminal_id.clone(),
         master: pair.master,
@@ -330,6 +373,7 @@ pub fn spawn_terminal(
         child,
         cols,
         rows,
+        managed_run_id: managed_run_id.clone(),
     };
     register_terminal(session);
 
@@ -475,17 +519,25 @@ pub fn spawn_terminal(
                 .unwrap_or((None, None));
 
             let stopped_event = TerminalStoppedEvent {
-                terminal_id: terminal_id_clone,
+                terminal_id: terminal_id_clone.clone(),
                 exit_code,
-                signal,
+                signal: signal.clone(),
             };
             if let Err(e) = app_clone.emit_all("terminal:stopped", &stopped_event) {
                 log::error!("Failed to emit terminal:stopped event: {e}");
             }
+            if managed_run_id.is_some() {
+                super::run_supervisor::handle_terminal_exit(
+                    &app_clone,
+                    &terminal_id_clone,
+                    exit_code,
+                    signal.as_deref(),
+                );
+            }
         }
     });
 
-    Ok(())
+    Ok(pid)
 }
 
 /// Control bytes that should also deliver a POSIX signal to the foreground

@@ -10,7 +10,6 @@ import { invoke } from '@/lib/transport'
 import { toast } from 'sonner'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
-import { useTerminalStore } from '@/store/terminal-store'
 import { cancelChatMessage } from '@/services/chat'
 import { logger } from '@/lib/logger'
 import type { ContentBlock, QueuedMessage, Session } from '@/types/chat'
@@ -50,7 +49,7 @@ interface UseChatWindowEventsParams {
   handleSaveContext: () => void
   handleLoadContext: () => void
   // Run scripts
-  runScripts: string[]
+  handleRunDefault: () => void
   // Plan approval (keyboard shortcuts)
   hasPendingPlanApproval: boolean
   pendingPlanMessage: { id: string } | null | undefined
@@ -95,7 +94,7 @@ export function useChatWindowEvents({
   patchPreferences,
   handleSaveContext,
   handleLoadContext,
-  runScripts,
+  handleRunDefault,
   hasPendingPlanApproval,
   pendingPlanMessage,
   handlePlanApproval,
@@ -361,11 +360,7 @@ export function useChatWindowEvents({
   useEffect(() => {
     const handleSave = () => handleSaveContext()
     const handleLoad = () => handleLoadContext()
-    const handleRun = () => {
-      const first = runScripts[0]
-      if (!activeWorktreeId || !first) return
-      useTerminalStore.getState().startRun(activeWorktreeId, first)
-    }
+    const handleRun = () => handleRunDefault()
     window.addEventListener('command:save-context', handleSave)
     window.addEventListener('command:load-context', handleLoad)
     window.addEventListener('command:run-script', handleRun)
@@ -374,7 +369,7 @@ export function useChatWindowEvents({
       window.removeEventListener('command:load-context', handleLoad)
       window.removeEventListener('command:run-script', handleRun)
     }
-  }, [handleSaveContext, handleLoadContext, activeWorktreeId, runScripts])
+  }, [handleSaveContext, handleLoadContext, handleRunDefault])
 
   // Toggle debug mode
   useEffect(() => {

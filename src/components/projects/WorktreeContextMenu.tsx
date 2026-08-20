@@ -142,13 +142,13 @@ export function WorktreeContextMenu({
               Run
             </ContextMenuSubTrigger>
             <ContextMenuSubContent>
-              {runScripts.map(cmd => (
+              {runScripts.map(script => (
                 <ContextMenuItem
-                  key={cmd}
-                  onSelect={() => handleRunCommand(cmd)}
+                  key={script.id}
+                  onSelect={() => handleRunCommand(script)}
                   className="font-mono text-xs"
                 >
-                  {cmd}
+                  {script.label}
                 </ContextMenuItem>
               ))}
             </ContextMenuSubContent>

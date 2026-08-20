@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { render } from '@/test/test-utils'
 import { useProjectsStore } from '@/store/projects-store'
 import { JeanConfigWizard } from './JeanConfigWizard'
+
+const saveJeanConfigMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/projects', () => ({
   useProjects: () => ({
@@ -11,7 +13,7 @@ vi.mock('@/services/projects', () => ({
   }),
   useSaveJeanConfig: () => ({
     isPending: false,
-    mutateAsync: vi.fn(),
+    mutateAsync: saveJeanConfigMock,
   }),
 }))
 
@@ -24,6 +26,8 @@ vi.mock('@/services/preferences', () => ({
 
 describe('JeanConfigWizard mobile layout', () => {
   beforeEach(() => {
+    saveJeanConfigMock.mockReset()
+    saveJeanConfigMock.mockResolvedValue(undefined)
     useProjectsStore.setState({
       jeanConfigWizardOpen: true,
       jeanConfigWizardProjectId: 'project-1',
@@ -71,5 +75,34 @@ describe('JeanConfigWizard mobile layout', () => {
       'col-span-2',
       'sm:w-auto'
     )
+  })
+
+  it('saves project run policy and links declared app ports to its range', async () => {
+    const user = userEvent.setup()
+    render(<JeanConfigWizard />)
+
+    await user.selectOptions(screen.getByLabelText('Concurrency'), 'exclusive')
+    await user.selectOptions(screen.getByLabelText('Run ports'), 'workspace')
+    await user.clear(screen.getByLabelText('Ports reserved per workspace'))
+    await user.type(screen.getByLabelText('Ports reserved per workspace'), '4')
+    await user.click(screen.getByRole('button', { name: 'Add port' }))
+    await user.type(screen.getByPlaceholderText('Port'), '3000')
+    await user.type(screen.getByPlaceholderText('Label'), 'Web App')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(saveJeanConfigMock).toHaveBeenCalledWith({
+        projectPath: '/tmp/jean',
+        config: {
+          scripts: { setup: null, teardown: null, run: null },
+          ports: [{ port: 3000, label: 'Web App', host: undefined }],
+          runPolicy: {
+            mode: 'exclusive',
+            portAllocation: 'workspace',
+            portsPerWorkspace: 4,
+          },
+        },
+      })
+    })
   })
 })
