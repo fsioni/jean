@@ -207,6 +207,9 @@ fn is_ancestor(project_path: &str, ancestor: &str, descendant: &str) -> Result<b
 
 async fn fetch_production_sha(version_url: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
+        // SecureTransport fails against TLS 1.3-only endpoints on macOS.
+        // Rustls keeps the deployment probe compatible with modern servers.
+        .use_rustls_tls()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
