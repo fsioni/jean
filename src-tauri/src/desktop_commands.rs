@@ -1,11 +1,32 @@
 use base64::Engine;
 use serde_json::{json, Value};
 use std::io::Cursor;
+#[cfg(target_os = "macos")]
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::CoreRuntime;
+
+#[cfg(target_os = "macos")]
+const LOCAL_SIGNING_IDENTITY: &str = "Jean Local Signing";
+
+#[cfg(target_os = "macos")]
+fn app_bundle_from_executable(executable: &Path) -> Option<PathBuf> {
+    executable
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(Path::to_path_buf)
+}
+
+#[cfg(target_os = "macos")]
+fn local_signing_identity(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find(|line| line.contains(&format!("\"{LOCAL_SIGNING_IDENTITY}\"")))
+        .and_then(|line| line.split_whitespace().nth(1))
+}
 
 async fn core_command(runtime: &CoreRuntime, command: &str, args: Value) -> Result<Value, String> {
     jean_core::http_server::dispatch::dispatch_command(&runtime.0, command, args).await
@@ -75,6 +96,69 @@ pub async fn set_window_vibrancy(app: AppHandle, enabled: bool) -> Result<(), St
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, enabled);
+    Ok(())
+}
+
+/// Re-sign an updater-installed macOS bundle with Jean's stable local identity.
+///
+/// Tauri verifies the downloaded artifact separately with its updater key. This
+/// signature only gives macOS TCC a stable designated requirement across local
+/// releases, so previously denied/granted privacy choices are remembered.
+#[tauri::command]
+pub async fn sign_installed_macos_update() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(|| {
+            let executable = std::env::current_exe()
+                .map_err(|error| format!("Failed to locate Jean: {error}"))?;
+            let app_bundle = app_bundle_from_executable(&executable).ok_or_else(|| {
+                format!(
+                    "Jean is not running from a macOS app bundle: {}",
+                    executable.display()
+                )
+            })?;
+
+            let identities = Command::new("/usr/bin/security")
+                .args(["find-identity", "-v", "-p", "codesigning"])
+                .output()
+                .map_err(|error| format!("Failed to inspect the macOS keychain: {error}"))?;
+            let identities = String::from_utf8_lossy(&identities.stdout);
+            let fingerprint = local_signing_identity(&identities).ok_or_else(|| {
+                format!(
+                    "The '{LOCAL_SIGNING_IDENTITY}' identity is missing. Run `bun run setup:local-signing` once."
+                )
+            })?;
+
+            let signed = Command::new("/usr/bin/codesign")
+                .args(["--force", "--deep", "--options", "runtime", "--sign"])
+                .arg(fingerprint)
+                .arg(&app_bundle)
+                .output()
+                .map_err(|error| format!("Failed to start codesign: {error}"))?;
+            if !signed.status.success() {
+                return Err(format!(
+                    "Failed to sign the installed update: {}",
+                    String::from_utf8_lossy(&signed.stderr).trim()
+                ));
+            }
+
+            let verified = Command::new("/usr/bin/codesign")
+                .args(["--verify", "--deep", "--strict"])
+                .arg(&app_bundle)
+                .output()
+                .map_err(|error| format!("Failed to verify Jean's signature: {error}"))?;
+            if !verified.status.success() {
+                return Err(format!(
+                    "The installed update signature is invalid: {}",
+                    String::from_utf8_lossy(&verified.stderr).trim()
+                ));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("Local signing task failed: {error}"))?
+    }
+    #[cfg(not(target_os = "macos"))]
     Ok(())
 }
 
@@ -360,4 +444,31 @@ pub async fn install_remote_jean_server(
     })
     .await
     .map_err(|error| format!("Remote install task failed: {error}"))?
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_app_bundle_from_macos_executable() {
+        let executable = Path::new("/Applications/Jean.app/Contents/MacOS/jean");
+        assert_eq!(
+            app_bundle_from_executable(executable),
+            Some(PathBuf::from("/Applications/Jean.app"))
+        );
+    }
+
+    #[test]
+    fn extracts_matching_identity_fingerprint() {
+        let output = r#"  1) ABC123DEF456 "Jean Local Signing"
+     1 valid identities found"#;
+        assert_eq!(local_signing_identity(output), Some("ABC123DEF456"));
+    }
+
+    #[test]
+    fn ignores_other_signing_identities() {
+        let output = r#"  1) ABC123 "Apple Development: Someone Else""#;
+        assert_eq!(local_signing_identity(output), None);
+    }
 }

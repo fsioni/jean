@@ -43,7 +43,24 @@ Restart Application
 2. **Manual checker**: Triggered by menu/command palette
 3. **Progress tracking**: Logs download progress
 4. **User dialogs**: Browser-native confirm dialogs
-5. **Restart handler**: Uses `@tauri-apps/plugin-process`
+5. **Restart handler**: On macOS, locally signs the installed app and verifies
+   it before using `@tauri-apps/plugin-process`. Other platforms relaunch directly.
+
+### Stable macOS privacy permissions
+
+CI artifacts stay protected by Tauri's updater signature. After installation,
+Jean additionally signs `/Applications/Jean.app` with a certificate stored only
+in the user's login keychain. This gives macOS TCC a stable identity across
+versions, preventing privacy prompts (Photos, accessibility, etc.) from looping.
+
+No CI or repository secret is required. On each Mac, run once:
+
+```bash
+bun run setup:local-signing
+```
+
+The update restart is aborted if local signing or signature verification fails,
+so Jean never deliberately relaunches a partially signed bundle.
 
 ## Implementation
 
