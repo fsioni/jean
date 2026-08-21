@@ -218,7 +218,11 @@ function App() {
     return () => unlisten?.()
   }, [])
 
-  const relaunchApp = useCallback(async () => {
+  const relaunchApp = useCallback(async (signInstalledUpdate = false) => {
+    if (signInstalledUpdate && isNativeApp()) {
+      const { invoke: invokeNative } = await import('@tauri-apps/api/core')
+      await invokeNative('sign_installed_macos_update')
+    }
     const { relaunch } = await import('@tauri-apps/plugin-process')
     await relaunch()
   }, [])
@@ -233,7 +237,7 @@ function App() {
 
       // Already installed this session — only relaunch is needed (#507).
       if (ui.updateReadyVersion) {
-        await relaunchApp()
+        await relaunchApp(true)
         return
       }
       if (ui.isUpdateInstalling) {
@@ -300,7 +304,12 @@ function App() {
           action: {
             label: 'Restart',
             onClick: () => {
-              void relaunchApp()
+              void relaunchApp(true).catch(error => {
+                logger.error('Failed to sign and restart update', { error })
+                toast.error(`Restart failed: ${String(error)}`, {
+                  duration: 8000,
+                })
+              })
             },
           },
         })

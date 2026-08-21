@@ -431,6 +431,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             dispatch_core_command,
             desktop_commands::set_window_vibrancy,
+            desktop_commands::sign_installed_macos_update,
             desktop_commands::send_native_notification,
             desktop_commands::read_clipboard_image,
             desktop_commands::write_clipboard_text,

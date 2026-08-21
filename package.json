@@ -33,6 +33,7 @@
     "tauri:build:fast": "tauri build --bundles dmg --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}' -- --profile release-fast",
     "tauri:build:macos": "tauri build --target universal-apple-darwin --bundles app,dmg",
     "install:local": "bun scripts/install-local-macos.mjs",
+    "setup:local-signing": "bun scripts/setup-local-macos-signing.mjs",
     "install:local:foreground": "bun scripts/install-local-macos.mjs --foreground",
     "test:install-local": "node --test scripts/install-local-macos.test.mjs",
     "install:local:server": "bun scripts/install-local-server.mjs",
