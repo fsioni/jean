@@ -454,9 +454,10 @@ fn pipeline_gh_command(
     crate::platform::resolved_gh_command(&gh, Path::new(project_path), Some(repo_slug))
 }
 
-fn pipeline_gh_error(project_path: &str, repo_slug: &str, stderr: &str) -> String {
+fn pipeline_gh_error(app: &AppHandle, project_path: &str, repo_slug: &str, stderr: &str) -> String {
+    let gh = resolve_gh_binary(app);
     let identity =
-        crate::platform::select_github_account(Path::new(project_path), Some(repo_slug), None);
+        crate::platform::resolve_github_identity(&gh, Path::new(project_path), Some(repo_slug));
     let account = identity
         .map(|value| value.account)
         .unwrap_or_else(|_| "unknown".to_string());
@@ -485,7 +486,7 @@ fn fetch_repo_prs_json(
         .map_err(|e| format!("Failed to run gh pr list: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
+        return Err(pipeline_gh_error(app, project_path, repo_slug, &stderr));
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse gh pr list output: {e}"))
@@ -499,7 +500,7 @@ fn gh_login(app: &AppHandle, project_path: &str, repo_slug: &str) -> Result<Stri
         .map_err(|e| format!("Failed to run gh api user: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
+        return Err(pipeline_gh_error(app, project_path, repo_slug, &stderr));
     }
     let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if login.is_empty() {
@@ -529,7 +530,7 @@ fn gh_pr_assignees(
         .map_err(|e| format!("Failed to run gh pr view: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
+        return Err(pipeline_gh_error(app, project_path, repo_slug, &stderr));
     }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse gh pr view output: {e}"))?;
@@ -573,7 +574,7 @@ fn assign_pr_guarded(
                 .map_err(|e| format!("Failed to run gh pr edit: {e}"))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(pipeline_gh_error(project_path, repo_slug, &stderr));
+                return Err(pipeline_gh_error(app, project_path, repo_slug, &stderr));
             }
             Ok("PR auto-assignée".to_string())
         }

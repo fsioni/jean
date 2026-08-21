@@ -8,6 +8,7 @@ pub enum GithubAccountSource {
     LocalGitConfig,
     ExplicitRepoOwner,
     GlobalGitConfig,
+    ActiveGhAccount,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,10 +87,49 @@ fn token_for_account(gh: &Path, cwd: &Path, account: &str) -> Option<String> {
     (!token.is_empty()).then_some(token)
 }
 
+fn active_gh_account(gh: &Path, cwd: &Path) -> Option<String> {
+    let mut command = resolved_cli_command(gh, Some(cwd));
+    command
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .args(["api", "user", "--jq", ".login"]);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let account = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!account.is_empty()).then_some(account)
+}
+
+/// Resolve an authenticated GitHub identity for a repository.
+///
+/// A repository owner may be an organization rather than a login. Prefer the
+/// repository-specific selection when it has a token, then fall back to gh's
+/// active authenticated account instead of manufacturing an invalid token.
+pub fn resolve_github_identity(
+    gh: &Path,
+    cwd: &Path,
+    repo_hint: Option<&str>,
+) -> Result<GithubIdentity, String> {
+    if let Ok(identity) = select_github_account(cwd, repo_hint, None) {
+        if token_for_account(gh, cwd, &identity.account).is_some() {
+            return Ok(identity);
+        }
+    }
+
+    let account = active_gh_account(gh, cwd)
+        .ok_or_else(|| "No authenticated GitHub CLI account available".to_string())?;
+    Ok(GithubIdentity {
+        account,
+        repo: repo_hint.map(str::to_string),
+        source: GithubAccountSource::ActiveGhAccount,
+    })
+}
+
 /// Build a repository-scoped `gh` command without changing gh's globally active account.
 pub fn resolved_gh_command(gh: &Path, cwd: &Path, repo_hint: Option<&str>) -> Command {
     let mut command = resolved_cli_command(gh, Some(cwd));
-    if let Ok(identity) = select_github_account(cwd, repo_hint, None) {
+    if let Ok(identity) = resolve_github_identity(gh, cwd, repo_hint) {
         command.env("JEAN_GITHUB_ACCOUNT", &identity.account);
         if let Some(token) = token_for_account(gh, cwd, &identity.account) {
             command.env("GH_TOKEN", token).env_remove("GITHUB_TOKEN");
@@ -174,6 +214,42 @@ mod tests {
         assert_eq!(selected.account, "Spottt");
         assert_eq!(selected.repo.as_deref(), Some("Spottt/planexpo"));
         assert_eq!(selected.source, GithubAccountSource::ExplicitRepoOwner);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn falls_back_to_active_gh_account_when_repo_owner_is_an_organization() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        init_repo(temp.path(), None);
+        let gh = temp.path().join("gh");
+        std::fs::write(
+            &gh,
+            r#"#!/bin/sh
+if [ "$1 $2" = "auth token" ]; then
+  case " $* " in
+    *" --user Spottt "*) exit 1 ;;
+    *" --user fares-spottt "*) echo active-token; exit 0 ;;
+  esac
+fi
+if [ "$1 $2 $3" = "api user --jq" ]; then
+  echo fares-spottt
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&gh, permissions).unwrap();
+
+        let identity = resolve_github_identity(&gh, temp.path(), Some("Spottt/planexpo"))
+            .expect("the active authenticated user should be used as fallback");
+
+        assert_eq!(identity.account, "fares-spottt");
+        assert_eq!(identity.source, GithubAccountSource::ActiveGhAccount);
     }
 
     #[test]
