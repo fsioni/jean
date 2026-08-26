@@ -462,6 +462,15 @@ where
     rx.recv().map_err(|_| "Async task dropped".to_string())
 }
 
+#[cfg(unix)]
+fn codex_websocket_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    const MAX_INCOMING_SIZE: usize = 64 * 1024 * 1024;
+
+    tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(MAX_INCOMING_SIZE))
+        .max_frame_size(Some(MAX_INCOMING_SIZE))
+}
+
 /// Connect to a listening app-server socket and start the async reader/writer
 /// tasks. Returns the outgoing message sender.
 #[cfg(unix)]
@@ -485,9 +494,13 @@ fn connect_socket_transport(
             .map_err(|e| format!("Failed to connect to codex app-server socket: {e}"))?;
         // The URI authority is a dummy value for the Host header; the server
         // only cares about the HTTP Upgrade handshake.
-        let (ws, _resp) = tokio_tungstenite::client_async("ws://localhost/", stream)
-            .await
-            .map_err(|e| format!("WebSocket handshake with codex app-server failed: {e}"))?;
+        let (ws, _resp) = tokio_tungstenite::client_async_with_config(
+            "ws://localhost/",
+            stream,
+            Some(codex_websocket_config()),
+        )
+        .await
+        .map_err(|e| format!("WebSocket handshake with codex app-server failed: {e}"))?;
         Ok::<_, String>(ws)
     })??;
 
@@ -1237,6 +1250,14 @@ fn route_server_request(active_sessions: &ActiveSessions, id: u64, method: Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_websocket_accepts_messages_larger_than_tungstenite_default() {
+        let config = codex_websocket_config();
+
+        assert_eq!(config.max_message_size, Some(64 * 1024 * 1024));
+        assert_eq!(config.max_frame_size, Some(64 * 1024 * 1024));
+    }
 
     #[test]
     fn server_pid_record_roundtrip_with_socket_path() {
