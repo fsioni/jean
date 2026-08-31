@@ -31,6 +31,9 @@ pub const PIPELINE_JOB: &str = "unified-build-test-deploy";
 /// FreeStyle entry job triggered by the GitHub PR (serializes; queues first).
 /// Still the ghprb entry point, and still what the PR's commit status links to.
 pub const LAUNCHER_JOB: &str = "build-and-test_Launcher-on-pr";
+/// Current GitHub PR webhook entry job on the migrated Jenkins controller.
+/// Kept separate from [`LAUNCHER_JOB`] so older controllers remain supported.
+pub const WEBHOOK_JOB: &str = "github-pr-webhook-v2";
 /// Job the launcher triggers, which dispatches to [`PIPELINE_JOB`] (or, on
 /// explicit opt-in, to the legacy pipeline — those builds have no unified build,
 /// so the status falls back to the GitHub commit status).
@@ -41,7 +44,7 @@ pub const PREVIEW_JOB: &str = "unified-deploy-preview";
 /// steps are the [`JenkinsAttempt`]s.
 pub const FLAKY_STAGE: &str = "Cypress Unified";
 /// Jobs whose queue items mean "the PR's pipeline is waiting to start".
-const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, ROUTER_JOB, LAUNCHER_JOB];
+const QUEUE_JOBS: &[&str] = &[PIPELINE_JOB, ROUTER_JOB, LAUNCHER_JOB, WEBHOOK_JOB];
 /// The ghprb "retest" trigger phrase (Jenkins global config regex
 /// `.*test\W+this\W+please.*`). Posted as a PR comment, it makes ghprb
 /// re-trigger the Launcher build — see [`rerun_jenkins_pipeline`].
@@ -711,9 +714,10 @@ mod tests {
 
     #[test]
     fn queue_jobs_cover_the_whole_pr_chain() {
-        // A PR waits at whichever of the three chained jobs hasn't started yet;
+        // A PR waits at whichever chained job hasn't started yet;
         // missing one would show "no build" instead of "queued".
         assert!(QUEUE_JOBS.contains(&LAUNCHER_JOB));
+        assert!(QUEUE_JOBS.contains(&WEBHOOK_JOB));
         assert!(QUEUE_JOBS.contains(&ROUTER_JOB));
         assert!(QUEUE_JOBS.contains(&PIPELINE_JOB));
     }
