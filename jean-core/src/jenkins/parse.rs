@@ -163,6 +163,73 @@ pub fn parse_stages(json: &str) -> Result<Vec<JenkinsStage>, String> {
         .collect())
 }
 
+/// Recover declarative stage names from a Jenkins console log.
+///
+/// Newer/minimal controllers may not install the Pipeline REST API, making
+/// `wfapi/describe` return 404 even though the standard console is available.
+/// Jenkins prints skipped stages explicitly; on a terminal failed build, the
+/// last stage before the first skipped one is the failing stage.
+pub fn parse_stages_from_console(
+    console: &str,
+    build_result: Option<&str>,
+    building: bool,
+) -> Vec<JenkinsStage> {
+    let lines: Vec<&str> = console.lines().collect();
+    let mut stages = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() != "[Pipeline] stage" {
+            continue;
+        }
+        let Some(name) = lines.get(index + 1).and_then(|next| {
+            next.trim()
+                .strip_prefix("[Pipeline] { (")
+                .and_then(|value| value.strip_suffix(')'))
+        }) else {
+            continue;
+        };
+        if stages.iter().any(|stage: &JenkinsStage| stage.name == name) {
+            continue;
+        }
+        stages.push(JenkinsStage {
+            name: name.to_string(),
+            status: "UNKNOWN".to_string(),
+            duration_ms: 0,
+        });
+    }
+
+    for stage in &mut stages {
+        let skipped = format!("Stage \"{}\" skipped due to earlier failure(s)", stage.name);
+        if console.contains(&skipped) {
+            stage.status = "NOT_EXECUTED".to_string();
+        }
+    }
+
+    let first_skipped = stages
+        .iter()
+        .position(|stage| stage.status == "NOT_EXECUTED")
+        .unwrap_or(stages.len());
+    for stage in stages.iter_mut().take(first_skipped) {
+        stage.status = "SUCCESS".to_string();
+    }
+
+    if building {
+        if let Some(active) = stages.iter_mut().take(first_skipped).next_back() {
+            active.status = "IN_PROGRESS".to_string();
+        }
+    } else if matches!(build_result, Some("FAILURE" | "ABORTED")) {
+        if let Some(failed) = stages.iter_mut().take(first_skipped).next_back() {
+            failed.status = if build_result == Some("ABORTED") {
+                "ABORTED".to_string()
+            } else {
+                "FAILED".to_string()
+            };
+        }
+    }
+
+    stages
+}
+
 /// The retry attempts of one stage, from a `wfapi/describe?fullStages=true`
 /// response, oldest first.
 ///
@@ -911,6 +978,46 @@ mod tests {
         assert_eq!(find_failed_stage(BUILDS_FIXTURE), None); // wrong shape → None
         let green = r#"{"stages":[{"id":"4","name":"Rust unit tests","status":"SUCCESS"}]}"#;
         assert_eq!(find_failed_stage(green), None);
+    }
+
+    #[test]
+    fn recovers_pipeline_stages_from_console_when_wfapi_is_unavailable() {
+        let console = r#"
+[Pipeline] stage
+[Pipeline] { (Checkout branches)
+ERROR: Error cloning remote repo 'origin'
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Classify PR changes)
+Stage "Classify PR changes" skipped due to earlier failure(s)
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Cypress Unified)
+Stage "Cypress Unified" skipped due to earlier failure(s)
+[Pipeline] // stage
+Finished: FAILURE
+"#;
+
+        assert_eq!(
+            parse_stages_from_console(console, Some("FAILURE"), false),
+            vec![
+                JenkinsStage {
+                    name: "Checkout branches".to_string(),
+                    status: "FAILED".to_string(),
+                    duration_ms: 0,
+                },
+                JenkinsStage {
+                    name: "Classify PR changes".to_string(),
+                    status: "NOT_EXECUTED".to_string(),
+                    duration_ms: 0,
+                },
+                JenkinsStage {
+                    name: "Cypress Unified".to_string(),
+                    status: "NOT_EXECUTED".to_string(),
+                    duration_ms: 0,
+                },
+            ]
+        );
     }
 
     #[test]

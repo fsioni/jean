@@ -13,8 +13,8 @@ use super::freshness::{self, PreviewFreshness};
 use super::gh_checks::{self, PrChecks};
 use super::parse;
 use super::types::{
-    JenkinsBuild, JenkinsFailureReport, JenkinsStage, JenkinsWorktreeStatus, SOURCE_GITHUB,
-    SOURCE_JENKINS, SOURCE_NONE,
+    JenkinsBuild, JenkinsFailureReport, JenkinsWorktreeStatus, SOURCE_GITHUB, SOURCE_JENKINS,
+    SOURCE_NONE,
 };
 use crate::gh_cli::config::resolve_gh_binary;
 use crate::projects::storage::{load_projects_data, save_projects_data};
@@ -130,14 +130,31 @@ pub async fn assemble_status(
 
     // One `wfapi/describe?fullStages=true` gives both the stage breakdown and
     // the per-attempt detail of the flaky stage (which retries in place).
-    let stages_json = match &pipeline {
-        Some(build) => client
-            .fetch_stages_json(PIPELINE_JOB, build.number)
-            .await
-            .unwrap_or_default(),
-        None => String::new(),
+    let (stages_json, stages) = match &pipeline {
+        Some(build) => match client.fetch_stages_json(PIPELINE_JOB, build.number).await {
+            Ok(json) => {
+                let stages = parse::parse_stages(&json).unwrap_or_default();
+                (json, stages)
+            }
+            Err(error) => {
+                log::debug!(
+                    "Jenkins {PIPELINE_JOB} #{}: wfapi unavailable ({error}), using console",
+                    build.number
+                );
+                let console = client
+                    .fetch_console_tail(PIPELINE_JOB, build.number, CONSOLE_TAIL_BYTES)
+                    .await
+                    .unwrap_or_default();
+                let stages = parse::parse_stages_from_console(
+                    &console,
+                    build.result.as_deref(),
+                    build.building,
+                );
+                (String::new(), stages)
+            }
+        },
+        None => (String::new(), Vec::new()),
     };
-    let stages: Vec<JenkinsStage> = parse::parse_stages(&stages_json).unwrap_or_default();
     let integration_attempts =
         parse::parse_stage_attempts(&stages_json, FLAKY_STAGE, client.base_url());
 
@@ -518,12 +535,48 @@ pub async fn get_jenkins_failure_report(
         log_excerpt: String::new(),
     };
 
-    // 1. Which stage broke?
-    let stages_json = client.fetch_stages_json(PIPELINE_JOB, build.number).await?;
-    let Some((stage_node, stage_name)) = parse::find_failed_stage(&stages_json) else {
+    // 1. Which stage broke? Minimal Jenkins controllers may not expose wfapi,
+    // so keep the console as a complete fallback instead of failing diagnosis.
+    let stages_json = client
+        .fetch_stages_json(PIPELINE_JOB, build.number)
+        .await
+        .ok();
+    let console_fallback = if stages_json.is_none() {
+        client
+            .fetch_console_tail(PIPELINE_JOB, build.number, CONSOLE_TAIL_BYTES)
+            .await
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let failed_stage = stages_json
+        .as_deref()
+        .and_then(parse::find_failed_stage)
+        .or_else(|| {
+            parse::parse_stages_from_console(
+                &console_fallback,
+                build.result.as_deref(),
+                build.building,
+            )
+            .into_iter()
+            .find(|stage| stage.status == "FAILED")
+            .map(|stage| (String::new(), stage.name))
+        });
+    let Some((stage_node, stage_name)) = failed_stage else {
+        report.log_excerpt = parse::clean_log_excerpt(&console_fallback);
         return Ok(report);
     };
     report.stage = Some(stage_name);
+
+    if stages_json.is_none() {
+        report.log_excerpt = parse::clean_log_excerpt(&console_fallback);
+        if let Ok(Some(json)) = client.fetch_test_report(PIPELINE_JOB, build.number).await {
+            let (tests, total) = parse::parse_failed_tests(&json, MAX_FAILED_TESTS);
+            report.failed_tests = tests;
+            report.failed_test_count = total;
+        }
+        return Ok(report);
+    }
 
     // 2. Which step inside it, and what did that step log?
     let raw_log = match client
