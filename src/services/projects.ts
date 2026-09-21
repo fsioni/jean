@@ -1014,6 +1014,13 @@ export function useCreateWorktree() {
  * Used when creating a worktree from an existing branch (e.g. after branch conflict auto-resolution).
  * This creates a worktree that checks out an existing branch instead of creating a new one.
  */
+const locallyHandledWorktreeErrors = new Set<string>()
+
+/** Avoid a duplicate global toast when a caller owns its recovery UI. */
+export function handleNextWorktreeErrorLocally(worktreeId: string) {
+  locallyHandledWorktreeErrors.add(worktreeId)
+}
+
 export function useCreateWorktreeFromExistingBranch() {
   const queryClient = useQueryClient()
 
@@ -1491,6 +1498,9 @@ export function useWorktreeEvents() {
     unlistenPromises.push(
       listen<WorktreeCreateErrorEvent>('worktree:error', event => {
         const { id, project_id, error } = event.payload
+        const errorHandledLocally =
+          locallyHandledWorktreeErrors.delete(id) ||
+          Boolean(useChatStore.getState().pendingSetupMessages[id])
         logger.error('Worktree creation failed', { id, project_id, error })
 
         // Clear recovery timeout since we got the error event
@@ -1516,6 +1526,7 @@ export function useWorktreeEvents() {
         // Don't show toast for path/branch conflicts — they're handled by
         // worktree:path_exists / worktree:branch_exists event listeners
         if (
+          !errorHandledLocally &&
           !error.includes('Directory already exists') &&
           !error.includes('Branch already exists')
         ) {

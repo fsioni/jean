@@ -203,6 +203,9 @@ interface ChatUIState {
   // Setup script results per worktree (from jean.json) - stays at worktree level
   setupScriptResults: Record<string, SetupScriptResult>
   dismissedSetupScripts: Record<string, boolean>
+  pendingSetupPrompts: Record<string, string>
+  pendingSetupMessages: Record<string, QueuedMessage>
+  recoverableSetupMessageIds: Record<string, boolean>
 
   // Pending images per session (before sending)
   pendingImages: Record<string, PendingImage[]>
@@ -543,6 +546,11 @@ interface ChatUIState {
   addSetupScriptResult: (worktreeId: string, result: SetupScriptResult) => void
   clearSetupScriptResult: (worktreeId: string) => void
   dismissSetupScript: (worktreeId: string) => void
+  setPendingSetupPrompt: (worktreeId: string, prompt: string) => void
+  setPendingSetupMessage: (worktreeId: string, message: QueuedMessage) => void
+  clearPendingSetupPrompt: (worktreeId: string) => void
+  claimPendingSetupRecovery: (worktreeId: string) => QueuedMessage | undefined
+  restorePendingSetupRecovery: (worktreeId: string) => void
 
   // Actions - Pending images (session-based)
   addPendingImage: (sessionId: string, image: PendingImage) => void
@@ -927,6 +935,9 @@ export const useChatStore = create<ChatUIState>()(
       lastSentAttachments: {},
       setupScriptResults: {},
       dismissedSetupScripts: {},
+      pendingSetupPrompts: {},
+      pendingSetupMessages: {},
+      recoverableSetupMessageIds: {},
       pendingImages: {},
       pendingFiles: {},
       pendingSkills: {},
@@ -2782,6 +2793,93 @@ export const useChatStore = create<ChatUIState>()(
           },
           undefined,
           'dismissSetupScript'
+        ),
+
+
+      setPendingSetupPrompt: (worktreeId, prompt) =>
+        set(
+          state => {
+            if (state.pendingSetupPrompts[worktreeId] === prompt) return state
+            return {
+              pendingSetupPrompts: {
+                ...state.pendingSetupPrompts,
+                [worktreeId]: prompt,
+              },
+            }
+          },
+          undefined,
+          'setPendingSetupPrompt'
+        ),
+
+      setPendingSetupMessage: (worktreeId, message) =>
+        set(
+          state => ({
+            pendingSetupPrompts: {
+              ...state.pendingSetupPrompts,
+              [worktreeId]: message.message,
+            },
+            pendingSetupMessages: {
+              ...state.pendingSetupMessages,
+              [worktreeId]: message,
+            },
+          }),
+          undefined,
+          'setPendingSetupMessage'
+        ),
+
+      clearPendingSetupPrompt: worktreeId =>
+        set(
+          state => {
+            const hasPrompt = worktreeId in state.pendingSetupPrompts
+            const hasMessage = worktreeId in state.pendingSetupMessages
+            const isRecoverable = worktreeId in state.recoverableSetupMessageIds
+            if (!hasPrompt && !hasMessage && !isRecoverable) return state
+            const { [worktreeId]: _prompt, ...pendingSetupPrompts } =
+              state.pendingSetupPrompts
+            const { [worktreeId]: _message, ...pendingSetupMessages } =
+              state.pendingSetupMessages
+            const { [worktreeId]: _recovery, ...recoverableSetupMessageIds } =
+              state.recoverableSetupMessageIds
+            return {
+              pendingSetupPrompts,
+              pendingSetupMessages,
+              recoverableSetupMessageIds,
+            }
+          },
+          undefined,
+          'clearPendingSetupPrompt'
+        ),
+
+      claimPendingSetupRecovery: worktreeId => {
+        const state = get()
+        if (!state.recoverableSetupMessageIds[worktreeId]) return undefined
+        const message = state.pendingSetupMessages[worktreeId]
+        set(
+          current => {
+            const { [worktreeId]: _, ...recoverableSetupMessageIds } =
+              current.recoverableSetupMessageIds
+            return { recoverableSetupMessageIds }
+          },
+          undefined,
+          'claimPendingSetupRecovery'
+        )
+        return message
+      },
+
+      restorePendingSetupRecovery: worktreeId =>
+        set(
+          state =>
+            state.pendingSetupMessages[worktreeId] &&
+            !state.recoverableSetupMessageIds[worktreeId]
+              ? {
+                  recoverableSetupMessageIds: {
+                    ...state.recoverableSetupMessageIds,
+                    [worktreeId]: true,
+                  },
+                }
+              : state,
+          undefined,
+          'restorePendingSetupRecovery'
         ),
 
       // Pending images (session-based)
