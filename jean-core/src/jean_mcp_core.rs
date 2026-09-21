@@ -1815,10 +1815,10 @@ async fn run_tool(
     }
 }
 
-fn select_reusable_empty_mcp_session<'a>(
-    sessions: &'a crate::chat::types::WorktreeSessions,
+fn select_reusable_empty_mcp_session(
+    sessions: &crate::chat::types::WorktreeSessions,
     additional_check: impl Fn(&crate::chat::types::Session) -> bool,
-) -> Option<&'a crate::chat::types::Session> {
+) -> Option<&crate::chat::types::Session> {
     let is_reusable = |session: &&crate::chat::types::Session| {
         session.archived_at.is_none()
             && session.primary_surface.as_deref() != Some("terminal")
