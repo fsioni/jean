@@ -186,8 +186,8 @@ export const IntegrationsPane: React.FC = () => {
               Used by all projects unless overridden in project settings. The
               token needs <code>org:read</code> to discover projects and{' '}
               <code>event:read</code> to load issues. Personal tokens follow
-              your Sentry account memberships; they are not tied to one
-              project. Create one in{' '}
+              your Sentry account memberships; they are not tied to one project.
+              Create one in{' '}
               <a
                 href="https://sentry.io/settings/account/api/auth-tokens/"
                 target="_blank"
