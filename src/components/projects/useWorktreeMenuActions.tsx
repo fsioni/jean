@@ -8,6 +8,7 @@ import {
   useOpenWorktreeInTerminal,
   useOpenWorktreeInEditor,
   useRunScripts,
+  useUpdateWorktreeStandby,
 } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
@@ -24,16 +25,19 @@ export function useWorktreeMenuActions({
   projectId,
 }: UseWorktreeMenuActionsProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showStandbyDialog, setShowStandbyDialog] = useState(false)
   const archiveWorktree = useArchiveWorktree()
   const closeBaseSession = useCloseBaseSession()
   const deleteWorktree = useDeleteWorktree()
   const openInFinder = useOpenWorktreeInFinder()
   const openInTerminal = useOpenWorktreeInTerminal()
   const openInEditor = useOpenWorktreeInEditor()
+  const updateStandby = useUpdateWorktreeStandby()
   const { data: runScripts = [] } = useRunScripts(worktree.path)
   const { data: preferences } = usePreferences()
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
   const isBase = isBaseSession(worktree)
+  const isStandby = Boolean(worktree.standby_reason && worktree.standby_until)
 
   const hasMessages = sessionsData?.sessions?.some(
     session => session.messages.length > 0
@@ -102,11 +106,31 @@ export function useWorktreeMenuActions({
     setShowDeleteConfirm(false)
   }, [deleteWorktree, worktree.id, projectId])
 
+  const handleSetStandby = useCallback(
+    (reason: string, standbyUntil: number) => {
+      setShowStandbyDialog(false)
+      updateStandby.mutate({
+        worktreeId: worktree.id,
+        projectId,
+        reason,
+        standbyUntil,
+      })
+    },
+    [projectId, updateStandby, worktree.id]
+  )
+
+  const handleClearStandby = useCallback(() => {
+    updateStandby.mutate({ worktreeId: worktree.id, projectId })
+  }, [projectId, updateStandby, worktree.id])
+
   return {
     // State
     showDeleteConfirm,
     setShowDeleteConfirm,
+    showStandbyDialog,
+    setShowStandbyDialog,
     isBase,
+    isStandby,
     hasMessages,
     runScripts,
     preferences,
@@ -120,5 +144,8 @@ export function useWorktreeMenuActions({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+    handleSetStandby,
+    handleClearStandby,
+    isUpdatingStandby: updateStandby.isPending,
   }
 }

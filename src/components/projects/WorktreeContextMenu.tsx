@@ -1,3 +1,4 @@
+import { Coffee } from 'lucide-react'
 import {
   Archive,
   Code,
@@ -34,25 +35,32 @@ import {
   canOpenInTerminal,
 } from '@/lib/environment'
 import { getFileManagerName } from '@/lib/platform'
+import type { Worktree } from '@/types/projects'
 import type { useWorktreeMenuActions } from './useWorktreeMenuActions'
+import { StandbyDialog } from './StandbyDialog'
 
 interface WorktreeContextMenuProps {
   // Computed once by the parent (WorktreeItem) and passed in so the hook isn't
   // run twice per worktree row.
   actions: ReturnType<typeof useWorktreeMenuActions>
+  worktree: Worktree
   serverId?: string
   children: React.ReactNode
 }
 
 export function WorktreeContextMenu({
   actions,
+  worktree,
   serverId,
   children,
 }: WorktreeContextMenuProps) {
   const {
     showDeleteConfirm,
     setShowDeleteConfirm,
+    showStandbyDialog,
+    setShowStandbyDialog,
     isBase,
+    isStandby,
     runScripts,
     preferences,
     handleRun,
@@ -62,6 +70,9 @@ export function WorktreeContextMenu({
     handleOpenInEditor,
     handleArchiveOrClose,
     handleDelete,
+    handleSetStandby,
+    handleClearStandby,
+    isUpdatingStandby,
   } = actions
 
   return (
@@ -121,6 +132,25 @@ export function WorktreeContextMenu({
 
         <ContextMenuSeparator />
 
+        {!isBase &&
+          (isStandby ? (
+            <ContextMenuItem
+              onClick={handleClearStandby}
+              disabled={isUpdatingStandby}
+            >
+              <Coffee className="mr-2 h-4 w-4 text-violet-500" />
+              Sortir du standby métier
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem
+              onClick={() => setShowStandbyDialog(true)}
+              disabled={isUpdatingStandby}
+            >
+              <Coffee className="mr-2 h-4 w-4 text-violet-500" />
+              Mettre en standby métier…
+            </ContextMenuItem>
+          ))}
+
         <ContextMenuItem onClick={handleArchiveOrClose}>
           {isBase ? (
             <>
@@ -174,6 +204,14 @@ export function WorktreeContextMenu({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <StandbyDialog
+        open={showStandbyDialog}
+        worktree={worktree}
+        isPending={isUpdatingStandby}
+        onOpenChange={setShowStandbyDialog}
+        onConfirm={handleSetStandby}
+      />
     </ContextMenu>
   )
 }
