@@ -10,7 +10,6 @@ import {
   GitPullRequest,
   Link2,
   ListChecks,
-  Bot,
   Paperclip,
   Shield,
   Settings,
@@ -129,12 +128,6 @@ const sources: {
     label: 'Linear issue',
     description: 'Start with a Linear task and its context',
     icon: ListChecks,
-  },
-  {
-    tab: 'pipeline',
-    label: 'AI pipeline',
-    description: 'Generate and orchestrate a multi-agent plan',
-    icon: Bot,
   },
   {
     tab: 'sentry',

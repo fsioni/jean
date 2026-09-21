@@ -7,7 +7,6 @@ import {
   GitPullRequest,
   Shield,
   GitBranch,
-  Bot,
   Bug,
 } from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
@@ -33,9 +32,6 @@ import { BranchesTab } from './BranchesTab'
 import { LinearIssuesTab } from './LinearIssuesTab'
 import { SentryIssuesTab } from './SentryIssuesTab'
 import { IssuePreviewModal } from './IssuePreviewModal'
-// --- perso/ai-pipeline ---
-import { AiPipelineTab } from './AiPipelineTab'
-// --- /perso/ai-pipeline ---
 import {
   NewSessionComposer,
   type NewSessionComposerSettings,
@@ -72,9 +68,6 @@ export const TABS: Tab[] = [
   { id: 'security', label: 'Security', key: '4', icon: Shield },
   { id: 'branches', label: 'Branches', key: '5', icon: GitBranch },
   { id: 'linear', label: 'Linear', key: '6', icon: LinearIcon },
-  // --- perso/ai-pipeline ---
-  { id: 'pipeline', label: 'Pipeline IA', key: '7', icon: Bot },
-  // --- /perso/ai-pipeline ---
   // perso: Sentry moved to 8 — 7 stays on our Pipeline IA tab.
   { id: 'sentry', label: 'Sentry', key: '8', icon: Bug },
 ]
@@ -552,11 +545,6 @@ export function NewWorktreeModal() {
               />
             )}
 
-            {/* --- perso/ai-pipeline --- */}
-            {activeTab === 'pipeline' && (
-              <AiPipelineTab isActive={newWorktreeModalOpen} />
-            )}
-            {/* --- /perso/ai-pipeline --- */}
             {activeTab === 'sentry' && (
               <SentryIssuesTab
                 projectId={data.selectedProjectId ?? ''}
