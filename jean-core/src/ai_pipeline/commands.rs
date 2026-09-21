@@ -26,8 +26,8 @@ use crate::projects::types::Worktree;
 use crate::projects::{
     assign_clickup_task_to_me, checkout_pr, clickup_task_id_for_worktree, create_worktree,
     get_clickup_me, get_clickup_task, load_clickup_config, merge_github_pr,
-    parse_clickup_task_id_from_branch, resolve_clickup_token,
-    update_clickup_task_status, ClickUpTask,
+    parse_clickup_task_id_from_branch, resolve_clickup_token, update_clickup_task_status,
+    ClickUpTask,
 };
 
 /// ClickUp statuses that mark a ticket ready to pick up for review/merge.
@@ -454,18 +454,31 @@ fn pipeline_gh_command(
     crate::platform::resolved_cli_command(&gh, Some(Path::new(project_path)))
 }
 
-fn pipeline_gh_error(_app: &AppHandle, _project_path: &str, repo_slug: &str, stderr: &str) -> String {
+fn pipeline_gh_error(
+    _app: &AppHandle,
+    _project_path: &str,
+    repo_slug: &str,
+    stderr: &str,
+) -> String {
     format!("GitHub access failed for {repo_slug}: {}", stderr.trim())
 }
 
 fn prepare_pipeline_pr_for_merge(app: &AppHandle, worktree_path: &str) -> Result<(), String> {
     let gh = resolve_gh_binary(app);
     let output = crate::platform::resolved_cli_command(&gh, Some(Path::new(worktree_path)))
-        .args(["pr", "view", "--json", "state,isDraft,mergeable,mergeStateStatus"])
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "state,isDraft,mergeable,mergeStateStatus",
+        ])
         .output()
         .map_err(|error| format!("Failed to inspect PR: {error}"))?;
     if !output.status.success() {
-        return Err(format!("No PR found for this branch: {}", String::from_utf8_lossy(&output.stderr).trim()));
+        return Err(format!(
+            "No PR found for this branch: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
     let pr: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("Failed to parse PR info: {error}"))?;
@@ -478,7 +491,10 @@ fn prepare_pipeline_pr_for_merge(app: &AppHandle, worktree_path: &str) -> Result
             .output()
             .map_err(|error| format!("Failed to mark PR ready: {error}"))?;
         if !ready.status.success() {
-            return Err(format!("Failed to mark PR ready: {}", String::from_utf8_lossy(&ready.stderr).trim()));
+            return Err(format!(
+                "Failed to mark PR ready: {}",
+                String::from_utf8_lossy(&ready.stderr).trim()
+            ));
         }
     }
     if pr["mergeable"].as_str() == Some("CONFLICTING") {

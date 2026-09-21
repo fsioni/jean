@@ -162,8 +162,8 @@ fn fetch_merged_prs(
 ) -> Result<Vec<MergedPr>, String> {
     let gh = resolve_gh_binary(app);
     let stdout = command_output(
-        crate::platform::resolved_cli_command(&gh, Some(std::path::Path::new(project_path)))
-            .args([
+        crate::platform::resolved_cli_command(&gh, Some(std::path::Path::new(project_path))).args(
+            [
                 "pr",
                 "list",
                 "--repo",
@@ -174,7 +174,8 @@ fn fetch_merged_prs(
                 "500",
                 "--json",
                 "number,title,headRefName,url,mergedAt,mergeCommit",
-            ]),
+            ],
+        ),
         "gh pr list",
     )?;
     let value = serde_json::from_str(&stdout)
