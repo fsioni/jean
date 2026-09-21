@@ -42,6 +42,8 @@ import {
   filterProjectsByServer,
   projectServerId,
 } from './server-filter'
+import { AiPipelineSidebarButton } from '@/components/ai-pipeline/AiPipelineSidebarButton'
+import { DeploymentSidebarButton } from '@/components/deployment/DeploymentSidebarButton'
 
 /** Close the mobile projects drawer when leaving into a dialog/modal. */
 function closeMobileSidebarIfNeeded(isMobile: boolean) {
@@ -299,6 +301,10 @@ export function ProjectsSidebar() {
       <div
         className={`flex shrink-0 items-center justify-between ${showServerMenu ? 'p-2' : 'px-2 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]'}`}
       >
+        <div className="flex min-w-0 flex-1 gap-1">
+          <AiPipelineSidebarButton isNarrow={sidebarWidth < 190} />
+          <DeploymentSidebarButton isNarrow={sidebarWidth < 190} />
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <button

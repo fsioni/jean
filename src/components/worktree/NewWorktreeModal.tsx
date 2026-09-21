@@ -8,6 +8,7 @@ import {
   Shield,
   GitBranch,
   Bug,
+  Bot,
 } from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { LucideIcon } from 'lucide-react'
@@ -31,6 +32,7 @@ import { SecurityAlertsTab } from './SecurityAlertsTab'
 import { BranchesTab } from './BranchesTab'
 import { LinearIssuesTab } from './LinearIssuesTab'
 import { SentryIssuesTab } from './SentryIssuesTab'
+import { AiPipelineTab } from './AiPipelineTab'
 import { IssuePreviewModal } from './IssuePreviewModal'
 import {
   NewSessionComposer,
@@ -68,7 +70,7 @@ export const TABS: Tab[] = [
   { id: 'security', label: 'Security', key: '4', icon: Shield },
   { id: 'branches', label: 'Branches', key: '5', icon: GitBranch },
   { id: 'linear', label: 'Linear', key: '6', icon: LinearIcon },
-  // perso: Sentry moved to 8 — 7 stays on our Pipeline IA tab.
+  { id: 'pipeline', label: 'Pipeline IA', key: '7', icon: Bot },
   { id: 'sentry', label: 'Sentry', key: '8', icon: Bug },
 ]
 
@@ -568,6 +570,10 @@ export function NewWorktreeModal() {
                 isBulkInvestigating={handlers.isBulkInvestigating}
                 searchInputRef={searchInputRef}
               />
+            )}
+
+            {activeTab === 'pipeline' && (
+              <AiPipelineTab isActive={newWorktreeModalOpen} />
             )}
 
             {activeTab === 'branches' && (

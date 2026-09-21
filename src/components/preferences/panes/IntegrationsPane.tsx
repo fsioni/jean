@@ -7,6 +7,8 @@ import { toast } from 'sonner'
 import { usePreferences, usePatchPreferences } from '@/services/preferences'
 import { testSentryAuthToken } from '@/services/sentry'
 import { SettingsSection } from '../SettingsSection'
+import { ClickUpSettings } from '@/components/clickup/ClickUpSettings'
+import { AiPipelineSettings } from '@/components/ai-pipeline/AiPipelineSettings'
 
 const InlineField: React.FC<{
   label: string
@@ -110,6 +112,8 @@ export const IntegrationsPane: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <ClickUpSettings />
+      <AiPipelineSettings />
       <SettingsSection
         title="Linear"
         anchorId="pref-integrations-section-linear"

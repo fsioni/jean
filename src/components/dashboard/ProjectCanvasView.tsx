@@ -84,6 +84,7 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { GitStatusBadges } from '@/components/ui/git-status-badges'
 import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
+import { ClickUpStatusLink } from '@/components/clickup/ClickUpStatusLink'
 import {
   useProjectBootstrap,
   useJeanConfig,
@@ -902,6 +903,7 @@ function WorktreeSectionHeader({
           worktreeId={worktree.id}
           prId={worktree.pr_number != null ? String(worktree.pr_number) : null}
         />
+        <ClickUpStatusLink projectId={projectId} worktreeId={worktree.id} />
         {showDetails && sessionMetrics && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             {sessionMetrics.waitingCount > 0 && (

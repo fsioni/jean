@@ -144,6 +144,8 @@ interface UIState {
   workflowRunsModalOpen: boolean
   workflowRunsModalProjectPath: string | null
   workflowRunsModalBranch: string | null
+  aiPipelineModalOpen: boolean
+  aiPipelineModalProjectId: string | null
   /**
    * GitHub Actions run database IDs already viewed by the user.
    * Failed-workflow badges only count IDs not in this list.
@@ -273,6 +275,7 @@ interface UIState {
       | null
   ) => void
   setReleaseNotesModalOpen: (open: boolean) => void
+  setAiPipelineModalOpen: (open: boolean, projectId?: string | null) => void
   setUpdatePrModalOpen: (open: boolean) => void
   setReviewCommentsModalOpen: (open: boolean) => void
   setWorkflowRunsModalOpen: (
@@ -355,6 +358,8 @@ interface UIState {
   chatSearchOpen: boolean
   setChatSearchOpen: (open: boolean) => void
   githubDashboardOpen: boolean
+  deploymentOpen: boolean
+  setDeploymentOpen: (open: boolean) => void
   setGitHubDashboardOpen: (open: boolean) => void
   /**
    * Zen mode: full-screen the active session chat.
@@ -416,6 +421,8 @@ export const useUIStore = create<UIState>()(
       workflowRunsModalOpen: false,
       workflowRunsModalProjectPath: null,
       workflowRunsModalBranch: null,
+      aiPipelineModalOpen: false,
+      aiPipelineModalProjectId: null,
       seenFailedWorkflowRunIds: [],
       cliUpdateModalOpen: false,
       cliUpdateModalType: null,
@@ -457,6 +464,7 @@ export const useUIStore = create<UIState>()(
       availableCliUpdates: [],
       chatSearchOpen: false,
       githubDashboardOpen: false,
+      deploymentOpen: false,
       zenMode: false,
       toggleZenMode: () => {
         const { zenMode } = get()
@@ -1551,6 +1559,24 @@ export const useUIStore = create<UIState>()(
               : { githubDashboardOpen: open },
           undefined,
           'setGitHubDashboardOpen'
+        ),
+
+      setAiPipelineModalOpen: (open: boolean, projectId?: string | null) =>
+        set(
+          {
+            aiPipelineModalOpen: open,
+            aiPipelineModalProjectId: open ? (projectId ?? null) : null,
+          },
+          undefined,
+          'setAiPipelineModalOpen'
+        ),
+
+      setDeploymentOpen: (open: boolean) =>
+        set(
+          state =>
+            state.deploymentOpen === open ? state : { deploymentOpen: open },
+          undefined,
+          'setDeploymentOpen'
         ),
     }),
     {

@@ -32,6 +32,11 @@ const ProjectCanvasView = lazy(() =>
     default: mod.ProjectCanvasView,
   }))
 )
+const DeploymentView = lazy(() =>
+  import('@/components/deployment/DeploymentView').then(mod => ({
+    default: mod.DeploymentView,
+  }))
+)
 
 interface MainWindowContentProps {
   children?: React.ReactNode
@@ -52,6 +57,7 @@ export function MainWindowContent({
 }: MainWindowContentProps) {
   const activeWorktreePath = useChatStore(state => state.activeWorktreePath)
   const isMobile = useIsMobile()
+  const deploymentOpen = useUIStore(state => state.deploymentOpen)
 
   const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
   const setAddProjectDialogOpen = useProjectsStore(
@@ -110,8 +116,11 @@ export function MainWindowContent({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [showAddButton, setAddProjectDialogOpen])
 
-  const nonChatContent =
-    selectedProjectId && selectedProject ? (
+  const nonChatContent = deploymentOpen ? (
+    <Suspense fallback={<JeanLoadingScreen />}>
+      <DeploymentView />
+    </Suspense>
+  ) : selectedProjectId && selectedProject ? (
       <Suspense fallback={<JeanLoadingScreen />}>
         <ProjectCanvasView
           key={selectedProjectId}

@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod agent_browser;
+mod ai_pipeline;
 mod antigravity_cli;
 mod auto_fix;
 mod background_tasks;
@@ -47,6 +48,7 @@ mod coderabbit_cli;
 mod codex_cli;
 mod commandcode_cli;
 mod cursor_cli;
+pub mod deployment;
 mod gh_cli;
 mod grok_cli;
 pub mod http_server;

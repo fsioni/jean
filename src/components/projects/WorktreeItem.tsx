@@ -20,6 +20,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
 import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
+import { ClickUpStatusLink } from '@/components/clickup/ClickUpStatusLink'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -857,6 +858,7 @@ export function WorktreeItem({
               worktree.pr_number != null ? String(worktree.pr_number) : null
             }
           />
+          <ClickUpStatusLink projectId={projectId} worktreeId={worktree.id} />
         </div>
       </WorktreeContextMenu>
 

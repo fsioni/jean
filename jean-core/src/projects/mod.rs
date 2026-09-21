@@ -1,4 +1,8 @@
 pub mod checkpoints;
+pub mod clickup_client;
+pub mod clickup_config;
+pub mod clickup_link;
+pub mod clickup_tasks;
 mod commands;
 pub mod git;
 pub mod git_log;
@@ -21,6 +25,9 @@ pub use checkpoints::{
     list_ai_checkpoints, propose_ai_checkpoint_restore, restore_ai_checkpoint,
     restore_ai_checkpoint_file, restore_ai_checkpoint_turn,
 };
+pub use clickup_config::*;
+pub use clickup_link::*;
+pub use clickup_tasks::*;
 pub use commands::*;
 pub use github_actions::*;
 pub use github_issues::*;

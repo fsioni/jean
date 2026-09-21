@@ -147,6 +147,11 @@ const MagicModal = lazy(() =>
     default: mod.MagicModal,
   }))
 )
+const AiPipelinePrModal = lazy(() =>
+  import('@/components/ai-pipeline/AiPipelinePrModal').then(mod => ({
+    default: mod.AiPipelinePrModal,
+  }))
+)
 const ResolveConflictsDialog = lazy(() =>
   import('@/components/magic/ResolveConflictsDialog').then(mod => ({
     default: mod.ResolveConflictsDialog,
@@ -264,6 +269,7 @@ export function MainWindow() {
     state => state.reviewCommentsModalOpen
   )
   const workflowRunsModalOpen = useUIStore(state => state.workflowRunsModalOpen)
+  const aiPipelineModalOpen = useUIStore(state => state.aiPipelineModalOpen)
   const cliUpdateModalOpen = useUIStore(state => state.cliUpdateModalOpen)
   const cliLoginModalOpen = useUIStore(state => state.cliLoginModalOpen)
   const updateModalVersion = useUIStore(state => state.updateModalVersion)
@@ -511,6 +517,7 @@ export function MainWindow() {
     reviewCommentsModalOpen
   )
   const shouldRenderWorkflowRunsModal = useRetainedMount(workflowRunsModalOpen)
+  const shouldRenderAiPipelineModal = useRetainedMount(aiPipelineModalOpen)
   // Always mount MagicModal so canvas/mobile magic-command dispatches and
   // prompt-session starters work even when the dialog has never been opened.
   const shouldRenderMagicModal = true
@@ -800,6 +807,11 @@ export function MainWindow() {
       {shouldRenderNewWorktreeModal && (
         <Suspense fallback={null}>
           <NewWorktreeModal />
+        </Suspense>
+      )}
+      {shouldRenderAiPipelineModal && (
+        <Suspense fallback={null}>
+          <AiPipelinePrModal />
         </Suspense>
       )}
       {shouldRenderNewSessionModeModal && (
