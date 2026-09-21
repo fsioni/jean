@@ -11,7 +11,8 @@ export function ClickUpStatusLink({
   const { data: taskId } = useResolvedClickUpTaskId(worktreeId)
   const { data: task } = useClickUpTask(taskId ?? null, projectId)
 
-  if (!task?.url) return null
+  const taskUrl = task?.url
+  if (!taskUrl) return null
 
   return (
     <button
@@ -20,7 +21,7 @@ export function ClickUpStatusLink({
       title={`Open ClickUp ticket ${task.id}`}
       onClick={event => {
         event.stopPropagation()
-        openExternal(task.url!)
+        openExternal(taskUrl)
       }}
     >
       {task.status?.status ?? task.id}
