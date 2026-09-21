@@ -91,6 +91,10 @@ export interface Project {
   linear_api_key?: string | null
   /** Linear team ID to filter issues (undefined/null = show all teams) */
   linear_team_id?: string | null
+  jenkins_url?: string | null
+  jenkins_user?: string | null
+  jenkins_token?: string | null
+  jenkins_preview_url_template?: string | null
   /** Sentry auth token override for this project */
   sentry_auth_token?: string | null
   /** Sentry organization slug */

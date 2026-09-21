@@ -36,6 +36,7 @@ function statusWith(
     previewFreshness: null,
     queue: null,
     overallStatus: 'SUCCESS',
+    verdictSource: 'jenkins',
     checkedAt: 0,
     ...partial,
   }
@@ -52,6 +53,7 @@ const UNCONFIGURED_SENTINEL: JenkinsWorktreeStatus = {
   previewFreshness: null,
   queue: null,
   overallStatus: 'UNKNOWN',
+  verdictSource: 'none',
   checkedAt: 0,
 }
 
@@ -96,6 +98,7 @@ describe('WorktreeCiStatus', () => {
         previewFreshness: {
           status: 'STALE',
           previewSha: 'aaa',
+          shaSource: 'preview',
           prHeadSha: 'bbb',
           behindBy: 2,
         },
@@ -106,6 +109,28 @@ describe('WorktreeCiStatus', () => {
     )
     expect(getByText('CI OK')).toBeInTheDocument()
     expect(getByText('Preview périmée')).toBeInTheDocument()
+  })
+
+  it('shows a single Testable state when CI and preview are both current', () => {
+    mockUseJenkinsStatusCached.mockReturnValue({
+      data: statusWith({
+        overallStatus: 'SUCCESS',
+        previewUrl: 'https://42.preview.example.com',
+        previewFreshness: {
+          status: 'UP_TO_DATE',
+          previewSha: 'abc',
+          shaSource: 'preview',
+          prHeadSha: 'abc',
+          behindBy: 0,
+        },
+      }),
+    })
+    const { getByText, queryByText } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+    )
+    expect(getByText('Testable')).toBeInTheDocument()
+    expect(queryByText('CI OK')).toBeNull()
+    expect(queryByText('Preview à jour')).toBeNull()
   })
 
   it('shows the "CI non configuré" pill for a PR worktree whose project lacks config', () => {
@@ -122,6 +147,45 @@ describe('WorktreeCiStatus', () => {
     mockUseProjects.mockReturnValue({
       data: [{ id: 'p1', jenkins_url: 'https://ci.example.com' }],
     })
+    const { container } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('shows the GitHub-sourced verdict when Jenkins kept no build for the PR', () => {
+    // Jenkins rotates builds out within hours; the verdict then only exists as
+    // a GitHub commit status. The row must still say CI OK, not stay blank.
+    mockUseJenkinsStatusCached.mockReturnValue({
+      data: statusWith({
+        pipeline: null,
+        overallStatus: 'SUCCESS',
+        verdictSource: 'github',
+      }),
+    })
+    mockUseProjects.mockReturnValue({
+      data: [{ id: 'p1', jenkins_url: 'https://ci.example.com' }],
+    })
+    const { getByText } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+    )
+    expect(getByText('CI OK')).toBeInTheDocument()
+  })
+
+  it('shows "CI inconnu" once polled with no verdict on either side', () => {
+    mockUseJenkinsStatusCached.mockReturnValue({ data: UNCONFIGURED_SENTINEL })
+    mockUseProjects.mockReturnValue({
+      data: [{ id: 'p1', jenkins_url: 'https://ci.example.com' }],
+    })
+    const { getByText } = render(
+      <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+    )
+    expect(getByText('CI inconnu')).toBeInTheDocument()
+  })
+
+  it('renders nothing while the project list is still loading', () => {
+    mockUseJenkinsStatusCached.mockReturnValue({ data: UNCONFIGURED_SENTINEL })
+    mockUseProjects.mockReturnValue({ data: [] })
     const { container } = render(
       <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
     )

@@ -55,6 +55,7 @@ import {
 import { BackendLabel } from '@/components/ui/backend-label'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import type { CliBackend } from '@/types/preferences'
+import { useSaveJenkinsConfig } from '@/services/jenkins'
 
 const SettingsSection: React.FC<{
   title: string
@@ -111,6 +112,7 @@ export function GeneralPane({
   const { data: appDataDir = '' } = useAppDataDir()
   const setProjectAvatar = useSetProjectAvatar()
   const removeProjectAvatar = useRemoveProjectAvatar()
+  const saveJenkinsConfig = useSaveJenkinsConfig()
 
   const [localName, setLocalName] = useState<string | null>(null)
   const [branchPopoverOpen, setBranchPopoverOpen] = useState(false)
@@ -121,6 +123,10 @@ export function GeneralPane({
     null
   )
   const [worktreesBrowserOpen, setWorktreesBrowserOpen] = useState(false)
+  const [jenkinsUrl, setJenkinsUrl] = useState<string | null>(null)
+  const [jenkinsUser, setJenkinsUser] = useState<string | null>(null)
+  const [jenkinsToken, setJenkinsToken] = useState<string | null>(null)
+  const [jenkinsPreviewUrl, setJenkinsPreviewUrl] = useState<string | null>(null)
   // Track image load errors
   const avatarKey = project?.avatar_path ?? project?.default_avatar_path ?? null
   const [imgErrorKey, setImgErrorKey] = useState<string | null>(null)
@@ -240,6 +246,35 @@ export function GeneralPane({
       setLocalWorktreesDir(selected)
     }
   }, [])
+
+  const handleSaveJenkins = useCallback(() => {
+    saveJenkinsConfig.mutate(
+      {
+        projectId,
+        url: jenkinsUrl ?? project?.jenkins_url ?? '',
+        user: jenkinsUser ?? project?.jenkins_user ?? '',
+        token: jenkinsToken ?? project?.jenkins_token ?? '',
+        previewUrlTemplate:
+          jenkinsPreviewUrl ?? project?.jenkins_preview_url_template ?? '',
+      },
+      {
+        onSuccess: () => {
+          setJenkinsUrl(null)
+          setJenkinsUser(null)
+          setJenkinsToken(null)
+          setJenkinsPreviewUrl(null)
+        },
+      }
+    )
+  }, [
+    jenkinsPreviewUrl,
+    jenkinsToken,
+    jenkinsUrl,
+    jenkinsUser,
+    project,
+    projectId,
+    saveJenkinsConfig,
+  ])
 
   return (
     <>
@@ -555,6 +590,58 @@ export function GeneralPane({
               Save
             </Button>
           </InlineField>
+        </SettingsSection>
+
+        <SettingsSection title="Jenkins">
+          <InlineField
+            label="Server URL"
+            description="Jenkins instance used to follow pull-request pipelines"
+          >
+            <Input
+              placeholder="https://jenkins.example.com"
+              value={jenkinsUrl ?? project?.jenkins_url ?? ''}
+              onChange={event => setJenkinsUrl(event.target.value)}
+            />
+          </InlineField>
+          <div className="grid gap-4 md:grid-cols-2">
+            <InlineField label="User">
+              <Input
+                value={jenkinsUser ?? project?.jenkins_user ?? ''}
+                onChange={event => setJenkinsUser(event.target.value)}
+              />
+            </InlineField>
+            <InlineField label="API token">
+              <Input
+                type="password"
+                value={jenkinsToken ?? project?.jenkins_token ?? ''}
+                onChange={event => setJenkinsToken(event.target.value)}
+              />
+            </InlineField>
+          </div>
+          <InlineField
+            label="Preview URL template"
+            description="Optional. Use {branch} where the branch slug should be inserted."
+          >
+            <Input
+              placeholder="https://{branch}.preview.example.com"
+              value={
+                jenkinsPreviewUrl ??
+                project?.jenkins_preview_url_template ??
+                ''
+              }
+              onChange={event => setJenkinsPreviewUrl(event.target.value)}
+            />
+          </InlineField>
+          <Button
+            size="sm"
+            onClick={handleSaveJenkins}
+            disabled={saveJenkinsConfig.isPending}
+          >
+            {saveJenkinsConfig.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
+            Save Jenkins configuration
+          </Button>
         </SettingsSection>
       </div>
 

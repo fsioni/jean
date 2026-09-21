@@ -6,6 +6,7 @@
  *
  * Backend contract:
  * - get_jenkins_status({ projectId, worktreeId, prId?, branch? }) -> JenkinsWorktreeStatus
+ * - get_jenkins_failure_report({ projectId, worktreeId, prId?, branch? }) -> JenkinsFailureReport
  * - save_jenkins_config({ projectId, url, user, token, previewUrlTemplate? }) -> Project
  * - rerun_jenkins_pipeline({ projectId, worktreeId, prId?, branch? }) -> void
  * - restart_jenkins_integration({ projectId, buildNumber }) -> void
@@ -22,8 +23,14 @@ import {
   type UnlistenFn,
 } from '@/lib/transport'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notifications'
 import { isTauri } from '@/services/projects'
-import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import { projectsQueryKeys } from '@/services/projects'
+import type { Project } from '@/types/projects'
+import type {
+  JenkinsFailureReport,
+  JenkinsWorktreeStatus,
+} from '@/types/jenkins'
 
 function getErrorMessage(error: unknown): string {
   if (!error) return ''
@@ -55,6 +62,7 @@ function notConfiguredStatus(
     previewFreshness: null,
     queue: null,
     overallStatus: 'UNKNOWN',
+    verdictSource: 'none',
     checkedAt: Math.floor(Date.now() / 1000),
   }
 }
@@ -67,6 +75,65 @@ export const jenkinsQueryKeys = {
   all: ['jenkins'] as const,
   status: (worktreeId: string) =>
     [...jenkinsQueryKeys.all, 'status', worktreeId] as const,
+  /** Keyed by build number so a new build never shows the old build's failure. */
+  failure: (worktreeId: string, buildNumber: number | null) =>
+    [...jenkinsQueryKeys.all, 'failure', worktreeId, buildNumber] as const,
+}
+
+export function useSaveJenkinsConfig() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (variables: {
+      projectId: string
+      url: string
+      user: string
+      token: string
+      previewUrlTemplate?: string | null
+    }): Promise<Project> =>
+      invoke<Project>('save_jenkins_config', variables),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      queryClient.invalidateQueries({ queryKey: jenkinsQueryKeys.all })
+      toast.success('Jenkins configuration saved')
+    },
+    onError: error => {
+      toast.error(`Failed to save Jenkins configuration: ${getErrorMessage(error)}`)
+    },
+  })
+}
+
+/**
+ * Why the PR's pipeline failed: failing stage, named failing tests and a cleaned
+ * log excerpt — everything the user would otherwise open Jenkins for.
+ *
+ * On demand only (`enabled`): the backend walks several Jenkins endpoints to
+ * build it, so it must never run for every row in a list.
+ */
+export function useJenkinsFailureReport(
+  projectId: string | null,
+  worktreeId: string | null,
+  buildNumber: number | null,
+  prId?: string | null,
+  branch?: string | null,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: jenkinsQueryKeys.failure(worktreeId ?? '', buildNumber),
+    queryFn: async (): Promise<JenkinsFailureReport> =>
+      invoke<JenkinsFailureReport>('get_jenkins_failure_report', {
+        projectId,
+        worktreeId,
+        prId: prId ?? null,
+        branch: branch ?? null,
+      }),
+    enabled:
+      (options?.enabled ?? false) && isTauri() && !!projectId && !!worktreeId,
+    // A finished build's failure never changes; a new build gets a new key.
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 10,
+    retry: 1,
+  })
 }
 
 // ============================================================================
@@ -199,6 +266,16 @@ export function useJenkinsStatusEvents() {
       })
     )
 
+    // The core runtime is Tauri-free and cannot raise an OS banner itself, so
+    // the poller asks us to do it (build broke/recovered, preview fresh, queue).
+    unlistenPromises.push(
+      listen<{ title?: string; body?: string }>('jenkins:notify', event => {
+        const { title, body } = event.payload ?? {}
+        if (!title) return
+        void notify(title, body, { native: true })
+      })
+    )
+
     const unlistens: UnlistenFn[] = []
     Promise.all(unlistenPromises).then(fns => {
       unlistens.push(...fns)
@@ -260,8 +337,9 @@ export function useRerunJenkinsPipeline() {
 }
 
 /**
- * Mutation to restart only the integration tests for a given build.
- * Invalidates the worktree's Jenkins status on success.
+ * Mutation to restart a build from the flaky end-to-end stage, skipping the
+ * stages that already passed. Invalidates the worktree's Jenkins status on
+ * success.
  */
 export function useRestartJenkinsIntegration() {
   const queryClient = useQueryClient()
@@ -280,18 +358,18 @@ export function useRestartJenkinsIntegration() {
       })
     },
     onMutate: () => {
-      const toastId = toast.loading('Restarting integration tests...')
+      const toastId = toast.loading('Restarting the end-to-end stage...')
       return { toastId }
     },
     onSuccess: (_data, variables, context) => {
-      toast.success('Integration tests restarted', { id: context?.toastId })
+      toast.success('End-to-end stage restarted', { id: context?.toastId })
       queryClient.invalidateQueries({
         queryKey: jenkinsQueryKeys.status(variables.worktreeId),
       })
     },
     onError: (error, _variables, context) => {
       toast.error(
-        `Failed to restart integration tests: ${getErrorMessage(error)}`,
+        `Failed to restart the end-to-end stage: ${getErrorMessage(error)}`,
         { id: context?.toastId }
       )
     },

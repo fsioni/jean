@@ -1,0 +1,35 @@
+{
+  "builds": [
+    {
+      "number": 24,
+      "result": "SUCCESS",
+      "building": false,
+      "timestamp": 1718890000000,
+      "duration": 90000,
+      "url": "http://jenkins.example.internal/job/unified-deploy-preview/24/",
+      "actions": [
+        {
+          "causes": [
+            {
+              "shortDescription": "Started by upstream project \"unified-build-test-deploy\" build number 61",
+              "upstreamProject": "unified-build-test-deploy",
+              "upstreamBuild": 61
+            }
+          ]
+        },
+        {},
+        {
+          "parameters": [
+            { "name": "PR_ID", "value": "3959" },
+            { "name": "APP_BRANCH", "value": "feat-login" },
+            { "name": "DEPLOY_BRANCH", "value": "master" },
+            {
+              "name": "REVISION",
+              "value": "061b5ffe63e60dee88d2527f4f8c150053ce9a11"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -40,6 +40,7 @@ const seededStatus: JenkinsWorktreeStatus = {
   previewFreshness: null,
   queue: null,
   overallStatus: 'SUCCESS',
+  verdictSource: 'jenkins',
   checkedAt: 0,
 }
 

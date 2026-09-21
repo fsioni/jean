@@ -54,6 +54,7 @@ pub mod jean_mcp_config;
 pub mod jean_mcp_core;
 pub mod jean_mcp_socket;
 pub mod jean_mcp_stdio;
+mod jenkins;
 mod kimi_cli;
 mod opencode_cli;
 mod opencode_server;
@@ -4520,6 +4521,15 @@ pub fn initialize_runtime(context: &RuntimeContext) -> Result<(), String> {
     task_manager.start();
     context.manage(task_manager);
     auto_fix::scheduler::start_auto_fix_scheduler(context.clone());
+
+    let jenkins_signal = jenkins::JenkinsPollSignal::default();
+    context.manage(jenkins_signal.clone());
+    let jenkins_context = context.clone();
+    async_runtime::spawn(async move {
+        if let Err(error) = jenkins::start_poller(jenkins_context, jenkins_signal).await {
+            log::error!("Jenkins poller stopped: {error}");
+        }
+    });
 
     let cleanup_context = context.clone();
     async_runtime::spawn_blocking(move || {

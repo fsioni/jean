@@ -1,0 +1,145 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/unified-build-test-deploy/52/wfapi/describe"
+    }
+  },
+  "id": "52",
+  "name": "#52 feat-login@8b5a15b00051",
+  "status": "FAILED",
+  "startTimeMillis": 1784742499131,
+  "endTimeMillis": 1784743610750,
+  "durationMillis": 1111619,
+  "queueDurationMillis": 11,
+  "pauseDurationMillis": 0,
+  "stages": [
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/12/wfapi/describe"
+        }
+      },
+      "id": "12",
+      "name": "Checkout branches",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1784742499369,
+      "durationMillis": 30430,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/54/wfapi/describe"
+        }
+      },
+      "id": "54",
+      "name": "Rust unit tests",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1784742537000,
+      "durationMillis": 87845,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/68/wfapi/describe"
+        }
+      },
+      "id": "68",
+      "name": "Elm unit tests",
+      "execNode": "",
+      "status": "SUCCESS",
+      "startTimeMillis": 1784742625000,
+      "durationMillis": 57298,
+      "pauseDurationMillis": 0
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/79/wfapi/describe"
+        }
+      },
+      "id": "79",
+      "name": "Cypress Unified",
+      "execNode": "",
+      "status": "FAILED",
+      "startTimeMillis": 1784742799490,
+      "durationMillis": 1048013,
+      "pauseDurationMillis": 0,
+      "stageFlowNodes": [
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/52/execution/node/84/log"
+            }
+          },
+          "id": "84",
+          "name": "Shell Script",
+          "status": "FAILED",
+          "durationMillis": 526565,
+          "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
+          "parentNodes": ["83"]
+        },
+        {
+          "_links": {
+            "console": {
+              "href": "/job/unified-build-test-deploy/52/execution/node/87/log"
+            }
+          },
+          "id": "87",
+          "name": "Shell Script",
+          "status": "FAILED",
+          "durationMillis": 521013,
+          "parameterDescription": "app/ci/jenkins/run-cypress-unified.sh run",
+          "parentNodes": ["86"]
+        }
+      ]
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/95/wfapi/describe"
+        }
+      },
+      "id": "95",
+      "name": "Build front + back images",
+      "execNode": "",
+      "status": "FAILED",
+      "startTimeMillis": 1784743847000,
+      "durationMillis": 0,
+      "pauseDurationMillis": 0,
+      "stageFlowNodes": []
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/103/wfapi/describe"
+        }
+      },
+      "id": "103",
+      "name": "Deploy preview",
+      "execNode": "",
+      "status": "FAILED",
+      "startTimeMillis": 1784743847100,
+      "durationMillis": 0,
+      "pauseDurationMillis": 0,
+      "stageFlowNodes": []
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/unified-build-test-deploy/52/execution/node/119/wfapi/describe"
+        }
+      },
+      "id": "119",
+      "name": "Declarative: Post Actions",
+      "execNode": "",
+      "status": "UNSTABLE",
+      "startTimeMillis": 1784743847200,
+      "durationMillis": 10729,
+      "pauseDurationMillis": 0
+    }
+  ]
+}

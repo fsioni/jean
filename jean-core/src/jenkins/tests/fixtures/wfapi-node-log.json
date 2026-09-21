@@ -1,0 +1,8 @@
+{
+  "nodeId": "107",
+  "nodeStatus": "FAILED",
+  "length": 1103,
+  "hasMore": false,
+  "text": "<span class=\"timestamp\"><b>05:23:50</b> </span><span style=\"display: none\">[2026-07-23T05:23:50.329Z]</span> Scheduling project: <a href='/job/unified-deploy-preview/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview</a>\n<span class=\"timestamp\"><b>05:23:57</b> </span><span style=\"display: none\">[2026-07-23T05:23:57.701Z]</span> Starting building: <a href='/job/unified-deploy-preview/24/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview #24</a>\n<span class=\"timestamp\"><b>05:26:28</b> </span><span style=\"display: none\">[2026-07-23T05:26:28.013Z]</span> Build <a href='/job/unified-deploy-preview/24/' class='jenkins-table__link model-link model-link--float'>unified-deploy-preview #24</a> completed: FAILURE\n",
+  "consoleUrl": "/job/unified-build-test-deploy/61/execution/node/107/log"
+}

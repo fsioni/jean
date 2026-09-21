@@ -23,6 +23,7 @@ import {
   useRestartJenkinsIntegration,
 } from '@/services/jenkins'
 import { JenkinsStageList, formatDuration } from './JenkinsStageList'
+import { FLAKY_STAGE, PIPELINE_JOB } from './jenkins-jobs'
 import type { JenkinsBuild, JenkinsWorktreeStatus } from '@/types/jenkins'
 
 interface JenkinsStatusBadgeProps {
@@ -44,7 +45,7 @@ function formatSince(ms: number): string {
   return `depuis ${Math.floor(min / 60)} h ${min % 60} min`
 }
 
-/** Visual treatment for the global build-and-test verdict. */
+/** Visual treatment for the global pipeline verdict. */
 function overallBadge(status: string): {
   label: string
   icon: React.ReactNode
@@ -119,10 +120,10 @@ function isUnconfigured(status: JenkinsWorktreeStatus): boolean {
  * Compact Jenkins verdict for a worktree, sized for the worktree header bar
  * (next to the git status / GitHub badges).
  *
- * The pill reflects the GLOBAL `build-and-test` result for the worktree's PR
+ * The pill reflects the GLOBAL pipeline result for the worktree's PR
  * (not any single stage). Clicking opens a popover with the per-stage breakdown
- * ("Integration tests" highlighted as the important flaky step) and actions
- * (re-run pipeline, restart integration tests). Preview access lives in the
+ * (the flaky end-to-end stage highlighted) and actions (re-run pipeline,
+ * restart from that stage). Preview access lives in the
  * dedicated `PreviewBadge` next to this one.
  *
  * Renders nothing when there is no PR/branch or Jenkins is not configured.
@@ -172,10 +173,10 @@ export function JenkinsStatusBadge({
             badge.text,
             badge.hover
           )}
-          title={`build-and-test : ${badge.label}`}
+          title={`${PIPELINE_JOB} : ${badge.label}`}
         >
           {badge.icon}
-          <span className="hidden lg:inline">build-and-test</span>
+          <span className="hidden lg:inline">{PIPELINE_JOB}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-3 font-sans text-sm">
@@ -210,7 +211,7 @@ export function JenkinsStatusBadge({
             <span className="text-muted-foreground">
               {pipeline.building ? 'Build en cours' : 'Dernier build'}
             </span>
-            <span className="font-medium text-foreground">build-and-test</span>
+            <span className="font-medium text-foreground">{PIPELINE_JOB}</span>
             <button
               type="button"
               onClick={handleOpenPipeline}
@@ -228,7 +229,7 @@ export function JenkinsStatusBadge({
           </div>
         )}
 
-        {/* Stages (with the Integration tests retry attempts inline) */}
+        {/* Stages (with the flaky stage's retry attempts inline) */}
         {status.stages.length > 0 && (
           <div className="mt-2">
             <JenkinsStageList
@@ -270,7 +271,7 @@ export function JenkinsStatusBadge({
               ) : (
                 <RotateCcw className="h-3.5 w-3.5" />
               )}
-              Relancer Integration tests
+              Relancer {FLAKY_STAGE}
             </Button>
           )}
         </div>

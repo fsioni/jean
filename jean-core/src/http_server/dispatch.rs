@@ -3843,23 +3843,42 @@ pub async fn dispatch_command(
             to_value(result)
         }
 
-        // =====================================================================
-        // --- perso/jenkins ---
-        // =====================================================================
         "get_jenkins_status" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
             let branch: Option<String> = from_field_opt(&args, "branch")?;
-            let result = crate::jenkins::get_jenkins_status(
-                app.clone(),
-                project_id,
-                worktree_id,
-                pr_id,
-                branch,
+            to_value(
+                crate::jenkins::get_jenkins_status(
+                    app.clone(),
+                    project_id,
+                    worktree_id,
+                    pr_id,
+                    branch,
+                )
+                .await?,
             )
-            .await?;
-            to_value(result)
+        }
+        "get_jenkins_statuses" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let targets: Vec<crate::jenkins::JenkinsStatusTarget> = from_field(&args, "targets")?;
+            to_value(crate::jenkins::get_jenkins_statuses(app.clone(), project_id, targets).await?)
+        }
+        "get_jenkins_failure_report" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
+            let pr_id: Option<String> = field_opt(&args, "prId", "pr_id")?;
+            let branch: Option<String> = from_field_opt(&args, "branch")?;
+            to_value(
+                crate::jenkins::get_jenkins_failure_report(
+                    app.clone(),
+                    project_id,
+                    worktree_id,
+                    pr_id,
+                    branch,
+                )
+                .await?,
+            )
         }
         "rerun_jenkins_pipeline" => {
             let project_id: String = field(&args, "projectId", "project_id")?;
@@ -3888,17 +3907,24 @@ pub async fn dispatch_command(
             let url: String = from_field(&args, "url")?;
             let user: String = from_field(&args, "user")?;
             let token: String = from_field(&args, "token")?;
-            let result =
-                crate::jenkins::save_jenkins_config(app.clone(), project_id, url, user, token)
-                    .await?;
-            to_value(result)
+            let preview_url_template: Option<String> =
+                field_opt(&args, "previewUrlTemplate", "preview_url_template")?;
+            to_value(
+                crate::jenkins::save_jenkins_config(
+                    app.clone(),
+                    project_id,
+                    url,
+                    user,
+                    token,
+                    preview_url_template,
+                )
+                .await?,
+            )
         }
         "poke_jenkins_poll" => {
             crate::jenkins::poke_jenkins_poll(app.clone())?;
             Ok(Value::Null)
         }
-
-        // =====================================================================
         // Unknown command
         // =====================================================================
         _ => Err(format!("Unknown command: {command}")),

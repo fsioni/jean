@@ -19,7 +19,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
-import { WorktreeStatusDot } from '@/components/jenkins/WorktreeStatusDot'
+import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -850,7 +850,7 @@ export function WorktreeItem({
 
           {/* Jenkins build-and-test verdict + preview freshness (cache-only,
               visible without entering the worktree). */}
-          <WorktreeStatusDot
+          <WorktreeCiStatus
             projectId={projectId}
             worktreeId={worktree.id}
             prId={

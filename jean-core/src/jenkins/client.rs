@@ -78,9 +78,107 @@ impl JenkinsClient {
 
     /// Fetch the declarative-pipeline stage breakdown of a build.
     pub async fn fetch_stages(&self, job: &str, build: u64) -> Result<Vec<JenkinsStage>, String> {
-        let url = format!("{}/{build}/wfapi/describe", self.job_url(job));
-        let body = self.get_text(&url, &[]).await?;
+        let body = self.fetch_stages_json(job, build).await?;
         parse::parse_stages(&body)
+    }
+
+    /// Raw `wfapi/describe` body — keeps the per-stage `id` the failure report
+    /// needs to drill into a stage (`parse_stages` drops it).
+    ///
+    /// `fullStages=true` inlines each stage's `stageFlowNodes`, so the retry
+    /// attempts of the flaky stage come along for free instead of costing one
+    /// extra request per worktree per poll cycle.
+    pub async fn fetch_stages_json(&self, job: &str, build: u64) -> Result<String, String> {
+        let url = format!("{}/{build}/wfapi/describe", self.job_url(job));
+        self.get_text(&url, &[("fullStages", "true")]).await
+    }
+
+    /// Base URL of the controller, for absolutizing its relative `_links`.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Raw `wfapi/describe` of ONE stage node: its `stageFlowNodes` are the
+    /// individual steps, each with its own status and log link.
+    pub async fn fetch_stage_node_json(
+        &self,
+        job: &str,
+        build: u64,
+        node_id: &str,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/{build}/execution/node/{node_id}/wfapi/describe",
+            self.job_url(job)
+        );
+        self.get_text(&url, &[]).await
+    }
+
+    /// Log of one pipeline step (`{ text, consoleUrl, … }`, HTML-escaped links).
+    pub async fn fetch_node_log_json(
+        &self,
+        job: &str,
+        build: u64,
+        node_id: &str,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/{build}/execution/node/{node_id}/wfapi/log",
+            self.job_url(job)
+        );
+        self.get_text(&url, &[]).await
+    }
+
+    /// Last `max_bytes` of a build's console output.
+    ///
+    /// Jenkins console logs run to hundreds of KB; `logText/progressiveText`
+    /// takes a byte offset and a HEAD request reports the total via the
+    /// `X-Text-Size` header, so only the tail crosses the wire.
+    pub async fn fetch_console_tail(
+        &self,
+        job: &str,
+        build: u64,
+        max_bytes: u64,
+    ) -> Result<String, String> {
+        let url = format!("{}/{build}/logText/progressiveText", self.job_url(job));
+        let head = self
+            .http
+            .head(&url)
+            .basic_auth(&self.user, Some(&self.token))
+            .query(&[("start", "0")])
+            .send()
+            .await
+            .map_err(|e| format!("Jenkins log HEAD failed: {e}"))?;
+        let total = head
+            .headers()
+            .get("x-text-size")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let start = total.saturating_sub(max_bytes);
+        self.get_text(&url, &[("start", &start.to_string())]).await
+    }
+
+    /// JUnit report of a build. `Ok(None)` when the build published no tests
+    /// (Jenkins answers 404) — an absent report is normal, not an error.
+    pub async fn fetch_test_report(&self, job: &str, build: u64) -> Result<Option<String>, String> {
+        let url = format!("{}/{build}/testReport/api/json", self.job_url(job));
+        match self
+            .get_text(
+                &url,
+                // `errorDetails` is empty for some runners (jest puts everything
+                // in `errorStackTrace`), so both are fetched — verified against
+                // Planexpo's unit-tests #7031.
+                &[(
+                    "tree",
+                    "failCount,suites[cases[className,name,status,errorDetails,errorStackTrace]]",
+                )],
+            )
+            .await
+        {
+            Ok(body) => Ok(Some(body)),
+            // 404 = no test report on this build; anything else is a real error.
+            Err(e) if e.contains("404") => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Fetch a CSRF crumb `(header_name, value)`, or `None` if disabled/unavailable.
@@ -118,7 +216,7 @@ impl JenkinsClient {
         Ok(())
     }
 
-    /// Restart a declarative pipeline from a given stage (e.g. `"Integration tests"`).
+    /// Restart a declarative pipeline from a given stage (e.g. `"Cypress Unified"`).
     pub async fn restart_stage(&self, job: &str, build: u64, stage: &str) -> Result<(), String> {
         let url = format!("{}/{build}/restart/restart", self.job_url(job));
         self.post_form(&url, &[("stageName", stage.to_string())])
@@ -137,8 +235,8 @@ mod tests {
         assert_eq!(client.user, "ci-user");
         assert_eq!(client.token, "tok");
         assert_eq!(
-            client.job_url("build-and-test"),
-            "https://jenkins.example.com/job/build-and-test"
+            client.job_url("unified-build-test-deploy"),
+            "https://jenkins.example.com/job/unified-build-test-deploy"
         );
     }
 }

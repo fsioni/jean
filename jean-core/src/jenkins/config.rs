@@ -13,6 +13,8 @@ pub struct JenkinsConfig {
     pub url: String,
     pub user: String,
     pub token: String,
+    /// Preview admin URL template (`{pr}` placeholder), or `None` if unset.
+    pub preview_url_template: Option<String>,
 }
 
 /// Build a config from a project, or `Err` if any field is missing/blank.
@@ -25,7 +27,12 @@ pub fn config_from_project(project: &Project) -> Result<JenkinsConfig, String> {
     let token = trimmed(project.jenkins_token.as_deref());
 
     match (url, user, token) {
-        (Some(url), Some(user), Some(token)) => Ok(JenkinsConfig { url, user, token }),
+        (Some(url), Some(user), Some(token)) => Ok(JenkinsConfig {
+            url,
+            user,
+            token,
+            preview_url_template: trimmed(project.jenkins_preview_url_template.as_deref()),
+        }),
         _ => Err("Jenkins not configured for this project".to_string()),
     }
 }

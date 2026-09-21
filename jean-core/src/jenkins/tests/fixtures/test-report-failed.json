@@ -1,0 +1,90 @@
+{
+  "failCount": 2,
+  "suites": [
+    {
+      "cases": [
+        {
+          "className": "External API fetch all records",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "External API fetch all records",
+          "status": "SKIPPED"
+        }
+      ]
+    },
+    {
+      "cases": [
+        {
+          "className": "WidgetRepoMongo admin sees all widgets",
+          "errorDetails": null,
+          "errorStackTrace": "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/unit-tests/jest/source/server/src/widgetModule/repos/WidgetRepo.test.ts:102:9\n    at _dispatchDescribe (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/index.js:91:26)\n    at describe (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/index.js:55:5)\n    at Object.<anonymous> (/workspace/unit-tests/jest/source/server/src/widgetModule/repos/WidgetRepo.test.ts:58:9)\n    at Runtime._execModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:1439:24)\n    at Runtime._loadModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:1022:12)\n    at Runtime.requireModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:882:12)\n    at jestAdapter (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:77:13)\n    at processTicksAndRejections (node:internal/process/task_queues:95:5)\n    at runTestInternal (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/runTest.js:367:16)\n    at runTest (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/runTest.js:444:34)\n    at Object.worker (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/testWorker.js:106:12)",
+          "name": "WidgetRepoMongo admin sees all widgets",
+          "status": "REGRESSION"
+        },
+        {
+          "className": "WidgetRepoMongo member sees only orgs linked to orders on granted events",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo member sees only orgs linked to orders on granted events",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo returns '[]' on empty collection",
+          "errorDetails": null,
+          "errorStackTrace": "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/unit-tests/jest/source/server/src/widgetModule/repos/WidgetRepo.test.ts:131:9\n    at _dispatchDescribe (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/index.js:91:26)\n    at describe (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/index.js:55:5)\n    at Object.<anonymous> (/workspace/unit-tests/jest/source/server/src/widgetModule/repos/WidgetRepo.test.ts:58:9)\n    at Runtime._execModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:1439:24)\n    at Runtime._loadModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:1022:12)\n    at Runtime.requireModule (/workspace/unit-tests/jest/source/server/node_modules/jest-runtime/build/index.js:882:12)\n    at jestAdapter (/workspace/unit-tests/jest/source/server/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:77:13)\n    at processTicksAndRejections (node:internal/process/task_queues:95:5)\n    at runTestInternal (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/runTest.js:367:16)\n    at runTest (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/runTest.js:444:34)\n    at Object.worker (/workspace/unit-tests/jest/source/server/node_modules/jest-runner/build/testWorker.js:106:12)",
+          "name": "WidgetRepoMongo returns '[]' on empty collection",
+          "status": "REGRESSION"
+        },
+        {
+          "className": "WidgetRepoMongo getOneByIdAsync admin gets OrgRef when org exists",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getOneByIdAsync admin gets OrgRef when org exists",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getOneByIdAsync returns null when org does not exist",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getOneByIdAsync returns null when org does not exist",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getOneByIdAsync member gets null for an org with no order on granted events",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getOneByIdAsync member gets null for an org with no order on granted events",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getOneByIdAsync member gets OrgRef for an org with at least one order on granted events",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getOneByIdAsync member gets OrgRef for an org with at least one order on granted events",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getIdsMatchingNameAsync matches on corporateName (case-insensitive)",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getIdsMatchingNameAsync matches on corporateName (case-insensitive)",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getIdsMatchingNameAsync matches on brandName",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getIdsMatchingNameAsync matches on brandName",
+          "status": "PASSED"
+        },
+        {
+          "className": "WidgetRepoMongo getIdsMatchingNameAsync returns [] when nothing matches",
+          "errorDetails": null,
+          "errorStackTrace": null,
+          "name": "WidgetRepoMongo getIdsMatchingNameAsync returns [] when nothing matches",
+          "status": "PASSED"
+        }
+      ]
+    }
+  ]
+}

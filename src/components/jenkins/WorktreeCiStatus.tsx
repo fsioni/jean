@@ -6,6 +6,7 @@ import {
   Hourglass,
   Globe,
   Settings2,
+  HelpCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -16,6 +17,7 @@ import {
 import { useJenkinsStatusCached } from '@/services/jenkins'
 import { useProjects } from '@/services/projects'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'
 
 interface WorktreeCiStatusProps {
   projectId: string
@@ -49,7 +51,15 @@ const TONE = {
 
 const ICON = 'size-3 shrink-0'
 
-/** build-and-test verdict → a shaped, labelled pill (or null for UNKNOWN). */
+/**
+ * Suffix appended to the verdict tooltip when the verdict was recovered from
+ * the PR's GitHub commit status — Jenkins keeps a very short build history, so
+ * an hours-old build is simply gone and there is no Jenkins run to link to.
+ */
+const GITHUB_SOURCE_NOTE =
+  ' — verdict GitHub (build purgé de l’historique Jenkins)'
+
+/** Pipeline verdict → a shaped, labelled pill (or null for UNKNOWN). */
 function verdictPill(status: string): PillSpec | null {
   switch (status) {
     case 'SUCCESS':
@@ -58,7 +68,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <CheckCircle2 className={ICON} />,
         label: 'CI OK',
         tone: TONE.green,
-        tooltip: 'build-and-test : réussi',
+        tooltip: `${PIPELINE_JOB} : réussi`,
       }
     case 'FAILURE':
       return {
@@ -66,7 +76,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <XCircle className={ICON} />,
         label: 'CI échec',
         tone: TONE.red,
-        tooltip: 'build-and-test : en échec',
+        tooltip: `${PIPELINE_JOB} : en échec`,
       }
     case 'BUILDING':
       return {
@@ -74,7 +84,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <Loader2 className={cn(ICON, 'animate-spin')} />,
         label: 'CI en cours',
         tone: TONE.blue,
-        tooltip: 'build-and-test : en cours',
+        tooltip: `${PIPELINE_JOB} : en cours`,
       }
     case 'QUEUED':
       return {
@@ -82,7 +92,7 @@ function verdictPill(status: string): PillSpec | null {
         icon: <Hourglass className={ICON} />,
         label: 'CI en file',
         tone: TONE.amber,
-        tooltip: "build-and-test : en file d'attente",
+        tooltip: `${PIPELINE_JOB} : en file d'attente`,
       }
     default:
       return null
@@ -122,17 +132,20 @@ function previewPill(status: JenkinsWorktreeStatus): PillSpec | null {
   }
 }
 
-/** True once the poller has filled the cache with a real verdict for this row. */
-function hasRealData(
-  status: JenkinsWorktreeStatus | undefined
-): status is JenkinsWorktreeStatus {
-  if (!status) return false
-  return !(
-    status.overallStatus === 'UNKNOWN' &&
-    status.pipeline === null &&
-    status.stages.length === 0 &&
-    status.preview === null
-  )
+function testablePill(status: JenkinsWorktreeStatus): PillSpec | null {
+  if (
+    status.overallStatus !== 'SUCCESS' ||
+    status.previewFreshness?.status !== 'UP_TO_DATE'
+  ) {
+    return null
+  }
+  return {
+    key: 'testable',
+    icon: <CheckCircle2 className={ICON} />,
+    label: 'Testable',
+    tone: TONE.green,
+    tooltip: 'CI réussie et preview à jour avec le dernier commit de la PR',
+  }
 }
 
 function Pill({ spec }: { spec: PillSpec }) {
@@ -162,8 +175,10 @@ function Pill({ spec }: { spec: PillSpec }) {
  * it scales to N rows. The detailed popovers stay in the worktree
  * (`JenkinsStatusBadge` / `PreviewBadge`).
  *
- * Renders nothing when: no PR; project configured but not polled yet. Shows a
- * "CI non configuré" pill for a PR worktree whose project has no Jenkins config.
+ * Renders nothing when: no PR; project not loaded; configured but not polled
+ * yet. Otherwise it always says *something* — "CI non configuré" when the
+ * project has no Jenkins settings, "CI inconnu" when neither Jenkins nor GitHub
+ * knows a verdict — so a silent row never gets mistaken for a broken badge.
  */
 export function WorktreeCiStatus({
   projectId,
@@ -175,15 +190,44 @@ export function WorktreeCiStatus({
 
   if (!prId) return null
 
-  if (!hasRealData(status)) {
-    const project = projects.find(p => p.id === projectId)
-    const jenkinsConfigured =
-      !!project?.jenkins_url ||
-      !!project?.jenkins_user ||
-      !!project?.jenkins_token ||
-      !!project?.jenkins_preview_url_template
-    if (jenkinsConfigured) return null
+  const ready = status ? testablePill(status) : null
+  const pills = ready
+    ? [ready]
+    : status
+      ? [verdictPill(status.overallStatus), previewPill(status)].filter(
+          (p): p is PillSpec => p !== null
+        )
+      : []
 
+  if (pills.length > 0) {
+    const note = status?.verdictSource === 'github' ? GITHUB_SOURCE_NOTE : ''
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        {pills.map(spec => (
+          <Pill
+            key={spec.key}
+            spec={
+              spec.key === 'ci' && note
+                ? { ...spec, tooltip: `${spec.tooltip}${note}` }
+                : spec
+            }
+          />
+        ))}
+      </div>
+    )
+  }
+
+  const project = projects.find(p => p.id === projectId)
+  // Projects not loaded yet — say nothing rather than guess "unconfigured".
+  if (!project) return null
+
+  const jenkinsConfigured =
+    !!project.jenkins_url ||
+    !!project.jenkins_user ||
+    !!project.jenkins_token ||
+    !!project.jenkins_preview_url_template
+
+  if (!jenkinsConfigured) {
     return (
       <div className="flex flex-wrap items-center gap-1">
         <Pill
@@ -199,16 +243,21 @@ export function WorktreeCiStatus({
     )
   }
 
-  const pills = [verdictPill(status.overallStatus), previewPill(status)].filter(
-    (p): p is PillSpec => p !== null
-  )
-  if (pills.length === 0) return null
+  // Configured but never polled for this row yet — avoid a spurious pill.
+  if (!status) return null
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {pills.map(spec => (
-        <Pill key={spec.key} spec={spec} />
-      ))}
+      <Pill
+        spec={{
+          key: 'unknown',
+          icon: <HelpCircle className={ICON} />,
+          label: 'CI inconnu',
+          tone: TONE.muted,
+          tooltip:
+            'Aucun verdict : ni build Jenkins retrouvé pour cette PR, ni statut GitHub',
+        }}
+      />
     </div>
   )
 }

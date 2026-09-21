@@ -166,6 +166,14 @@ pub struct Project {
     /// Linear team ID to filter issues (None = show all teams)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linear_team_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jenkins_preview_url_template: Option<String>,
     /// Sentry auth token override for this project (None = use global token)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sentry_auth_token: Option<String>,
