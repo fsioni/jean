@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CheckCircle2,
+  ChevronDown,
+  Coffee,
+  RefreshCw,
+  UserRound,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
 import { useQueries } from '@tanstack/react-query'
 import {
   draggable,
@@ -32,6 +41,11 @@ import { announceDrag } from '@/lib/drag-and-drop/live-region'
 import { DropIndicator } from '@/components/drag-and-drop/DropIndicator'
 import { matchesWorktreeSearch } from './project-search'
 import {
+  classifyWorktreeCategory,
+  groupWorktreesByCategory,
+  type WorktreeCategory,
+} from './worktree-category'
+import {
   applyWorktreeDropSnapshot,
   emptyWorktreeDropSnapshot,
   getSnapshotFromWorktreeDropTarget,
@@ -42,6 +56,42 @@ import {
   type WorktreeDropSnapshot,
   type WorktreeReorderDragState,
 } from '@/lib/drag-and-drop/worktree-reorder-ux'
+
+const CATEGORY_CONFIG: Record<
+  WorktreeCategory,
+  { label: string; icon: LucideIcon; tone: string; defaultOpen: boolean }
+> = {
+  needs_brain: {
+    label: 'Besoin de ton cerveau',
+    icon: UserRound,
+    tone: 'text-primary',
+    defaultOpen: true,
+  },
+  ai_running: {
+    label: 'IA en cours',
+    icon: RefreshCw,
+    tone: 'text-red-500',
+    defaultOpen: true,
+  },
+  monitoring: {
+    label: 'Jean surveille',
+    icon: Zap,
+    tone: 'text-amber-500',
+    defaultOpen: true,
+  },
+  standby: {
+    label: 'Standby métier',
+    icon: Coffee,
+    tone: 'text-violet-500',
+    defaultOpen: true,
+  },
+  calm: {
+    label: 'Calmes',
+    icon: CheckCircle2,
+    tone: 'text-emerald-500',
+    defaultOpen: false,
+  },
+}
 
 interface SortableWorktreeProps {
   worktree: Worktree
@@ -272,6 +322,43 @@ export function WorktreeList({
 
     return [...sortedPending, ...sortedReady]
   }, [pendingWorktrees, readyWorktrees, sessionsByWorktreeId, worktreeSortMode])
+
+  const categoryGroups = useMemo(
+    () =>
+      groupWorktreesByCategory(
+        sortedWorktrees.map(worktree => ({
+          item: worktree,
+          category: classifyWorktreeCategory({
+            isBase: isBaseSession(worktree),
+            worktreeStatus: worktree.status,
+            standbyReason: worktree.standby_reason,
+            standbyUntil: worktree.standby_until,
+            hasHumanAttention: false,
+            hasAiActivity: false,
+            hasPullRequest: worktree.pr_number != null,
+            ciOverallStatus:
+              worktree.cached_check_status === 'success'
+                ? 'SUCCESS'
+                : worktree.cached_check_status === 'pending'
+                  ? 'BUILDING'
+                  : worktree.cached_check_status === 'failure'
+                    ? 'FAILURE'
+                    : undefined,
+            now: Math.floor(Date.now() / 1000),
+          }),
+        }))
+      ),
+    [sortedWorktrees]
+  )
+  const [openCategories, setOpenCategories] = useState<
+    Record<WorktreeCategory, boolean>
+  >(() => ({
+    needs_brain: true,
+    ai_running: true,
+    monitoring: true,
+    standby: true,
+    calm: false,
+  }))
 
   const canReorderWorktree = useCallback((worktree: Worktree) => {
     return (
@@ -524,23 +611,62 @@ export function WorktreeList({
       onDrop={handleNativeDrop}
       onDragEnd={handleNativeDragEnd}
     >
-      {sortedWorktrees.map(worktree => {
-        const isTarget = dragState.targetId === worktree.id
+      {categoryGroups.map(group => {
+        if (group.items.length === 0) return null
+        const config = CATEGORY_CONFIG[group.category]
+        const Icon = config.icon
+        const isOpen = openCategories[group.category]
         return (
-          <SortableWorktree
-            key={worktree.id}
-            worktree={worktree}
-            projectId={projectId}
-            projectPath={projectPath}
-            defaultBranch={defaultBranch}
-            disabled={
-              searchActive ||
-              reorderWorktrees.isPending ||
-              !canReorderWorktree(worktree)
-            }
-            isDragging={dragState.draggingId === worktree.id}
-            closestEdge={isTarget ? dragState.closestEdge : null}
-          />
+          <section
+            key={group.category}
+            className="border-b border-sidebar-border/50 last:border-b-0"
+          >
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              onClick={() =>
+                setOpenCategories(current => ({
+                  ...current,
+                  [group.category]: !current[group.category],
+                }))
+              }
+              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-sidebar-accent/40"
+            >
+              <ChevronDown
+                className={cn(
+                  'size-3 text-muted-foreground transition-transform',
+                  !isOpen && '-rotate-90'
+                )}
+              />
+              <Icon className={cn('size-3', config.tone)} />
+              <span className="truncate text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                {config.label}
+              </span>
+              <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[8px] font-bold text-muted-foreground">
+                {group.items.length}
+              </span>
+            </button>
+            {isOpen &&
+              group.items.map(worktree => {
+                const isTarget = dragState.targetId === worktree.id
+                return (
+                  <SortableWorktree
+                    key={worktree.id}
+                    worktree={worktree}
+                    projectId={projectId}
+                    projectPath={projectPath}
+                    defaultBranch={defaultBranch}
+                    disabled={
+                      searchActive ||
+                      reorderWorktrees.isPending ||
+                      !canReorderWorktree(worktree)
+                    }
+                    isDragging={dragState.draggingId === worktree.id}
+                    closestEdge={isTarget ? dragState.closestEdge : null}
+                  />
+                )
+              })}
+          </section>
         )
       })}
     </div>
