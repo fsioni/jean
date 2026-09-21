@@ -1,0 +1,237 @@
+name: 'Edge build (Linux + macOS)'
+
+# Canal "edge" du fork : Linux et macOS sont construits depuis le meme commit,
+# avec exactement la meme version, puis publies ensemble sur la release roulante.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.ai/**'
+      - 'tasks-todo/**'
+      - 'tasks-done/**'
+      - '.github/**'
+      - '!.github/workflows/edge.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: edge-build
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  EDGE_TAG: edge
+
+jobs:
+  version:
+    name: Compute edge version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compute monotonic edge version
+        id: version
+        run: |
+          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          VERSION="${BASE}-edge.${{ github.run_number }}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Edge version: $VERSION"
+
+  build:
+    name: Build edge (${{ matrix.name }})
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-22.04
+            artifact: edge-linux
+          - name: macos-universal
+            runner: macos-latest
+            artifact: edge-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Inject shared edge version
+        env:
+          EDGE_VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+            d.version = process.env.EDGE_VERSION;
+            if (process.env.RUNNER_OS === 'macOS') {
+              d.bundle.macOS.signingIdentity = null;
+            }
+            fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n');
+          "
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          packages=(libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2)
+
+          for attempt in 1 2; do
+            echo "APT attempt ${attempt}/2"
+            if sudo timeout 2m apt-get update \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=20 \
+              -o Acquire::https::Timeout=20 \
+              && sudo timeout 5m env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                -o Acquire::Retries=3 \
+                -o Acquire::http::Timeout=20 \
+                -o Acquire::https::Timeout=20 \
+                "${packages[@]}"; then
+              exit 0
+            fi
+
+            echo "::warning::APT attempt ${attempt}/2 failed or timed out"
+            sleep 10
+          done
+
+          echo "::error::Unable to install Linux dependencies after 2 attempts"
+          exit 1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install macOS universal targets
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          shared-key: edge-${{ matrix.name }}
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build & sign AppImage
+        if: runner.os == 'Linux'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/build-appimage.sh
+
+      - name: Build universal macOS app and sign updater bundle
+        if: runner.os == 'macOS'
+        timeout-minutes: 35
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: bun run tauri
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Stage Linux artifacts
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          mkdir artifacts
+          cp "src-tauri/target/release/bundle/appimage/Jean_${VERSION}_amd64.AppImage"* artifacts/
+
+      - name: Stage macOS artifacts
+        if: runner.os == 'macOS'
+        run: |
+          mkdir artifacts
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg artifacts/
+          cp src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz* artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/
+          if-no-files-found: error
+
+  publish:
+    name: Publish unified edge release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: edge-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish rolling release and updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.value }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          LINUX_TAR="Jean_${VERSION}_amd64.AppImage.tar.gz"
+          MAC_TAR="Jean.app.tar.gz"
+          for file in "$LINUX_TAR" "${LINUX_TAR}.sig" "$MAC_TAR" "${MAC_TAR}.sig"; do
+            if [ ! -f "artifacts/$file" ]; then
+              echo "::error::Artefact obligatoire absent : $file"
+              exit 1
+            fi
+          done
+
+          if ! /usr/bin/gh release view "$EDGE_TAG" >/dev/null 2>&1; then
+            /usr/bin/gh release create "$EDGE_TAG" \
+              --prerelease \
+              --title "Edge (rolling)" \
+              --notes "Build automatique Linux + macOS du dernier main. Canal de dev — pas une release stable."
+          fi
+
+          /usr/bin/gh release upload "$EDGE_TAG" artifacts/* --clobber
+
+          LINUX_SIG="$(cat "artifacts/${LINUX_TAR}.sig")" \
+          MAC_SIG="$(cat "artifacts/${MAC_TAR}.sig")" \
+          VERSION="$VERSION" REPO="$REPO" EDGE_TAG="$EDGE_TAG" node <<'NODE'
+          const fs = require('fs')
+          const baseUrl = `https://github.com/${process.env.REPO}/releases/download/${process.env.EDGE_TAG}`
+          const linux = {
+            signature: process.env.LINUX_SIG,
+            url: `${baseUrl}/Jean_${process.env.VERSION}_amd64.AppImage.tar.gz`,
+          }
+          const macos = {
+            signature: process.env.MAC_SIG,
+            url: `${baseUrl}/Jean.app.tar.gz`,
+          }
+          const data = {
+            version: process.env.VERSION,
+            notes: 'Edge build (rolling) — dernier main',
+            pub_date: new Date().toISOString(),
+            platforms: {
+              'linux-x86_64': linux,
+              'darwin-aarch64': macos,
+              'darwin-x86_64': macos,
+            },
+          }
+          fs.writeFileSync('/tmp/latest.json', JSON.stringify(data, null, 2))
+          NODE
+
+          /usr/bin/gh release upload "$EDGE_TAG" /tmp/latest.json --clobber
+          echo "✓ Edge Linux + macOS publié : $VERSION"
