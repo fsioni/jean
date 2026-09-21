@@ -204,7 +204,7 @@ export function useSendFailureToAgent() {
 
         if (navigate) {
           // Navigate last: the message is already in flight, so the chat opens
-          // with the run started (and Mission Control closes on the way).
+          // with the run started.
           useProjectsStore.getState().selectProject(project.id)
           useProjectsStore.getState().expandProject(project.id)
           useProjectsStore.getState().selectWorktree(worktree.id)

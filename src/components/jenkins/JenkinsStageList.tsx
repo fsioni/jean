@@ -180,7 +180,7 @@ function AttemptList({ attempts }: { attempts: JenkinsAttempt[] }) {
 
 /**
  * Per-stage breakdown of a pipeline run, shared by the worktree popover
- * (`JenkinsStatusBadge`) and the inline Mission Control row. The flaky
+ * (`JenkinsStatusBadge`) and inline CI details. The flaky
  * end-to-end stage is highlighted as the important step.
  *
  * When `attempts` are supplied, that stage also shows its retry counter

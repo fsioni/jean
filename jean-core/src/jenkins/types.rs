@@ -83,7 +83,7 @@ pub struct JenkinsFailedTest {
     pub message: Option<String>,
 }
 
-/// Why a pipeline build failed — the diagnostic Mission Control shows instead of
+/// Why a pipeline build failed — the diagnostic panel shows instead of
 /// sending the user to Jenkins.
 ///
 /// Built by drilling from the pipeline build into its first failed stage, then —

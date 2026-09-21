@@ -13,7 +13,7 @@ import {
 } from '@/services/ai-pipeline'
 
 /**
- * Permanent sidebar entry (right under Mission Control) opening the AI pipeline
+ * Permanent sidebar entry opening the AI pipeline
  * modal. Always targets the pinned project, so the same tickets show up
  * wherever it is opened from. Hidden until ClickUp is configured.
  */
