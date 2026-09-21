@@ -126,7 +126,9 @@ export function GeneralPane({
   const [jenkinsUrl, setJenkinsUrl] = useState<string | null>(null)
   const [jenkinsUser, setJenkinsUser] = useState<string | null>(null)
   const [jenkinsToken, setJenkinsToken] = useState<string | null>(null)
-  const [jenkinsPreviewUrl, setJenkinsPreviewUrl] = useState<string | null>(null)
+  const [jenkinsPreviewUrl, setJenkinsPreviewUrl] = useState<string | null>(
+    null
+  )
   // Track image load errors
   const avatarKey = project?.avatar_path ?? project?.default_avatar_path ?? null
   const [imgErrorKey, setImgErrorKey] = useState<string | null>(null)
@@ -625,9 +627,7 @@ export function GeneralPane({
             <Input
               placeholder="https://{branch}.preview.example.com"
               value={
-                jenkinsPreviewUrl ??
-                project?.jenkins_preview_url_template ??
-                ''
+                jenkinsPreviewUrl ?? project?.jenkins_preview_url_template ?? ''
               }
               onChange={event => setJenkinsPreviewUrl(event.target.value)}
             />

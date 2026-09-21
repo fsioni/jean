@@ -17,7 +17,7 @@ import {
   TriangleAlert,
   X,
   type LucideIcon,
-} from 'lucide-react'
+} from '@/components/icons/reicon'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { useDragAndDropImages } from '@/components/chat/hooks/useDragAndDropImages'
 import { ImagePreview } from '@/components/chat/ImagePreview'
@@ -318,8 +318,7 @@ export function NewSessionComposer({
   )
   const pendingSkillsBySession = useChatStore(state => state.pendingSkills)
   const pendingImages = pendingImagesBySession[draftSessionId] ?? []
-  const pendingTextFiles =
-    pendingTextFilesBySession[draftSessionId] ?? []
+  const pendingTextFiles = pendingTextFilesBySession[draftSessionId] ?? []
   const pendingSkills = pendingSkillsBySession[draftSessionId] ?? []
   const hasPendingAttachments = useChatStore(state =>
     [
@@ -388,8 +387,7 @@ export function NewSessionComposer({
       !projectId ||
       isCreating ||
       hasInvalidName ||
-      ((message || hasAttachments) &&
-        (areBackendsLoading || !backendAvailable))
+      ((message || hasAttachments) && (areBackendsLoading || !backendAvailable))
     )
       return
     setIsCreating(true)
@@ -409,19 +407,20 @@ export function NewSessionComposer({
         baseBranch: sourceOwnsBranch ? undefined : defaultStartPoint,
         customName: customName.trim(),
       })
-      queuedMessage = message || hasAttachments
-        ? {
-            id: generateId(),
-            message,
-            ...messageAttachments,
-            model,
-            provider: null,
-            executionMode,
-            thinkingLevel: store.getThinkingLevel(draftSessionId),
-            backend,
-            queuedAt: Date.now(),
-          }
-        : undefined
+      queuedMessage =
+        message || hasAttachments
+          ? {
+              id: generateId(),
+              message,
+              ...messageAttachments,
+              model,
+              provider: null,
+              executionMode,
+              thinkingLevel: store.getThinkingLevel(draftSessionId),
+              backend,
+              queuedAt: Date.now(),
+            }
+          : undefined
       if (source?.type !== 'base') {
         tracker = await prepareWorktreeCreationTracker(listen)
       }

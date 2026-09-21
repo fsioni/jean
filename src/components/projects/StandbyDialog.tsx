@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Coffee } from 'lucide-react'
+import { Coffee } from '@/components/icons/reicon'
 import type { Worktree } from '@/types/projects'
 import { Button } from '@/components/ui/button'
 import {

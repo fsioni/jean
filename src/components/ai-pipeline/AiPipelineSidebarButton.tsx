@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Bot } from 'lucide-react'
+import { Bot } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import {
   Tooltip,

@@ -202,10 +202,7 @@ export function JeanJsonPane({
               size="sm"
               className="h-7 text-xs"
               onClick={() =>
-                setLocalRun([
-                  ...localRun,
-                  { id: generateId(), value: '' },
-                ])
+                setLocalRun([...localRun, { id: generateId(), value: '' }])
               }
             >
               <Plus className="mr-1 h-3 w-3" />

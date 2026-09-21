@@ -32,6 +32,7 @@ export {
   ClipboardList,
   Clock,
   Clock3,
+  Coffee,
   Code,
   CodeFile,
   Command,
@@ -46,6 +47,7 @@ export {
   FileText,
   Flash,
   Flask,
+  Flame,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -58,6 +60,7 @@ export {
   Hierarchy,
   Hierarchy2,
   History,
+  Hourglass,
   Home,
   Image,
   InfoCircle,
@@ -95,6 +98,7 @@ export {
   Pen,
   PenLine,
   Pin,
+  PinOff,
   Play,
   Plug,
   Plus,
@@ -103,6 +107,7 @@ export {
   Radio,
   RecordCircle,
   Refresh,
+  Rocket,
   RotateLeft,
   RotateRight,
   Save,
@@ -134,6 +139,7 @@ export {
   Undo,
   Upload,
   Users,
+  UserCheck,
   Wand2,
   WifiOff,
   X,
@@ -146,6 +152,9 @@ export { Download as ArrowDownToLine } from 'reicon-react'
 export { Refresh as ArrowDownUp } from 'reicon-react'
 export { SortDownUp as ArrowUpDown } from 'reicon-react'
 export { Upload as ArrowUpToLine } from 'reicon-react'
+export { AlertTriangle as TriangleAlert } from 'reicon-react'
+export { Users as UserPlus } from 'reicon-react'
+export { Users as UserRound } from 'reicon-react'
 export { Chart3 as BarChart3 } from 'reicon-react'
 export { BellAlert as BellDot } from 'reicon-react'
 export { TextBlock as Blocks } from 'reicon-react'

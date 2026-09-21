@@ -8,10 +8,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import {
-  checkpointQueryKeys,
-  listAiCheckpoints,
-} from '@/services/checkpoints'
+import { checkpointQueryKeys, listAiCheckpoints } from '@/services/checkpoints'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import type { AiCheckpoint } from '@/types/checkpoints'
@@ -141,9 +138,7 @@ export const CheckpointTurnRestoreButton = memo(
 
     const checkpoint: AiCheckpoint | null = useMemo(() => {
       if (!worktreeId) return null
-      return (
-        checkpoints.find(c => c.userMessageId === userMessageId) ?? null
-      )
+      return checkpoints.find(c => c.userMessageId === userMessageId) ?? null
     }, [checkpoints, userMessageId, worktreeId])
 
     // Show as soon as we know the turn edited files (or checkpoint lists files).

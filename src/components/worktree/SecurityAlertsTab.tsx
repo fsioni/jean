@@ -1,5 +1,10 @@
 import { useCallback, useMemo } from 'react'
-import { Loader2, Search, RefreshCw, AlertCircle } from '@/components/icons/reicon'
+import {
+  Loader2,
+  Search,
+  RefreshCw,
+  AlertCircle,
+} from '@/components/icons/reicon'
 import { isGhAuthError } from '@/services/github'
 import { GhAuthError } from '@/components/shared/GhAuthError'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -199,18 +204,15 @@ export function SecurityAlertsTab({
           >
             Include resolved alerts
           </label>
-          {!isLoading &&
-            !isLoadingAdvisories &&
-            !error &&
-            hasItems && (
-              <SelectAllControl
-                id="select-all-security"
-                allChecked={multi.allVisibleChecked}
-                someChecked={multi.someVisibleChecked}
-                onToggleAll={multi.toggleAllVisible}
-                ariaLabel="Select all visible security items"
-              />
-            )}
+          {!isLoading && !isLoadingAdvisories && !error && hasItems && (
+            <SelectAllControl
+              id="select-all-security"
+              allChecked={multi.allVisibleChecked}
+              someChecked={multi.someVisibleChecked}
+              onToggleAll={multi.toggleAllVisible}
+              ariaLabel="Select all visible security items"
+            />
+          )}
         </div>
       </div>
 

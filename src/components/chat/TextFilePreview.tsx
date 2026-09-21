@@ -199,9 +199,7 @@ export function TextFilePreview({
                 value={editContent}
                 onChange={e => setEditContent(e.target.value)}
                 aria-label={
-                  openFile?.filename
-                    ? `Edit ${openFile.filename}`
-                    : 'Edit file'
+                  openFile?.filename ? `Edit ${openFile.filename}` : 'Edit file'
                 }
                 className="w-full h-full min-h-[calc(85vh-10rem)] text-base font-mono whitespace-pre-wrap break-words p-3 bg-muted rounded-md border-none outline-none resize-none md:text-xs"
               />

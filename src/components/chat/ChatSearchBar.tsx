@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useUIStore } from '@/store/ui-store'
 import { ChevronUp, ChevronDown, X } from '@/components/icons/reicon'
 

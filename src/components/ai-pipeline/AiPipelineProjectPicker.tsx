@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { toast } from 'sonner'
-import { Pin, PinOff } from 'lucide-react'
+import { Pin, PinOff } from '@/components/icons/reicon'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import {
   Tooltip,

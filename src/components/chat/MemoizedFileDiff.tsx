@@ -1,5 +1,10 @@
 import { useState, useMemo, useCallback, memo, useTransition } from 'react'
-import { FileText, Loader2, MessageSquarePlus, X } from '@/components/icons/reicon'
+import {
+  FileText,
+  Loader2,
+  MessageSquarePlus,
+  X,
+} from '@/components/icons/reicon'
 import { FileDiff } from '@pierre/diffs/react'
 import type {
   SelectedLineRange,

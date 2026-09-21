@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Loader2, XCircle, Hourglass, Globe } from 'lucide-react'
+import { Loader2, XCircle, Hourglass, Globe } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import {
   Tooltip,

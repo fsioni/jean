@@ -7,7 +7,7 @@ import {
   UserRound,
   Zap,
   type LucideIcon,
-} from 'lucide-react'
+} from '@/components/icons/reicon'
 import { useQueries } from '@tanstack/react-query'
 import {
   draggable,

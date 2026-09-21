@@ -16,7 +16,7 @@ import {
   UserCheck,
   UserPlus,
   XCircle,
-} from 'lucide-react'
+} from '@/components/icons/reicon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'

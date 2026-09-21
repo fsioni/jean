@@ -1,5 +1,10 @@
 import { useCallback } from 'react'
-import { AlertCircle, Loader2, RefreshCw, Search } from '@/components/icons/reicon'
+import {
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+  Search,
+} from '@/components/icons/reicon'
 import { isSentryAuthError } from '@/services/sentry'
 import { SentryAuthError } from '@/components/shared/SentryAuthError'
 import { ScrollArea } from '@/components/ui/scroll-area'

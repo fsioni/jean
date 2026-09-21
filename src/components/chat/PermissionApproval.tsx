@@ -3,7 +3,12 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Kbd } from '@/components/ui/kbd'
-import { ShieldAlert, Play, ChevronRight, CheckCircle2 } from '@/components/icons/reicon'
+import {
+  ShieldAlert,
+  Play,
+  ChevronRight,
+  CheckCircle2,
+} from '@/components/icons/reicon'
 import { formatShortcutDisplay, DEFAULT_KEYBINDINGS } from '@/types/keybindings'
 import {
   Collapsible,

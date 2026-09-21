@@ -62,9 +62,7 @@ function formatUsagePair(
   return `${sessionText}|${weeklyText}%`
 }
 
-export function DockBurgerButton({
-  className,
-}: DockBurgerButtonProps = {}) {
+export function DockBurgerButton({ className }: DockBurgerButtonProps = {}) {
   const isMobile = useIsMobile()
   const { data: preferences } = usePreferences()
 
@@ -235,17 +233,13 @@ export function DockBurgerButton({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() =>
-                openExternal('https://github.com/coollabsio/jean')
-              }
+              onClick={() => openExternal('https://github.com/coollabsio/jean')}
             >
               <Github className="mr-2 h-4 w-4" />
               Jean on GitHub
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() =>
-                openExternal('https://jean.build/sponsorships/')
-              }
+              onClick={() => openExternal('https://jean.build/sponsorships/')}
             >
               <Heart className="mr-2 h-4 w-4 text-pink-500" />
               Sponsor Jean

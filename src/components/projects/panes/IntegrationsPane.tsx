@@ -135,8 +135,7 @@ export function IntegrationsPane({ projectId }: { projectId: string }) {
   const selectedSentryProjectId =
     sentryProjects.find(
       sentryProject =>
-        sentryProject.organization.slug ===
-          project?.sentry_organization_slug &&
+        sentryProject.organization.slug === project?.sentry_organization_slug &&
         sentryProject.slug === project?.sentry_project_slug
     )?.id ?? ''
 

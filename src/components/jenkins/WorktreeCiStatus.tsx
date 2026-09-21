@@ -7,7 +7,7 @@ import {
   Globe,
   Settings2,
   HelpCircle,
-} from 'lucide-react'
+} from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import {
   Tooltip,

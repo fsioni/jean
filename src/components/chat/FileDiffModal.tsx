@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { FileText, Loader2, AlertCircle, Columns2, Rows3 } from '@/components/icons/reicon'
+import {
+  FileText,
+  Loader2,
+  AlertCircle,
+  Columns2,
+  Rows3,
+} from '@/components/icons/reicon'
 import { FileDiff } from '@pierre/diffs/react'
 import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs'
 import {

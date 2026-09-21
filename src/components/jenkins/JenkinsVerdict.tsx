@@ -4,7 +4,7 @@ import {
   Hourglass,
   Loader2,
   XCircle,
-} from 'lucide-react'
+} from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
 import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'

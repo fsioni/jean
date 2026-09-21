@@ -131,13 +131,7 @@ export function SlashPopover({
     }
 
     return items.slice(0, 15)
-  }, [
-    backendGroups,
-    searchQuery,
-    isAtPromptStart,
-    sessionBackend,
-    triggerKind,
-  ])
+  }, [backendGroups, searchQuery, isAtPromptStart, sessionBackend, triggerKind])
 
   const renderGroups = useMemo(() => {
     const groups: RenderGroup[] = []

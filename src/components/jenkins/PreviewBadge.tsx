@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { ExternalLink, Globe } from 'lucide-react'
+import { ExternalLink, Globe } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {

@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Rocket } from 'lucide-react'
+import { Rocket } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
 import {
   Tooltip,

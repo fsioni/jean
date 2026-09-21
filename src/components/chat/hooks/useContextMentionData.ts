@@ -1,5 +1,10 @@
 import { useMemo } from 'react'
-import { Bug, GitPullRequest, ShieldAlert, Siren } from '@/components/icons/reicon'
+import {
+  Bug,
+  GitPullRequest,
+  ShieldAlert,
+  Siren,
+} from '@/components/icons/reicon'
 import type { LucideIcon } from '@/components/icons/reicon'
 import {
   filterAdvisories,

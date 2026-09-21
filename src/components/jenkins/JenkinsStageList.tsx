@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { cn } from '@/lib/utils'
-import { ExternalLink, FlaskConical } from 'lucide-react'
+import { ExternalLink, FlaskConical } from '@/components/icons/reicon'
 import type { JenkinsAttempt, JenkinsStage } from '@/types/jenkins'
 import { FLAKY_STAGE } from '@/components/jenkins/jenkins-jobs'
 

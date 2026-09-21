@@ -1,5 +1,10 @@
 import { useCallback } from 'react'
-import { Loader2, Search, RefreshCw, AlertCircle } from '@/components/icons/reicon'
+import {
+  Loader2,
+  Search,
+  RefreshCw,
+  AlertCircle,
+} from '@/components/icons/reicon'
 import { isLinearAuthError } from '@/services/linear'
 import { LinearAuthError } from '@/components/shared/LinearAuthError'
 import { ScrollArea } from '@/components/ui/scroll-area'

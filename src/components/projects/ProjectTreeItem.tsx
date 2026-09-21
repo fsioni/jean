@@ -503,7 +503,6 @@ export function ProjectTreeItem({
               <FailedRunsBadge projectPath={project.path} />
             </div>
           )}
-
         </div>
 
         {/* Worktrees */}

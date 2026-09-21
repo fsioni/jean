@@ -43,9 +43,7 @@ export function BulkInvestigateBar({
         ) : (
           <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
         )}
-        {isLoading
-          ? 'Starting…'
-          : `Investigate ${count} ${noun} in background`}
+        {isLoading ? 'Starting…' : `Investigate ${count} ${noun} in background`}
       </Button>
     </div>
   )

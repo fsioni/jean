@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen, within } from '@/test/test-utils'
+import { render, screen } from '@/test/test-utils'
 import { useUIStore } from '@/store/ui-store'
 import { NewWorktreeModal } from './NewWorktreeModal'
 import type * as EnvironmentModule from '@/lib/environment'
@@ -37,7 +37,11 @@ vi.mock('@/hooks/useInstalledBackends', () => ({
 }))
 vi.mock('./hooks/useNewWorktreeData', () => ({
   useNewWorktreeData: () => ({
+    selectedProjectId: 'project-1',
     selectedProject: { name: 'Test' },
+    projects: [{ id: 'project-1', name: 'Test' }],
+    branches: [],
+    remotes: [],
     createWorktree: {},
     createBaseSession: {},
   }),
@@ -80,99 +84,29 @@ beforeEach(() => {
   Element.prototype.releasePointerCapture = vi.fn()
 })
 
-describe('NewWorktreeModal investigation selector', () => {
-  it('shows a styled desktop modifier hint in web access', () => {
+describe('NewWorktreeModal prompt-first flow', () => {
+  it('opens the selected context tab', () => {
     render(<NewWorktreeModal />)
-
-    const hint = screen.getByText(/to open in background/i).parentElement
-    expect(hint).toHaveTextContent('Hold Ctrl to open in background')
-    expect(hint?.querySelector('[data-slot="kbd"]')).toHaveTextContent('Ctrl')
-  })
-
-  it('hides the keyboard-only background hint on mobile', () => {
-    mocks.isMobile = true
-    render(<NewWorktreeModal />)
-
-    expect(screen.queryByText(/to open in background/i)).toBeNull()
-  })
-
-  it.each([
-    { mode: 'native desktop', native: true, mobile: false },
-    { mode: 'web', native: false, mobile: false },
-    { mode: 'mobile', native: false, mobile: true },
-  ])(
-    'scopes models and providers to the backend on $mode',
-    async ({ native, mobile }) => {
-      mocks.isNativeApp = native
-      mocks.isMobile = mobile
-      const user = userEvent.setup()
-      render(<NewWorktreeModal />)
-
-      expect(
-        screen.queryByRole('combobox', { name: 'Investigation provider' })
-      ).toBeNull()
-      await user.click(
-        screen.getByRole('button', { name: 'Choose backend and model' })
-      )
-      expect(screen.getByRole('tab', { name: 'Codex' })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-      const list = screen.getByRole('listbox')
-      expect(within(list).queryByText(/Sonnet/)).toBeNull()
-      await user.click(screen.getByRole('tab', { name: 'Claude' }))
-      expect(within(list).queryByText(/GPT/)).toBeNull()
-      await user.click(within(list).getByText('Sonnet 4.6'))
-      expect(
-        screen.getByRole('combobox', { name: 'Investigation provider' })
-      ).toHaveTextContent('Anthropic')
-      await user.click(
-        screen.getByRole('combobox', { name: 'Investigation provider' })
-      )
-      await user.click(screen.getByRole('option', { name: 'Team' }))
-      await user.click(
-        screen.getByRole('button', { name: 'Choose backend and model' })
-      )
-      expect(
-        within(screen.getByRole('listbox')).getByText('Sonnet')
-      ).toBeInTheDocument()
-      expect(within(screen.getByRole('listbox')).queryByText(/GPT/)).toBeNull()
-    }
-  )
-
-  it('keeps the selected backend when unrelated preferences refresh', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(<NewWorktreeModal />)
-    await user.click(
-      screen.getByRole('button', { name: 'Choose backend and model' })
+    expect(screen.getByRole('button', { name: /Issues/ })).toHaveAttribute(
+      'class',
+      expect.stringContaining('border-primary')
     )
-    await user.click(screen.getByRole('tab', { name: 'Claude' }))
-    await user.click(
-      within(screen.getByRole('listbox')).getByText('Sonnet 4.6')
-    )
-    mocks.preferences = { ...mocks.preferences }
-    rerender(<NewWorktreeModal />)
-    expect(
-      screen.getByRole('combobox', { name: 'Investigation provider' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Choose backend and model' })
-    ).toHaveTextContent('Claude')
   })
 
-  it('loads the PR investigation defaults when switching tabs', async () => {
+  it('exposes the AI pipeline source', async () => {
     const user = userEvent.setup()
     render(<NewWorktreeModal />)
-    await user.click(screen.getByRole('button', { name: /PRs/ }))
-    expect(
-      screen.getByRole('combobox', { name: 'Investigation provider' })
-    ).toHaveTextContent('Anthropic')
-    await user.click(
-      screen.getByRole('button', { name: 'Choose backend and model' })
+    await user.click(screen.getByRole('button', { name: /Pipeline IA/ }))
+    expect(screen.getByRole('button', { name: /Pipeline IA/ })).toHaveAttribute(
+      'class',
+      expect.stringContaining('border-primary')
     )
-    expect(screen.getByRole('tab', { name: 'Claude' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+  })
+
+  it('returns to the prompt composer', async () => {
+    const user = userEvent.setup()
+    render(<NewWorktreeModal />)
+    await user.click(screen.getByRole('button', { name: 'Back to prompt' }))
+    expect(screen.getByText('Start something new')).toBeInTheDocument()
   })
 })

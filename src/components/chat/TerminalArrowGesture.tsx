@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
   ArrowDown,
   ArrowLeft,
@@ -15,10 +10,7 @@ import {
   ChevronUp,
 } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
-import {
-  focusTerminal,
-  writeTerminalInput,
-} from '@/lib/terminal-instances'
+import { focusTerminal, writeTerminalInput } from '@/lib/terminal-instances'
 import {
   ARROW_GESTURE_CANCEL_MOVE_PX,
   ARROW_GESTURE_DEADZONE_PX,
@@ -301,7 +293,11 @@ export function TerminalArrowGesture({
           active={direction === 'left'}
           gear={direction === 'left' ? gear : 0}
         />
-        <PadCell center gear={direction ? gear : 0} hasDirection={!!direction} />
+        <PadCell
+          center
+          gear={direction ? gear : 0}
+          hasDirection={!!direction}
+        />
         <PadCell
           direction="right"
           active={direction === 'right'}

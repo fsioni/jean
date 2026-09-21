@@ -1,4 +1,11 @@
-import { Check, File, FileText, Loader2, Terminal, Wand2 } from 'lucide-react'
+import {
+  Check,
+  File,
+  FileText,
+  Loader2,
+  Terminal,
+  Wand2,
+} from '@/components/icons/reicon'
 import type { QueuedMessage } from '@/types/chat'
 import { getFilename } from '@/lib/path-utils'
 import { ImageLightbox } from './ImageLightbox'
@@ -29,7 +36,9 @@ export function WorktreeSetupProgress({
             {queuedMessage && (
               <div
                 aria-label="Queued attachments"
-                className={prompt ? 'mt-3 flex flex-wrap gap-2' : 'flex flex-wrap gap-2'}
+                className={
+                  prompt ? 'mt-3 flex flex-wrap gap-2' : 'flex flex-wrap gap-2'
+                }
               >
                 {queuedMessage.pendingImages.map(image =>
                   image.loading ? (

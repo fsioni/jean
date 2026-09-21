@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { toast } from 'sonner'
-import { Loader2, GitPullRequest, Rocket } from 'lucide-react'
+import { Loader2, GitPullRequest, Rocket } from '@/components/icons/reicon'
 import {
   Dialog,
   DialogContent,

@@ -69,9 +69,9 @@ function RestoreRiskHint({ className }: { className?: string }) {
           Restore can make mistakes
         </p>
         <p className="text-amber-900/85 dark:text-amber-100/85">
-          Undoing AI edits may overwrite later work, miss shared-file changes, or
-          (with AI assist) produce imperfect merges. Review carefully and prefer
-          git commit / backup first when unsure.
+          Undoing AI edits may overwrite later work, miss shared-file changes,
+          or (with AI assist) produce imperfect merges. Review carefully and
+          prefer git commit / backup first when unsure.
         </p>
       </div>
     </div>
@@ -79,12 +79,7 @@ function RestoreRiskHint({ className }: { className?: string }) {
 }
 
 /** Restore actions that mutate the worktree — each requires explicit approval. */
-type PendingApproval =
-  | 'cleanOnly'
-  | 'allTurnFiles'
-  | 'full'
-  | 'applyAi'
-  | null
+type PendingApproval = 'cleanOnly' | 'allTurnFiles' | 'full' | 'applyAi' | null
 
 export interface CheckpointRestoreDialogProps {
   open: boolean
@@ -192,7 +187,7 @@ export function CheckpointRestoreDialog({
       case 'full':
         return {
           title: 'Approve full project reset?',
-          body: 'Reset the entire worktree to the state before this AI turn. All later uncommitted changes will be lost (including other sessions\' work on this worktree and files created after the checkpoint).',
+          body: "Reset the entire worktree to the state before this AI turn. All later uncommitted changes will be lost (including other sessions' work on this worktree and files created after the checkpoint).",
           confirmLabel: 'Yes, reset entire project',
           destructive: true,
         }
@@ -576,8 +571,7 @@ export function CheckpointRestoreDialog({
                 className="h-auto min-h-10 w-full whitespace-normal py-2.5 sm:w-auto"
                 disabled={
                   busy ||
-                  (selectedAiCount === 0 &&
-                    aiProposal.cleanPaths.length === 0)
+                  (selectedAiCount === 0 && aiProposal.cleanPaths.length === 0)
                 }
                 onClick={() => setPendingApproval('applyAi')}
               >
@@ -606,7 +600,10 @@ export function CheckpointRestoreDialog({
                 variant="default"
                 className="h-auto w-full flex-col items-stretch gap-0.5 whitespace-normal px-3 py-3 text-left"
                 disabled={
-                  busy || analysisLoading || !restoreAnalysis || cleanCount === 0
+                  busy ||
+                  analysisLoading ||
+                  !restoreAnalysis ||
+                  cleanCount === 0
                 }
                 onClick={() => setPendingApproval('cleanOnly')}
               >
@@ -670,8 +667,9 @@ export function CheckpointRestoreDialog({
                     {restoreAnalysis ? ` (${turnCount})` : ''}
                   </span>
                   <span className="text-xs font-normal text-muted-foreground">
-                    Reverts every path this turn touched, even if another session
-                    edited them later. Can discard later work on those files.
+                    Reverts every path this turn touched, even if another
+                    session edited them later. Can discard later work on those
+                    files.
                   </span>
                 </Button>
                 <Button

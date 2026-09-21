@@ -376,10 +376,7 @@ function AutoFixProviderSelect({
       }
       disabled={disabled}
     >
-      <SelectTrigger
-        aria-label={`Choose ${label} provider`}
-        className="w-full"
-      >
+      <SelectTrigger aria-label={`Choose ${label} provider`} className="w-full">
         <SelectValue placeholder="Anthropic" />
       </SelectTrigger>
       <SelectContent>
@@ -440,8 +437,7 @@ function AutoFixBackendModelPicker({
   const handleBackendModelChange = useCallback(
     (nextBackend: CliBackend, nextModel: string) => {
       // Switching backends drops Claude-only custom providers.
-      const nextProvider =
-        nextBackend === 'claude' ? selectedProvider : null
+      const nextProvider = nextBackend === 'claude' ? selectedProvider : null
       onChange(
         nextBackend,
         nextModel === BACKEND_DEFAULT_MODEL_VALUE ? null : nextModel,
@@ -809,9 +805,7 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
                     planning_backend,
                     planning_model,
                     planning_provider:
-                      planning_backend === 'claude'
-                        ? planning_provider
-                        : null,
+                      planning_backend === 'claude' ? planning_provider : null,
                   }))
                 }
               />
