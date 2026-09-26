@@ -47,6 +47,7 @@ import {
 import { WorktreeList } from './WorktreeList'
 import { ProjectContextMenu } from './ProjectContextMenu'
 import { matchesProjectSearch, matchesWorktreeSearch } from './project-search'
+import { CollapsedCountBadge } from './CollapsedCountBadge'
 
 interface ProjectTreeItemProps {
   project: Project
@@ -89,15 +90,20 @@ export function ProjectTreeItem({
     (Boolean(searchQuery) ||
       isProjectExpanded ||
       selectedProjectId === project.id)
-  const { data: worktrees = [], isLoading: worktreesLoading } = useWorktrees(
+  const { data: loadedWorktrees, isLoading: worktreesLoading } = useWorktrees(
     project.id,
     {
       enabled: shouldLoadWorktrees,
     }
   )
+  const worktrees = loadedWorktrees ?? []
   const { data: appDataDir = '' } = useAppDataDir()
   const hasWorktrees =
     !isOffline && (worktrees.length > 0 || (project.worktree_count ?? 0) > 0)
+  const worktreeCount =
+    shouldLoadWorktrees && loadedWorktrees
+      ? loadedWorktrees.length
+      : (project.worktree_count ?? 0)
   const projectMatchesSearch = matchesProjectSearch(project, searchQuery)
   const hasMatchingWorktree = worktrees.some(worktree =>
     matchesWorktreeSearch(worktree, searchQuery)
@@ -503,6 +509,12 @@ export function ProjectTreeItem({
               <FailedRunsBadge projectPath={project.path} />
             </div>
           )}
+
+          <CollapsedCountBadge
+            count={worktreeCount}
+            label="workspaces"
+            isExpanded={isExpanded}
+          />
         </div>
 
         {/* Worktrees */}

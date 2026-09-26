@@ -102,7 +102,7 @@ export function NewSessionModeModal() {
   const grokStatus = useGrokCliStatus(statusOptions)
   const kimiStatus = useKimiCliStatus(statusOptions)
   const antigravityStatus = useAntigravityCliStatus(statusOptions)
-  const { data: preferences } = usePreferences()
+  const { data: preferences } = usePreferences(targetServerId)
   const [nativePickerKind, setNativePickerKind] =
     useState<NativeCliSessionKind | null>(null)
   const [nativePickerInitialCommandArgs, setNativePickerInitialCommandArgs] =
@@ -231,19 +231,21 @@ export function NewSessionModeModal() {
   const chooseChat = useCallback(() => {
     if (!target) return
     const { worktreeId, worktreePath } = target
-    const backend = (preferences?.default_backend ?? 'claude') as CliBackend
-    const model = resolveDefaultModelForBackend(backend, preferences)
-    const effortLevel =
-      backend === 'codex'
-        ? (preferences?.default_codex_reasoning_effort ?? 'high')
-        : backend === 'grok'
-          ? (preferences?.default_grok_reasoning_effort ?? 'high')
-          : (preferences?.default_effort_level ?? 'high')
     close()
     createSession.mutate(
-      { worktreeId, worktreePath, backend },
+      { worktreeId, worktreePath },
       {
         onSuccess: session => {
+          const backend = (session.backend ??
+            preferences?.default_backend ??
+            'claude') as CliBackend
+          const model = resolveDefaultModelForBackend(backend, preferences)
+          const effortLevel =
+            backend === 'codex'
+              ? (preferences?.default_codex_reasoning_effort ?? 'high')
+              : backend === 'grok'
+                ? (preferences?.default_grok_reasoning_effort ?? 'high')
+                : (preferences?.default_effort_level ?? 'high')
           const defaultExecutionMode =
             preferences?.default_execution_mode ?? 'plan'
           useChatStore

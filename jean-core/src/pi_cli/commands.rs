@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 use tauri::AppHandle;
 
-use super::config::{find_pi_in_path, get_cli_dir, resolve_cli_binary};
+use super::config::{find_pi_in_path, get_cli_binary_path, get_cli_dir, resolve_cli_binary};
 #[cfg(windows)]
 use crate::platform::silent_command;
 const PI_NPM_PACKAGE: &str = "@earendil-works/pi-coding-agent";
@@ -693,6 +693,7 @@ pub async fn install_pi_cli(app: AppHandle, version: Option<String>) -> Result<(
     if !status.success() {
         return Err("npm install for PI failed".to_string());
     }
+    crate::expose_managed_cli("pi", &get_cli_binary_path(&app)?);
     Ok(())
 }
 

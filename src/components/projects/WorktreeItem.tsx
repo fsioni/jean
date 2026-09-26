@@ -53,6 +53,7 @@ import {
   TooltipContent,
 } from '@/components/ui/tooltip'
 import { useSidebarWidth } from '@/components/layout/SidebarWidthContext'
+import { CollapsedCountBadge } from './CollapsedCountBadge'
 
 interface WorktreeItemProps {
   worktree: Worktree
@@ -848,7 +849,6 @@ export function WorktreeItem({
               <TooltipContent>{`Uncommitted: +${uncommittedAdded}/-${uncommittedRemoved} lines`}</TooltipContent>
             </Tooltip>
           )}
-
           {/* Jenkins build-and-test verdict + preview freshness (cache-only,
               visible without entering the worktree). */}
           <WorktreeCiStatus
@@ -859,6 +859,11 @@ export function WorktreeItem({
             }
           />
           <ClickUpStatusLink projectId={projectId} worktreeId={worktree.id} />
+          <CollapsedCountBadge
+            count={sessionsData?.sessions.length ?? 0}
+            label="sessions"
+            isExpanded={isExpanded}
+          />
         </div>
       </WorktreeContextMenu>
 

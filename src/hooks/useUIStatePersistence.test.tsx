@@ -113,7 +113,10 @@ describe('useUIStatePersistence — terminal restore on web refresh', () => {
       pendingSkills: {},
       dismissedSetupScripts: {},
     })
-    useProjectsStore.setState({ projectCanvasSettings: {} })
+    useProjectsStore.setState({
+      projectCanvasSettings: {},
+      pinnedRecentSessionIds: [],
+    })
   })
 
   it('does not send client-only project canvas settings to the server', async () => {
@@ -137,6 +140,110 @@ describe('useUIStatePersistence — terminal restore on web refresh', () => {
 
     await new Promise(resolve => setTimeout(resolve, 600))
     expect(mockSaveUIState).not.toHaveBeenCalled()
+  })
+
+  it('restores pinned sessions and labels from server UI state', async () => {
+    mockUseUIState.mockReturnValue({
+      data: buildUiState({
+        pinned_recent_session_ids: ['session-pinned'],
+        project_canvas_settings: {
+          'project-1': {
+            pinned_labels: [
+              { name: 'Important', color: '#ef4444', pinned: true },
+            ],
+          },
+        },
+      }),
+      isSuccess: true,
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    renderHook(() => useUIStatePersistence(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => {
+      expect(useProjectsStore.getState().pinnedRecentSessionIds).toEqual([
+        'session-pinned',
+      ])
+      expect(
+        useProjectsStore.getState().projectCanvasSettings['project-1']
+          ?.pinnedLabels
+      ).toEqual([{ name: 'Important', color: '#ef4444', pinned: true }])
+    })
+  })
+
+  it('applies pinned sessions saved by another client without saving them again', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    const { rerender } = renderHook(() => useUIStatePersistence(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => {
+      expect(useUIStore.getState().uiStateInitialized).toBe(true)
+    })
+
+    // Simulates the ui-state refetch after a cache:invalidate broadcast.
+    mockUseUIState.mockReturnValue({
+      data: buildUiState({ pinned_recent_session_ids: ['session-remote'] }),
+      isSuccess: true,
+    })
+    rerender()
+
+    await waitFor(() => {
+      expect(useProjectsStore.getState().pinnedRecentSessionIds).toEqual([
+        'session-remote',
+      ])
+    })
+    await new Promise(resolve => setTimeout(resolve, 600))
+    expect(mockSaveUIState).not.toHaveBeenCalled()
+  })
+
+  it('saves pinned sessions and labels to server UI state', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    renderHook(() => useUIStatePersistence(), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    await waitFor(() => {
+      expect(useUIStore.getState().uiStateInitialized).toBe(true)
+    })
+    useProjectsStore.getState().setPinnedRecentSessionIds(['session-pinned'])
+    useProjectsStore
+      .getState()
+      .setProjectCanvasPinnedLabels('project-1', [
+        { name: 'Important', color: '#ef4444', pinned: true },
+      ])
+
+    await waitFor(() => {
+      expect(mockSaveUIState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          pinned_recent_session_ids: ['session-pinned'],
+          project_canvas_settings: {
+            'project-1': {
+              pinned_labels: [
+                { name: 'Important', color: '#ef4444', pinned: true },
+              ],
+            },
+          },
+        })
+      )
+    })
   })
 
   it('saves the latest active session before a native relaunch', async () => {

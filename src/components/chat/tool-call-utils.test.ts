@@ -3,6 +3,7 @@ import {
   buildTimeline,
   coalesceContentBlocks,
   getIntroTextBeforeDuplicatePlan,
+  restoreOmittedStreamingPrefix,
   isDuplicatePlanTextBlock,
   normalizeTodosForDisplay,
   resolvePlanContent,
@@ -322,6 +323,32 @@ describe('getIntroTextBeforeDuplicatePlan', () => {
         'Plan:\n- Implement changes'
       )
     ).toBe('Repo inspected.')
+  })
+})
+
+describe('restoreOmittedStreamingPrefix', () => {
+  it('puts the missing start back on the first text block', () => {
+    const blocks: ContentBlock[] = [
+      { type: 'tool_use', tool_call_id: 'bash-1' },
+      {
+        type: 'text',
+        text: "|\n  grep -E 'reverb:start|terminal-server' |\n  grep -v grep\n",
+      },
+    ]
+    const streamingContent =
+      "Check processes:\n\n```bash\ndocker exec coolify ps aux |\n  grep -E 'reverb:start|terminal-server' |\n  grep -v grep\n"
+
+    const restored = restoreOmittedStreamingPrefix(streamingContent, blocks)
+    const text = restored.find(block => block.type === 'text')
+    expect(text).toEqual({
+      type: 'text',
+      text: streamingContent,
+    })
+  })
+
+  it('does not duplicate text that is already in the blocks', () => {
+    const blocks: ContentBlock[] = [{ type: 'text', text: 'Hello world' }]
+    expect(restoreOmittedStreamingPrefix('Hello world', blocks)).toBe(blocks)
   })
 })
 

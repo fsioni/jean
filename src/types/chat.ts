@@ -996,7 +996,13 @@ export function hasQuestionAnswerOutput(
   const trimmed = output.trim()
   if (!trimmed) return false
 
-  if (trimmed === 'Answer questions?' || trimmed.startsWith('Error:')) {
+  if (
+    trimmed === 'Answer questions?' ||
+    trimmed.startsWith('Error:') ||
+    trimmed.startsWith('<tool_use_error>') ||
+    // Newer Claude CLI denies the blocking tool in headless runs
+    /^Permission to use \S+ was not granted\.?$/.test(trimmed)
+  ) {
     return false
   }
 

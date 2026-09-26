@@ -13,6 +13,9 @@ describe('RecentWorktreesList structure', () => {
     expect(source).toContain('{Math.min(hiddenCount, RECENT_PAGE_SIZE)} more')
     expect(source).toContain('setLimit(value => value + RECENT_PAGE_SIZE)')
     expect(source).toContain('Show snoozed sessions')
+    expect(source).toContain(
+      'createPortal(footerActions, footerActionsContainer)'
+    )
     expect(source).toContain('Snoozed · inactive for 24 hours')
     expect(source).toContain('isSnoozedSession(row.lastActivityAt)')
   })
@@ -38,9 +41,9 @@ describe('RecentWorktreesList structure', () => {
     expect(source).toContain(
       'className="justify-self-end text-[10px] tabular-nums"'
     )
-    expect(source).toContain('col-start-2 flex min-h-4 justify-self-end gap-1')
+    expect(source).toContain('flex min-h-4 items-center justify-between')
     expect(source).toContain(
-      '<span className="col-start-2 flex min-h-4 justify-self-end gap-1'
+      '<span className="flex gap-1 text-[10px] font-medium tabular-nums">'
     )
     expect(source).not.toContain('pt-4')
     expect(source).not.toContain('absolute right-3 top-2')
@@ -58,7 +61,7 @@ describe('RecentWorktreesList structure', () => {
 
   it('uses fully rounded rows and a full background for the current row', () => {
     expect(source).toContain('className="flex flex-col gap-2 px-2 py-2"')
-    expect(source).toContain('rounded-lg border px-3 py-2.5')
+    expect(source).toContain('rounded-lg border py-2.5 pl-3 pr-3')
     expect(source).toContain(
       "isCurrent ? 'border-border bg-muted/50 text-foreground shadow'"
     )
@@ -102,11 +105,13 @@ describe('RecentWorktreesList structure', () => {
     expect(source).toContain("status.tone !== 'completed'")
   })
 
-  it('does not create a different cached list for each selected session', () => {
+  it('fetches pinned sessions without creating a list for each selected session', () => {
     expect(source).toContain(
-      "queryKey: ['recent-worktrees', projectKey, limit]"
+      "queryKey: ['recent-worktrees', projectKey, limit, pinnedSessionIds]"
     )
-    expect(source).toContain('fetchRecentWorktrees(projects, limit, null)')
+    expect(source).toContain(
+      'fetchRecentWorktrees(projects, limit, pinnedSessionIds)'
+    )
     expect(source).not.toContain(
       "queryKey: ['recent-worktrees', projectKey, limit, selectedSessionId]"
     )
@@ -117,12 +122,41 @@ describe('RecentWorktreesList structure', () => {
     expect(source).not.toContain('Updating…')
   })
 
-  it('pins sessions above recent rows and keeps the pin action hover-only', () => {
+  it('pins sessions above recent rows and keeps the pin visible on small screens', () => {
+    expect(source).toContain('<PinTack')
+    expect(source).toContain("weight={isPinned ? 'Filled' : 'Outline'}")
     expect(source).toContain('toggleRecentSessionPinned(row.session.id)')
     expect(source).toContain('pinned.has(row.session.id)')
-    expect(source).toContain('aPinned === bPinned ? 0 : aPinned ? -1 : 1')
-    expect(source).toContain('group-hover:opacity-100')
+    expect(source).toContain('return sortRecentRows(')
+    expect(source).toContain('opacity-100')
+    expect(source).toContain('md:opacity-0')
+    expect(source).toContain('md:group-hover:opacity-100')
+    expect(source).toContain('flex size-4 shrink-0')
+    expect(source).toContain('flex min-h-4 items-center justify-between')
+    expect(source).not.toContain('absolute right-full')
+    expect(source).not.toContain('absolute right-1 top-1')
+    expect(source).not.toContain('pr-9')
+    const projectName = source.indexOf(
+      '{row.projectName} · {row.worktree.name}'
+    )
+    const pinLabel = source.indexOf(
+      "isPinned ? 'Unpin session' : 'Pin session'"
+    )
+    const gitAdded = source.indexOf('+{row.added}')
+    expect(projectName).toBeGreaterThan(-1)
+    expect(pinLabel).toBeGreaterThan(projectName)
+    expect(gitAdded).toBeGreaterThan(pinLabel)
     expect(source).toContain("isPinned ? 'Unpin session' : 'Pin session'")
     expect(source).toContain('!isPinned &&')
+    expect(source).toContain('showPinnedSeparator')
+    expect(source).toContain('role="separator"')
+    expect(source).toContain('border-t border-border/70')
+  })
+
+  it('opens a session from the full card without treating the pin as an open action', () => {
+    expect(source).toContain('cursor-pointer flex-col')
+    expect(source).toContain('onClick={() => handleOpen(row)}')
+    expect(source).toContain('onClick={event => {')
+    expect(source).toContain('event.stopPropagation()')
   })
 })

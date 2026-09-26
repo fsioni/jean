@@ -2,8 +2,10 @@
 //!
 //! On Unix, interactive Grok turns run through a detached ACP host process
 //! (`--jean-grok-acp-host`) so the turn survives Jean restart — same pattern as
-//! PI's RPC host. Jean tails the run JSONL and reattaches via `resume_session`.
-//! Windows keeps the in-process ACP child path (non-survivable).
+//! PI's RPC host. The host stays up for the Jean session and accepts follow-up
+//! prompts on the same socket (Codex-style warm pool, gated by
+//! `keep_ai_servers_warm`). Jean tails each run's JSONL and reattaches via
+//! `resume_session`. Windows keeps the in-process ACP child path (non-survivable).
 
 use super::coalesce::ChunkCoalescer;
 use super::types::{ChatMessage, ContentBlock, MessageRole, RunEntry, ToolCall, UsageData};
@@ -1652,7 +1654,10 @@ fn build_grok_agent_args(
     // + synthetic ExitPlanMode on structured plan text.
     let mut args = vec!["--no-auto-update".to_string(), "--no-plan".to_string()];
     args.push("agent".to_string());
-    args.push("--no-leader".to_string());
+    // One shared Grok leader for every Jean session. The stdio process is the
+    // ACP client; MCP and the agent backend live in the leader, which Grok
+    // starts on ~/.grok/leader.sock when it is not already running.
+    args.push("--leader".to_string());
     if matches!(execution_mode, Some("build") | Some("yolo")) {
         args.push("--always-approve".to_string());
     }
@@ -1718,6 +1723,10 @@ static GROK_ACP_STEER_HANDLES: Lazy<Mutex<HashMap<String, GrokSteerHandle>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const GROK_ACP_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Detached Unix host idle grace. Same 10 minute window as the Codex app-server
+/// warm pool (`keep_ai_servers_warm`).
+#[cfg_attr(not(unix), allow(dead_code))]
+const GROK_ACP_HOST_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 
 fn register_grok_steer_handle(jean_session_id: &str, handle: GrokSteerHandle) {
     if let Ok(mut map) = GROK_ACP_STEER_HANDLES.lock() {
@@ -1761,6 +1770,29 @@ fn send_acp_request_on_writer(
         .flush()
         .map_err(|e| format!("Failed to flush Grok ACP stdin: {e}"))?;
     Ok(request_id)
+}
+
+fn send_acp_notification_on_writer(
+    writer: &Arc<Mutex<GrokAcpWriter>>,
+    method: &str,
+    params: Value,
+) -> Result<(), String> {
+    let mut writer = writer
+        .lock()
+        .map_err(|_| "Failed to lock Grok ACP writer".to_string())?;
+    send_acp_message(
+        &mut writer.stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }),
+    )?;
+    writer
+        .stdin
+        .flush()
+        .map_err(|e| format!("Failed to flush Grok ACP stdin: {e}"))?;
+    Ok(())
 }
 
 /// Build params for Grok's mid-turn interjection ACP extension.
@@ -1860,6 +1892,19 @@ pub(crate) fn serialize_grok_host_command(
     message: Option<&str>,
     id: Option<&str>,
 ) -> String {
+    serialize_grok_host_command_with_output(command_type, message, id, None)
+}
+
+pub(crate) fn serialize_grok_host_prompt(message: &str, id: &str, output: &Path) -> String {
+    serialize_grok_host_command_with_output("prompt", Some(message), Some(id), Some(output))
+}
+
+fn serialize_grok_host_command_with_output(
+    command_type: &str,
+    message: Option<&str>,
+    id: Option<&str>,
+    output: Option<&Path>,
+) -> String {
     let mut value = serde_json::Map::new();
     if let Some(id) = id {
         value.insert("id".to_string(), Value::String(id.to_string()));
@@ -1868,7 +1913,85 @@ pub(crate) fn serialize_grok_host_command(
     if let Some(message) = message {
         value.insert("message".to_string(), Value::String(message.to_string()));
     }
+    if let Some(output) = output {
+        value.insert(
+            "output".to_string(),
+            Value::String(output.to_string_lossy().to_string()),
+        );
+    }
     format!("{}\n", Value::Object(value))
+}
+
+/// Identity of a warm Grok ACP host. A follow-up reuses the process only when
+/// this matches — model, effort, mode, cwd, and MCP servers are fixed at spawn.
+pub(crate) fn grok_host_fingerprint(
+    working_dir: &Path,
+    grok_args: &[String],
+    execution_mode: Option<&str>,
+    mcp_servers: &[Value],
+) -> String {
+    let mut servers = mcp_servers.to_vec();
+    servers.sort_by(|left, right| {
+        let name = |value: &Value| {
+            value
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        name(left).cmp(&name(right))
+    });
+    format!(
+        "{}\n{}\n{}\n{}",
+        working_dir.display(),
+        grok_args.join("\u{1f}"),
+        execution_mode.unwrap_or(""),
+        serde_json::to_string(&servers).unwrap_or_default()
+    )
+}
+
+/// Whether an existing host can take the next prompt.
+///
+/// `requested_session_id` is Jean's persisted Grok session. Reuse only when it
+/// equals the id the host already loaded. An empty request means a fresh
+/// conversation, so a host that already has a session is replaced.
+pub(crate) fn should_reuse_grok_acp_host(
+    record_fingerprint: &str,
+    record_session_id: &str,
+    record_keep_warm: bool,
+    requested_fingerprint: &str,
+    requested_session_id: Option<&str>,
+    requested_keep_warm: bool,
+    pid_alive: bool,
+    socket_exists: bool,
+) -> bool {
+    if !requested_keep_warm
+        || !record_keep_warm
+        || !pid_alive
+        || !socket_exists
+        || record_fingerprint != requested_fingerprint
+    {
+        return false;
+    }
+    match requested_session_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(requested) => record_session_id == requested,
+        None => record_session_id.is_empty(),
+    }
+}
+
+fn grok_result_marker_is_cancelled(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .is_some_and(|value| {
+            value.get("cancelled").and_then(Value::as_bool) == Some(true)
+                && matches!(
+                    value.get("type").and_then(Value::as_str),
+                    Some("result" | "complete")
+                )
+        })
 }
 
 fn grok_line_is_completion_result(line: &str) -> bool {
@@ -2038,6 +2161,14 @@ pub(crate) fn grok_host_terminal_marker(session_id: &str, prompt_error: Option<&
     }
 }
 
+fn grok_host_cancelled_marker(session_id: &str) -> Value {
+    serde_json::json!({
+        "type": "result",
+        "session_id": session_id,
+        "cancelled": true,
+    })
+}
+
 #[cfg(unix)]
 pub(crate) fn grok_acp_socket_path(app_data_dir: &Path, session_id: &str, run_id: &str) -> PathBuf {
     fn short_id(value: &str) -> String {
@@ -2052,12 +2183,123 @@ pub(crate) fn grok_acp_socket_path(app_data_dir: &Path, session_id: &str, run_id
             short
         }
     }
-    // Keep under macOS Unix socket path limits (~104 bytes).
-    app_data_dir.join("grok-acp").join(format!(
-        "s{}-r{}.sock",
-        short_id(session_id),
-        short_id(run_id)
-    ))
+    // One socket per Jean session so follow-up turns find the warm host.
+    // `run_id` stays in the signature for callers that still have a run id;
+    // it does not change the path. Keep under macOS Unix socket limits (~104 bytes).
+    let _ = run_id;
+    app_data_dir
+        .join("grok-acp")
+        .join(format!("s{}.sock", short_id(session_id)))
+}
+
+#[cfg(unix)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct GrokAcpHostRecord {
+    pid: u32,
+    fingerprint: String,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    keep_warm: bool,
+}
+
+#[cfg(unix)]
+fn grok_acp_host_state_path(socket_path: &Path) -> PathBuf {
+    let mut path = socket_path.to_path_buf();
+    path.set_extension("json");
+    path
+}
+
+#[cfg(unix)]
+fn read_grok_acp_host_record(socket_path: &Path) -> Option<GrokAcpHostRecord> {
+    let text = std::fs::read_to_string(grok_acp_host_state_path(socket_path)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+#[cfg(unix)]
+fn write_grok_acp_host_record(
+    socket_path: &Path,
+    record: &GrokAcpHostRecord,
+) -> Result<(), String> {
+    let path = grok_acp_host_state_path(socket_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Grok ACP host state dir: {e}"))?;
+    }
+    let body = serde_json::to_string(record)
+        .map_err(|e| format!("Failed to serialize Grok ACP host record: {e}"))?;
+    std::fs::write(&path, body).map_err(|e| format!("Failed to write Grok ACP host record: {e}"))
+}
+
+#[cfg(unix)]
+fn remove_grok_acp_host_record(socket_path: &Path) {
+    let _ = std::fs::remove_file(grok_acp_host_state_path(socket_path));
+}
+
+#[cfg(unix)]
+fn retire_grok_acp_host(socket_path: &Path) {
+    use crate::platform::{is_process_alive, kill_process, kill_process_tree};
+
+    if let Some(record) = read_grok_acp_host_record(socket_path) {
+        if is_process_alive(record.pid) {
+            let line = serialize_grok_host_command("shutdown", None, None);
+            let _ = send_grok_acp_host_command(socket_path, &line);
+            let started = Instant::now();
+            while is_process_alive(record.pid) && started.elapsed() < Duration::from_millis(1500) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if is_process_alive(record.pid) {
+                let _ = kill_process_tree(record.pid);
+                let _ = kill_process(record.pid);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(socket_path);
+    remove_grok_acp_host_record(socket_path);
+}
+
+#[cfg(unix)]
+fn release_acp_terminals(terminals: &mut HashMap<String, AcpTerminal>) {
+    for (_, terminal) in terminals.drain() {
+        if let Ok(mut child) = terminal.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn shutdown_grok_acp_host_process(
+    stop: &AtomicBool,
+    socket_path: &Path,
+    child: &mut Child,
+    terminals: &mut HashMap<String, AcpTerminal>,
+) {
+    stop.store(true, Ordering::SeqCst);
+    let _ = std::os::unix::net::UnixStream::connect(socket_path);
+    release_acp_terminals(terminals);
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(socket_path);
+    remove_grok_acp_host_record(socket_path);
+}
+
+#[cfg(unix)]
+fn replace_grok_host_output(output: &Arc<Mutex<std::fs::File>>, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Grok output directory: {e}"))?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open Grok output file: {e}"))?;
+    let mut slot = output
+        .lock()
+        .map_err(|_| "Grok output file lock poisoned".to_string())?;
+    *slot = file;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -2114,6 +2356,8 @@ fn spawn_grok_acp_host(
     existing_grok_session_id: Option<&str>,
     execution_mode: Option<&str>,
     mcp_servers: &[Value],
+    keep_warm: bool,
+    fingerprint: &str,
 ) -> Result<(u32, PathBuf), String> {
     let app_data = app
         .path()
@@ -2159,6 +2403,13 @@ fn spawn_grok_acp_host(
         args.push("--execution-mode".to_string());
         args.push(mode.to_string());
     }
+    if keep_warm {
+        args.push("--keep-warm".to_string());
+    }
+    if !fingerprint.is_empty() {
+        args.push("--fingerprint".to_string());
+        args.push(fingerprint.to_string());
+    }
     for arg in grok_args {
         args.push("--grok-arg".to_string());
         args.push(arg.clone());
@@ -2167,6 +2418,77 @@ fn spawn_grok_acp_host(
     let pid = super::detached::spawn_detached_process(&exe, &args, &log_file, &app_data)?;
     wait_for_grok_acp_socket(&socket_path, pid)?;
     Ok((pid, socket_path))
+}
+
+/// Reuse a warm per-session host, or spawn one and wait until its socket is up.
+/// The caller sends the prompt after process registration so a queued cancel
+/// can still stop the turn before Grok sees it.
+#[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
+fn prepare_grok_acp_host(
+    app: &AppHandle,
+    session_id: &str,
+    run_id: &str,
+    output_file: &Path,
+    working_dir: &Path,
+    cli_path: &Path,
+    grok_args: &[String],
+    existing_grok_session_id: Option<&str>,
+    execution_mode: Option<&str>,
+    mcp_servers: &[Value],
+) -> Result<(u32, PathBuf), String> {
+    use crate::platform::is_process_alive;
+
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    let socket_path = grok_acp_socket_path(&app_data, session_id, run_id);
+    let fingerprint = grok_host_fingerprint(working_dir, grok_args, execution_mode, mcp_servers);
+    let keep_warm = crate::load_preferences_sync(app)
+        .map(|preferences| preferences.keep_ai_servers_warm)
+        .unwrap_or(true);
+
+    if let Some(record) = read_grok_acp_host_record(&socket_path) {
+        if should_reuse_grok_acp_host(
+            &record.fingerprint,
+            &record.session_id,
+            record.keep_warm,
+            &fingerprint,
+            existing_grok_session_id,
+            keep_warm,
+            is_process_alive(record.pid),
+            socket_path.exists(),
+        ) {
+            log::info!(
+                "[Grok ACP host] reusing warm host pid={} session={session_id}",
+                record.pid
+            );
+            return Ok((record.pid, socket_path));
+        }
+        log::info!(
+            "[Grok ACP host] replacing host pid={} session={session_id} (fingerprint, session, or warm flag changed)",
+            record.pid
+        );
+        retire_grok_acp_host(&socket_path);
+    } else if socket_path.exists() {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    spawn_grok_acp_host(
+        app,
+        session_id,
+        run_id,
+        output_file,
+        working_dir,
+        cli_path,
+        grok_args,
+        existing_grok_session_id,
+        execution_mode,
+        mcp_servers,
+        keep_warm,
+        &fingerprint,
+    )
 }
 
 /// Detached Grok ACP host entrypoint (Unix). Owns the Grok CLI ACP child,
@@ -2184,6 +2506,8 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
     let mut existing_session: Option<String> = None;
     let mut execution_mode: Option<String> = None;
     let mut mcp_servers_file: Option<PathBuf> = None;
+    let mut keep_warm = false;
+    let mut fingerprint: Option<String> = None;
     let mut grok_args: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
@@ -2196,6 +2520,8 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
             "--existing-session" => existing_session = args.next(),
             "--execution-mode" => execution_mode = args.next(),
             "--mcp-servers-file" => mcp_servers_file = args.next().map(PathBuf::from),
+            "--keep-warm" => keep_warm = true,
+            "--fingerprint" => fingerprint = args.next(),
             "--grok-arg" => {
                 if let Some(value) = args.next() {
                     grok_args.push(value);
@@ -2355,18 +2681,32 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
         let _ = std::fs::remove_file(path);
     }
 
+    let host_record = GrokAcpHostRecord {
+        pid: std::process::id(),
+        fingerprint: fingerprint.unwrap_or_default(),
+        session_id: acp_session_id.clone(),
+        keep_warm,
+    };
+    if let Err(error) = write_grok_acp_host_record(&socket_path, &host_record) {
+        eprintln!("[grok-acp-host] failed to write host record: {error}");
+    }
+
     let _ = std::fs::remove_file(&socket_path);
     let listener = UnixListener::bind(&socket_path)
         .map_err(|e| format!("Failed to bind Grok ACP host socket: {e}"))?;
 
     let stop = Arc::new(AtomicBool::new(false));
     let abort = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicBool::new(false));
     let pending_prompt: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let pending_output: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let pending_interject: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     let listener_stop = stop.clone();
     let listener_abort = abort.clone();
+    let listener_shutdown = shutdown.clone();
     let listener_prompt = pending_prompt.clone();
+    let listener_output = pending_output.clone();
     let listener_interject = pending_interject.clone();
     let listener_writer = writer.clone();
     let listener_session = acp_session_id.clone();
@@ -2374,7 +2714,9 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
         fn handle_client(
             stream: UnixStream,
             abort: Arc<AtomicBool>,
+            shutdown: Arc<AtomicBool>,
             pending_prompt: Arc<Mutex<Option<String>>>,
+            pending_output: Arc<Mutex<Option<PathBuf>>>,
             pending_interject: Arc<Mutex<Vec<String>>>,
             writer: Arc<Mutex<GrokAcpWriter>>,
             acp_session_id: String,
@@ -2390,11 +2732,19 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
                 };
                 match value.get("type").and_then(Value::as_str) {
                     Some("prompt") => {
+                        if let Some(output) = value.get("output").and_then(Value::as_str) {
+                            if let Ok(mut slot) = pending_output.lock() {
+                                *slot = Some(PathBuf::from(output));
+                            }
+                        }
                         if let Some(message) = value.get("message").and_then(Value::as_str) {
                             if let Ok(mut slot) = pending_prompt.lock() {
                                 *slot = Some(message.to_string());
                             }
                         }
+                    }
+                    Some("shutdown") => {
+                        shutdown.store(true, Ordering::SeqCst);
                     }
                     Some("interject") | Some("steer") => {
                         if let Some(message) =
@@ -2444,7 +2794,9 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
                         break;
                     }
                     let abort = listener_abort.clone();
+                    let shutdown = listener_shutdown.clone();
                     let pending_prompt = listener_prompt.clone();
+                    let pending_output = listener_output.clone();
                     let pending_interject = listener_interject.clone();
                     let writer = listener_writer.clone();
                     let session = listener_session.clone();
@@ -2452,7 +2804,9 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
                         handle_client(
                             stream,
                             abort,
+                            shutdown,
                             pending_prompt,
+                            pending_output,
                             pending_interject,
                             writer,
                             session,
@@ -2468,140 +2822,182 @@ pub fn run_grok_acp_host_from_args() -> Result<(), String> {
         }
     });
 
-    // Wait for the first prompt command from Jean.
-    let prompt_message = loop {
-        if abort.load(Ordering::SeqCst) {
-            break None;
-        }
-        if let Ok(mut slot) = pending_prompt.lock() {
-            if let Some(message) = slot.take() {
-                break Some(message);
-            }
-        }
-        // If Grok died during idle wait, fail fast.
-        if child.try_wait().ok().flatten().is_some() {
-            return Err("Grok ACP exited before receiving prompt".to_string());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-
-    let Some(prompt_message) = prompt_message else {
-        stop.store(true, Ordering::SeqCst);
-        let _ = UnixStream::connect(&socket_path);
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = std::fs::remove_file(&socket_path);
-        return Ok(());
-    };
-
-    // Drain any interjections queued before prompt started.
-    if let Ok(mut queue) = pending_interject.lock() {
-        for message in queue.drain(..) {
-            let interjection_id = format!(
-                "jean-steer-host-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0)
-            );
-            let params = build_grok_interject_params(&acp_session_id, &message, &interjection_id);
-            let _ = send_acp_request_on_writer(&writer, GROK_ACP_INTERJECT_METHOD, params);
-        }
-    }
-
-    let prompt = build_grok_acp_prompt(&prompt_message)?;
-    let prompt_request_id = send_acp_request_on_writer(
-        &writer,
-        "session/prompt",
-        serde_json::json!({
-            "sessionId": acp_session_id,
-            "prompt": prompt,
-        }),
-    )?;
-
-    let mut line = String::new();
+    // Stay up for follow-up prompts when keep-warm is on. Each prompt can target
+    // a new run JSONL via the `output` field. Idle exit matches Codex (10 min).
+    let mut current_output_path = output_file.clone();
+    let mut awaiting_first_prompt = true;
     loop {
-        if abort.load(Ordering::SeqCst) {
-            break;
-        }
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) => return Err(format!("Failed to read Grok ACP prompt stream: {e}")),
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-            continue;
+        let idle_started = Instant::now();
+        let prompt_message = loop {
+            if shutdown.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst) {
+                break None;
+            }
+            if let Ok(mut slot) = pending_prompt.lock() {
+                if let Some(message) = slot.take() {
+                    break Some(message);
+                }
+            }
+            if abort.load(Ordering::SeqCst) {
+                abort.store(false, Ordering::SeqCst);
+            }
+            if child.try_wait().ok().flatten().is_some() {
+                break None;
+            }
+            if idle_started.elapsed() > GROK_ACP_HOST_IDLE_TIMEOUT {
+                eprintln!("[grok-acp-host] idle timeout, shutting down");
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         };
-        if let Some(session_id) = extract_acp_session_id(&value) {
-            acp_session_id = session_id;
-        }
-        if value.get("method").is_some() && value.get("id").is_some() {
-            // Client requests (fs/terminal/permission) — handle, don't persist.
-            // Do not abort the whole turn if one client request fails; Grok will
-            // otherwise hang waiting for a JSON-RPC response that never arrives.
-            let mut writer_guard = writer
-                .lock()
-                .map_err(|_| "Failed to lock Grok ACP writer".to_string())?;
-            if let Err(error) = handle_acp_client_request(
-                &mut writer_guard.stdin,
-                &value,
-                &mut terminals,
-                execution_mode,
-            ) {
-                eprintln!("[grok-acp-host] client request failed: {error}");
-                if let Some(id) = value.get("id") {
-                    let _ = send_acp_error(
-                        &mut writer_guard.stdin,
-                        id,
-                        &format!("Jean ACP client error: {error}"),
-                    );
-                }
+
+        let Some(prompt_message) = prompt_message else {
+            let child_died = child.try_wait().ok().flatten().is_some();
+            shutdown_grok_acp_host_process(&stop, &socket_path, &mut child, &mut terminals);
+            if awaiting_first_prompt && child_died {
+                return Err("Grok ACP exited before receiving prompt".to_string());
             }
-            continue;
-        }
-        if grok_host_line_should_persist(trimmed) {
-            host_write_output_line(&output, trimmed)?;
-        }
-        // Surface errors for fire-and-forget requests (e.g. interject) that are
-        // not the main session/prompt response — otherwise Method not found
-        // style failures look like a successful steer in Jean.
-        if let Some(resp_id) = value.get("id").and_then(Value::as_i64) {
-            if resp_id != prompt_request_id {
-                if let Some(error) = value.get("error") {
-                    eprintln!("[grok-acp-host] non-prompt JSON-RPC error id={resp_id}: {error}");
+            return Ok(());
+        };
+        awaiting_first_prompt = false;
+        abort.store(false, Ordering::SeqCst);
+
+        if let Ok(mut slot) = pending_output.lock() {
+            if let Some(path) = slot.take() {
+                if path != current_output_path {
+                    replace_grok_host_output(&output, &path)?;
+                    current_output_path = path;
+                    let marker = serde_json::json!({
+                        "type": "session",
+                        "session_id": acp_session_id,
+                    });
+                    host_write_output_line(&output, &marker.to_string())?;
                 }
             }
         }
-        if value.get("id").and_then(Value::as_i64) == Some(prompt_request_id) {
-            // Write exactly one terminal marker: error OR result (never both).
-            // Writing both made Jean treat failed turns as empty completed runs (#580).
-            let prompt_error = value.get("error");
-            let marker = grok_host_terminal_marker(&acp_session_id, prompt_error);
-            host_write_output_line(&output, &marker.to_string())?;
+
+        if let Ok(mut queue) = pending_interject.lock() {
+            for message in queue.drain(..) {
+                let interjection_id = format!(
+                    "jean-steer-host-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                );
+                let params =
+                    build_grok_interject_params(&acp_session_id, &message, &interjection_id);
+                let _ = send_acp_request_on_writer(&writer, GROK_ACP_INTERJECT_METHOD, params);
+            }
+        }
+
+        let prompt = build_grok_acp_prompt(&prompt_message)?;
+        let prompt_request_id = send_acp_request_on_writer(
+            &writer,
+            "session/prompt",
+            serde_json::json!({
+                "sessionId": acp_session_id,
+                "prompt": prompt,
+            }),
+        )?;
+
+        let mut cancelling = false;
+        let mut line = String::new();
+        loop {
+            if abort.load(Ordering::SeqCst) && !cancelling {
+                cancelling = true;
+                let _ = send_acp_notification_on_writer(
+                    &writer,
+                    "session/cancel",
+                    serde_json::json!({ "sessionId": acp_session_id }),
+                );
+                let marker = grok_host_cancelled_marker(&acp_session_id);
+                host_write_output_line(&output, &marker.to_string())?;
+            }
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    shutdown_grok_acp_host_process(&stop, &socket_path, &mut child, &mut terminals);
+                    return Err(format!("Failed to read Grok ACP prompt stream: {e}"));
+                }
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            if let Some(session_id) = extract_acp_session_id(&value) {
+                acp_session_id = session_id;
+            }
+            if value.get("method").is_some() && value.get("id").is_some() {
+                // Client requests (fs/terminal/permission) — handle, don't persist.
+                // Do not abort the whole turn if one client request fails; Grok will
+                // otherwise hang waiting for a JSON-RPC response that never arrives.
+                let mut writer_guard = writer
+                    .lock()
+                    .map_err(|_| "Failed to lock Grok ACP writer".to_string())?;
+                if let Err(error) = handle_acp_client_request(
+                    &mut writer_guard.stdin,
+                    &value,
+                    &mut terminals,
+                    execution_mode,
+                ) {
+                    eprintln!("[grok-acp-host] client request failed: {error}");
+                    if let Some(id) = value.get("id") {
+                        let _ = send_acp_error(
+                            &mut writer_guard.stdin,
+                            id,
+                            &format!("Jean ACP client error: {error}"),
+                        );
+                    }
+                }
+                continue;
+            }
+            // Keep session/update lines after abort. The cancel marker is
+            // written first, and Grok may still emit the reply that was already
+            // on screen. Dropping those lines makes that reply vanish on reload.
+            if grok_host_line_should_persist(trimmed) {
+                host_write_output_line(&output, trimmed)?;
+            }
+            if let Some(resp_id) = value.get("id").and_then(Value::as_i64) {
+                if resp_id != prompt_request_id {
+                    if let Some(error) = value.get("error") {
+                        eprintln!(
+                            "[grok-acp-host] non-prompt JSON-RPC error id={resp_id}: {error}"
+                        );
+                    }
+                }
+            }
+            if value.get("id").and_then(Value::as_i64) == Some(prompt_request_id) {
+                // Write exactly one terminal marker: error OR result (never both).
+                // A cancel already wrote its marker above.
+                if !cancelling {
+                    let prompt_error = value.get("error");
+                    let marker = grok_host_terminal_marker(&acp_session_id, prompt_error);
+                    host_write_output_line(&output, &marker.to_string())?;
+                }
+                break;
+            }
+        }
+
+        release_acp_terminals(&mut terminals);
+        if let Some(mut record) = read_grok_acp_host_record(&socket_path) {
+            if record.session_id != acp_session_id {
+                record.session_id = acp_session_id.clone();
+                let _ = write_grok_acp_host_record(&socket_path, &record);
+            }
+        }
+        let child_alive = child.try_wait().ok().flatten().is_none();
+        if !keep_warm || !child_alive {
             break;
         }
     }
 
-    // Abort/disconnect without a prompt response: no terminal marker (tail
-    // treats process death as cancel). Success/error markers are written above.
-
-    stop.store(true, Ordering::SeqCst);
-    let _ = UnixStream::connect(&socket_path);
-    for (_, terminal) in terminals.drain() {
-        if let Ok(mut child) = terminal.child.lock() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = std::fs::remove_file(&socket_path);
+    shutdown_grok_acp_host_process(&stop, &socket_path, &mut child, &mut terminals);
     Ok(())
 }
 
@@ -2726,6 +3122,10 @@ pub fn tail_grok_output(
     let mut received_output = false;
     let mut completed = false;
     let mut cancelled = false;
+    let mut user_cancelled = false;
+    // After the cancel marker, keep reading until the host goes quiet so reply
+    // text Grok emits while winding down is part of this turn, not dropped.
+    let mut cancel_quiet_deadline: Option<Instant> = None;
     let mut known_tool_outputs: HashMap<String, Option<String>> = HashMap::new();
     // Batch tiny token deltas (~30ms) so streaming markdown re-parses less often
     // and leading spaces between word fragments stay mid-string in each batch.
@@ -2762,7 +3162,12 @@ pub fn tail_grok_output(
             }
 
             if grok_line_is_completion_result(&line) {
-                completed = true;
+                if grok_result_marker_is_cancelled(&line) {
+                    user_cancelled = true;
+                    cancel_quiet_deadline = Some(Instant::now() + Duration::from_millis(400));
+                } else {
+                    completed = true;
+                }
             }
 
             // Each host line is independent ACP JSON. Parse one line so we only
@@ -2854,6 +3259,14 @@ pub fn tail_grok_output(
             }
         }
 
+        if let Some(deadline) = cancel_quiet_deadline {
+            if got_lines {
+                cancel_quiet_deadline = Some(Instant::now() + Duration::from_millis(200));
+            } else if Instant::now() >= deadline {
+                completed = true;
+            }
+        }
+
         if completed {
             break;
         }
@@ -2878,11 +3291,17 @@ pub fn tail_grok_output(
                 sleep_for = until_flush;
             }
         }
+        if let Some(deadline) = cancel_quiet_deadline {
+            let until_cancel = deadline.saturating_duration_since(Instant::now());
+            if until_cancel < sleep_for {
+                sleep_for = until_cancel;
+            }
+        }
         std::thread::sleep(sleep_for);
     }
 
     flush_coalesced_chunks(app, session_id, worktree_id, &mut chunk_coalescer);
-    response.cancelled = cancelled && !completed;
+    response.cancelled = user_cancelled || (cancelled && !completed);
     response.content = response.content.trim().to_string();
 
     // Legacy logs may still have type:error followed by type:result; prefer error.
@@ -4149,7 +4568,7 @@ pub fn execute_grok(options: GrokExecutionOptions<'_>) -> Result<GrokResponse, S
     #[cfg(unix)]
     {
         let run_id = super::pi::run_id_from_output_file(output_file);
-        let (pid, socket_path) = spawn_grok_acp_host(
+        let (pid, socket_path) = prepare_grok_acp_host(
             app,
             jean_session_id,
             &run_id,
@@ -4178,11 +4597,8 @@ pub fn execute_grok(options: GrokExecutionOptions<'_>) -> Result<GrokResponse, S
             });
         }
 
-        let prompt_line = serialize_grok_host_command(
-            "prompt",
-            Some(&prepared_message),
-            Some(&format!("prompt-{run_id}")),
-        );
+        let prompt_line =
+            serialize_grok_host_prompt(&prepared_message, &format!("prompt-{run_id}"), output_file);
         if let Err(e) = send_grok_acp_host_command(&socket_path, &prompt_line) {
             super::registry::unregister_process(jean_session_id);
             let _ = crate::platform::kill_process_tree(pid);
@@ -5995,6 +6411,8 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
         assert!(args.contains(&"--reasoning-effort".to_string()));
         assert!(args.contains(&"high".to_string()));
         assert!(args.contains(&"--always-approve".to_string()));
+        assert!(args.contains(&"--leader".to_string()));
+        assert!(!args.contains(&"--no-leader".to_string()));
         assert_eq!(args[1], "--no-plan");
         assert_eq!(args[2], "agent");
     }
@@ -6070,6 +6488,103 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
     }
 
     #[test]
+    fn serialize_grok_host_prompt_includes_output_path() {
+        let line = serialize_grok_host_prompt("hello", "prompt-1", Path::new("/tmp/run.jsonl"));
+        let value: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("prompt"));
+        assert_eq!(
+            value.get("output").and_then(Value::as_str),
+            Some("/tmp/run.jsonl")
+        );
+    }
+
+    #[test]
+    fn grok_result_marker_is_cancelled_requires_flag() {
+        assert!(grok_result_marker_is_cancelled(
+            r#"{"type":"result","session_id":"abc","cancelled":true}"#
+        ));
+        assert!(!grok_result_marker_is_cancelled(
+            r#"{"type":"result","session_id":"abc"}"#
+        ));
+        assert!(grok_line_is_completion_result(
+            r#"{"type":"result","session_id":"abc","cancelled":true}"#
+        ));
+    }
+
+    #[test]
+    fn should_reuse_grok_acp_host_matches_session_and_fingerprint() {
+        let fingerprint = grok_host_fingerprint(
+            Path::new("/work"),
+            &["--model".to_string(), "grok-4.7".to_string()],
+            Some("yolo"),
+            &[],
+        );
+        assert!(should_reuse_grok_acp_host(
+            &fingerprint,
+            "grok-session",
+            true,
+            &fingerprint,
+            Some("grok-session"),
+            true,
+            true,
+            true,
+        ));
+        assert!(!should_reuse_grok_acp_host(
+            &fingerprint,
+            "grok-session",
+            true,
+            &fingerprint,
+            Some("other-session"),
+            true,
+            true,
+            true,
+        ));
+        assert!(
+            !should_reuse_grok_acp_host(
+                &fingerprint,
+                "grok-session",
+                true,
+                &fingerprint,
+                None,
+                true,
+                true,
+                true,
+            ),
+            "a fresh conversation must not resume the previous Grok session"
+        );
+        assert!(!should_reuse_grok_acp_host(
+            &fingerprint,
+            "grok-session",
+            true,
+            &fingerprint,
+            Some("grok-session"),
+            false,
+            true,
+            true,
+        ));
+        assert!(!should_reuse_grok_acp_host(
+            &fingerprint,
+            "grok-session",
+            true,
+            "different",
+            Some("grok-session"),
+            true,
+            true,
+            true,
+        ));
+        assert!(!should_reuse_grok_acp_host(
+            &fingerprint,
+            "grok-session",
+            true,
+            &fingerprint,
+            Some("grok-session"),
+            true,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
     fn grok_line_is_completion_result_detects_result_marker() {
         assert!(grok_line_is_completion_result(
             r#"{"type":"result","session_id":"abc"}"#
@@ -6081,14 +6596,21 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
 
     #[test]
     #[cfg(unix)]
-    fn grok_acp_socket_path_is_short_under_app_data() {
-        let path = grok_acp_socket_path(
+    fn grok_acp_socket_path_is_stable_per_jean_session() {
+        let first = grok_acp_socket_path(
             Path::new("/tmp/jean-app-data"),
             "session-abcdefghijklmnop",
-            "run-1234567890",
+            "run-11111111",
         );
-        assert!(path.starts_with("/tmp/jean-app-data/grok-acp"));
-        assert!(path.to_string_lossy().len() < 100);
+        let second = grok_acp_socket_path(
+            Path::new("/tmp/jean-app-data"),
+            "session-abcdefghijklmnop",
+            "run-22222222",
+        );
+        assert_eq!(first, second);
+        assert!(first.starts_with("/tmp/jean-app-data/grok-acp"));
+        assert!(first.to_string_lossy().ends_with("ssessiona.sock"));
+        assert!(first.to_string_lossy().len() < 100);
     }
 
     #[test]
@@ -6128,6 +6650,44 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
         let message = parse_grok_run_to_message(&lines, &run).unwrap();
         assert_eq!(message.content, "Survived restart");
         assert_eq!(message.id, "a1");
+    }
+
+    #[test]
+    fn parse_grok_run_to_message_keeps_text_when_cancel_marker_follows() {
+        let lines = vec![
+            r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Partial reply before cancel"}}}}"#.to_string(),
+            r#"{"type":"result","session_id":"s","cancelled":true}"#.to_string(),
+        ];
+        let run = RunEntry {
+            run_id: "run-cancel".to_string(),
+            user_message_id: "u1".to_string(),
+            user_message: "hi".to_string(),
+            model: Some("grok/grok-4.7".to_string()),
+            execution_mode: Some("yolo".to_string()),
+            thinking_level: None,
+            effort_level: None,
+            backend: Some(super::super::types::Backend::Grok),
+            custom_profile_name: None,
+            started_at: 1,
+            ended_at: Some(2),
+            status: super::super::types::RunStatus::Cancelled,
+            assistant_message_id: Some("a-cancel".to_string()),
+            cancelled: true,
+            recovered: true,
+            claude_session_id: None,
+            pid: None,
+            usage: None,
+            codex_thread_id: None,
+            codex_turn_id: None,
+            cursor_chat_id: None,
+            grok_session_id: Some("s".to_string()),
+            kimi_session_id: None,
+            antigravity_session_id: None,
+            checkpoint_id: None,
+        };
+        let message = parse_grok_run_to_message(&lines, &run).unwrap();
+        assert_eq!(message.content, "Partial reply before cancel");
+        assert!(message.cancelled);
     }
 
     #[test]

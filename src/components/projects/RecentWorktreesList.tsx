@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, BellDot, Pin, Plus } from '@/components/icons/reicon'
+import { createPortal } from 'react-dom'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import {
+  AlertTriangle,
+  BellDot,
+  PinTack,
+  Plus,
+} from '@/components/icons/reicon'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { mergeSessionIntoWorktreeSessions } from '@/components/chat/session-tab-order'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
+import { chatQueryKeys } from '@/services/chat'
 import { fetchRecentWorktrees } from '@/services/projects'
 import { fetchWorktreesStatus } from '@/services/git-status'
+import type { WorktreeSessions } from '@/types/chat'
 import type { Project, RecentWorktreeItem } from '@/types/projects'
 import { isUnreadSession } from '@/components/unread/unread-utils'
 import { getRecentSessionStatus } from './recent-session-status'
@@ -17,6 +30,8 @@ const SNOOZE_AFTER_SECONDS = 24 * 60 * 60
 
 interface RecentWorktreesListProps {
   projects: Project[]
+  /** Sidebar footer slot for the "Show more" actions (next to Settings). */
+  footerActionsContainer?: HTMLElement | null
 }
 
 export function formatRecentActivity(
@@ -57,8 +72,27 @@ export function getAdjacentRecentRow(
   return rows[nextIndex]
 }
 
-export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
+/**
+ * Pinned rows first. Inside the pinned and unpinned groups, running rows go
+ * first. All other rows keep the incoming recent-activity order, so a
+ * finished row goes back to its normal position.
+ */
+export function sortRecentRows(
+  rows: RecentWorktreeItem[],
+  pinnedSessionIds: ReadonlySet<string>,
+  isRunning: (row: RecentWorktreeItem) => boolean
+): RecentWorktreeItem[] {
+  const rank = (row: RecentWorktreeItem) =>
+    (pinnedSessionIds.has(row.session.id) ? 0 : 2) + (isRunning(row) ? 0 : 1)
+  return [...rows].sort((a, b) => rank(a) - rank(b))
+}
+
+export function RecentWorktreesList({
+  projects,
+  footerActionsContainer,
+}: RecentWorktreesListProps) {
   const isMobile = useIsMobile()
+  const queryClient = useQueryClient()
   const selectProject = useProjectsStore(state => state.selectProject)
   const selectWorktree = useProjectsStore(state => state.selectWorktree)
   const selectedWorktreeId = useProjectsStore(state => state.selectedWorktreeId)
@@ -96,8 +130,8 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
     // Selection only changes the highlighted row. Keep it out of the query so
     // switching sessions cannot swap between cached list variants with
     // different ordering.
-    queryKey: ['recent-worktrees', projectKey, limit],
-    queryFn: () => fetchRecentWorktrees(projects, limit, null),
+    queryKey: ['recent-worktrees', projectKey, limit, pinnedSessionIds],
+    queryFn: () => fetchRecentWorktrees(projects, limit, pinnedSessionIds),
     enabled: projects.length > 0,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
@@ -108,19 +142,28 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
     .some(row => isSnoozedSession(row.lastActivityAt))
   const displayedRows = useMemo(() => {
     const pinned = new Set(pinnedSessionIds)
-    return rows
-      .filter(
-        row =>
-          showSnoozed ||
-          pinned.has(row.session.id) ||
-          !isSnoozedSession(row.lastActivityAt)
-      )
-      .sort((a, b) => {
-        const aPinned = pinned.has(a.session.id)
-        const bPinned = pinned.has(b.session.id)
-        return aPinned === bPinned ? 0 : aPinned ? -1 : 1
-      })
-  }, [pinnedSessionIds, rows, showSnoozed])
+    const visibleRows = rows.filter(
+      row =>
+        showSnoozed ||
+        pinned.has(row.session.id) ||
+        !isSnoozedSession(row.lastActivityAt)
+    )
+    return sortRecentRows(
+      visibleRows,
+      pinned,
+      row =>
+        getRecentSessionStatus(row.session, {
+          sending: sendingSessionIds[row.session.id] ?? false,
+          waiting: waitingForInputSessionIds[row.session.id] ?? false,
+        }).tone === 'working'
+    )
+  }, [
+    pinnedSessionIds,
+    rows,
+    showSnoozed,
+    sendingSessionIds,
+    waitingForInputSessionIds,
+  ])
   const recentProjectKey = useMemo(
     () => [...new Set(rows.map(row => row.projectId))].sort().join('\0'),
     [rows]
@@ -139,24 +182,47 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
 
   const handleOpen = useCallback(
     (row: RecentWorktreeItem) => {
-      selectProject(row.projectId)
-      selectWorktree(row.worktree.id)
-      useChatStore.getState().clearActiveWorktree()
-      useChatStore.getState().setActiveSession(row.worktree.id, row.session.id)
-      window.setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent('open-session-modal', {
-            detail: {
-              sessionId: row.session.id,
-              worktreeId: row.worktree.id,
-              worktreePath: row.worktree.path,
-            },
-          })
+      const worktreeId = row.worktree.id
+      const sessionId = row.session.id
+      for (const queryKey of [
+        chatQueryKeys.sessions(worktreeId),
+        [...chatQueryKeys.sessions(worktreeId), 'with-counts'],
+      ]) {
+        queryClient.setQueryData<WorktreeSessions | undefined>(
+          queryKey,
+          current =>
+            mergeSessionIntoWorktreeSessions(current, worktreeId, row.session)
         )
-      }, 50)
+      }
+      void queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.sessions(worktreeId),
+      })
+
+      selectProject(row.projectId)
+      selectWorktree(worktreeId)
+      const chat = useChatStore.getState()
+      chat.registerWorktreePath(worktreeId, row.worktree.path)
+      chat.clearActiveWorktree()
+      chat.setActiveSession(worktreeId, sessionId)
+      chat.setLastOpenedForProject(row.projectId, worktreeId, sessionId)
+      // The project canvas remounts when the repo changes. A timed window
+      // event is lost during that remount, so queue the open until the new
+      // canvas is ready. Also dispatch now for a canvas that is already open.
+      useUIStore
+        .getState()
+        .markWorktreeForAutoOpenSession(worktreeId, sessionId)
+      window.dispatchEvent(
+        new CustomEvent('open-session-modal', {
+          detail: {
+            sessionId,
+            worktreeId,
+            worktreePath: row.worktree.path,
+          },
+        })
+      )
       if (isMobile) useUIStore.getState().setLeftSidebarVisible(false)
     },
-    [isMobile, selectProject, selectWorktree]
+    [isMobile, queryClient, selectProject, selectWorktree]
   )
 
   useEffect(() => {
@@ -221,6 +287,44 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
     (query.data?.failedServerIds.length ?? 0) +
     (query.data?.failedWorktreeIds.length ?? 0)
   const hiddenCount = Math.max(0, (query.data?.total ?? rows.length) - limit)
+  const footerButtonClass =
+    'flex h-8 items-center justify-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+  const footerActions = (
+    <>
+      {hiddenCount > 0 && !snoozedBoundaryLoaded && (
+        <button
+          type="button"
+          className={footerButtonClass}
+          onClick={() => setLimit(value => value + RECENT_PAGE_SIZE)}
+        >
+          <Plus className="size-3.5" /> Show{' '}
+          {Math.min(hiddenCount, RECENT_PAGE_SIZE)} more
+        </button>
+      )}
+      {snoozedBoundaryLoaded && !showSnoozed && (
+        <button
+          type="button"
+          className={footerButtonClass}
+          onClick={() => {
+            setShowSnoozed(true)
+            setLimit(value => value + RECENT_PAGE_SIZE)
+          }}
+        >
+          Show snoozed sessions
+        </button>
+      )}
+      {showSnoozed && hiddenCount > 0 && (
+        <button
+          type="button"
+          className={footerButtonClass}
+          onClick={() => setLimit(value => value + RECENT_PAGE_SIZE)}
+        >
+          <Plus className="size-3.5" /> Show{' '}
+          {Math.min(hiddenCount, RECENT_PAGE_SIZE)} more
+        </button>
+      )}
+    </>
+  )
 
   return (
     <div
@@ -250,8 +354,21 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
             const isWorking = status.tone === 'working'
             const isUnread = isUnreadSession(row.session)
             const isPinned = pinnedSessionIds.includes(row.session.id)
+            const showPinnedSeparator =
+              !isPinned &&
+              index > 0 &&
+              pinnedSessionIds.includes(
+                displayedRows[index - 1]?.session.id ?? ''
+              )
             return (
-              <li key={row.session.id} className="group relative">
+              <li key={row.session.id} className="group">
+                {showPinnedSeparator && (
+                  <div
+                    role="separator"
+                    aria-hidden="true"
+                    className="mx-1 mb-2 border-t border-border/70"
+                  />
+                )}
                 {showSnoozed &&
                   !isPinned &&
                   isSnoozedSession(row.lastActivityAt) &&
@@ -266,120 +383,101 @@ export function RecentWorktreesList({ projects }: RecentWorktreesListProps) {
                       Snoozed · inactive for 24 hours
                     </div>
                   )}
-                <button
-                  ref={element => {
-                    if (element) rowRefs.current.set(row.session.id, element)
-                    else rowRefs.current.delete(row.session.id)
-                  }}
-                  type="button"
-                  aria-current={isCurrent ? 'page' : undefined}
-                  aria-label={`${row.session.name}, ${row.projectName}, ${row.worktree.name}, ${status.label}${isUnread ? ', unread' : ''}, ${activityLabel}`}
-                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-1 rounded-lg border px-3 py-2.5 text-left transition-[background-color,border-color,box-shadow,color] hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${isCurrent ? 'border-border bg-muted/50 text-foreground shadow' : 'border-transparent bg-transparent text-muted-foreground'}`}
+                <div
+                  className={`flex w-full cursor-pointer flex-col gap-y-1 rounded-lg border py-2.5 pl-3 pr-3 text-left transition-[background-color,border-color,box-shadow,color] hover:bg-muted/30 hover:text-foreground has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-ring ${isCurrent ? 'border-border bg-muted/50 text-foreground shadow' : 'border-transparent bg-transparent text-muted-foreground'}`}
                   onClick={() => handleOpen(row)}
                 >
-                  <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
-                    {namingSessionIds[row.session.id]
-                      ? 'Generating…'
-                      : row.session.name}
-                  </span>
-                  <span className="flex min-w-14 items-center justify-end gap-1.5 text-[10px]">
-                    {isUnread && (
-                      <BellDot
-                        aria-label="Unread session"
-                        className="size-3.5 shrink-0 text-yellow-400"
-                      />
-                    )}
-                    {isWorking ? (
-                      <span
-                        aria-hidden="true"
-                        className="recent-working-waveform text-violet-500 dark:text-violet-400"
-                      >
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    ) : (
-                      status.tone !== 'completed' && (
-                        <span className={`font-medium ${statusClassName}`}>
-                          {status.label}
-                        </span>
-                      )
-                    )}
-                  </span>
-                  <span className="min-w-0 truncate text-[11px]">
-                    {row.projectName} · {row.worktree.name}
-                  </span>
-                  <time
-                    className="justify-self-end text-[10px] tabular-nums"
-                    dateTime={new Date(row.lastActivityAt * 1000).toISOString()}
+                  <button
+                    ref={element => {
+                      if (element) rowRefs.current.set(row.session.id, element)
+                      else rowRefs.current.delete(row.session.id)
+                    }}
+                    type="button"
+                    aria-current={isCurrent ? 'page' : undefined}
+                    aria-label={`${row.session.name}, ${row.projectName}, ${row.worktree.name}, ${status.label}${isUnread ? ', unread' : ''}, ${activityLabel}`}
+                    className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-1 text-left focus-visible:outline-none"
                   >
-                    {activity}
-                  </time>
-                  <span className="col-start-2 flex min-h-4 justify-self-end gap-1 text-[10px] font-medium tabular-nums">
-                    {(row.added > 0 || row.removed > 0) && (
-                      <>
-                        <span className="text-green-500">+{row.added}</span>
-                        <span className="text-red-500">-{row.removed}</span>
-                      </>
-                    )}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={isPinned ? 'Unpin session' : 'Pin session'}
-                  title={isPinned ? 'Unpin session' : 'Pin session'}
-                  className="absolute right-1 top-1 flex size-6 items-center justify-center rounded-md bg-background/90 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
-                  onClick={() =>
-                    useProjectsStore
-                      .getState()
-                      .toggleRecentSessionPinned(row.session.id)
-                  }
-                >
-                  <Pin
-                    className={`size-3.5 ${isPinned ? 'fill-current' : ''}`}
-                  />
-                </button>
+                    <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
+                      {namingSessionIds[row.session.id]
+                        ? 'Generating…'
+                        : row.session.name}
+                    </span>
+                    <span className="flex min-w-14 items-center justify-end gap-1.5 text-[10px]">
+                      {isUnread && (
+                        <BellDot
+                          aria-label="Unread session"
+                          className="size-3.5 shrink-0 text-yellow-400"
+                        />
+                      )}
+                      {isWorking ? (
+                        <span
+                          aria-hidden="true"
+                          className="recent-working-waveform text-violet-500 dark:text-violet-400"
+                        >
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      ) : (
+                        status.tone !== 'completed' && (
+                          <span className={`font-medium ${statusClassName}`}>
+                            {status.label}
+                          </span>
+                        )
+                      )}
+                    </span>
+                    <span className="min-w-0 truncate text-[11px]">
+                      {row.projectName} · {row.worktree.name}
+                    </span>
+                    <time
+                      className="justify-self-end text-[10px] tabular-nums"
+                      dateTime={new Date(
+                        row.lastActivityAt * 1000
+                      ).toISOString()}
+                    >
+                      {activity}
+                    </time>
+                  </button>
+                  <div className="flex min-h-4 items-center justify-between">
+                    <button
+                      type="button"
+                      aria-label={isPinned ? 'Unpin session' : 'Pin session'}
+                      title={isPinned ? 'Unpin session' : 'Pin session'}
+                      className="flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-opacity hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:focus-visible:opacity-100 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                      onClick={event => {
+                        event.stopPropagation()
+                        useProjectsStore
+                          .getState()
+                          .toggleRecentSessionPinned(row.session.id)
+                      }}
+                    >
+                      <PinTack
+                        size={14}
+                        weight={isPinned ? 'Filled' : 'Outline'}
+                      />
+                    </button>
+                    <span className="flex gap-1 text-[10px] font-medium tabular-nums">
+                      {(row.added > 0 || row.removed > 0) && (
+                        <>
+                          <span className="text-green-500">+{row.added}</span>
+                          <span className="text-red-500">-{row.removed}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                </div>
               </li>
             )
           })}
         </ul>
       </div>
-      {(hiddenCount > 0 ||
-        failedCount > 0 ||
-        (snoozedBoundaryLoaded && !showSnoozed)) && (
+      {footerActionsContainer &&
+        createPortal(footerActions, footerActionsContainer)}
+      {(failedCount > 0 ||
+        (!footerActionsContainer &&
+          (hiddenCount > 0 || (snoozedBoundaryLoaded && !showSnoozed)))) && (
         <div className="shrink-0 border-t border-border/40 p-2">
-          {hiddenCount > 0 && !snoozedBoundaryLoaded && (
-            <button
-              type="button"
-              className="flex h-8 w-full items-center justify-center gap-1 rounded-md text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              onClick={() => setLimit(value => value + RECENT_PAGE_SIZE)}
-            >
-              <Plus className="size-3.5" /> Show{' '}
-              {Math.min(hiddenCount, RECENT_PAGE_SIZE)} more
-            </button>
-          )}
-          {snoozedBoundaryLoaded && !showSnoozed && (
-            <button
-              type="button"
-              className="flex h-8 w-full items-center justify-center rounded-md text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              onClick={() => {
-                setShowSnoozed(true)
-                setLimit(value => value + RECENT_PAGE_SIZE)
-              }}
-            >
-              Show snoozed sessions
-            </button>
-          )}
-          {showSnoozed && hiddenCount > 0 && (
-            <button
-              type="button"
-              className="flex h-8 w-full items-center justify-center gap-1 rounded-md text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              onClick={() => setLimit(value => value + RECENT_PAGE_SIZE)}
-            >
-              <Plus className="size-3.5" /> Show{' '}
-              {Math.min(hiddenCount, RECENT_PAGE_SIZE)} more
-            </button>
-          )}
+          {!footerActionsContainer && footerActions}
           {failedCount > 0 && (
             <div
               role="status"

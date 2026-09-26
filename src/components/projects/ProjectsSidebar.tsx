@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  GitBranchPlus,
+  FolderPlus,
   Plus,
   AlertTriangle,
   ChevronDown,
@@ -25,7 +27,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useProjects } from '@/services/projects'
+import { useCreateFolder, useProjects } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -61,6 +63,8 @@ export function ProjectsSidebar() {
     refetch,
   } = useProjects()
   const { setAddProjectDialogOpen } = useProjectsStore()
+  const createFolder = useCreateFolder()
+  const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
   const sidebarWidth = useSidebarWidth()
   const isMobile = useIsMobile()
   const [backendCheckReady, setBackendCheckReady] = useState(false)
@@ -75,6 +79,9 @@ export function ProjectsSidebar() {
   const setActiveTab = useProjectsStore(state => state.setSidebarActiveTab)
   const [searchQuery, setSearchQuery] = useState('')
   const [appVersion, setAppVersion] = useState(FALLBACK_APP_VERSION)
+  const [footerActionsEl, setFooterActionsEl] = useState<HTMLDivElement | null>(
+    null
+  )
   const serverSnapshots = useServerConnectionSnapshots()
   const serverIds = useMemo(
     () => [...new Set(projects.map(projectServerId))],
@@ -116,6 +123,17 @@ export function ProjectsSidebar() {
     setAddProjectDialogOpen(true)
   }, [isMobile, setAddProjectDialogOpen])
 
+  const handleNewFolder = useCallback(() => {
+    setSearchQuery('')
+    createFolder.mutate({ name: 'New Folder' })
+  }, [createFolder])
+
+  const handleNewWorktree = useCallback(() => {
+    if (!selectedProjectId) return
+    closeMobileSidebarIfNeeded(isMobile)
+    useUIStore.getState().setNewWorktreeModalOpen(true)
+  }, [isMobile, selectedProjectId])
+
   const handleOpenSettings = useCallback(() => {
     closeMobileSidebarIfNeeded(isMobile)
     useUIStore.getState().togglePreferences()
@@ -150,7 +168,7 @@ export function ProjectsSidebar() {
         {activeTab === 'projects' ? (
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             <div className="border-b border-border/40 pb-2 pt-[3px]">
-              <div className="flex gap-2 px-3 pt-2">
+              <div className="flex gap-1 px-3 pt-2">
                 <div className="relative min-w-0 flex-1">
                   <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -159,22 +177,57 @@ export function ProjectsSidebar() {
                     onChange={event => setSearchQuery(event.target.value)}
                     placeholder="Search projects…"
                     aria-label="Search projects and worktrees"
-                    className="h-8 bg-background/40 pl-7 pr-2 text-xs shadow-none"
+                    className="h-8 border-transparent bg-transparent pl-7 pr-2 text-xs shadow-none focus-visible:border-transparent dark:bg-transparent"
                   />
                 </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                      onClick={handleNewProject}
+                <DropdownMenu>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          aria-label="Add project or folder"
+                        >
+                          <Plus className="size-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Add project or folder</TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={handleNewProject}
                       disabled={!backendCheckReady || setupIncomplete}
                       aria-label="Add project"
                     >
                       <Plus className="size-3.5" />
+                      Add project
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={handleNewFolder}
+                      disabled={createFolder.isPending}
+                    >
+                      <FolderPlus className="size-3.5" />
+                      New folder
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                      onClick={handleNewWorktree}
+                      disabled={!selectedProjectId}
+                      aria-label="Add worktree to selected project"
+                    >
+                      <GitBranchPlus className="size-3.5" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent>Add project</TooltipContent>
+                  <TooltipContent>
+                    Add worktree to selected project
+                  </TooltipContent>
                 </Tooltip>
               </div>
             </div>
@@ -295,7 +348,10 @@ export function ProjectsSidebar() {
             )}
           </div>
         ) : (
-          <RecentWorktreesList projects={visibleProjects} />
+          <RecentWorktreesList
+            projects={visibleProjects}
+            footerActionsContainer={footerActionsEl}
+          />
         )}
       </div>
       <div
@@ -319,6 +375,10 @@ export function ProjectsSidebar() {
           </TooltipTrigger>
           <TooltipContent side="right">Settings</TooltipContent>
         </Tooltip>
+        <div
+          ref={setFooterActionsEl}
+          className="flex min-w-0 flex-1 justify-center"
+        />
         <button
           type="button"
           onClick={() =>

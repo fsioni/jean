@@ -43,6 +43,7 @@ import { useBrowserStore } from '@/store/browser-store'
 import { useUIStore } from '@/store/ui-store'
 import {
   useSessions,
+  useSession,
   useCreateSession,
   useClearSessionHistory,
   useRenameSession,
@@ -51,6 +52,7 @@ import {
 } from '@/services/chat'
 import { resolveBackendCliPath } from '@/services/cli-binary'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import { usePackageScripts, type PackageScript } from '@/services/projects'
 import { useGitHubPRs } from '@/services/github'
 import {
@@ -86,6 +88,7 @@ import {
 import { SessionStatusMenu } from './SessionStatusMenu'
 import {
   resolveModalSessionId,
+  sessionsForTabBar,
   sortSessionCardsForTabs,
 } from './session-tab-order'
 import { useCanvasStoreState } from './hooks/useCanvasStoreState'
@@ -220,13 +223,48 @@ export function SessionChatModal({
   }, [])
   const { data: sessionsData } = useSessions(
     worktreeId || null,
-    worktreePath || null
+    worktreePath || null,
+    { refetchOnMount: 'always' }
   )
   const sessions = useMemo(
     () => sessionsData?.sessions ?? [],
     [sessionsData?.sessions]
   )
-  const { data: preferences } = usePreferences()
+  // Active session from store. The chat can render from this id before the
+  // worktree session list arrives. Keep that session in the tab row.
+  const activeSessionId = useChatStore(
+    state => state.activeSessionIds[worktreeId]
+  )
+  const activeSessionIsListed =
+    !!activeSessionId &&
+    sessions.some(session => session.id === activeSessionId)
+  const { data: missingActiveSession, isError: missingActiveSessionFailed } =
+    useSession(
+      activeSessionIsListed ? null : (activeSessionId ?? null),
+      worktreeId || null,
+      worktreePath || null
+    )
+  // A deleted session keeps its id in the store (persisted UI state, other
+  // clients). Once the list has loaded and the direct lookup fails, fall back
+  // to a listed session so one tab is always selected.
+  const activeSessionGone = !!sessionsData && missingActiveSessionFailed
+  const currentSessionId = resolveModalSessionId(
+    activeSessionId,
+    sessions.map(session => session.id),
+    sessionsData?.active_session_id,
+    activeSessionGone
+  )
+  const tabSessions = useMemo(
+    () =>
+      sessionsForTabBar(
+        sessions,
+        activeSessionGone ? null : (missingActiveSession ?? null)
+      ),
+    [activeSessionGone, missingActiveSession, sessions]
+  )
+  const showSessionTabs = tabSessions.length > 0 || !!currentSessionId
+  const serverId = parseServerResourceKey(worktreeId)?.serverId
+  const { data: preferences } = usePreferences(serverId)
   const { data: packageScripts = [] } = usePackageScripts(worktreePath)
   const modalTerminalDockMode = useTerminalStore(
     state => state.modalTerminalDockMode
@@ -255,24 +293,17 @@ export function SessionChatModal({
 
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
-  }, [sessions.length, zenMode])
+  }, [showSessionTabs, zenMode])
 
-  // Active session from store
-  const activeSessionId = useChatStore(
-    state => state.activeSessionIds[worktreeId]
-  )
-  const currentSessionId = resolveModalSessionId(
-    activeSessionId,
-    sessions.map(session => session.id)
-  )
-  const currentSession = sessions.find(s => s.id === currentSessionId) ?? null
+  const currentSession =
+    tabSessions.find(session => session.id === currentSessionId) ?? null
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
   // Compute card data once per session — same derivation as ProjectCanvasView,
   // so canvas badges and modal tab badges stay in sync.
   const cards = useMemo(
-    () => sessions.map(s => computeSessionCardData(s, storeState)),
-    [sessions, storeState]
+    () => tabSessions.map(s => computeSessionCardData(s, storeState)),
+    [storeState, tabSessions]
   )
 
   const cardForSession = useCallback(
@@ -304,7 +335,7 @@ export function SessionChatModal({
       }
     })
     return () => cancelAnimationFrame(scrollId)
-  }, [isOpen, currentSessionId, sessions.length, currentSessionStatus])
+  }, [isOpen, currentSessionId, tabSessions.length, currentSessionStatus])
 
   // The canvas already loaded the complete worktree and project records. Use
   // that snapshot for the first modal paint instead of issuing another query,
@@ -401,12 +432,15 @@ export function SessionChatModal({
   const handleRenameSubmit = useCallback(
     (sessionId: string) => {
       const newName = renameValue.trim()
-      if (newName && newName !== sessions.find(s => s.id === sessionId)?.name) {
+      if (
+        newName &&
+        newName !== tabSessions.find(session => session.id === sessionId)?.name
+      ) {
         renameSession.mutate({ worktreeId, worktreePath, sessionId, newName })
       }
       setRenamingSessionId(null)
     },
-    [renameValue, worktreeId, worktreePath, renameSession, sessions]
+    [renameValue, worktreeId, worktreePath, renameSession, tabSessions]
   )
 
   const handleRenameKeyDown = useCallback(
@@ -429,7 +463,7 @@ export function SessionChatModal({
     ) => {
       const sessionId = e.detail?.sessionId
       if (!sessionId) return
-      const session = sessions.find(s => s.id === sessionId)
+      const session = tabSessions.find(s => s.id === sessionId)
       if (!session || session.archived_at) return
 
       setRenameValue(session.name)
@@ -445,7 +479,7 @@ export function SessionChatModal({
         'command:rename-session',
         handleRenameSessionCommand as EventListener
       )
-  }, [isOpen, sessions])
+  }, [isOpen, tabSessions])
 
   const renameInputRef = useCallback((node: HTMLInputElement | null) => {
     if (node) {
@@ -499,7 +533,7 @@ export function SessionChatModal({
 
   const removeSessionTab = useCallback(
     (session: Session) => {
-      const activeSessions = sessions.filter(s => !s.archived_at)
+      const activeSessions = tabSessions.filter(s => !s.archived_at)
       const sessionIsEmpty = !session.message_count
       // Confirm any non-empty session when preference is on (default). Only
       // confirming the last tab allowed held/cascade closes to wipe chats
@@ -525,7 +559,7 @@ export function SessionChatModal({
       }
     },
     [
-      sessions,
+      tabSessions,
       handleDeleteSession,
       preferences?.confirm_session_close,
       selectVisualNeighbor,
@@ -546,7 +580,7 @@ export function SessionChatModal({
     if (!isOpen) return
     const handler = (e: Event) => {
       e.stopImmediatePropagation()
-      const activeSessions = sessions.filter(s => !s.archived_at)
+      const activeSessions = tabSessions.filter(s => !s.archived_at)
       if (activeSessions.length === 0) {
         setCloseConfirmMode('worktree')
         pendingCloseAction.current = () => {
@@ -566,7 +600,7 @@ export function SessionChatModal({
           handleDeleteSession(currentSessionId)
         }
       }
-      const currentSession = sessions.find(s => s.id === currentSessionId)
+      const currentSession = tabSessions.find(s => s.id === currentSessionId)
       const sessionIsEmpty = !currentSession?.message_count
       if (preferences?.confirm_session_close !== false && !sessionIsEmpty) {
         setCloseConfirmMode('session')
@@ -585,7 +619,7 @@ export function SessionChatModal({
       })
   }, [
     isOpen,
-    sessions,
+    tabSessions,
     currentSessionId,
     handleDeleteSession,
     selectVisualNeighbor,
@@ -1122,7 +1156,7 @@ export function SessionChatModal({
                   {!zenMode && (
                     <>
                       {/* Desktop: secondary tools that are not in the menu */}
-                      <div className="hidden 2xl:flex items-center gap-1">
+                      <div className="hidden lg:flex items-center gap-1">
                         <OpenInButton
                           worktreePath={worktreePath}
                           serverId={worktree?.serverId}
@@ -1157,7 +1191,7 @@ export function SessionChatModal({
           )}
 
           {/* Session tabs — hidden in zen mode for an immersive chat surface */}
-          {!zenMode && sessions.length > 0 && (
+          {!zenMode && showSessionTabs && (
             <div
               className={cn(
                 'relative flex shrink-0 items-center gap-0.5 border-b border-border/40 pr-4',

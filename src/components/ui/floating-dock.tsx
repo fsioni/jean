@@ -46,6 +46,7 @@ import { useWsConnectionStatus } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
 import { copyToClipboard } from '@/lib/clipboard'
+import { formatUsagePair } from '@/lib/usage-format'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
@@ -53,29 +54,17 @@ import { useTerminalStore } from '@/store/terminal-store'
 import { chatQueryKeys } from '@/services/chat'
 import { usePreferences } from '@/services/preferences'
 import { useWorktree, type GitHubRemote } from '@/services/projects'
-import {
-  useClaudeCliAuth,
-  useClaudeCliStatus,
-  useClaudeUsage,
-} from '@/services/claude-cli'
-import {
-  useCodexCliAuth,
-  useCodexCliStatus,
-  useCodexUsage,
-} from '@/services/codex-cli'
-import {
-  useGrokCliAuth,
-  useGrokCliStatus,
-  useGrokUsage,
-} from '@/services/grok-cli'
 import type { WorktreeSessions } from '@/types/chat'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import type { KeybindingHint } from '@/components/ui/keybinding-hints'
 import { getResumeCommand } from '@/components/chat/session-card-utils'
 import { shouldHideFloatingDock } from './floating-dock-visibility'
-import { ClaudeIcon } from '@/components/icons/ClaudeIcon'
-import { CodexIcon } from '@/components/icons/CodexIcon'
-import { GrokIcon } from '@/components/icons/GrokIcon'
+import {
+  UsageEntryTitle,
+  UsageEntryWindows,
+  UsageMenuItem,
+  useUsageEntries,
+} from '@/components/usage/usage-entries'
 
 // Canvas-specific hints (used in ProjectCanvasView)
 const CANVAS_HINTS: KeybindingHint[] = [
@@ -230,87 +219,18 @@ export function FloatingDock() {
     | 'commandcode'
     | 'grok'
 
-  const claudeStatus = useClaudeCliStatus()
-  const claudeAuth = useClaudeCliAuth({
-    enabled: !!claudeStatus.data?.installed,
-  })
-  const claudeUsage = useClaudeUsage({
-    enabled:
-      !!claudeStatus.data?.installed &&
-      !!claudeAuth.data?.authenticated &&
-      shouldFetchUsage,
-  })
-
-  const codexStatus = useCodexCliStatus()
-  const codexAuth = useCodexCliAuth({
-    enabled: !!codexStatus.data?.installed,
-  })
-  const codexUsage = useCodexUsage({
-    enabled:
-      !!codexStatus.data?.installed &&
-      !!codexAuth.data?.authenticated &&
-      shouldFetchUsage,
-  })
-
-  const grokStatus = useGrokCliStatus()
-  const grokAuth = useGrokCliAuth({
-    enabled: !!grokStatus.data?.installed,
-  })
-  const grokUsage = useGrokUsage({
-    enabled:
-      !!grokStatus.data?.installed &&
-      !!grokAuth.data?.authenticated &&
-      shouldFetchUsage,
-  })
-
   // Only installed + authenticated backends appear in the usage menu.
-  const usageEntries = [
-    {
-      id: 'claude' as const,
-      label: 'Claude',
-      Icon: ClaudeIcon,
-      plan: claudeUsage.data?.planType ?? null,
-      session: claudeUsage.data?.session?.usedPercent ?? null,
-      weekly: claudeUsage.data?.weekly?.usedPercent ?? null,
-      available:
-        !!claudeStatus.data?.installed && !!claudeAuth.data?.authenticated,
-    },
-    {
-      id: 'codex' as const,
-      label: 'Codex',
-      Icon: CodexIcon,
-      plan: codexUsage.data?.planType ?? null,
-      session: codexUsage.data?.session?.usedPercent ?? null,
-      weekly: codexUsage.data?.weekly?.usedPercent ?? null,
-      available:
-        !!codexStatus.data?.installed && !!codexAuth.data?.authenticated,
-    },
-    {
-      id: 'grok' as const,
-      label: 'Grok',
-      Icon: GrokIcon,
-      plan: grokUsage.data?.planType ?? null,
-      session: grokUsage.data?.session?.usedPercent ?? null,
-      weekly: grokUsage.data?.weekly?.usedPercent ?? null,
-      available:
-        !!grokStatus.data?.installed && !!grokAuth.data?.authenticated,
-    },
-  ].filter(entry => entry.available)
+  const usageEntries = useUsageEntries(shouldFetchUsage)
 
   const activeUsageEntry =
     usageEntries.find(entry => entry.id === activeBackend) ??
     usageEntries[0] ??
     null
 
-  const usageBadge = (() => {
-    const session = activeUsageEntry?.session ?? null
-    const weekly = activeUsageEntry?.weekly ?? null
-    const sessionText = session === null ? '--' : `${Math.round(session)}`
-    const weeklyText = weekly === null ? '--' : `${Math.round(weekly)}`
-    return {
-      text: `${sessionText}|${weeklyText}%`,
-    }
-  })()
+  const usageBadgeText = formatUsagePair(
+    activeUsageEntry?.session?.usedPercent,
+    activeUsageEntry?.weekly?.usedPercent
+  )
 
   const getActiveResumeCommand = useCallback(() => {
     const { selectedWorktreeId: currentWorktreeId } =
@@ -541,9 +461,7 @@ export function FloatingDock() {
                 Jean on GitHub
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() =>
-                  openExternal('https://jean.build/sponsorships/')
-                }
+                onClick={() => openExternal('https://jean.build/sponsorships/')}
               >
                 <Heart className="mr-2 h-4 w-4 text-pink-500" />
                 Sponsor Jean
@@ -615,53 +533,34 @@ export function FloatingDock() {
                 >
                   <activeUsageEntry.Icon className="size-4 shrink-0 xl:mr-1 xl:size-3.5" />
                   <span className="hidden text-[11px] leading-none tabular-nums xl:inline">
-                    {usageBadge.text}
+                    {usageBadgeText}
                   </span>
                 </Button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent side={popoverSide}>
-              {activeUsageEntry.label} Session|Weekly{' '}
-              {showKeybindingHints && (
-                <kbd className="ml-1 text-[0.625rem] opacity-60">
-                  {usageShortcut}
-                </kbd>
-              )}
+            <TooltipContent side={popoverSide} className="min-w-[200px]">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-3 font-medium">
+                  <UsageEntryTitle entry={activeUsageEntry} />
+                  {showKeybindingHints && (
+                    <kbd className="text-[0.625rem] opacity-60">
+                      {usageShortcut}
+                    </kbd>
+                  )}
+                </div>
+                <UsageEntryWindows entry={activeUsageEntry} />
+              </div>
             </TooltipContent>
           </Tooltip>
           <DropdownMenuContent
             side={popoverSide}
             align={popoverAlign}
-            className="min-w-[180px]"
+            className="min-w-[240px]"
             onEscapeKeyDown={e => e.stopPropagation()}
           >
-            {usageEntries.map(entry => {
-              const sessionText =
-                entry.session === null ? '--' : `${Math.round(entry.session)}`
-              const weeklyText =
-                entry.weekly === null ? '--' : `${Math.round(entry.weekly)}`
-              const planText =
-                entry.plan && entry.plan.trim().length > 0 ? entry.plan : '--'
-              return (
-                <DropdownMenuItem
-                  key={entry.id}
-                  onClick={() =>
-                    useUIStore.getState().openPreferencesPane('usage')
-                  }
-                >
-                  <entry.Icon className="mr-2 h-4 w-4 shrink-0" />
-                  <div className="flex min-w-0 flex-col">
-                    <span>{entry.label}</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      Plan: {planText}
-                    </span>
-                  </div>
-                  <DropdownMenuShortcut>
-                    {sessionText}|{weeklyText}%
-                  </DropdownMenuShortcut>
-                </DropdownMenuItem>
-              )
-            })}
+            {usageEntries.map(entry => (
+              <UsageMenuItem key={entry.id} entry={entry} />
+            ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => useUIStore.getState().openPreferencesPane('usage')}

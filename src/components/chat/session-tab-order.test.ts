@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { Session } from '@/types/chat'
 import type { SessionCardData } from './session-card-utils'
 import {
+  mergeSessionIntoWorktreeSessions,
+  resolveInitialActiveSessionId,
   resolveModalSessionId,
+  sessionsForTabBar,
   sortSessionCardsForTabs,
 } from './session-tab-order'
 
@@ -83,5 +86,109 @@ describe('resolveModalSessionId', () => {
 
   it('returns null when there is no active session and no sessions', () => {
     expect(resolveModalSessionId(undefined, [])).toBeNull()
+  })
+
+  it('selects the backend last-used session when the client has none', () => {
+    expect(
+      resolveModalSessionId(undefined, ['first', 'last-used'], 'last-used')
+    ).toBe('last-used')
+  })
+
+  it('selects the only empty session when the client has none', () => {
+    expect(resolveModalSessionId(undefined, ['empty'], null)).toBe('empty')
+  })
+
+  it('ignores a backend selection absent from the current list', () => {
+    expect(resolveModalSessionId(undefined, ['empty'], 'removed')).toBe('empty')
+  })
+
+  it('falls back to the backend selection when the active session is gone', () => {
+    expect(
+      resolveModalSessionId(
+        'deleted',
+        ['first', 'last-used'],
+        'last-used',
+        true
+      )
+    ).toBe('last-used')
+  })
+
+  it('falls back to the first session when the active session is gone', () => {
+    expect(resolveModalSessionId('deleted', ['first'], null, true)).toBe(
+      'first'
+    )
+  })
+})
+
+describe('resolveInitialActiveSessionId', () => {
+  it('does not replace the selected session when a refresh omits it', () => {
+    expect(
+      resolveInitialActiveSessionId('running', 'other', ['other'])
+    ).toBeNull()
+  })
+
+  it('uses the persisted backend selection when the client has none', () => {
+    expect(
+      resolveInitialActiveSessionId(undefined, 'persisted', [
+        'first',
+        'persisted',
+      ])
+    ).toBe('persisted')
+  })
+
+  it('falls back to the first session when no selection is persisted', () => {
+    expect(
+      resolveInitialActiveSessionId(undefined, null, ['first', 'second'])
+    ).toBe('first')
+  })
+})
+
+describe('sessionsForTabBar', () => {
+  it('keeps the open session when the worktree list is empty', () => {
+    const open = session('open', 1)
+
+    expect(sessionsForTabBar([], open).map(item => item.id)).toEqual(['open'])
+  })
+
+  it('does not duplicate a session that is already in the list', () => {
+    const open = session('open', 1)
+    const other = session('other', 2)
+
+    expect(sessionsForTabBar([other, open], open).map(item => item.id)).toEqual(
+      ['other', 'open']
+    )
+  })
+})
+
+describe('mergeSessionIntoWorktreeSessions', () => {
+  it('creates a list from the known session when the cache is empty', () => {
+    const open = session('open', 1)
+
+    expect(
+      mergeSessionIntoWorktreeSessions(undefined, 'worktree-1', open)
+    ).toMatchObject({
+      worktree_id: 'worktree-1',
+      active_session_id: 'open',
+      sessions: [open],
+    })
+  })
+
+  it('adds the known session without dropping sessions already cached', () => {
+    const open = session('open', 1)
+    const other = session('other', 2)
+
+    const merged = mergeSessionIntoWorktreeSessions(
+      {
+        worktree_id: 'worktree-1',
+        sessions: [other],
+        active_session_id: 'other',
+        version: 2,
+      },
+      'worktree-1',
+      open
+    )
+
+    expect(merged.sessions.map(item => item.id)).toEqual(['other', 'open'])
+    expect(merged.active_session_id).toBe('other')
   })
 })

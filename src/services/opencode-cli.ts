@@ -153,8 +153,12 @@ export function useAvailableOpencodeVersions(options?: { enabled?: boolean }) {
 }
 export const useAvailableOpenCodeVersions = useAvailableOpencodeVersions
 
-export function useAvailableOpencodeModels(options?: { enabled?: boolean }) {
-  const serverId = useOptionalSettingsTargetServerId()
+export function useAvailableOpencodeModels(options?: {
+  enabled?: boolean
+  serverId?: string
+}) {
+  const settingsServerId = useOptionalSettingsTargetServerId()
+  const serverId = options?.serverId ?? settingsServerId
   return useQuery({
     queryKey: [...opencodeCliQueryKeys.models(), serverId ?? 'local'],
     queryFn: async (): Promise<string[]> => {

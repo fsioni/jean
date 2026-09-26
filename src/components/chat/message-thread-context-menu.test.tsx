@@ -11,6 +11,12 @@ const mocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  downloadLocalFile: vi.fn(),
+}))
+
+vi.mock('@/lib/local-file', () => ({
+  downloadLocalFile: mocks.downloadLocalFile,
+  resolveWorktreeFilePath: (path: string) => `/repo/${path}`,
 }))
 
 vi.mock('@/lib/clipboard', () => ({
@@ -65,6 +71,62 @@ describe('MessageThreadContextMenu', () => {
     mocks.toastSuccess.mockReset()
     mocks.toastError.mockReset()
     mocks.copyToClipboard.mockResolvedValue(undefined)
+    mocks.downloadLocalFile.mockReset()
+    mocks.downloadLocalFile.mockResolvedValue(undefined)
+  })
+
+  it('downloads a file path from inline code', async () => {
+    const user = userEvent.setup()
+    render(
+      <MessageThreadContextMenu messageText="Full message body">
+        <div>
+          Play <code data-file-path="out/video.mp4">out/video.mp4</code>
+        </div>
+      </MessageThreadContextMenu>
+    )
+
+    fireEvent.contextMenu(screen.getByText('out/video.mp4'))
+    await user.click(
+      await screen.findByRole('menuitem', { name: /download file/i })
+    )
+
+    expect(mocks.downloadLocalFile).toHaveBeenCalledWith('/repo/out/video.mp4')
+  })
+
+  it('shows Download file on touch long press without contextmenu (iOS)', async () => {
+    render(
+      <MessageThreadContextMenu messageText="Full message body">
+        <div>
+          Play <code data-file-path="out/video.mp4">out/video.mp4</code>
+        </div>
+      </MessageThreadContextMenu>
+    )
+
+    fireEvent.pointerDown(screen.getByText('out/video.mp4'), {
+      pointerType: 'touch',
+    })
+
+    expect(
+      await screen.findByRole(
+        'menuitem',
+        { name: /download file/i },
+        { timeout: 2000 }
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('hides Download file outside file-path code', async () => {
+    render(
+      <MessageThreadContextMenu messageText="Full message body">
+        <div>message body</div>
+      </MessageThreadContextMenu>
+    )
+
+    fireEvent.contextMenu(screen.getByText('message body'))
+    await screen.findByRole('menuitem', { name: /copy message/i })
+    expect(
+      screen.queryByRole('menuitem', { name: /download file/i })
+    ).not.toBeInTheDocument()
   })
 
   it('shows Copy message and copies full text when nothing is selected', async () => {

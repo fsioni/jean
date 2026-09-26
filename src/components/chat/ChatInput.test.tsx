@@ -49,6 +49,88 @@ vi.mock('./FileMentionPopover', () => ({
   FileMentionPopover: () => null,
 }))
 
+vi.mock('./ContextMentionPopover', () => ({
+  ContextMentionPopover: ({
+    open,
+    onSelectContext,
+  }: {
+    open: boolean
+    onSelectContext: (item: unknown, investigate: boolean) => void
+  }) =>
+    open ? (
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            onSelectContext(
+              {
+                id: 'issue:123',
+                type: 'issue',
+                label: '#123',
+                title: 'Login fails',
+                issue: { number: 123, title: 'Login fails' },
+              },
+              false
+            )
+          }
+        >
+          Add selected issue
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onSelectContext(
+              {
+                id: 'issue:123',
+                type: 'issue',
+                label: '#123',
+                title: 'Login fails',
+                issue: { number: 123, title: 'Login fails' },
+              },
+              true
+            )
+          }
+        >
+          Investigate selected issue
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onSelectContext(
+              {
+                id: 'pr:45',
+                type: 'pr',
+                label: 'PR #45',
+                title: 'Fix login',
+                pr: { number: 45, title: 'Fix login' },
+              },
+              true
+            )
+          }
+        >
+          Investigate selected PR
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onSelectContext(
+              {
+                id: 'pr:45',
+                type: 'pr',
+                label: 'PR #45',
+                title: 'Fix login',
+                pr: { number: 45, title: 'Fix login' },
+              },
+              false
+            )
+          }
+        >
+          Add selected PR
+        </button>
+      </>
+    ) : null,
+}))
+
 vi.mock('./SlashPopover', () => ({
   SlashPopover: slashPopoverMock,
 }))
@@ -65,7 +147,11 @@ vi.mock('@/store/chat-store', () => ({
 }))
 
 describe('ChatInput attachments', () => {
-  const renderInput = (activeSessionId = 'session-1') => {
+  const renderInput = (
+    activeSessionId = 'session-1',
+    investigateIssuePrompt?: string,
+    investigatePRPrompt?: string
+  ) => {
     const formRef = createRef<HTMLFormElement>()
     const inputRef = createRef<HTMLTextAreaElement>()
 
@@ -80,6 +166,8 @@ describe('ChatInput attachments', () => {
         onCancel={vi.fn()}
         formRef={formRef}
         inputRef={inputRef}
+        investigateIssuePrompt={investigateIssuePrompt}
+        investigatePRPrompt={investigatePRPrompt}
       />
     )
 
@@ -154,6 +242,111 @@ describe('ChatInput attachments', () => {
 
     expect(onSubmit).toHaveBeenCalledOnce()
     expect(prompt).toHaveValue('Keep me')
+  })
+
+  it('attaches an issue before adding its magic investigation prompt to the draft', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const textarea = renderInput(
+      'session-1',
+      'Investigate the loaded GitHub {issueWord} ({issueRefs})'
+    )
+
+    fireEvent.change(textarea, { target: { value: '#42' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Investigate selected issue' })
+    )
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('load_issue_context', {
+        sessionId: 'session-1',
+        issueNumber: 123,
+        projectPath: '/tmp/worktree',
+      })
+      expect(storeState.setInputDraft).toHaveBeenCalledWith(
+        'session-1',
+        'Investigate the loaded GitHub issue (#123)'
+      )
+    })
+    expect(textarea.value).toBe('Investigate the loaded GitHub issue (#123)')
+  })
+
+  it('removes the typed hash and number after attaching an issue', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const textarea = renderInput()
+
+    fireEvent.change(textarea, { target: { value: '#42' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected issue' }))
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('load_issue_context', {
+        sessionId: 'session-1',
+        issueNumber: 123,
+        projectPath: '/tmp/worktree',
+      })
+      expect(storeState.setInputDraft).toHaveBeenCalledWith('session-1', '')
+    })
+    expect(textarea.value).toBe('')
+  })
+
+  it('removes only the typed hash query when other draft text exists', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const textarea = renderInput()
+
+    fireEvent.change(textarea, { target: { value: 'Check this #42' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected issue' }))
+
+    await waitFor(() => {
+      expect(storeState.setInputDraft).toHaveBeenCalledWith(
+        'session-1',
+        'Check this '
+      )
+    })
+    expect(textarea.value).toBe('Check this ')
+  })
+
+  it('attaches a PR before adding its magic investigation prompt to the draft', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const textarea = renderInput(
+      'session-1',
+      undefined,
+      'Investigate the loaded GitHub {prWord} ({prRefs})'
+    )
+
+    fireEvent.change(textarea, { target: { value: '#' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Investigate selected PR' })
+    )
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('load_pr_context', {
+        sessionId: 'session-1',
+        prNumber: 45,
+        projectPath: '/tmp/worktree',
+      })
+      expect(storeState.setInputDraft).toHaveBeenCalledWith(
+        'session-1',
+        'Investigate the loaded GitHub PR (#45)'
+      )
+    })
+    expect(textarea.value).toBe('Investigate the loaded GitHub PR (#45)')
+  })
+
+  it('removes the typed hash and number after attaching a PR', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const textarea = renderInput()
+
+    fireEvent.change(textarea, { target: { value: '#42' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected PR' }))
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('load_pr_context', {
+        sessionId: 'session-1',
+        prNumber: 45,
+        projectPath: '/tmp/worktree',
+      })
+      expect(storeState.setInputDraft).toHaveBeenCalledWith('session-1', '')
+    })
+    expect(textarea.value).toBe('')
   })
 
   it('opens the skill picker when typing $ for a Codex session', () => {
@@ -299,6 +492,13 @@ describe('ChatInput attachments', () => {
     expect(textarea.parentElement).toHaveClass('min-w-0')
   })
 
+  it('limits the normal textarea height to keep chat messages visible', () => {
+    const textarea = renderInput()
+
+    expect(textarea).toHaveClass('max-h-[30vh]')
+    expect(textarea).not.toHaveClass('max-h-[50vh]')
+  })
+
   it('caps the textarea height in mobile zen mode', () => {
     mobileState.value = true
     useUIStore.setState({ zenMode: true })
@@ -306,7 +506,7 @@ describe('ChatInput attachments', () => {
     const textarea = renderInput()
 
     expect(textarea).toHaveClass('h-12', 'max-h-12')
-    expect(textarea).not.toHaveClass('max-h-[50vh]')
+    expect(textarea).not.toHaveClass('max-h-[30vh]')
   })
 
   it('uses a compact textarea height in desktop zen mode', () => {
@@ -315,7 +515,7 @@ describe('ChatInput attachments', () => {
     const textarea = renderInput()
 
     expect(textarea).toHaveClass('h-12', 'max-h-12')
-    expect(textarea).not.toHaveClass('max-h-[50vh]')
+    expect(textarea).not.toHaveClass('max-h-[30vh]')
     expect(screen.queryByText('to focus')).not.toBeInTheDocument()
   })
 

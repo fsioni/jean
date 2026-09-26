@@ -18,6 +18,16 @@ describe('hasQuestionAnswerOutput', () => {
   it('returns false for Claude blocking-tool error output', () => {
     expect(hasQuestionAnswerOutput('Answer questions?')).toBe(false)
     expect(hasQuestionAnswerOutput('Error: Answer questions?')).toBe(false)
+    expect(
+      hasQuestionAnswerOutput(
+        'Permission to use AskUserQuestion was not granted.'
+      )
+    ).toBe(false)
+    expect(
+      hasQuestionAnswerOutput(
+        '<tool_use_error>Answer questions?</tool_use_error>'
+      )
+    ).toBe(false)
   })
 
   it('returns true for persisted JSON answers', () => {
@@ -225,7 +235,10 @@ describe('TodoWrite (Grok + Claude)', () => {
         name: 'todo_write',
         input: {
           merge: true,
-          todos: [{ id: '2', status: 'completed' }, { id: '3', status: 'completed' }],
+          todos: [
+            { id: '2', status: 'completed' },
+            { id: '3', status: 'completed' },
+          ],
         },
       },
     ]
@@ -252,27 +265,26 @@ describe('TodoWrite (Grok + Claude)', () => {
   })
 })
 
+it('recognizes and parses Claude AskUserQuestion with questions encoded as JSON string', () => {
+  const toolCall = {
+    id: 'claude-question-1',
+    name: 'AskUserQuestion',
+    input: {
+      questions:
+        '[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A"}]}]',
+    },
+  }
 
-  it('recognizes and parses Claude AskUserQuestion with questions encoded as JSON string', () => {
-    const toolCall = {
-      id: 'claude-question-1',
-      name: 'AskUserQuestion',
-      input: {
-        questions:
-          '[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A"}]}]',
-      },
-    }
-
-    expect(isAskUserQuestion(toolCall)).toBe(true)
-    expect(getAskUserQuestions(toolCall.input)).toEqual([
-      {
-        question: 'Pick one',
-        header: 'Choice',
-        multiSelect: false,
-        options: [{ label: 'A' }],
-      },
-    ])
-  })
+  expect(isAskUserQuestion(toolCall)).toBe(true)
+  expect(getAskUserQuestions(toolCall.input)).toEqual([
+    {
+      question: 'Pick one',
+      header: 'Choice',
+      multiSelect: false,
+      options: [{ label: 'A' }],
+    },
+  ])
+})
 
 describe('buildCodexUserInputAnswerMap', () => {
   it('maps selected option labels and custom text by Codex question id', () => {

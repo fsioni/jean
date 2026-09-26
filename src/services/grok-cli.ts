@@ -46,6 +46,13 @@ const fallbackGrokVersions: GrokReleaseInfo[] = [
   { version: 'latest', tagName: 'latest', publishedAt: '', prerelease: false },
 ]
 
+const fallbackGrokModels: GrokModelInfo[] = [
+  { id: 'grok-4.7-build-fast', label: 'Grok 4.7 Fast', isDefault: false },
+  { id: 'grok-4.7', label: 'Grok 4.7', isDefault: false },
+  { id: 'grok-4.6', label: 'Grok 4.6', isDefault: true },
+  { id: 'grok-4.5', label: 'Grok 4.5', isDefault: false },
+]
+
 export function useGrokPathDetection(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...grokCliQueryKeys.all, 'path-detection'],
@@ -153,24 +160,17 @@ export function useGrokUsage(options?: { enabled?: boolean }) {
   })
 }
 
-export function useAvailableGrokModels(options?: { enabled?: boolean }) {
-  const serverId = useOptionalSettingsTargetServerId()
+export function useAvailableGrokModels(options?: {
+  enabled?: boolean
+  serverId?: string
+}) {
+  const settingsServerId = useOptionalSettingsTargetServerId()
+  const serverId = options?.serverId ?? settingsServerId
   return useQuery({
     queryKey: [...grokCliQueryKeys.models(), serverId ?? 'local'],
     queryFn: async (): Promise<GrokModelInfo[]> => {
       if (!isTauri()) {
-        return [
-          {
-            id: 'grok-4.6',
-            label: 'Grok 4.6',
-            isDefault: true,
-          },
-          {
-            id: 'grok-4.5',
-            label: 'Grok 4.5',
-            isDefault: false,
-          },
-        ]
+        return fallbackGrokModels
       }
       try {
         return await invokeForOptionalServer<GrokModelInfo[]>(
@@ -179,18 +179,7 @@ export function useAvailableGrokModels(options?: { enabled?: boolean }) {
         )
       } catch (error) {
         logger.error('Failed to list Grok models', { error })
-        return [
-          {
-            id: 'grok-4.6',
-            label: 'Grok 4.6',
-            isDefault: true,
-          },
-          {
-            id: 'grok-4.5',
-            label: 'Grok 4.5',
-            isDefault: false,
-          },
-        ]
+        return fallbackGrokModels
       }
     },
     enabled: options?.enabled ?? true,

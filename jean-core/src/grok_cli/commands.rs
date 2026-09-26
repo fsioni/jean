@@ -148,6 +148,16 @@ fn semver_parts(version: &str) -> Vec<u32> {
 fn fallback_models() -> Vec<GrokModelInfo> {
     vec![
         GrokModelInfo {
+            id: "grok-4.7-build-fast".to_string(),
+            label: "Grok 4.7 Fast".to_string(),
+            is_default: false,
+        },
+        GrokModelInfo {
+            id: "grok-4.7".to_string(),
+            label: "Grok 4.7".to_string(),
+            is_default: false,
+        },
+        GrokModelInfo {
             id: "grok-4.6".to_string(),
             label: "Grok 4.6".to_string(),
             is_default: true,
@@ -161,6 +171,16 @@ fn fallback_models() -> Vec<GrokModelInfo> {
 }
 
 fn format_model_label(id: &str) -> String {
+    let id = id.strip_prefix("grok/").unwrap_or(id);
+    if let Some(version) = id
+        .strip_prefix("grok-")
+        .and_then(|rest| rest.strip_suffix("-build-fast"))
+    {
+        if !version.is_empty() && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+            return format!("Grok {version} Fast");
+        }
+    }
+
     id.split('-')
         .map(|part| {
             if part.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
@@ -701,6 +721,7 @@ pub async fn install_grok_cli(app: AppHandle, version: Option<String>) -> Result
         return Err("Grok CLI verification failed".to_string());
     }
 
+    crate::expose_managed_cli("grok", &get_cli_binary_path(&app)?);
     Ok(())
 }
 
@@ -1477,12 +1498,39 @@ Available models:
     }
 
     #[test]
-    fn fallback_models_default_to_grok_4_6() {
-        let models = fallback_models();
-        assert_eq!(models[0].id, "grok-4.6");
-        assert_eq!(models[0].label, "Grok 4.6");
+    fn parse_models_output_uses_a_short_name_for_build_fast() {
+        let output = br#"
+Default model: grok-4.7-build-fast
+
+Available models:
+  - grok-4.7
+  * grok-4.7-build-fast (default)
+"#;
+
+        let models = parse_models_output(output);
+
+        assert_eq!(models[0].id, "grok-4.7-build-fast");
+        assert_eq!(models[0].label, "Grok 4.7 Fast");
         assert!(models[0].is_default);
-        assert_eq!(models[1].id, "grok-4.5");
-        assert!(!models[1].is_default);
+        assert_eq!(models[1].label, "Grok 4.7");
+    }
+
+    #[test]
+    fn fallback_models_include_grok_4_7_and_keep_4_6_as_default() {
+        let models = fallback_models();
+        assert_eq!(models[0].id, "grok-4.7-build-fast");
+        assert_eq!(models[0].label, "Grok 4.7 Fast");
+        assert!(!models[0].is_default);
+        assert_eq!(models[1].id, "grok-4.7");
+        assert_eq!(models[1].label, "Grok 4.7");
+        let default_model = models.iter().find(|model| model.is_default);
+        assert_eq!(
+            default_model.map(|model| model.id.as_str()),
+            Some("grok-4.6")
+        );
+        assert_eq!(
+            models.last().map(|model| model.id.as_str()),
+            Some("grok-4.5")
+        );
     }
 }

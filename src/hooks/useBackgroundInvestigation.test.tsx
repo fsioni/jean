@@ -118,13 +118,19 @@ describe('useBackgroundInvestigation', () => {
     }
   )
 
-  it('uses a one-time investigation prompt without loading persistent issue context', async () => {
+  it('passes the selected issue to the backend for attachment to the new session', async () => {
     preferencesData = {}
     useUIStore.setState({
       autoInvestigateOverrides: {
         'worktree-1': {
           prompt: 'Investigate issue #42\n\nIssue details',
           forceNewSession: true,
+          issueContext: {
+            number: 42,
+            title: 'Issue title',
+            body: 'Issue details',
+            comments: [],
+          },
         },
       },
     })
@@ -162,6 +168,12 @@ describe('useBackgroundInvestigation', () => {
         expect.objectContaining({
           message: 'Investigate issue #42\n\nIssue details',
           forceNewSession: true,
+          issueContext: {
+            number: 42,
+            title: 'Issue title',
+            body: 'Issue details',
+            comments: [],
+          },
         })
       )
     })

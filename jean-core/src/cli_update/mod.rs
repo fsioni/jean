@@ -18,6 +18,7 @@ const ALLOWED_CLI_TYPES: &[&str] = &[
     "coderabbit",
     "pi",
     "commandcode",
+    "grok",
 ];
 const ALLOWED_COMMANDS: &[&str] = &[
     "brew",
@@ -29,6 +30,7 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "pi",
     "cmd",
     "command-code",
+    "grok",
 ];
 
 /// Reduce `command` to the name matched against [`ALLOWED_COMMANDS`].
@@ -86,6 +88,12 @@ mod tests {
         assert!(ALLOWED_CLI_TYPES.contains(&"commandcode"));
         assert!(ALLOWED_COMMANDS.contains(&"cmd"));
         assert!(ALLOWED_COMMANDS.contains(&"command-code"));
+    }
+
+    #[test]
+    fn grok_self_updates_are_allowed() {
+        assert!(ALLOWED_CLI_TYPES.contains(&"grok"));
+        assert!(ALLOWED_COMMANDS.contains(&"grok"));
     }
 
     #[test]

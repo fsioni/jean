@@ -14,6 +14,7 @@ function renderUseMagicCommands(
     handleCheckGitHubIssues: vi.fn(),
     handleCommit: vi.fn(),
     handleCommitAndPush: vi.fn(),
+    handleCommentAndCloseIssue: vi.fn(),
     handlePull: vi.fn(),
     handlePush: vi.fn(),
     handleRevertLastCommit: vi.fn(),
@@ -59,6 +60,18 @@ describe('useMagicCommands review comments batch', () => {
     )
 
     expect(handlers.handleCheckGitHubIssues).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches the comment and close issue command to the current chat', () => {
+    const handlers = renderUseMagicCommands()
+
+    window.dispatchEvent(
+      new CustomEvent('magic-command', {
+        detail: { command: 'comment-and-close-issue' },
+      })
+    )
+
+    expect(handlers.handleCommentAndCloseIssue).toHaveBeenCalledTimes(1)
   })
 
   it('passes separate review comment prompts and plan mode from event detail', () => {

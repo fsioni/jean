@@ -71,7 +71,7 @@ describe('fetchRecentWorktrees', () => {
     const result = await fetchRecentWorktrees(
       [project('local-project'), project('remote-project', 'remote')],
       10,
-      null
+      []
     )
 
     expect(invokeForServer).toHaveBeenCalledTimes(2)
@@ -91,7 +91,7 @@ describe('fetchRecentWorktrees', () => {
     const result = await fetchRecentWorktrees(
       [project('local-project'), project('remote-project', 'remote')],
       10,
-      null
+      []
     )
 
     expect(result.items).toHaveLength(1)
@@ -110,11 +110,76 @@ describe('fetchRecentWorktrees', () => {
     })
     invokeForServer.mockResolvedValue(data)
 
-    const result = await fetchRecentWorktrees([project('project')], 10, null)
+    const result = await fetchRecentWorktrees([project('project')], 10, [])
 
     expect(result.items.map(item => item.session.name)).toEqual([
       'project',
       'Older session',
     ])
+  })
+
+  it('keeps pinned sessions beyond the recent page without duplicates', async () => {
+    const data = response('local', 'project', 30, 12)
+    const newest = data.items[0]
+    expect(newest).toBeDefined()
+    if (!newest) return
+    data.items = [
+      newest,
+      {
+        ...newest,
+        lastActivityAt: 20,
+        session: { ...newest.session, id: 'local:pinned-old' },
+      },
+      {
+        ...newest,
+        lastActivityAt: 10,
+        session: { ...newest.session, id: 'local:pinned-older' },
+      },
+    ]
+    invokeForServer.mockResolvedValue(data)
+
+    const result = await fetchRecentWorktrees([project('project')], 1, [
+      'local:session-project',
+      'local:pinned-old',
+      'local:pinned-older',
+    ])
+
+    expect(invokeForServer).toHaveBeenCalledWith(
+      'local',
+      'get_recent_worktrees',
+      expect.objectContaining({
+        limit: 1,
+        includeSessionIds: ['session-project', 'pinned-old', 'pinned-older'],
+      })
+    )
+    expect(result.items.map(item => item.session.id)).toEqual([
+      'local:session-project',
+      'local:pinned-old',
+      'local:pinned-older',
+    ])
+    expect(result.total).toBe(12)
+  })
+
+  it('sends pinned IDs only to their owning server', async () => {
+    invokeForServer.mockImplementation((serverId: string) =>
+      Promise.resolve(response(serverId, serverId, 10))
+    )
+
+    await fetchRecentWorktrees(
+      [project('local'), project('remote', 'remote')],
+      10,
+      ['local:local-pin', 'remote:remote-pin']
+    )
+
+    expect(invokeForServer).toHaveBeenCalledWith(
+      'local',
+      'get_recent_worktrees',
+      expect.objectContaining({ includeSessionIds: ['local-pin'] })
+    )
+    expect(invokeForServer).toHaveBeenCalledWith(
+      'remote',
+      'get_recent_worktrees',
+      expect.objectContaining({ includeSessionIds: ['remote-pin'] })
+    )
   })
 })

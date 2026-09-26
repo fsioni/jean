@@ -352,6 +352,7 @@ pub async fn install_antigravity_cli(
             &String::from_utf8_lossy(&output.stderr),
         ));
     }
+    crate::expose_managed_cli("agy", &get_cli_binary_path(&app)?);
     Ok(())
 }
 

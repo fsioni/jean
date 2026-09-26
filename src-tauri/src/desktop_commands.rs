@@ -381,6 +381,35 @@ pub async fn set_project_avatar(
     jean_core::set_project_avatar_from_path(runtime.0.clone(), project_id, source_path).await
 }
 
+/// Ask for a destination with the native save dialog and copy a local file there.
+/// Returns `false` when the user cancels the dialog.
+#[tauri::command]
+pub async fn save_file_as(app: AppHandle, source_path: String) -> Result<bool, String> {
+    let source = std::path::PathBuf::from(&source_path);
+    if !source.is_file() {
+        return Err(format!("File not found: {source_path}"));
+    }
+    let file_name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let Some(destination) = app
+        .dialog()
+        .file()
+        .set_title("Save File")
+        .set_file_name(file_name)
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let destination = destination.into_path().map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || std::fs::copy(&source, &destination))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("Failed to save file: {error}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn start_http_server(
     runtime: State<'_, CoreRuntime>,

@@ -60,7 +60,6 @@ interface UseScrollManagementReturn {
   endKeyboardScroll: () => void
 }
 
-const BOTTOM_THRESHOLD_PX = 100
 const SCROLL_EPSILON_PX = 2
 /** Cap deferred non-tail restores so an unreachable scrollTop cannot latch forever. */
 const MAX_PENDING_RESTORE_ATTEMPTS = 20
@@ -78,7 +77,7 @@ function isViewportAtBottom(viewport: HTMLDivElement) {
 
   return (
     viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
-    BOTTOM_THRESHOLD_PX
+    SCROLL_EPSILON_PX
   )
 }
 
@@ -486,7 +485,15 @@ export function useScrollManagement({
     }
     if (!hasScrollableOverflow(viewport)) {
       rePinToTail()
+      return
     }
+
+    // Content can grow or the window can become shorter without a scroll
+    // event. Keep the floating Bottom action in sync with the real viewport
+    // edge so it remains available on short desktop windows.
+    const atBottom = isViewportAtBottom(viewport)
+    isAtBottomRef.current = atBottom
+    setIsAtBottom(prev => (prev === atBottom ? prev : atBottom))
   })
 
   useEffect(() => {

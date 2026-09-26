@@ -26,6 +26,7 @@ import { buildReleaseNotesSessionPrompt } from '@/lib/release-notes-prompt'
 import { resolveMcpConfigForSend } from '@/services/mcp'
 import { usePreferences } from '@/services/preferences'
 import type { CliBackend } from '@/types/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 
 interface DetectPrResponse {
   pr_number: number
@@ -47,7 +48,10 @@ export function UpdatePrDialog() {
 
   const createSession = useCreateSession()
   const sendMessage = useSendMessage()
-  const { data: preferences } = usePreferences()
+  const targetServerId = selectedWorktreeId
+    ? parseServerResourceKey(selectedWorktreeId)?.serverId
+    : undefined
+  const { data: preferences } = usePreferences(targetServerId)
   const { data: projects } = useProjects()
   const project = worktree
     ? projects?.find(p => p.id === worktree.project_id)

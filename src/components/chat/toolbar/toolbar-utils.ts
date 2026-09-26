@@ -269,10 +269,45 @@ export function formatCommandCodeModelLabel(raw: string): string {
   return `Command Code · ${formatModelIdTailLabel(value)}`
 }
 
+const GROK_BUILD_FAST_SUFFIX = '-build-fast'
+
+function grokModelId(raw: string): string {
+  return raw.startsWith('grok/') ? raw.slice('grok/'.length) : raw
+}
+
 export function formatGrokPromptModelLabel(raw: string): string {
-  const value = raw.startsWith('grok/') ? raw.slice('grok/'.length) : raw
-  const label = formatModelIdTailLabel(value)
-  return label.startsWith('Grok ') ? label.slice('Grok '.length) : label
+  const value = grokModelId(raw)
+  const isBuildFast = value.endsWith(GROK_BUILD_FAST_SUFFIX)
+  const base = isBuildFast
+    ? value.slice(0, -GROK_BUILD_FAST_SUFFIX.length)
+    : value
+  const label = formatModelIdTailLabel(base)
+  const short = label.startsWith('Grok ') ? label.slice('Grok '.length) : label
+  return isBuildFast ? `${short} Fast` : short
+}
+
+export function isMechanicalGrokLabel(value: string, label: string): boolean {
+  const id = grokModelId(value)
+  const normalized = label.trim().replace(/\s+/g, ' ').toLowerCase()
+  if (
+    normalized === value.toLowerCase() ||
+    normalized === id.toLowerCase() ||
+    normalized === `grok/${id}`.toLowerCase()
+  ) {
+    return true
+  }
+  if (!id.endsWith(GROK_BUILD_FAST_SUFFIX)) return false
+  const spaced = id.replaceAll('-', ' ').toLowerCase()
+  return normalized === spaced || normalized === `grok ${spaced}`
+}
+
+export function formatGrokModelOptionLabel(
+  value: string,
+  label?: string | null
+): string {
+  if (label && !isMechanicalGrokLabel(value, label)) return label
+  const short = formatGrokPromptModelLabel(value)
+  return short.startsWith('Grok ') ? short : `Grok ${short}`
 }
 
 export function formatOpenCodePromptModelLabel(raw: string): string {

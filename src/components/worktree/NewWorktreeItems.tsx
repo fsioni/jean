@@ -394,7 +394,7 @@ function ItemActions({
           {onInvestigateInNewSession && (
             <DropdownMenuItem onClick={onInvestigateInNewSession}>
               <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
-              Investigate in New Session
+              Investigate in the Current Worktree
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => onInvestigate(true)}>
@@ -431,7 +431,7 @@ function ItemActions({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label={`${investigateLabel} in new session`}
+              aria-label={`${investigateLabel} in the current worktree`}
               onClick={e => {
                 e.stopPropagation()
                 onInvestigateInNewSession()
@@ -442,7 +442,7 @@ function ItemActions({
               <MessageSquarePlus className="h-3.5 w-3.5" />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Investigate in new session</TooltipContent>
+          <TooltipContent>Investigate in the current worktree</TooltipContent>
         </Tooltip>
       )}
       <Tooltip>

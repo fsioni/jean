@@ -166,6 +166,8 @@ export interface UIState {
   dashboard_worktree_collapse_overrides?: Record<string, boolean>
   /** Project canvas settings per project */
   project_canvas_settings?: Record<string, ProjectCanvasSettingsState>
+  /** Session IDs pinned in the recent sessions list */
+  pinned_recent_session_ids?: string[]
   /** Favorited projects shown first in the GitHub Dashboard */
   github_dashboard_favorite_project_ids?: string[]
   /** Last opened worktree+session per project: projectId → { worktree_id, session_id } */
@@ -224,6 +226,7 @@ export const defaultUIState: UIState = {
   browser_modal_height: 400,
   browser_bottom_panel_open: {},
   browser_bottom_panel_height: 360,
+  pinned_recent_session_ids: [],
   github_dashboard_favorite_project_ids: [],
   seen_failed_workflow_run_ids: [],
   version: 1,

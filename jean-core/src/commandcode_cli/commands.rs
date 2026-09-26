@@ -736,6 +736,7 @@ pub async fn install_commandcode_cli(
         return Err("Command Code CLI verification failed".to_string());
     }
 
+    crate::expose_managed_cli("cmdc", &get_cli_binary_path(&app)?);
     Ok(())
 }
 

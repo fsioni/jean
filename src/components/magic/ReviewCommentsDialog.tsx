@@ -35,6 +35,7 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 import { useWorktrees } from '@/services/projects'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import {
   DEFAULT_MAGIC_PROMPT_MODES,
   DEFAULT_REVIEW_COMMENTS_PROMPT,
@@ -244,10 +245,12 @@ function ReviewStateBadge({ state }: { state: string }) {
 export function ReviewCommentsDialog() {
   const { reviewCommentsModalOpen, setReviewCommentsModalOpen } = useUIStore()
   const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
-  const { data: preferences } = usePreferences()
-
   const { data: worktrees } = useWorktrees(selectedProjectId)
   const selectedWorktreeId = useProjectsStore(state => state.selectedWorktreeId)
+  const serverId = selectedWorktreeId
+    ? parseServerResourceKey(selectedWorktreeId)?.serverId
+    : undefined
+  const { data: preferences } = usePreferences(serverId)
   const worktree = worktrees?.find(w => w.id === selectedWorktreeId) ?? null
 
   const prNumber = worktree?.pr_number
@@ -266,8 +269,7 @@ export function ReviewCommentsDialog() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [diffExpanded, setDiffExpanded] = useState<Set<number>>(new Set())
-  const [inlineFilter, setInlineFilter] =
-    useState<InlineCommentFilter>('open')
+  const [inlineFilter, setInlineFilter] = useState<InlineCommentFilter>('open')
 
   // Conversation comments state
   const [conversationItems, setConversationItems] = useState<
@@ -749,11 +751,8 @@ export function ReviewCommentsDialog() {
               >
                 <Code className="size-3" />
                 Code Comments (
-                {inlineFilter === 'open'
-                  ? openInlineCount
-                  : comments.length}
-                {inlineFilter === 'open' &&
-                openInlineCount !== comments.length
+                {inlineFilter === 'open' ? openInlineCount : comments.length}
+                {inlineFilter === 'open' && openInlineCount !== comments.length
                   ? ` open`
                   : ''}
                 )

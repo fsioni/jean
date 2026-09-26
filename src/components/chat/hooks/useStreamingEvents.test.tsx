@@ -93,7 +93,68 @@ describe('useStreamingEvents sending mode sync', () => {
       executingModes: {},
       waitingForInputSessionIds: {},
       reviewingSessions: {},
+      pendingPermissionDenials: {},
+      deniedMessageContext: {},
     })
+  })
+
+  it('shows only the prompt the backend started while the next prompt stays queued', async () => {
+    const queryClient = createQueryClient()
+    const first = {
+      id: 'first',
+      message: 'first queued prompt',
+      pendingImages: [],
+      pendingFiles: [],
+      pendingSkills: [],
+      pendingTextFiles: [],
+      model: 'gpt-6-sol-fast',
+      provider: null,
+      executionMode: 'yolo' as const,
+      thinkingLevel: 'off' as const,
+      queuedAt: 1,
+    }
+    const second = { ...first, id: 'second', message: 'second queued prompt' }
+    queryClient.setQueryData(['chat', 'session', 'session-1'], {
+      id: 'session-1',
+      messages: [],
+    })
+    useChatStore.setState({
+      messageQueues: {
+        'session-1': [first, second],
+      },
+    })
+
+    renderHook(() => useStreamingEvents({ queryClient }), {
+      wrapper: createWrapper(queryClient),
+    })
+    await waitFor(() => expect(registeredListeners.has('chat:sending')).toBe(true))
+
+    // Rust removes the first prompt from its queue, then reports the exact
+    // prompt that it started. The second prompt remains queued.
+    useChatStore.setState({
+      messageQueues: {
+        'session-1': [second],
+      },
+    })
+    registeredListeners.get('chat:sending')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        user_message: 'first queued prompt',
+        execution_mode: 'yolo',
+      },
+    })
+
+    expect(
+      queryClient.getQueryData<{ messages: { content: string }[] }>([
+        'chat',
+        'session',
+        'session-1',
+      ])?.messages.map(message => message.content)
+    ).toEqual(['first queued prompt'])
+    expect(
+      useChatStore.getState().messageQueues['session-1']?.map(message => message.id)
+    ).toEqual(['second'])
   })
 
   it('flushes live output when the webview does not run animation frames', async () => {
@@ -150,6 +211,46 @@ describe('useStreamingEvents sending mode sync', () => {
     const state = useChatStore.getState()
     expect(state.sendingSessionIds['session-1']).toBe(true)
     expect(state.executingModes['session-1']).toBe('yolo')
+  })
+
+  it('clears old Claude denials when a new prompt starts', async () => {
+    const queryClient = createQueryClient()
+    queryClient.setQueryData(['chat', 'session', 'session-1'], {
+      id: 'session-1',
+      messages: [],
+      pending_permission_denials: [{ tool_use_id: 'old-denial' }],
+    })
+    useChatStore.setState({
+      pendingPermissionDenials: {
+        'session-1': [{
+          tool_name: 'Bash',
+          tool_use_id: 'old-denial',
+          tool_input: {},
+        }],
+      },
+    })
+    renderHook(() => useStreamingEvents({ queryClient }), {
+      wrapper: createWrapper(queryClient),
+    })
+    await waitFor(() => expect(registeredListeners.has('chat:sending')).toBe(true))
+
+    registeredListeners.get('chat:sending')?.({
+      payload: {
+        session_id: 'session-1',
+        worktree_id: 'worktree-1',
+        user_message: 'new prompt',
+        execution_mode: 'yolo',
+      },
+    })
+
+    expect(useChatStore.getState().pendingPermissionDenials['session-1']).toBeUndefined()
+    expect(
+      queryClient.getQueryData<{ pending_permission_denials: unknown[] }>([
+        'chat',
+        'session',
+        'session-1',
+      ])?.pending_permission_denials
+    ).toEqual([])
   })
 })
 

@@ -17,6 +17,7 @@ import {
 } from '@/lib/client-preferences'
 import { useSettingsTargetServerId } from '@/lib/settings-target'
 import { LOCAL_SERVER_ID } from '@/types/server-resource'
+import type { ServerId } from '@/types/server-resource'
 
 // Old default keybindings that have been changed - used for migration
 // When a default changes, add the old value here so stored prefs get updated
@@ -66,6 +67,47 @@ export const preferencesQueryKeys = {
       : ([...preferencesQueryKeys.all, 'server', serverId] as const),
 }
 
+export async function loadPreferencesForServer(
+  serverId: ServerId
+): Promise<AppPreferences> {
+  if (!hasBackendTransport()) {
+    logger.debug('Not in Tauri context, using default preferences')
+    return defaultPreferences
+  }
+
+  const preferences =
+    serverId === LOCAL_SERVER_ID
+      ? await invoke<AppPreferences>('load_preferences')
+      : (
+          await invokeForServer<ServerPreferencesEnvelope>(
+            serverId,
+            'get_server_preferences'
+          )
+        ).preferences
+  const completePreferences = {
+    ...defaultPreferences,
+    ...preferences,
+  } as AppPreferences
+  const migratedBindings = migrateKeybindings(completePreferences.keybindings)
+  const merged = { ...DEFAULT_KEYBINDINGS, ...migratedBindings }
+  const validKeys = new Set(Object.keys(DEFAULT_KEYBINDINGS))
+  const keybindings: KeybindingsMap = {}
+  for (const [key, value] of Object.entries(merged)) {
+    if (validKeys.has(key)) keybindings[key] = value
+  }
+  const normalized = {
+    ...completePreferences,
+    selected_model: normalizeClaudeModel(completePreferences.selected_model, {
+      preserveProviderAliases: Boolean(completePreferences.default_provider),
+    }),
+    selected_codex_model: normalizeCodexModel(
+      completePreferences.selected_codex_model
+    ),
+    keybindings,
+  }
+  return { ...normalized, ...readClientPreferences(normalized) }
+}
+
 export function useServerPreferences() {
   const serverId = useSettingsTargetServerId()
   return useQuery({
@@ -111,62 +153,17 @@ export function useUpdateServerPreferences() {
 }
 
 // TanStack Query hooks following the architectural patterns
-export function usePreferences() {
-  const serverId = useSettingsTargetServerId()
+export function usePreferences(serverIdOverride?: ServerId) {
+  const settingsTargetServerId = useSettingsTargetServerId()
+  const serverId = serverIdOverride ?? settingsTargetServerId
   return useQuery({
     queryKey: preferencesQueryKeys.preferences(serverId),
     queryFn: async (): Promise<AppPreferences> => {
-      // Return defaults when running outside Tauri (e.g., bun run dev in browser)
-      if (!hasBackendTransport()) {
-        logger.debug('Not in Tauri context, using default preferences')
-        return defaultPreferences
-      }
-
       try {
         logger.debug('Loading preferences from backend')
-        const preferences =
-          serverId === LOCAL_SERVER_ID
-            ? await invoke<AppPreferences>('load_preferences')
-            : (
-                await invokeForServer<ServerPreferencesEnvelope>(
-                  serverId,
-                  'get_server_preferences'
-                )
-              ).preferences
+        const preferences = await loadPreferencesForServer(serverId)
         logger.info('Preferences loaded successfully', { preferences })
-        // Migrate old defaults and merge with new defaults
-        const completePreferences = {
-          ...defaultPreferences,
-          ...preferences,
-        } as AppPreferences
-        const migratedBindings = migrateKeybindings(
-          completePreferences.keybindings
-        )
-        const merged = { ...DEFAULT_KEYBINDINGS, ...migratedBindings }
-        // Drop stale keys (renamed/removed actions) that persist in saved prefs
-        const validKeys = new Set(Object.keys(DEFAULT_KEYBINDINGS))
-        const keybindings: KeybindingsMap = {}
-        for (const [key, value] of Object.entries(merged)) {
-          if (validKeys.has(key)) keybindings[key] = value
-        }
-        const normalized = {
-          ...completePreferences,
-          selected_model: normalizeClaudeModel(
-            completePreferences.selected_model,
-            {
-              // Keep opus/sonnet/haiku when a custom CLI provider is the default
-              // so Settings → Claude can show/persist provider-routed models.
-              preserveProviderAliases: Boolean(
-                completePreferences.default_provider
-              ),
-            }
-          ),
-          selected_codex_model: normalizeCodexModel(
-            completePreferences.selected_codex_model
-          ),
-          keybindings,
-        }
-        return { ...normalized, ...readClientPreferences(normalized) }
+        return preferences
       } catch (error) {
         // Return defaults if preferences file doesn't exist yet
         logger.warn('Failed to load preferences, using defaults', { error })
@@ -189,10 +186,12 @@ export function usePatchPreferences() {
 
   return useMutation({
     onMutate: patch => {
-      const [clientPatch] = splitClientPreferencePatch(patch)
-      if (Object.keys(clientPatch).length === 0) return
+      // Keep every consumer of this server's preferences in sync immediately.
+      // New-session creation can run before the persistence request and its
+      // follow-up refetch finish, especially when this client controls a
+      // remote Jean instance.
       queryClient.setQueryData<AppPreferences>(queryKey, current =>
-        current ? { ...current, ...clientPatch } : current
+        current ? { ...current, ...patch } : current
       )
     },
     mutationFn: async (patch: Partial<AppPreferences>) => {
@@ -241,6 +240,11 @@ export function usePatchPreferences() {
         queryKey,
       })
       logger.info('Preferences cache invalidated after patch')
+    },
+    onError: () => {
+      // The optimistic values were not saved. Reload the authoritative values
+      // instead of leaving defaults that only appear to be active.
+      queryClient.invalidateQueries({ queryKey })
     },
   })
 }

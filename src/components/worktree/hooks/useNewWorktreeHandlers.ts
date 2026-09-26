@@ -406,6 +406,23 @@ export function useNewWorktreeHandlers(
           projectPath,
         })
 
+        const issueContext: IssueContext = {
+          number: issueDetail.number,
+          title: issueDetail.title,
+          body: issueDetail.body,
+          comments: (issueDetail.comments ?? []).flatMap(comment =>
+            comment && comment.created_at && comment.author
+              ? [
+                  {
+                    body: comment.body ?? '',
+                    author: { login: comment.author.login ?? '' },
+                    createdAt: comment.created_at,
+                  },
+                ]
+              : []
+          ),
+        }
+
         const issuePrompt = (
           investigationOverride?.promptTemplate ??
           'Investigate the loaded GitHub {issueWord} ({issueRefs})'
@@ -428,6 +445,7 @@ export function useNewWorktreeHandlers(
             ...investigationOverride,
             forceNewSession: true,
             prompt,
+            issueContext,
             openSession: true,
           })
 

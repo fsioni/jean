@@ -46,6 +46,7 @@ import {
 } from '@/services/model-catalog'
 import {
   formatCursorModelLabel,
+  formatGrokModelOptionLabel,
   formatOpencodeModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
 import {
@@ -770,12 +771,12 @@ export const MagicPromptsPane: React.FC<MagicPromptsPaneProps> = ({
     const models = availableGrokModels?.length
       ? availableGrokModels.map(model => ({
           value: `grok/${model.id}`,
-          label: model.label || model.id,
+          label: formatGrokModelOptionLabel(`grok/${model.id}`, model.label),
         }))
       : GROK_FALLBACK_OPTIONS
     return models.map(option => ({
       value: option.value as MagicPromptModel,
-      label: option.label,
+      label: formatGrokModelOptionLabel(option.value, option.label),
     }))
   }, [availableGrokModels])
 

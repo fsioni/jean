@@ -29,6 +29,13 @@ describe('SessionChatModal responsive header actions', () => {
     )
   })
 
+  it('shows Open In and Scripts on smaller desktop windows', () => {
+    expect(source).toContain(
+      '<div className="hidden lg:flex items-center gap-1">'
+    )
+    expect(source).not.toContain('hidden 2xl:flex items-center gap-1')
+  })
+
   it('shows git diff stats beside the title at mobile and desktop widths', () => {
     expect(source).toContain('diffAdded={uncommittedAdded}')
     expect(source).toContain('diffRemoved={uncommittedRemoved}')

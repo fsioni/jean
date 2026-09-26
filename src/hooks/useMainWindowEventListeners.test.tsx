@@ -721,6 +721,18 @@ describe('applyCacheInvalidationKeys', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes Claude usage when a run reports rate-limit usage', () => {
+    const queryClient = new QueryClient()
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    applyCacheInvalidationKeys(queryClient, ['claude-usage'])
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['claude-cli', 'usage'],
+    })
+    expect(invalidateSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('invalidates chat queries and all-sessions for sessions keys', () => {
     const queryClient = new QueryClient()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')

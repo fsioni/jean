@@ -27,6 +27,7 @@ import {
   getPlanTextBlockIndicesToHide,
   isDuplicatePlanTextBlock,
   resolvePlanContent,
+  restoreOmittedStreamingPrefix,
   type TimelineItem,
 } from './tool-call-utils'
 import { ToolCallsDisplay } from './ToolCallsDisplay'
@@ -107,18 +108,22 @@ export const StreamingMessage = memo(function StreamingMessage({
   onCopySteeredText,
   hideEditedFiles = false,
 }: StreamingMessageProps) {
+  const displayBlocks = useMemo(
+    () => restoreOmittedStreamingPrefix(streamingContent, contentBlocks),
+    [streamingContent, contentBlocks]
+  )
   const resolvedPlan = useMemo(
     () =>
       resolvePlanContent({
         toolCalls,
         messageContent: streamingContent,
-        contentBlocks,
+        contentBlocks: displayBlocks,
       }),
-    [toolCalls, streamingContent, contentBlocks]
+    [toolCalls, streamingContent, displayBlocks]
   )
   const hiddenPlanTextBlockIndices = useMemo(
-    () => getPlanTextBlockIndicesToHide(contentBlocks, resolvedPlan.content),
-    [contentBlocks, resolvedPlan.content]
+    () => getPlanTextBlockIndicesToHide(displayBlocks, resolvedPlan.content),
+    [displayBlocks, resolvedPlan.content]
   )
   const fallbackPrePlanText = useMemo(
     () =>
@@ -129,10 +134,10 @@ export const StreamingMessage = memo(function StreamingMessage({
   // Timeline construction is O(blocks + tools) and runs on every streaming
   // frame otherwise — memoize on the immutable store slices it derives from.
   const timelineData = useMemo(() => {
-    if (contentBlocks.length === 0) return null
+    if (displayBlocks.length === 0) return null
     let timeline: TimelineItem[]
     try {
-      timeline = buildTimeline(contentBlocks, toolCalls)
+      timeline = buildTimeline(displayBlocks, toolCalls)
     } catch (e) {
       logger.error('Failed to build streaming timeline', {
         sessionId,
@@ -143,7 +148,7 @@ export const StreamingMessage = memo(function StreamingMessage({
     // First contentBlocks index per text block content — replaces a per-item
     // O(n) findIndex during render.
     const textBlockIndexByText = new Map<string, number>()
-    contentBlocks.forEach((block, index) => {
+    displayBlocks.forEach((block, index) => {
       if (block.type === 'text' && !textBlockIndexByText.has(block.text)) {
         textBlockIndexByText.set(block.text, index)
       }
@@ -168,15 +173,15 @@ export const StreamingMessage = memo(function StreamingMessage({
       textBlockIndexByText,
       incompleteIndices,
     }
-  }, [contentBlocks, toolCalls, sessionId])
+  }, [displayBlocks, toolCalls, sessionId])
 
   const streamingResponseText = useMemo(() => {
-    const fromBlocks = contentBlocks
+    const fromBlocks = displayBlocks
       .flatMap(block => (block.type === 'text' ? [block.text] : []))
       .join('\n')
       .trim()
     return fromBlocks || streamingContent.trim()
-  }, [contentBlocks, streamingContent])
+  }, [displayBlocks, streamingContent])
 
   const handleCopyStreamingResponse = useCallback(() => {
     if (!streamingResponseText) return

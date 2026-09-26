@@ -364,7 +364,7 @@ export function useChatHistory(
 export function useSessions(
   worktreeId: string | null,
   worktreePath: string | null,
-  options?: { includeMessageCounts?: boolean }
+  options?: { includeMessageCounts?: boolean; refetchOnMount?: 'always' }
 ) {
   const includeMessageCounts = options?.includeMessageCounts ?? false
 
@@ -374,12 +374,8 @@ export function useSessions(
       : chatQueryKeys.sessions(worktreeId ?? ''),
     queryFn: async (): Promise<WorktreeSessions> => {
       if (!hasBackendTransport() || !worktreeId || !worktreePath) {
-        return {
-          worktree_id: '',
-          sessions: [],
-          active_session_id: null,
-          version: 2,
-        }
+        // An empty success is cached for the stale time and hides every tab.
+        throw new Error('Session list is not available yet')
       }
 
       try {
@@ -399,7 +395,7 @@ export function useSessions(
     enabled: !!worktreeId && !!worktreePath,
     staleTime: 1000 * 60 * 5, // 5 minutes - enables instant tab bar rendering from cache
     gcTime: 1000 * 60 * 2,
-    refetchOnMount: true, // Respects staleTime; status changes pushed via streaming/cache:invalidate events
+    refetchOnMount: options?.refetchOnMount ?? true, // Modal openings must also refresh cached empty lists
   })
 }
 
@@ -1770,6 +1766,32 @@ export function useSetActiveSession() {
 // ============================================================================
 
 /**
+ * Put an assistant reply into the current turn: replace the assistant message
+ * that follows the last user message, or append one. Never replace a reply
+ * from an earlier turn — chat:done and the invoke response can each arrive
+ * first, and either can be missing.
+ */
+export function upsertTurnAssistantMessage(
+  messages: ChatMessage[],
+  reply: ChatMessage
+): ChatMessage[] {
+  let lastUserIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') {
+      lastUserIdx = i
+      break
+    }
+  }
+  const turnReplyIdx = messages.findIndex(
+    (message, index) => index > lastUserIdx && message.role === 'assistant'
+  )
+  if (turnReplyIdx < 0) return [...messages, reply]
+  const updated = [...messages]
+  updated[turnReplyIdx] = reply
+  return updated
+}
+
+/**
  * Hook to send a message to Claude (session-based)
  */
 export function useSendMessage() {
@@ -1812,8 +1834,6 @@ export function useSendMessage() {
       chromeEnabled?: boolean
       customProfileName?: string
       backend?: string
-      /** Set by the queue processor — its onError requeues the original message */
-      fromQueue?: boolean
       /** When false, skip the end-of-turn recap instruction. */
       includeRecap?: boolean
     }): Promise<ChatMessage> => {
@@ -1889,6 +1909,10 @@ export function useSendMessage() {
         timestamp: Math.floor(Date.now() / 1000),
         tool_calls: [],
         model,
+        // Keep the optimistic row on the explicitly selected backend. Model
+        // catalogs can expose new IDs before this client knows how to infer
+        // them, especially when using Jean from another app instance.
+        backend: backend as Backend | undefined,
         execution_mode: executionMode,
         thinking_level:
           backend === 'cursor' || backend === 'grok'
@@ -1941,9 +1965,13 @@ export function useSendMessage() {
         }
       )
 
-      return { previous, worktreeId }
+      return {
+        previous,
+        worktreeId,
+        sendStartedAt: useChatStore.getState().sendStartedAt[sessionId],
+      }
     },
-    onSuccess: (response, { sessionId, worktreeId }) => {
+    onSuccess: (response, { sessionId, worktreeId }, context) => {
       console.log(
         `[SendMutation] onSuccess sessionId=${sessionId} cancelled=${response.cancelled}`,
         {
@@ -1961,36 +1989,42 @@ export function useSendMessage() {
         return
       }
 
-      const finalResponse = response
+      // A queued prompt can start before this invoke resolves. Then the cache
+      // tail and the running state belong to the new turn — only refetch.
+      const store = useChatStore.getState()
+      const isSameSend =
+        store.sendStartedAt[sessionId] === context?.sendStartedAt
+      if (store.sendingSessionIds[sessionId] && !isSameSend) {
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.session(sessionId),
+        })
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.sessions(worktreeId),
+        })
+        return
+      }
 
-      // Replace the optimistic assistant message with the complete one from backend
-      // This fixes a race condition where chat:done creates an optimistic message
-      // with incomplete content_blocks (missing Edit/Read/Write tool blocks)
+      // Replace this turn's optimistic assistant message (from chat:done) with
+      // the complete one from the backend, which has all content_blocks.
       queryClient.setQueryData<Session>(
         chatQueryKeys.session(sessionId),
-        old => {
-          if (!old) return old
-
-          // Find the last assistant message (the optimistic one from chat:done)
-          // and replace it with the complete message from the backend
-          let lastAssistantIdx = -1
-          for (let i = old.messages.length - 1; i >= 0; i--) {
-            if (old.messages[i]?.role === 'assistant') {
-              lastAssistantIdx = i
-              break
-            }
-          }
-
-          if (lastAssistantIdx >= 0) {
-            const newMessages = [...old.messages]
-            newMessages[lastAssistantIdx] = finalResponse
-            return { ...old, messages: newMessages }
-          }
-
-          // If no assistant message found, add the response
-          return { ...old, messages: [...old.messages, finalResponse] }
-        }
+        old =>
+          old
+            ? {
+                ...old,
+                messages: upsertTurnAssistantMessage(old.messages, response),
+              }
+            : old
       )
+
+      // The invoke response is terminal too. If chat:done was lost (e.g. a
+      // dropped event), finish the turn here so it does not stay running.
+      if (store.sendingSessionIds[sessionId]) {
+        store.completeSession(sessionId)
+        queryClient.invalidateQueries({
+          queryKey: chatQueryKeys.session(sessionId),
+        })
+      }
 
       // Invalidate sessions list to update any metadata
       queryClient.invalidateQueries({
@@ -2027,10 +2061,8 @@ export function useSendMessage() {
         return
       }
 
-      // Benign race: another queue consumer (backend drain / another client)
-      // started a run for this session first. Queued messages are requeued by
-      // the queue processor's per-call onError. Direct submits restore the
-      // draft so typed text isn't lost.
+      // Benign race: the backend queue drain started a run first. Restore a
+      // direct submit to the draft so typed text is not lost.
       //
       // After cancel, a brief residual race can still produce this error while
       // the cancelled worker tears down (#329). Do NOT leave sending sticky —
@@ -2038,21 +2070,18 @@ export function useSendMessage() {
       if (isDuplicateSendError(error)) {
         logger.warn('Duplicate send rejected — another run is active', {
           sessionId,
-          fromQueue: variables.fromQueue ?? false,
         })
-        if (!variables.fromQueue) {
-          const {
-            inputDrafts,
-            setInputDraft,
-            removeSendingSession,
-            clearExecutingMode,
-          } = useChatStore.getState()
-          if (!inputDrafts[sessionId]?.trim()) {
-            setInputDraft(sessionId, variables.message)
-          }
-          removeSendingSession(sessionId)
-          clearExecutingMode(sessionId)
+        const {
+          inputDrafts,
+          setInputDraft,
+          removeSendingSession,
+          clearExecutingMode,
+        } = useChatStore.getState()
+        if (!inputDrafts[sessionId]?.trim()) {
+          setInputDraft(sessionId, variables.message)
         }
+        removeSendingSession(sessionId)
+        clearExecutingMode(sessionId)
         // Drop the optimistic user message by refetching authoritative state
         queryClient.invalidateQueries({
           queryKey: chatQueryKeys.session(sessionId),
@@ -2817,22 +2846,6 @@ export function persistEnqueue(
 }
 
 /**
- * Atomically dequeue a message from the backend.
- * Returns the dequeued message or null if queue was empty (another client won the race).
- */
-export async function persistDequeue(
-  worktreeId: string,
-  worktreePath: string,
-  sessionId: string
-): Promise<QueuedMessage | null> {
-  return invoke<QueuedMessage | null>('dequeue_message', {
-    worktreeId,
-    worktreePath,
-    sessionId,
-  })
-}
-
-/**
  * Persist removal of a specific queued message.
  */
 export function persistRemoveQueued(
@@ -2953,31 +2966,6 @@ export async function steerGrokTurn(
   message: string
 ): Promise<void> {
   await invoke('steer_grok_turn', { worktreeId, sessionId, message })
-}
-
-/**
- * Re-insert a message at the FRONT of the persisted queue (sequenced enqueue +
- * move-to-front). Used when a send lost the race against another queue
- * consumer and must be retried once the active run completes.
- */
-export async function persistRequeueFront(
-  worktreeId: string,
-  worktreePath: string,
-  sessionId: string,
-  message: QueuedMessage
-): Promise<void> {
-  await invoke('enqueue_message', {
-    worktreeId,
-    worktreePath,
-    sessionId,
-    message,
-  })
-  await invoke('move_queued_message_front', {
-    worktreeId,
-    worktreePath,
-    sessionId,
-    messageId: message.id,
-  })
 }
 
 /**

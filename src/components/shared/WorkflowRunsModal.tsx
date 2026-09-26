@@ -35,7 +35,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useWorkflowRuns, githubQueryKeys } from '@/services/github'
-import { projectsQueryKeys } from '@/services/projects'
+import { projectsQueryKeys, useProjects } from '@/services/projects'
 import {
   useCreateSession,
   useSendMessage,
@@ -156,7 +156,6 @@ export function WorkflowRunsModal() {
   const setSessionBackend = useSetSessionBackend()
   const setSessionModel = useSetSessionModel()
   const setSessionProvider = useSetSessionProvider()
-  const { data: preferences } = usePreferences()
 
   const workflowRunsModalOpen = useUIStore(state => state.workflowRunsModalOpen)
   const workflowRunsModalProjectPath = useUIStore(
@@ -165,6 +164,11 @@ export function WorkflowRunsModal() {
   const workflowRunsModalBranch = useUIStore(
     state => state.workflowRunsModalBranch
   )
+  const { data: projects } = useProjects()
+  const targetServerId = projects?.find(
+    project => project.path === workflowRunsModalProjectPath
+  )?.serverId
+  const { data: preferences } = usePreferences(targetServerId)
   const setWorkflowRunsModalOpen = useUIStore(
     state => state.setWorkflowRunsModalOpen
   )

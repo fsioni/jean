@@ -72,6 +72,7 @@ describe('client view state store bridge', () => {
       projectCanvasActiveFilters: {},
       sidebarServerFilter: null,
       sidebarActiveTab: 'projects',
+      pinnedRecentSessionIds: ['server:authoritative-session'],
     })
     useUIStore.setState({ rightSidebarVisible: false, zenMode: false })
     useTerminalStore.setState({ terminalVisibleByWorktree: {} })
@@ -90,7 +91,7 @@ describe('client view state store bridge', () => {
     expect(useProjectsStore.getState().sidebarServerFilter).toBe('server')
     expect(useProjectsStore.getState().sidebarActiveTab).toBe('recent')
     expect(useProjectsStore.getState().pinnedRecentSessionIds).toEqual([
-      'server:session',
+      'server:authoritative-session',
     ])
     expect(useUIStore.getState().rightSidebarVisible).toBe(true)
     expect(useUIStore.getState().zenMode).toBe(true)

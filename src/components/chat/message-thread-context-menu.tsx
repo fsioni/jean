@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactElement } from 'react'
-import { Copy } from '@/components/icons/reicon'
+import { Copy, Download } from '@/components/icons/reicon'
 import { toast } from 'sonner'
 import {
   ContextMenu,
@@ -8,6 +8,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { copyToClipboard } from '@/lib/clipboard'
+import { downloadLocalFile, resolveWorktreeFilePath } from '@/lib/local-file'
 
 /** Read the current window selection as trimmed plain text. */
 export function getTrimmedSelectionText(): string {
@@ -55,11 +56,17 @@ export function MessageThreadContextMenu({
 }: MessageThreadContextMenuProps) {
   const [selection, setSelection] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
+  const [filePath, setFilePath] = useState('')
 
-  const handleContextMenu = useCallback((event: React.MouseEvent) => {
-    const target = event.target
-    const link = target instanceof Element ? target.closest('a[href]') : null
+  // Runs on contextmenu (right-click, Android long press) and on pointerdown,
+  // because Radix opens touch long presses from a pointerdown timer and iOS
+  // Safari never fires contextmenu.
+  const captureMenuTarget = useCallback((event: React.SyntheticEvent) => {
+    const target = event.target instanceof Element ? event.target : null
+    const link = target?.closest('a[href]')
     setLinkUrl(link instanceof HTMLAnchorElement ? link.href : '')
+    const fileCode = target?.closest<HTMLElement>('code[data-file-path]')
+    setFilePath(fileCode?.dataset.filePath ?? '')
   }, [])
 
   const handleOpenChange = useCallback((open: boolean) => {
@@ -84,6 +91,17 @@ export function MessageThreadContextMenu({
       .catch(() => toast.error('Failed to copy'))
   }, [linkUrl])
 
+  const handleDownloadFile = useCallback(() => {
+    const path = resolveWorktreeFilePath(filePath)
+    if (!path) {
+      toast.error('Cannot resolve file path')
+      return
+    }
+    void downloadLocalFile(path).catch(error => {
+      toast.error(`Failed to download file: ${error}`)
+    })
+  }, [filePath])
+
   const handleCopyMessage = useCallback(() => {
     if (onCopyMessage) {
       void Promise.resolve(onCopyMessage()).catch(() => {
@@ -103,10 +121,20 @@ export function MessageThreadContextMenu({
 
   return (
     <ContextMenu onOpenChange={handleOpenChange}>
-      <ContextMenuTrigger asChild onContextMenu={handleContextMenu}>
+      <ContextMenuTrigger
+        asChild
+        onContextMenu={captureMenuTarget}
+        onPointerDown={captureMenuTarget}
+      >
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
+        {filePath && (
+          <ContextMenuItem onSelect={handleDownloadFile}>
+            <Download className="h-4 w-4" />
+            Download file
+          </ContextMenuItem>
+        )}
         {linkUrl && (
           <ContextMenuItem onSelect={handleCopyUrl}>
             <Copy className="h-4 w-4" />

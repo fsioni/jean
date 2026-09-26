@@ -249,15 +249,21 @@ export function useInvestigateHandlers({
 
       if (type === 'issue') {
         const contexts = await queryClient.fetchQuery({
-          queryKey: ['investigate-contexts', 'issue', activeWorktreeId],
+          queryKey: [
+            'investigate-contexts',
+            'issue',
+            activeSessionId,
+            activeWorktreeId,
+          ],
           queryFn: () =>
             invoke<{ number: number }[]>('list_loaded_issue_contexts', {
-              sessionId: activeWorktreeId,
+              sessionId: activeSessionId,
+              worktreeId: activeWorktreeId,
             }),
           staleTime: 0,
         })
         if ((contexts ?? []).length === 0) {
-          toast.error('No issue context loaded for this worktree')
+          toast.error('No issue context loaded for this session or worktree')
           return
         }
         const refs = (contexts ?? []).map(c => `#${c.number}`).join(', ')
@@ -272,15 +278,21 @@ export function useInvestigateHandlers({
           .replace(/\{issueRefs\}/g, refs)
       } else if (type === 'pr') {
         const contexts = await queryClient.fetchQuery({
-          queryKey: ['investigate-contexts', 'pr', activeWorktreeId],
+          queryKey: [
+            'investigate-contexts',
+            'pr',
+            activeSessionId,
+            activeWorktreeId,
+          ],
           queryFn: () =>
             invoke<{ number: number }[]>('list_loaded_pr_contexts', {
-              sessionId: activeWorktreeId,
+              sessionId: activeSessionId,
+              worktreeId: activeWorktreeId,
             }),
           staleTime: 0,
         })
         if ((contexts ?? []).length === 0) {
-          toast.error('No PR context loaded for this worktree')
+          toast.error('No PR context loaded for this session or worktree')
           return
         }
         const refs = (contexts ?? []).map(c => `#${c.number}`).join(', ')

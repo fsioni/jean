@@ -66,19 +66,23 @@ export function captureClientViewState(): ClientViewState {
 }
 
 export function applyClientViewState(state: ClientViewState): void {
+  const currentProjects = useProjectsStore.getState()
   useProjectsStore.setState({
-    projectCanvasSettings: Object.fromEntries(
-      Object.entries(state.project_canvas_settings).map(
-        ([projectId, settings]) => [
-          projectId,
-          {
-            worktreeSortMode: settings.worktree_sort_mode,
-            pinnedLabels: settings.pinned_labels,
-            labels: settings.labels,
-          },
-        ]
-      )
-    ),
+    projectCanvasSettings: {
+      ...currentProjects.projectCanvasSettings,
+      ...Object.fromEntries(
+        Object.entries(state.project_canvas_settings).map(
+          ([projectId, settings]) => [
+            projectId,
+            {
+              ...currentProjects.projectCanvasSettings[projectId],
+              worktreeSortMode: settings.worktree_sort_mode,
+              labels: settings.labels,
+            },
+          ]
+        )
+      ),
+    },
     projectCanvasActiveFilters: state.project_canvas_active_filters,
     expandedProjectIds: new Set(state.expanded_project_ids),
     expandedFolderIds: new Set(state.expanded_folder_ids),
@@ -90,7 +94,7 @@ export function applyClientViewState(state: ClientViewState): void {
       state.github_dashboard_favorite_project_ids,
     sidebarServerFilter: state.sidebar_server_filter,
     sidebarActiveTab: state.sidebar_active_tab,
-    pinnedRecentSessionIds: state.pinned_recent_session_ids,
+    pinnedRecentSessionIds: currentProjects.pinnedRecentSessionIds,
   })
   useUIStore.setState({
     leftSidebarVisible: state.left_sidebar_visible,

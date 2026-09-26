@@ -138,7 +138,7 @@ export interface RecentWorktreesData {
 export async function fetchRecentWorktrees(
   projects: Project[],
   limit: number,
-  includeSessionId: string | null
+  includeSessionIds: string[]
 ): Promise<RecentWorktreesData> {
   const projectsByServer = new Map<string, Project[]>()
   for (const project of projects.filter(
@@ -153,16 +153,11 @@ export async function fetchRecentWorktrees(
   const serverEntries = [...projectsByServer]
   const results = await Promise.allSettled(
     serverEntries.map(async ([serverId, serverProjects]) => {
-      const selectedRef = includeSessionId
-        ? parseServerResourceKey(includeSessionId)
-        : null
-      const selectedResourceId = selectedRef
-        ? selectedRef.serverId === serverId
-          ? selectedRef.resourceId
-          : null
-        : serverId === LOCAL_SERVER_ID
-          ? includeSessionId
-          : null
+      const serverSessionIds = includeSessionIds.flatMap(sessionId => {
+        const ref = parseServerResourceKey(sessionId)
+        if (ref) return ref.serverId === serverId ? [ref.resourceId] : []
+        return serverId === LOCAL_SERVER_ID ? [sessionId] : []
+      })
       const response = await invokeForServer<RecentWorktreesResponse>(
         serverId,
         'get_recent_worktrees',
@@ -172,7 +167,7 @@ export async function fetchRecentWorktrees(
           ),
           offset: 0,
           limit,
-          includeSessionId: selectedResourceId,
+          includeSessionIds: serverSessionIds,
         }
       )
       return { serverId, response }
@@ -193,12 +188,13 @@ export async function fetchRecentWorktrees(
         a.worktree.id.localeCompare(b.worktree.id)
     )
   const visibleItems = items.slice(0, limit)
-  if (
-    includeSessionId &&
-    !visibleItems.some(item => item.session.id === includeSessionId)
-  ) {
-    const selected = items.find(item => item.session.id === includeSessionId)
-    if (selected) visibleItems.push(selected)
+  const visibleIds = new Set(visibleItems.map(item => item.session.id))
+  const pinnedIds = new Set(includeSessionIds)
+  for (const item of items) {
+    if (pinnedIds.has(item.session.id) && !visibleIds.has(item.session.id)) {
+      visibleItems.push(item)
+      visibleIds.add(item.session.id)
+    }
   }
   return {
     items: visibleItems,
@@ -273,6 +269,7 @@ export function useProjects() {
 export interface ProjectBootstrap {
   worktrees: Worktree[]
   sessionsByWorktree: Record<string, WorktreeSessions>
+  runningSessions: string[]
 }
 
 /**
@@ -311,13 +308,58 @@ export async function fetchAndSeedProjectBootstrap(
   }
 
   const sessionsByWorktree = bootstrap.sessionsByWorktree ?? {}
+  const projectSessionIds = new Set<string>()
   for (const [worktreeId, sessions] of Object.entries(sessionsByWorktree)) {
+    for (const session of sessions.sessions) projectSessionIds.add(session.id)
     queryClient.setQueryData(chatQueryKeys.sessions(worktreeId), sessions)
     queryClient.setQueryData(
       [...chatQueryKeys.sessions(worktreeId), 'with-counts'],
       sessions
     )
   }
+
+  // A native remote-server switch does not reload App, so reconcile the
+  // running indicators from this server-owned project snapshot here.
+  const runningSessionIds = new Set(bootstrap.runningSessions ?? [])
+  const runningStartTimes: Record<string, number> = {}
+  for (const sessions of Object.values(sessionsByWorktree)) {
+    for (const session of sessions.sessions) {
+      if (runningSessionIds.has(session.id) && session.last_run_started_at) {
+        runningStartTimes[session.id] = session.last_run_started_at * 1000
+      }
+    }
+  }
+  useChatStore.setState(state => {
+    const sendingSessionIds = Object.fromEntries(
+      Object.entries(state.sendingSessionIds).filter(
+        ([sessionId]) => !projectSessionIds.has(sessionId)
+      )
+    )
+    const sendStartedAt = Object.fromEntries(
+      Object.entries(state.sendStartedAt).filter(
+        ([sessionId]) => !projectSessionIds.has(sessionId)
+      )
+    )
+    for (const sessionId of runningSessionIds) {
+      if (!projectSessionIds.has(sessionId)) continue
+      sendingSessionIds[sessionId] = true
+      const startedAt =
+        runningStartTimes[sessionId] ?? state.sendStartedAt[sessionId]
+      if (startedAt) sendStartedAt[sessionId] = startedAt
+    }
+    const currentIds = Object.keys(state.sendingSessionIds)
+    const nextIds = Object.keys(sendingSessionIds)
+    const currentStartIds = Object.keys(state.sendStartedAt)
+    const nextStartIds = Object.keys(sendStartedAt)
+    const changed =
+      currentIds.length !== nextIds.length ||
+      nextIds.some(sessionId => !state.sendingSessionIds[sessionId]) ||
+      currentStartIds.length !== nextStartIds.length ||
+      nextStartIds.some(
+        sessionId => state.sendStartedAt[sessionId] !== sendStartedAt[sessionId]
+      )
+    return changed ? { sendingSessionIds, sendStartedAt } : state
+  })
 
   logger.info('Project bootstrap loaded', {
     projectId,
@@ -3165,7 +3207,7 @@ export function useUpdateProjectSettings() {
       const serverId = projectRef?.serverId ?? LOCAL_SERVER_ID
       const resourceLinkedProjectIds = linkedProjectIds?.map(id => {
         const reference = parseServerResourceKey(id)
-        if (reference && reference.serverId !== serverId) {
+        if (isNativeApp() && reference && reference.serverId !== serverId) {
           throw new Error(
             'Linked projects must belong to the same Jean instance'
           )
@@ -3549,6 +3591,7 @@ export function useMoveItem() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
     },
     onError: error => {
       const message =
@@ -3632,6 +3675,7 @@ export function useReorderItems() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
     },
   })
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { CliBackend } from '@/types/preferences'
+import type { IssueContext } from '@/types/github'
 import type { CliType } from '@/lib/cli-update'
 import { mergeSeenFailedWorkflowRunIds } from '@/components/shared/workflow-run-utils'
 
@@ -11,6 +12,7 @@ export interface InvestigationOverride {
   forceNewSession?: boolean
   prompt?: string
   promptTemplate?: string
+  issueContext?: IssueContext
   openSession?: boolean
 }
 

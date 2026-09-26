@@ -259,6 +259,48 @@ export function coalesceContentBlocks(blocks: ContentBlock[]): ContentBlock[] {
   return out
 }
 
+/**
+ * Live tool blocks can start after the accumulated answer text.
+ * Put that missing start back on the first text block while the turn streams.
+ * The finished message already has the full text.
+ */
+export function restoreOmittedStreamingPrefix(
+  streamingContent: string,
+  blocks: ContentBlock[]
+): ContentBlock[] {
+  if (!streamingContent) return blocks
+
+  const joined = blocks
+    .flatMap(block => (block.type === 'text' ? [block.text] : []))
+    .join('')
+
+  if (!joined) {
+    if (blocks.length === 0) return blocks
+    return [{ type: 'text', text: streamingContent }, ...blocks]
+  }
+
+  if (
+    streamingContent.length === joined.length ||
+    !streamingContent.endsWith(joined)
+  ) {
+    return blocks
+  }
+
+  const prefix = streamingContent.slice(0, streamingContent.length - joined.length)
+  if (!prefix) return blocks
+
+  const index = blocks.findIndex(block => block.type === 'text')
+  const block = index >= 0 ? blocks[index] : undefined
+  if (!block || block.type !== 'text') return blocks
+
+  const text = prefix.endsWith(block.text) ? prefix : prefix + block.text
+  if (text === block.text) return blocks
+
+  const next = blocks.slice()
+  next[index] = { type: 'text', text }
+  return next
+}
+
 export function buildTimeline(
   contentBlocks: ContentBlock[],
   toolCalls: ToolCall[]

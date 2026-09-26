@@ -326,6 +326,7 @@ function CliLoginModalContent({
           terminalId={terminalId}
           command={command}
           commandArgs={commandArgs}
+          allowPasteInput={action === 'login'}
           className="min-h-0 flex-1"
         />
 

@@ -118,8 +118,12 @@ export function useAntigravityCliAuth(options?: { enabled?: boolean }) {
   })
 }
 
-export function useAvailableAntigravityModels(options?: { enabled?: boolean }) {
-  const serverId = useOptionalSettingsTargetServerId()
+export function useAvailableAntigravityModels(options?: {
+  enabled?: boolean
+  serverId?: string
+}) {
+  const settingsServerId = useOptionalSettingsTargetServerId()
+  const serverId = options?.serverId ?? settingsServerId
   return useQuery({
     queryKey: [...antigravityCliQueryKeys.models(), serverId ?? 'local'],
     queryFn: async (): Promise<AntigravityModelInfo[]> => {

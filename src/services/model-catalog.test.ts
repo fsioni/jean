@@ -176,6 +176,7 @@ describe('model catalog', () => {
     expect(getCatalogModelOptions(catalog, 'claude')).toEqual(
       expect.arrayContaining([
         { value: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
+        { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
         { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
       ])
     )
@@ -212,6 +213,44 @@ describe('model catalog', () => {
       'xhigh',
       'max',
       'ultra',
+    ])
+  })
+
+  it('uses the documented effort levels for bundled GPT 6 Sol', () => {
+    const reasoning = getCatalogModelReasoning(null, 'codex', 'gpt-6-sol')
+
+    expect(reasoning?.default).toBe('medium')
+    expect(reasoning?.levels.map(level => level.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ])
+  })
+
+  it('exposes fast mode for bundled GPT 6 models', () => {
+    for (const model of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
+      expect(getCatalogModelFastInfo(null, 'codex', model)).toEqual({
+        supportsFast: true,
+        isFast: false,
+        baseModel: model,
+        fastModel: `${model}-fast`,
+      })
+    }
+  })
+
+  it('does not expose Ultra effort for bundled GPT 6 Luna', () => {
+    const reasoning = getCatalogModelReasoning(null, 'codex', 'gpt-6-luna')
+
+    expect(reasoning?.default).toBe('medium')
+    expect(reasoning?.levels.map(level => level.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
     ])
   })
 

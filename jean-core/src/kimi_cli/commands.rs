@@ -423,6 +423,7 @@ pub async fn install_kimi_cli(app: AppHandle, version: Option<String>) -> Result
     if !get_cli_binary_path(&app)?.exists() {
         return Err("Kimi Code install completed but the binary was not found".to_string());
     }
+    crate::expose_managed_cli("kimi", &get_cli_binary_path(&app)?);
     Ok(())
 }
 

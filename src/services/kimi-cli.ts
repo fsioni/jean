@@ -119,8 +119,12 @@ export function useKimiCliAuth(options?: { enabled?: boolean }) {
   })
 }
 
-export function useAvailableKimiModels(options?: { enabled?: boolean }) {
-  const serverId = useOptionalSettingsTargetServerId()
+export function useAvailableKimiModels(options?: {
+  enabled?: boolean
+  serverId?: string
+}) {
+  const settingsServerId = useOptionalSettingsTargetServerId()
+  const serverId = options?.serverId ?? settingsServerId
   return useQuery({
     queryKey: [...kimiCliQueryKeys.models(), serverId ?? 'local'],
     queryFn: async (): Promise<KimiModelInfo[]> => {

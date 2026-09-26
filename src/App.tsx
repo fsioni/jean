@@ -5,6 +5,7 @@ import {
   ingestBootstrapEvents,
   invoke,
   useWsConnectionStatus,
+  useWsConnectionChecking,
   useWsAuthError,
   useWsAuthReason,
   preloadInitialData,
@@ -76,7 +77,6 @@ import { useAgentBrowserUpdateCheck } from './hooks/useAgentBrowserUpdateCheck'
 import { useServerUpdateCheck } from './hooks/useServerUpdateCheck'
 import { useCodexCodeModeHostRepair } from './hooks/useCodexCodeModeHostRepair'
 import { useServerQuerySync } from './hooks/useServerQuerySync'
-import { useQueueProcessor } from './hooks/useQueueProcessor'
 import { useBackgroundInvestigation } from './hooks/useBackgroundInvestigation'
 import { useAutoArchiveOnMerge } from './hooks/useAutoArchiveOnMerge'
 import { useMagicPromptAutoDefaults } from './hooks/useMagicPromptAutoDefaults'
@@ -692,6 +692,11 @@ function App() {
       })
 
       for (const { sessionId, message } of runningSnapshotMessages) {
+        // Only lift the snapshot into the live stream when this client already
+        // knows the turn is sending. A Resumable run (Jean restarted, host
+        // still alive) is not in that set yet. Leave its partial reply in the
+        // transcript until resume starts, or the text disappears.
+        if (!runningSendingIds[sessionId]) continue
         hydrateRunningSnapshot(sessionId, message, {
           allowWhileSending: true,
           dedupeReplayedOutput: true,
@@ -898,10 +903,6 @@ function App() {
     })
   }, [captureWebReloadState, webBackend])
 
-  // Global queue processor - must be at App level so queued messages execute
-  // even when the worktree is not focused (ChatWindow unmounted)
-  useQueueProcessor()
-
   // Headless background investigation - starts investigations on background
   // worktrees (CMD+Click) without opening the session modal
   useBackgroundInvestigation()
@@ -917,6 +918,7 @@ function App() {
   // terminals alive, so reloading behaves like reopening Jean without losing
   // backend work.
   const wsConnected = useWsConnectionStatus()
+  const wsCheckingConnection = useWsConnectionChecking()
   useEffect(() => {
     if (!webBackend || !wsConnected) return
 
@@ -1571,6 +1573,9 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <MainWindow />
+        {webBackend && wsCheckingConnection && (
+          <JeanLoadingScreen message="Checking connection to Jean..." onTop />
+        )}
         {webBackend && <WsAuthErrorOverlay />}
         {/* App-level dialog so quit confirmation wins over loading overlay
             even if MainWindow's copy is covered / not yet mounted. */}

@@ -12,6 +12,18 @@ High-level architectural overview and mental models for the Jean desktop applica
 
 ## Mental Models
 
+### GitHub issue and PR context scope
+
+`load_issue_context` and `load_pr_context` attach references to a session through Inject Context or the chat `#` picker. The chat `@` picker adds files, not issues or PRs. A worktree can also have issue or PR references from its creation. For each type independently, explicit session references replace worktree references in the loaded-context lists and AI prompts. If a session has no references of that type, the worktree references are the fallback. Older sessions can contain copied worktree references; when they also contain a distinct session reference, only the distinct reference is effective. Do not copy worktree references into new sessions or merge the two scopes in a new prompt path. The shared context files remain reference-counted.
+
+In the chat `#` picker, the plus action attaches an issue or PR to the active session and removes the typed `#` query from the chat draft. The sparkle action attaches it first, then replaces that query with the configured investigation magic prompt for the selected issue or PR. It does not send the draft. On native desktop, Enter selects the row and Shift+Enter inserts the investigation prompt; mobile and Web Access show the tap actions without keyboard hints.
+
+The picker shows issues and PRs in separate batches of eight. Each group has its own Load more button while more results are available. A new search or picker open resets both groups to eight results. The existing GitHub search finds results beyond the loaded list.
+
+The picker header has a Refresh button beside Include closed/merged. It invalidates only the active project's issue, PR, security, advisory, and Linear context queries, so the visible menu fetches fresh results without refreshing unrelated projects.
+
+**Investigate in the Current Worktree** creates a new session. Pass the selected issue context to `start_background_investigation`; the backend must save its session reference before it queues the prompt. This keeps the issue available to later commands in that session, including Comment & Close Issue.
+
 ### The "Onion" State Architecture
 
 State management follows a clear three-layer hierarchy:
@@ -41,6 +53,11 @@ Is this data needed across multiple components?
 See [state-management.md](./state-management.md) for detailed patterns.
 
 ### Event-Driven Bridge Architecture
+
+The Rust backend is the only consumer of persisted queued chat prompts. It
+starts the next prompt after a run ends and resumes a queued session when that
+session is opened after a restart. Frontend clients display `queue:updated` and
+`chat:sending` events but must not dequeue or send queued prompts themselves.
 
 Rust and React communicate through three patterns:
 
@@ -92,9 +109,10 @@ keys continue to use backend persistence. New code can use
 
 Project and worktree display state uses the same ownership rule through the
 versioned `jean-client-view-state-v1` browser storage record. This includes
-canvas sorting and filters, tree expansion, dashboard favorites, sidebar
-layout, and browser/terminal layout. Resource-keyed values must use scoped
-server resource IDs. `useClientViewStatePersistence()` migrates the legacy
+canvas sorting and active filters, tree expansion, dashboard favorites, sidebar
+layout, and browser/terminal layout. Pinned recent sessions and pinned canvas
+label filters are shared through server UI state instead. Resource-keyed values
+must use scoped server resource IDs. `useClientViewStatePersistence()` migrates the legacy
 server UI-state values on first load and then makes the client record
 authoritative. Keep session data, running terminal metadata, drafts, and other
 operational state in the backend persistence paths.
@@ -137,6 +155,14 @@ Each major system has focused documentation:
 - **[Bundle Optimization](./bundle-optimization.md)** - Build size optimization
 
 Additional systems (no dedicated docs yet):
+
+- **Jean-managed CLI terminal access** - When a backend uses a Jean-managed
+  CLI and no independent executable is available on `PATH`, Jean exposes the
+  managed binary to normal terminals. Unix and WSL use stable links in
+  `~/.local/bin`; Windows uses a launcher in the per-user `WindowsApps`
+  directory, which is on the standard user `PATH`. Jean repairs these launchers
+  on startup and after managed installs or upgrades. A real system `PATH`
+  installation always takes precedence.
 
 - **Required agent integrations** - Jean MCP and Agent Browser are mandatory
   runtime services. Startup always enables the Jean MCP socket, repairs the
@@ -275,8 +301,8 @@ Cursor-specific notes:
 
 Grok-specific notes:
 
-- Grok chat uses ACP over stdio (`grok --no-auto-update agent --no-leader stdio`) instead of `grok -p`, because headless `-p` streaming JSON does not expose reliable tool-call events.
-- Grok ACP processes are kept warm per Jean session and reused for follow-up prompts, then idle-stopped after five minutes. If the process is gone (app restart, crash, cancellation, model/mode flag change), Jean spawns a new ACP process and reloads via persisted `grok_session_id`.
+- Grok chat uses ACP over stdio (`grok --no-auto-update agent --leader stdio`) instead of `grok -p`, because headless `-p` streaming JSON does not expose reliable tool-call events. `--leader` attaches that client to Grok's shared leader (`~/.grok/leader.sock`), which Grok starts if needed. MCP and the agent backend are shared across Jean sessions; each session still has its own stdio client and ACP session.
+- On Unix, one detached Grok ACP host stays alive per Jean session and accepts follow-up prompts on a stable socket. `keep_ai_servers_warm` gates it: on, the host idle-stops after 10 minutes; off, it exits when the turn finishes. Those hosts share one Grok leader, so a new session attaches to the already-running backend instead of starting a private agent and a private MCP set. A model, effort, execution-mode, working-directory, or MCP change replaces that session's host and reloads via persisted `grok_session_id`. Cancelling a turn sends ACP `session/cancel` and leaves the host up when that prompt finishes.
 - ACP `session/update` chunks are mapped to Jean's common chat stream events (`chat:chunk`, `chat:tool_use`, `chat:tool_result`, `chat:done`), and ACP session ids are persisted as `grok_session_id` for later `session/load`.
 - Jean implements the minimal ACP client surface Grok needs for headless tool execution: `session/request_permission`, `terminal/*`, and text-file read/write requests. Plan mode auto-approves research tools (`read`/`search`/`think`/`fetch`/`execute`, including `run_terminal_command` / `terminal/*`) so investigations can use `gh`/`git`/`rg`/etc., and denies mutating file tools (`edit`/`delete`/`move`/`write`) plus hard-blocks `fs/write`; build/yolo auto-approve via ACP/CLI flags. Synthetic ExitPlanMode is only injected for plan-like content (not short research preambles).
 - **All modes** launch Grok ACP with `--no-plan`. Grok's native `exit_plan_mode` requires the TUI approval surface ACP cannot show; leaving native plan enabled caused Jean plan-mode turns to hang after research. Jean plan mode is enforced with a plan-mode system instruction, mutation-blocking tool permissions, and synthetic ExitPlanMode. Build/yolo also pass `--always-approve`.

@@ -21,6 +21,8 @@ import {
 } from '@/components/ui/dialog'
 import { useUIStore } from '@/store/ui-store'
 import { useProjectsStore } from '@/store/projects-store'
+import { parseServerResourceKey } from '@/lib/server-resource'
+import { SettingsTargetProvider } from '@/lib/settings-target'
 import { useNewWorktreeData } from './hooks/useNewWorktreeData'
 import { useNewWorktreeHandlers } from './hooks/useNewWorktreeHandlers'
 import { useNewWorktreeKeyboard } from './hooks/useNewWorktreeKeyboard'
@@ -77,6 +79,19 @@ export const TABS: Tab[] = [
 const SOURCE_TABS = TABS.filter(tab => tab.id !== 'quick')
 
 export function NewWorktreeModal() {
+  const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
+  const serverId = selectedProjectId
+    ? (parseServerResourceKey(selectedProjectId)?.serverId ?? 'local')
+    : 'local'
+
+  return (
+    <SettingsTargetProvider serverId={serverId}>
+      <NewWorktreeModalContent />
+    </SettingsTargetProvider>
+  )
+}
+
+function NewWorktreeModalContent() {
   const { triggerLogin: triggerGhLogin, isGhInstalled } = useGhLogin()
   const { newWorktreeModalOpen } = useUIStore()
 

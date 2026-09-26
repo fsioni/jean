@@ -245,14 +245,18 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
     return results.sort((a, b) => b.session.updated_at - a.session.updated_at)
   }, [allSessions])
 
-  // Use cached unread rows immediately while the open-triggered refetch runs.
-  // Only defer an empty snapshot because it can be stale and would hide rows
-  // that arrive with the refetch.
+  // A separate query supplies the badge count. Do not freeze an old list when
+  // that count says a newly finished session is still missing from it.
   useEffect(() => {
-    if (!open || !allSessions || (isFetching && unreadItems.length === 0))
+    if (
+      !open ||
+      !allSessions ||
+      unreadItems.length === 0 ||
+      unreadItems.length !== unreadCount
+    )
       return
     setSnapshotItems(prev => prev ?? unreadItems)
-  }, [allSessions, isFetching, open, unreadItems])
+  }, [allSessions, open, unreadCount, unreadItems])
 
   // Items rendered inside the popover. While open, prefer the snapshot taken at
   // open time so a queued prompt restarting a session (status flip → unread=false)
@@ -392,23 +396,29 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
     [markSessionsOpened]
   )
 
-  const handleTriggerClick = useCallback(
-    () => {
-      if (allSessions && (!isFetching || unreadItems.length > 0)) {
-        setSnapshotItems(unreadItems)
-      }
-    },
-    [allSessions, isFetching, unreadItems]
-  )
+  const handleTriggerClick = useCallback(() => {
+    if (
+      allSessions &&
+      unreadItems.length > 0 &&
+      unreadItems.length === unreadCount
+    ) {
+      setSnapshotItems(unreadItems)
+    }
+  }, [allSessions, unreadCount, unreadItems])
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (next && allSessions && (!isFetching || unreadItems.length > 0)) {
+      if (
+        next &&
+        allSessions &&
+        unreadItems.length > 0 &&
+        unreadItems.length === unreadCount
+      ) {
         setSnapshotItems(unreadItems)
       }
       setOpen(next)
     },
-    [allSessions, isFetching, unreadItems]
+    [allSessions, unreadCount, unreadItems]
   )
 
   const handleKeyDown = useCallback(

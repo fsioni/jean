@@ -65,7 +65,11 @@ import type {
   ContentBlock,
   ChatMessage,
 } from '@/types/chat'
-import { persistEnqueue, saveCancelledMessage } from '@/services/chat'
+import {
+  persistEnqueue,
+  saveCancelledMessage,
+  upsertTurnAssistantMessage,
+} from '@/services/chat'
 import {
   applySessionSettingToSession,
   type SessionSettingKey,
@@ -88,26 +92,6 @@ import {
 
 interface UseStreamingEventsParams {
   queryClient: QueryClient
-}
-
-/**
- * Upsert an optimistic assistant message into the session's message list.
- * If the last message is already an assistant message (e.g. from a cancelled run),
- * replace it instead of appending — prevents duplicate assistant messages when
- * the user cancels and resends.
- */
-function upsertAssistantMessage(
-  messages: Session['messages'],
-  newMsg: Session['messages'][number]
-): Session['messages'] {
-  const last = messages[messages.length - 1]
-  if (last?.role === 'assistant') {
-    // Replace the trailing assistant message
-    const updated = [...messages]
-    updated[updated.length - 1] = newMsg
-    return updated
-  }
-  return [...messages, newMsg]
 }
 
 function getTextContentFromBlocks(
@@ -380,13 +364,13 @@ export default function useStreamingEvents({
       // Check if THIS client initiated the send (sender calls addSendingSession
       // before sendMessage.mutate, so it's already in sendingSessionIds).
       const isSender = !!useChatStore.getState().sendingSessionIds[session_id]
-      // A remote web/mobile client may start a new turn while this client still
-      // has the previous turn parked as waiting/reviewing in Zustand. Clear
-      // those stale terminal flags before marking the session as running.
+      // A new turn supersedes the previous turn's waiting state and denials.
       useChatStore.setState(state => {
         if (
           !state.waitingForInputSessionIds[session_id] &&
-          !state.reviewingSessions[session_id]
+          !state.reviewingSessions[session_id] &&
+          !state.pendingPermissionDenials[session_id] &&
+          !state.deniedMessageContext[session_id]
         ) {
           return state
         }
@@ -394,7 +378,16 @@ export default function useStreamingEvents({
           state.waitingForInputSessionIds
         const { [session_id]: _reviewing, ...reviewingSessions } =
           state.reviewingSessions
-        return { waitingForInputSessionIds, reviewingSessions }
+        const { [session_id]: _denials, ...pendingPermissionDenials } =
+          state.pendingPermissionDenials
+        const { [session_id]: _context, ...deniedMessageContext } =
+          state.deniedMessageContext
+        return {
+          waitingForInputSessionIds,
+          reviewingSessions,
+          pendingPermissionDenials,
+          deniedMessageContext,
+        }
       })
       addSendingSession(session_id)
       if (execution_mode) {
@@ -409,6 +402,8 @@ export default function useStreamingEvents({
                 waiting_for_input: false,
                 waiting_for_input_type: null,
                 is_reviewing: false,
+                pending_permission_denials: [],
+                denied_message_context: undefined,
                 last_run_status: 'running',
                 last_run_execution_mode:
                   execution_mode ?? old.last_run_execution_mode,
@@ -1202,7 +1197,7 @@ export default function useStreamingEvents({
               if (!old) return old
               return {
                 ...old,
-                messages: upsertAssistantMessage(old.messages, {
+                messages: upsertTurnAssistantMessage(old.messages, {
                   id: messageId,
                   session_id: sessionId,
                   role: 'assistant' as const,
@@ -1305,7 +1300,7 @@ export default function useStreamingEvents({
               if (!old) return old
               return {
                 ...old,
-                messages: upsertAssistantMessage(old.messages, {
+                messages: upsertTurnAssistantMessage(old.messages, {
                   id: planMessageId as string,
                   session_id: sessionId,
                   role: 'assistant' as const,
@@ -1473,7 +1468,7 @@ export default function useStreamingEvents({
               }
               return {
                 ...old,
-                messages: upsertAssistantMessage(old.messages, {
+                messages: upsertTurnAssistantMessage(old.messages, {
                   id: messageId,
                   session_id: sessionId,
                   role: 'assistant' as const,

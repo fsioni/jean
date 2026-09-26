@@ -182,6 +182,31 @@ describe('ProjectTreeItem', () => {
     ).toBeInTheDocument()
   })
 
+  it('uses the project summary count without loading collapsed workspaces', () => {
+    mocks.worktrees = []
+    useProjectsStore.setState({
+      selectedProjectId: null,
+      selectedWorktreeId: null,
+      expandedProjectIds: new Set(),
+    })
+
+    render(<ProjectTreeItem project={{ ...project, worktree_count: 3 }} />)
+
+    expect(mocks.worktreeQueryOptions.at(-1)).toEqual({ enabled: false })
+    expect(
+      screen.getByRole('status', { name: '3 workspaces' })
+    ).toHaveTextContent('3')
+  })
+
+  it('hides the count when workspaces are shown', () => {
+    render(<ProjectTreeItem project={{ ...project, worktree_count: 1 }} />)
+
+    expect(
+      screen.queryByRole('status', { name: '1 workspace' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('worktree-list')).toBeInTheDocument()
+  })
+
   it('loads and shows worktrees that match the sidebar search', () => {
     useProjectsStore.setState({
       selectedProjectId: null,

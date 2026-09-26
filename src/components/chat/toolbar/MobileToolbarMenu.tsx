@@ -214,6 +214,28 @@ export function MobileToolbarMenu({
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem
+          disabled={!hasIssueContexts}
+          onClick={() => {
+            setMenuOpen(false)
+            window.dispatchEvent(
+              new CustomEvent('magic-command', {
+                detail: { command: 'comment-and-close-issue' },
+              })
+            )
+          }}
+        >
+          <Bug className="h-4 w-4" />
+          Comment & Close Issue
+          <span
+            className={cn(
+              'ml-auto text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded',
+              isMobile && 'hidden'
+            )}
+          >
+            H
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
           onClick={() => {
             setMenuOpen(false)
             onRevertLastCommit()

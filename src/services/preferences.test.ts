@@ -132,6 +132,7 @@ describe('model option helpers', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
       'claude-fable-5-1',
       'claude-fable-5',
+      'claude-opus-5-5',
       'claude-opus-5',
       'claude-sonnet-5',
       'claude-opus-4-8[1m]',
@@ -148,6 +149,7 @@ describe('model option helpers', () => {
     expect(normalizeClaudeModel('claude-fable-5-1')).toBe('claude-fable-5-1')
     expect(normalizeClaudeModel('sonnet')).toBe('claude-sonnet-5')
     expect(normalizeClaudeModel('claude-fable-5')).toBe('claude-fable-5')
+    expect(normalizeClaudeModel('claude-opus-5-5')).toBe('claude-opus-5-5')
     expect(normalizeClaudeModel('claude-opus-5')).toBe('claude-opus-5')
     expect(normalizeClaudeModel('claude-sonnet-5')).toBe('claude-sonnet-5')
     expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8')
@@ -166,16 +168,23 @@ describe('model option helpers', () => {
     ).toBe('haiku')
   })
 
-  it('offers GPT 5.6 preview variants in Codex selectors', () => {
+  it('offers GPT 6 and GPT 5.6 variants in Codex selectors', () => {
     const values = codexDefaultModelOptions.map(option => option.value)
-    expect(values.slice(0, 4)).toEqual([
+    expect(values.slice(0, 9)).toEqual([
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-6-astra-fast',
+      'gpt-6-sol-fast',
+      'gpt-6-luna-fast',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
     ])
     expect(values).not.toContain('gpt-5.6')
     expect(normalizeCodexModel('gpt-6-astra')).toBe('gpt-6-astra')
+    expect(normalizeCodexModel('gpt-6-sol')).toBe('gpt-6-sol')
+    expect(normalizeCodexModel('gpt-6-luna')).toBe('gpt-6-luna')
     expect(normalizeCodexModel('gpt-5.6-sol')).toBe('gpt-5.6-sol')
     expect(normalizeCodexModel('gpt-5.6-terra')).toBe('gpt-5.6-terra')
     expect(normalizeCodexModel('gpt-5.6-luna')).toBe('gpt-5.6-luna')
@@ -185,6 +194,9 @@ describe('model option helpers', () => {
 
   it('offers Codex fast modes for default selectors', () => {
     const values = codexDefaultModelOptions.map(option => option.value)
+    expect(values).toContain('gpt-6-astra-fast')
+    expect(values).toContain('gpt-6-sol-fast')
+    expect(values).toContain('gpt-6-luna-fast')
     expect(values).toContain('gpt-5.6-sol-fast')
     expect(values).toContain('gpt-5.6-terra-fast')
     expect(values).toContain('gpt-5.6-luna-fast')
@@ -192,6 +204,7 @@ describe('model option helpers', () => {
     expect(values).toContain('gpt-5.4-fast')
     expect(values).toContain('gpt-5.4-mini-fast')
     expect(normalizeCodexModel('gpt-5.6-sol-fast')).toBe('gpt-5.6-sol-fast')
+    expect(normalizeCodexModel('gpt-6-sol-fast')).toBe('gpt-6-sol-fast')
     expect(normalizeCodexModel('gpt-5.6-fast')).toBe('gpt-5.6-sol-fast')
     expect(normalizeCodexModel('gpt-5-6-sol-fast')).toBe('gpt-5.6-sol-fast')
     expect(normalizeCodexModel('gpt-5.5-fast')).toBe('gpt-5.5-fast')
@@ -364,6 +377,36 @@ describe('preferences service', () => {
         {
           patch: { default_backend: 'codex' },
           expectedRevision: 'revision-1',
+        }
+      )
+    })
+
+    it('updates cached server defaults before the remote save completes', () => {
+      const remoteKey = preferencesQueryKeys.preferences('dev-server')
+      queryClient.setQueryData(remoteKey, {
+        ...defaultPreferences,
+        default_backend: 'claude',
+        default_execution_mode: 'plan',
+      })
+      const { result } = renderHook(() => usePatchPreferences(), {
+        wrapper: createServerWrapper(queryClient, 'dev-server'),
+      })
+
+      act(() => {
+        result.current.mutate({
+          default_backend: 'codex',
+          default_execution_mode: 'yolo',
+          build_backend: 'opencode',
+          yolo_backend: 'cursor',
+        })
+      })
+
+      expect(queryClient.getQueryData<AppPreferences>(remoteKey)).toMatchObject(
+        {
+          default_backend: 'codex',
+          default_execution_mode: 'yolo',
+          build_backend: 'opencode',
+          yolo_backend: 'cursor',
         }
       )
     })

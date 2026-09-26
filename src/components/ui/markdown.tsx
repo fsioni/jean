@@ -21,6 +21,7 @@ import { remarkFixInterruptedLists } from '@/lib/remark-fix-interrupted-lists'
 import { Copy, Check, Table, ListChecks } from '@/components/icons/reicon'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/clipboard'
+import { extractFilePath, resolveWorktreeFilePath } from '@/lib/local-file'
 import {
   Tooltip,
   TooltipTrigger,
@@ -89,15 +90,8 @@ function openLocalFileLink(href: string | undefined): boolean {
     return false
   }
 
-  const decodedHref = decodeURIComponent(href)
-  const isAbsolute = decodedHref.startsWith('/') || /^[a-z]:[\\/]/i.test(decodedHref)
-  const rootPath = useChatStore.getState().activeWorktreePath
-  if (!isAbsolute && !rootPath) return false
-
-  const separator = rootPath?.includes('\\') ? '\\' : '/'
-  const path = isAbsolute
-    ? decodedHref
-    : `${rootPath?.replace(/[\\/]+$/, '')}${separator}${decodedHref.replace(/^[\\/]+/, '')}`
+  const path = resolveWorktreeFilePath(decodeURIComponent(href))
+  if (!path) return false
   useUIStore.getState().setViewingFilePath(path)
   return true
 }
@@ -317,7 +311,9 @@ function TableBlock({ children, tableOffset }: TableBlockProps) {
                 type="button"
                 onClick={handleToggleChecklist}
                 className={checklistEnabled ? activeBtnClass : btnClass}
-                aria-label={checklistEnabled ? 'Turn off checklist' : 'Toggle checklist'}
+                aria-label={
+                  checklistEnabled ? 'Turn off checklist' : 'Toggle checklist'
+                }
                 aria-pressed={checklistEnabled}
               >
                 <ListChecks className="size-4" />
@@ -330,7 +326,12 @@ function TableBlock({ children, tableOffset }: TableBlockProps) {
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" onClick={() => handleCopy('markdown')} aria-label="Copy as Markdown" className={btnClass}>
+            <button
+              type="button"
+              onClick={() => handleCopy('markdown')}
+              aria-label="Copy as Markdown"
+              className={btnClass}
+            >
               {copiedFormat === 'markdown' ? (
                 <Check className="size-4" />
               ) : (
@@ -342,7 +343,12 @@ function TableBlock({ children, tableOffset }: TableBlockProps) {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" onClick={() => handleCopy('tsv')} aria-label="Copy for spreadsheet" className={btnClass}>
+            <button
+              type="button"
+              onClick={() => handleCopy('tsv')}
+              aria-label="Copy for spreadsheet"
+              className={btnClass}
+            >
               {copiedFormat === 'tsv' ? (
                 <Check className="size-4" />
               ) : (
@@ -410,9 +416,15 @@ const components: Components = {
     if (isBlock) {
       return <code className={className}>{children}</code>
     }
-    // Inline code
+    // Inline code. File paths get a "Download file" item in the message
+    // context menu (see MessageThreadContextMenu).
+    const filePath =
+      typeof children === 'string' ? extractFilePath(children) : null
     return (
-      <code className="rounded-md bg-muted px-1.5 py-0.5 text-[0.875em]">
+      <code
+        className="rounded-md bg-muted px-1.5 py-0.5 text-[0.875em]"
+        data-file-path={filePath ?? undefined}
+      >
         {children}
       </code>
     )

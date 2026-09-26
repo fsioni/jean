@@ -5,6 +5,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
 import { useUIStore } from '@/store/ui-store'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import {
   useSendMessage,
   markPlanApproved,
@@ -144,7 +145,8 @@ export function useWorktreeApproval({
   projectId,
 }: UseWorktreeApprovalParams) {
   const queryClient = useQueryClient()
-  const { data: preferences } = usePreferences()
+  const serverId = parseServerResourceKey(worktreeId)?.serverId
+  const { data: preferences } = usePreferences(serverId)
   const sendMessage = useSendMessage()
 
   const handleWorktreeApproval = useCallback(
@@ -373,9 +375,9 @@ export function useWorktreeApproval({
         ? preferences?.yolo_effort_level
         : preferences?.build_effort_level
       const modeBackendOverride = modeBackendPref as CliBackend | null
-      const backend = (modeBackendOverride ??
-        originalBackend ??
-        undefined) as CliBackend | undefined
+      const backend = (modeBackendOverride ?? originalBackend ?? undefined) as
+        | CliBackend
+        | undefined
       const model =
         modeModelPref ??
         (modeBackendOverride

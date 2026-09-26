@@ -244,6 +244,62 @@ describe('UnreadBell', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows a new finished session on the first open after the last one was read', async () => {
+    ;(
+      globalThis as typeof globalThis & { __JEAN_TEST_IS_NATIVE__?: boolean }
+    ).__JEAN_TEST_IS_NATIVE__ = false
+    unreadCount = 1
+    allSessions = {
+      entries: [
+        {
+          project_id: 'project-1',
+          project_name: 'Jean',
+          worktree_id: 'worktree-1',
+          worktree_name: 'main',
+          worktree_path: '/repo',
+          sessions: [session({ id: 'session-1', name: 'Session one' })],
+        },
+      ],
+    }
+    const user = userEvent.setup()
+    const view = renderWithQueryClient(<UnreadBell title="Jean" />)
+
+    await user.click(
+      screen.getByRole('button', { name: /1 finished session/i })
+    )
+    await user.click(screen.getByText('Session one'))
+    await waitFor(() =>
+      expect(screen.queryByText('Session one')).not.toBeInTheDocument()
+    )
+
+    unreadCount = 0
+    allSessions = { entries: [] }
+    view.rerender(<UnreadBell title="Jean" />)
+    unreadCount = 1
+    view.rerender(<UnreadBell title="Jean" />)
+
+    await user.click(
+      screen.getByRole('button', { name: /1 finished session/i })
+    )
+    expect(screen.queryByText('Session one')).not.toBeInTheDocument()
+
+    allSessions = {
+      entries: [
+        {
+          project_id: 'project-1',
+          project_name: 'Jean',
+          worktree_id: 'worktree-1',
+          worktree_name: 'main',
+          worktree_path: '/repo',
+          sessions: [session({ id: 'session-2', name: 'Session two' })],
+        },
+      ],
+    }
+    view.rerender(<UnreadBell title="Jean" />)
+
+    expect(await screen.findByText('Session two')).toBeInTheDocument()
+  })
+
   it('shows cached unread sessions on the first click while refetching', async () => {
     allSessionsFetching = true
     renderWithQueryClient(<UnreadBell title="Jean" />)

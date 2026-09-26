@@ -168,6 +168,7 @@ import {
 import { useUIStore } from '@/store/ui-store'
 import { buildMcpConfigJson } from '@/services/mcp'
 import { CHECK_GITHUB_ISSUES_PROMPT } from '@/lib/github-discovery-prompt'
+import { buildCommentAndCloseIssuePrompt } from '@/lib/github-issue-close-prompt'
 import type { McpServerInfo } from '@/types/chat'
 import { useGitStatus } from '@/services/git-status'
 import { useRemotePicker } from '@/hooks/useRemotePicker'
@@ -192,6 +193,7 @@ import {
   shouldShowCodeReviewLoadingPanel,
   shouldShowReviewFullWidth,
 } from './session-card-utils'
+import { resolveInitialActiveSessionId } from './session-tab-order'
 
 interface ForkSessionToWorktreeResponse {
   worktree: Worktree
@@ -440,15 +442,13 @@ function ChatWindowContent({
     const currentActive = store.activeSessionIds[activeWorktreeId]
     const sessions = sessionsData.sessions
     if (!sessions) return
-    const firstSession = sessions[0]
-
-    // If no active session in store, or it doesn't exist in loaded sessions
-    if (sessions.length > 0 && firstSession) {
-      const sessionExists = sessions.some(s => s.id === currentActive)
-      if (!currentActive || !sessionExists) {
-        const targetSession = sessionsData.active_session_id ?? firstSession.id
-        store.setActiveSession(activeWorktreeId, targetSession)
-      }
+    const targetSession = resolveInitialActiveSessionId(
+      currentActive,
+      sessionsData.active_session_id,
+      sessions.map(session => session.id)
+    )
+    if (targetSession) {
+      store.setActiveSession(activeWorktreeId, targetSession)
     }
   }, [sessionsData, activeWorktreeId, isSessionsFetching, uiStateInitialized])
 
@@ -574,10 +574,18 @@ function ChatWindowContent({
   // Rebuild streamingContentBlocks from snapshot when opening a session whose
   // last message is still running. Covers web-access click-to-open, sidebar
   // navigation, and any other entry that bypasses App.tsx auto-resume.
+  const hydratedRunningSnapshotsRef = useRef<Set<string> | null>(null)
   useEffect(() => {
     if (!deferredSessionId || !session) return
     const lastMsg = session.messages.at(-1)
     if (lastMsg?.role === 'assistant' && lastMsg.id.startsWith('running-')) {
+      // Hydrate each running message once. The session query refetches while
+      // the turn streams; merging every refetched snapshot into live blocks
+      // (and resetting the replay cursor) duplicates the streamed output.
+      hydratedRunningSnapshotsRef.current ??= new Set()
+      const hydrateKey = `${deferredSessionId}:${lastMsg.id}`
+      if (hydratedRunningSnapshotsRef.current.has(hydrateKey)) return
+      hydratedRunningSnapshotsRef.current.add(hydrateKey)
       // Live chunks can reach Web Access before this session query finishes.
       // Always merge the persisted snapshot ahead of those chunks so opening a
       // running session includes output produced before this client connected.
@@ -1021,22 +1029,22 @@ function ChatWindowContent({
 
   const isSending = isSendingForSession
 
-  // PERFORMANCE: Content selectors use deferredSessionId to prevent sync re-render cascade
-  // When switching tabs, these selectors return stable values until React catches up
-  // This prevents the ~1 second freeze from 15+ selectors re-evaluating simultaneously
+  // Keep live status and live output on the same immediate session key. If the
+  // timer follows activeSessionId while output follows a deferred/previous id,
+  // the UI can show a running timer with no output and briefly render another
+  // session when the first chunk arrives.
   // IMPORTANT: Use stable empty array constants to prevent infinite render loops
   const streamingContent = useChatStore(state =>
-    deferredSessionId ? (state.streamingContents[deferredSessionId] ?? '') : ''
+    activeSessionId ? (state.streamingContents[activeSessionId] ?? '') : ''
   )
   const currentToolCalls = useChatStore(state =>
-    deferredSessionId
-      ? (state.activeToolCalls[deferredSessionId] ?? EMPTY_TOOL_CALLS)
+    activeSessionId
+      ? (state.activeToolCalls[activeSessionId] ?? EMPTY_TOOL_CALLS)
       : EMPTY_TOOL_CALLS
   )
   const currentStreamingContentBlocks = useChatStore(state =>
-    deferredSessionId
-      ? (state.streamingContentBlocks[deferredSessionId] ??
-        EMPTY_CONTENT_BLOCKS)
+    activeSessionId
+      ? (state.streamingContentBlocks[activeSessionId] ?? EMPTY_CONTENT_BLOCKS)
       : EMPTY_CONTENT_BLOCKS
   )
   // Per-session input - check if there's any input for submit button state
@@ -1637,8 +1645,30 @@ function ChatWindowContent({
     })
   }, [getMcpConfig, sendMessageNow])
 
-  // Note: Queue processing moved to useQueueProcessor hook in App.tsx
-  // This ensures queued messages execute even when the worktree is unfocused
+  const handleCommentAndCloseIssue = useCallback(() => {
+    if (!loadedIssueContexts?.length) {
+      toast.error('No GitHub issue attached to this session or worktree')
+      return
+    }
+    sendMessageNow({
+      id: generateId(),
+      message: buildCommentAndCloseIssuePrompt(loadedIssueContexts),
+      pendingImages: [],
+      pendingFiles: [],
+      pendingSkills: [],
+      pendingTextFiles: [],
+      model: selectedModelRef.current,
+      provider: selectedProviderRef.current,
+      executionMode: executionModeRef.current,
+      thinkingLevel: selectedThinkingLevelRef.current,
+      effortLevel: useAdaptiveThinkingRef.current
+        ? selectedEffortLevelRef.current
+        : undefined,
+      mcpConfig: getMcpConfig(),
+      backend: selectedBackendRef.current,
+      queuedAt: Date.now(),
+    })
+  }, [getMcpConfig, loadedIssueContexts, sendMessageNow])
 
   // Git operations hook - handles commit, PR, review, merge operations
   const {
@@ -1901,6 +1931,7 @@ function ChatWindowContent({
     handleCheckGitHubIssues,
     handleCommit,
     handleCommitAndPush: handleCommitAndPushWithPicker,
+    handleCommentAndCloseIssue,
     handlePull: handlePullWithPicker,
     handlePush: handlePushWithPicker,
     handleRevertLastCommit,
@@ -3106,6 +3137,13 @@ function ChatWindowContent({
                                   onCommandExecute={handleCommandExecute}
                                   onHasValueChange={setHasInputValue}
                                   onSteerModifierChange={setSteerModifierActive}
+                                  investigateIssuePrompt={
+                                    preferences?.magic_prompts
+                                      ?.investigate_issue
+                                  }
+                                  investigatePRPrompt={
+                                    preferences?.magic_prompts?.investigate_pr
+                                  }
                                   onRegisterClearHandler={(
                                     handler: (() => void) | null
                                   ) => {

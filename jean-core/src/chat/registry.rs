@@ -56,7 +56,7 @@ static DETACHED_SESSIONS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new
 ///
 /// The registry-based "actively managed" guard only catches duplicates after a
 /// process/turn is registered, leaving a window where two concurrent sends
-/// (frontend queue processor vs backend queue drain vs another client) both
+/// (backend queue drain vs a direct client send, or two clients) both
 /// pass the check and spawn duplicate runs. This claim is taken atomically at
 /// `send_chat_message` entry and held for the whole call — unless cancel
 /// releases it early so a follow-up send is not stuck (#329).
@@ -175,8 +175,11 @@ fn try_abort_pi_rpc_host(app: &AppHandle, session_id: &str) {
 #[cfg(not(unix))]
 fn try_abort_pi_rpc_host(_app: &AppHandle, _session_id: &str) {}
 
+/// Ask the warm Grok host to cancel the in-flight turn without exiting.
+/// Returns true when the host accepted the abort, so the caller must not
+/// kill that process — the next prompt reuses it.
 #[cfg(unix)]
-fn try_abort_grok_acp_host(app: &AppHandle, session_id: &str) {
+fn try_abort_grok_acp_host(app: &AppHandle, session_id: &str) -> bool {
     let run_id = super::storage::load_metadata(app, session_id)
         .ok()
         .flatten()
@@ -191,21 +194,27 @@ fn try_abort_grok_acp_host(app: &AppHandle, session_id: &str) {
                 })
                 .map(|run| run.run_id.clone())
         });
-    let Some(run_id) = run_id else { return };
+    let Some(run_id) = run_id else { return false };
     let Ok(app_data) = app.path().app_data_dir() else {
         log::warn!("Failed to resolve app data dir for Grok ACP abort");
-        return;
+        return false;
     };
     let socket_path = super::grok::grok_acp_socket_path(&app_data, session_id, &run_id);
     let line =
         super::grok::serialize_grok_host_command("abort", None, Some(&format!("abort-{run_id}")));
-    if let Err(e) = super::grok::send_grok_acp_host_command(&socket_path, &line) {
-        log::warn!("Failed to send Grok ACP abort before kill for session {session_id}: {e}");
+    match super::grok::send_grok_acp_host_command(&socket_path, &line) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("Failed to send Grok ACP abort before kill for session {session_id}: {e}");
+            false
+        }
     }
 }
 
 #[cfg(not(unix))]
-fn try_abort_grok_acp_host(_app: &AppHandle, _session_id: &str) {}
+fn try_abort_grok_acp_host(_app: &AppHandle, _session_id: &str) -> bool {
+    false
+}
 
 #[cfg(unix)]
 fn try_abort_kimi_acp_host(app: &AppHandle, session_id: &str) {
@@ -814,9 +823,17 @@ pub fn cancel_process(
         }
 
         try_abort_pi_rpc_host(app, session_id);
-        try_abort_grok_acp_host(app, session_id);
+        let grok_host_kept = try_abort_grok_acp_host(app, session_id);
         try_abort_kimi_acp_host(app, session_id);
         try_abort_antigravity_acp_host(app, session_id);
+        if grok_host_kept {
+            log::info!("Grok ACP host left running after cancel for session {session_id}");
+            if let Err(e) = run_log::mark_running_run_cancelled(app, session_id) {
+                log::warn!("Failed to mark run as cancelled in manifest: {e}");
+            }
+            emit_cancelled_event(app, session_id, worktree_id, false);
+            return Ok(true);
+        }
         log::trace!("Cancelling Claude process group {pid} for session: {session_id}");
 
         // Kill the entire process tree to ensure child processes are also terminated
@@ -961,9 +978,17 @@ pub fn cancel_process_if_running(
         }
 
         try_abort_pi_rpc_host(app, session_id);
-        try_abort_grok_acp_host(app, session_id);
+        let grok_host_kept = try_abort_grok_acp_host(app, session_id);
         try_abort_kimi_acp_host(app, session_id);
         try_abort_antigravity_acp_host(app, session_id);
+        if grok_host_kept {
+            log::info!("Grok ACP host left running after cancel for session {session_id}");
+            if let Err(e) = run_log::mark_running_run_cancelled(app, session_id) {
+                log::warn!("Failed to mark run as cancelled in manifest: {e}");
+            }
+            emit_cancelled_event(app, session_id, worktree_id, false);
+            return Ok(true);
+        }
         log::trace!("Cancelling Claude process group {pid} for session: {session_id}");
 
         use crate::platform::{is_process_alive, kill_process, kill_process_tree};

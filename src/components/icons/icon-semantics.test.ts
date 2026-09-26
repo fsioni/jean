@@ -27,6 +27,11 @@ describe('semantic brand and issue icons', () => {
     expect(source).not.toContain('export { Radio as CircleDot }')
   })
 
+  it('maps Brain to a brain icon instead of a lightbulb', () => {
+    expect(source).toContain("export { BrainIcon as Brain } from './BrainIcon'")
+    expect(source).not.toContain('export { LampCharge as Brain }')
+  })
+
   it('maps commit actions to the Git commit icon instead of RecordCircle', () => {
     expect(source).toContain(
       "export { GitCommitIcon as GitCommitHorizontal } from './GitCommitIcon'"

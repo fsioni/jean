@@ -570,7 +570,13 @@ export function MainWindow() {
       )}
 
       {/* Title Bar - semi-transparent overlay */}
-      <TitleBar title={windowTitle} className="absolute top-0 left-0 right-0" />
+      {/* Native desktop: the worktree header already shows project/worktree
+          details, so the title bar shows only the server badge. */}
+      <TitleBar
+        title={windowTitle}
+        hideTitle={isNativeApp() && !isMobile}
+        className="absolute top-0 left-0 right-0"
+      />
 
       {/* Dev Mode Banner */}
       <DevModeBanner />

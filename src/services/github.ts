@@ -643,12 +643,14 @@ export async function removePRContext(
 export async function getIssueContextContent(
   sessionId: string,
   issueNumber: number,
-  projectPath: string
+  projectPath: string,
+  worktreeId?: string | null
 ): Promise<string> {
   return invoke<string>('get_issue_context_content', {
     sessionId,
     issueNumber,
     projectPath,
+    worktreeId,
   })
 }
 
@@ -658,12 +660,14 @@ export async function getIssueContextContent(
 export async function getPRContextContent(
   sessionId: string,
   prNumber: number,
-  projectPath: string
+  projectPath: string,
+  worktreeId?: string | null
 ): Promise<string> {
   return invoke<string>('get_pr_context_content', {
     sessionId,
     prNumber,
     projectPath,
+    worktreeId,
   })
 }
 

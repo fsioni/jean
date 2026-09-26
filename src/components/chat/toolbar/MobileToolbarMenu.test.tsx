@@ -103,6 +103,10 @@ describe('MobileToolbarMenu', () => {
     expect(screen.getByText('Generate Release Notes')).toBeInTheDocument()
     expect(screen.getByText('Generate PR Description')).toBeInTheDocument()
     expect(screen.getByText('Commit & Push')).toBeInTheDocument()
+    expect(screen.getByText('Comment & Close Issue')).toBeInTheDocument()
+    expect(
+      screen.getByText('Comment & Close Issue').closest('[role="menuitem"]')
+    ).toHaveAttribute('data-disabled')
     expect(screen.getByRole('menuitem', { name: /sync/i })).toBeInTheDocument()
     expect(screen.getByText('Pull')).toBeInTheDocument()
     expect(screen.getByText('Push')).toBeInTheDocument()
@@ -114,6 +118,42 @@ describe('MobileToolbarMenu', () => {
     expect(screen.queryByText('Provider')).not.toBeInTheDocument()
     expect(screen.queryByText('Uncommitted')).not.toBeInTheDocument()
     expect(screen.queryByText('Branch diff')).not.toBeInTheDocument()
+  })
+
+  it('dispatches the comment and close issue action with issue context', async () => {
+    const user = userEvent.setup()
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    render(
+      <MobileToolbarMenu
+        isDisabled={false}
+        hasOpenPr={false}
+        hasIssueContexts={true}
+        hasPrContexts={false}
+        onSaveContext={vi.fn()}
+        onLoadContext={vi.fn()}
+        onCommit={vi.fn()}
+        onCommitAndPush={vi.fn()}
+        onRevertLastCommit={vi.fn()}
+        onOpenPr={vi.fn()}
+        onReview={vi.fn()}
+        onMerge={vi.fn()}
+        onMergePr={vi.fn()}
+        handleSyncClick={vi.fn()}
+        handlePullClick={vi.fn()}
+        handlePushClick={vi.fn()}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+    await user.click(screen.getByText('Comment & Close Issue'))
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'magic-command',
+        detail: { command: 'comment-and-close-issue' },
+      })
+    )
+    dispatchSpy.mockRestore()
   })
 
   it('disables investigate issue and PR when no contexts are loaded', async () => {

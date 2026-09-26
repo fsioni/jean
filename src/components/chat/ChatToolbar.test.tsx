@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { act, render, screen } from '@/test/test-utils'
+import { act, cleanup, render, screen } from '@/test/test-utils'
 import { ChatToolbar } from './ChatToolbar'
 import type { ChatToolbarProps } from './toolbar/types'
 import { useUIStore } from '@/store/ui-store'
@@ -33,6 +33,13 @@ beforeEach(() => {
     return 1
   })
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
+})
+
+afterEach(async () => {
+  cleanup()
+  // Radix FocusScope restores focus in a zero-delay timer after unmount.
+  // Let that callback run before Vitest disposes this file's jsdom realm.
+  await new Promise(resolve => setTimeout(resolve, 0))
 })
 
 function renderChatToolbar(props: Partial<ChatToolbarProps> = {}) {

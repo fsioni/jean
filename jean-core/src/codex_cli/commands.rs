@@ -724,6 +724,30 @@ fn map_usage_window(
     })
 }
 
+/// Codex reports windows by position (primary/secondary), not by kind. Plans
+/// with only a weekly limit send it as the primary window, so classify by
+/// window length instead of position.
+fn split_session_weekly(
+    primary: Option<CodexUsageWindowSnapshot>,
+    secondary: Option<CodexUsageWindowSnapshot>,
+) -> (
+    Option<CodexUsageWindowSnapshot>,
+    Option<CodexUsageWindowSnapshot>,
+) {
+    const DAY_SECS: u64 = 24 * 60 * 60;
+    let is_long = |w: &Option<CodexUsageWindowSnapshot>| {
+        w.as_ref()
+            .and_then(|w| w.limit_window_seconds)
+            .is_some_and(|secs| secs >= DAY_SECS)
+    };
+
+    if is_long(&primary) && !is_long(&secondary) {
+        (secondary, primary)
+    } else {
+        (primary, secondary)
+    }
+}
+
 fn current_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -753,11 +777,15 @@ pub(crate) fn codex_usage_snapshot_from_app_server_rate_limits(
     let notification = serde_json::from_value::<CodexAppServerRateLimitsParams>(params.clone())
         .map_err(|e| format!("Failed to parse Codex rate limits notification payload: {e}"))?;
     let rate_limits = notification.rate_limits;
+    let (session, weekly) = split_session_weekly(
+        map_app_server_rate_limit_window(rate_limits.primary),
+        map_app_server_rate_limit_window(rate_limits.secondary),
+    );
 
     Ok(CodexUsageSnapshot {
         plan_type: rate_limits.plan_type,
-        session: map_app_server_rate_limit_window(rate_limits.primary),
-        weekly: map_app_server_rate_limit_window(rate_limits.secondary),
+        session,
+        weekly,
         reviews: None,
         credits_remaining: rate_limits.credits.and_then(|credits| credits.balance),
         rate_limit_reached_type: rate_limits.rate_limit_reached_type,
@@ -1303,6 +1331,8 @@ pub async fn get_codex_usage(app: AppHandle) -> Result<CodexUsageSnapshot, Strin
         )
     };
 
+    let (session, weekly) = split_session_weekly(session, weekly);
+
     let reviews = map_usage_window(
         now_secs,
         usage
@@ -1328,8 +1358,10 @@ pub async fn get_codex_usage(app: AppHandle) -> Result<CodexUsageSnapshot, Strin
                 .replace("-Codex", "")
                 .replace("-codex", "");
 
-            let session = map_usage_window(now_secs, rate_limit.primary_window.as_ref());
-            let weekly = map_usage_window(now_secs, rate_limit.secondary_window.as_ref());
+            let (session, weekly) = split_session_weekly(
+                map_usage_window(now_secs, rate_limit.primary_window.as_ref()),
+                map_usage_window(now_secs, rate_limit.secondary_window.as_ref()),
+            );
 
             if session.is_none() && weekly.is_none() {
                 return None;
@@ -1896,6 +1928,8 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
         {
             log::warn!("Could not install Codex code-mode host into WSL: {e}");
         }
+        #[cfg(windows)]
+        crate::expose_managed_cli_in_wsl(&wsl.distro, "codex", &unix_path);
         emit_progress(&app, "complete", "Installation complete!", 100);
         log::trace!("Codex CLI installed successfully at WSL:{unix_path}");
         return Ok(());
@@ -2031,6 +2065,7 @@ pub async fn install_codex_cli(app: AppHandle, version: Option<String>) -> Resul
     emit_progress(&app, "complete", "Installation complete!", 100);
 
     log::trace!("Codex CLI installed successfully at {:?}", binary_path);
+    crate::expose_managed_cli("codex", &binary_path);
     Ok(())
 }
 
@@ -2995,6 +3030,27 @@ mod tests {
 
         assert_eq!(target, "x86_64-unknown-linux-musl");
         assert_eq!(version, Some("0.130.0".to_string()));
+    }
+
+    #[test]
+    fn app_server_weekly_only_primary_maps_to_weekly() {
+        let params = serde_json::json!({
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 9,
+                    "windowDurationMins": 10080,
+                    "resetsAt": 1_772_023_891
+                },
+                "secondary": null,
+                "planType": "plus"
+            }
+        });
+
+        let snapshot = codex_usage_snapshot_from_app_server_rate_limits(&params, 1_771_450_000)
+            .expect("rate limits snapshot should parse");
+
+        assert!(snapshot.session.is_none());
+        assert_eq!(snapshot.weekly.as_ref().map(|w| w.used_percent), Some(9.0));
     }
 
     #[test]

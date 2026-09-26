@@ -14,6 +14,7 @@ import { browserBackend } from '@/hooks/useBrowserPane'
 import { isLocalBackend } from '@/lib/environment'
 import { invoke } from '@/lib/transport'
 import { logger } from '@/lib/logger'
+import { toRawLocalResourceId } from '@/lib/server-resource'
 import type { BrowserTab } from '@/types/browser'
 import type {
   PendingFile,
@@ -28,6 +29,16 @@ import type {
   UIState,
 } from '@/types/ui-state'
 import { registerUIStateRelaunchSaver } from '@/lib/ui-state-relaunch'
+
+const getPinnedCanvasSettings = () =>
+  Object.fromEntries(
+    Object.entries(useProjectsStore.getState().projectCanvasSettings).flatMap(
+      ([projectId, settings]) =>
+        settings.pinnedLabels && settings.pinnedLabels.length > 0
+          ? [[projectId, { pinned_labels: settings.pinnedLabels }] as const]
+          : []
+    )
+  )
 
 /** Serialize ready (non-loading) pending images for UI-state persistence. */
 function serializePendingImages(
@@ -173,7 +184,8 @@ export function useUIStatePersistence() {
       reviewSidebarVisible,
       lastOpenedPerProject,
     } = useChatStore.getState()
-    const { selectedProjectId } = useProjectsStore.getState()
+    const { selectedProjectId, pinnedRecentSessionIds } =
+      useProjectsStore.getState()
     const {
       sessionTerminalIds,
       sessionPrimarySurface,
@@ -251,6 +263,8 @@ export function useUIStatePersistence() {
       // Browser pane state (per-worktree tabs + 3-surface visibility)
       browser_tabs: browserTabsForPersist,
       browser_active_tab_ids: browserState.activeTabIds,
+      project_canvas_settings: getPinnedCanvasSettings(),
+      pinned_recent_session_ids: pinnedRecentSessionIds,
       // Last opened worktree+session per project (convert camelCase → snake_case keys)
       last_opened_per_project: Object.fromEntries(
         Object.entries(lastOpenedPerProject).map(([projectId, entry]) => [
@@ -420,7 +434,11 @@ export function useUIStatePersistence() {
       logger.debug('Restoring active sessions', { activeSessionIds })
       const { setActiveSession } = useChatStore.getState()
       for (const [worktreeId, sessionId] of Object.entries(activeSessionIds)) {
-        setActiveSession(worktreeId, sessionId, { markOpened: false })
+        setActiveSession(
+          toRawLocalResourceId(worktreeId),
+          toRawLocalResourceId(sessionId),
+          { markOpened: false }
+        )
       }
     }
 
@@ -925,6 +943,10 @@ export function useUIStatePersistence() {
       )
     }
 
+    useProjectsStore
+      .getState()
+      .setPinnedRecentSessionIds(uiState.pinned_recent_session_ids ?? [])
+
     const githubDashboardFavoriteProjectIds =
       uiState.github_dashboard_favorite_project_ids ?? []
     if (githubDashboardFavoriteProjectIds.length > 0) {
@@ -1065,7 +1087,10 @@ export function useUIStatePersistence() {
       const converted = Object.fromEntries(
         Object.entries(lastOpenedPerProject).map(([projectId, entry]) => [
           projectId,
-          { worktreeId: entry.worktree_id, sessionId: entry.session_id },
+          {
+            worktreeId: toRawLocalResourceId(entry.worktree_id),
+            sessionId: toRawLocalResourceId(entry.session_id),
+          },
         ])
       )
       useChatStore.setState({ lastOpenedPerProject: converted })
@@ -1087,6 +1112,16 @@ export function useUIStatePersistence() {
     }
   }, [uiStateLoaded, uiState, projects, projectsLoaded, isInitialized])
 
+  // Pinned recent sessions are shared across native and web clients. Apply
+  // them again whenever another client's save refetches the UI state.
+  const serverPinnedRecentSessionIdsRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    if (!isInitialized || !uiState) return
+    const pinned = uiState.pinned_recent_session_ids ?? []
+    serverPinnedRecentSessionIdsRef.current = pinned
+    useProjectsStore.getState().setPinnedRecentSessionIds(pinned)
+  }, [isInitialized, uiState])
+
   // Step 2: Subscribe to store changes and save (debounced)
   useEffect(() => {
     // Don't start saving until we've initialized from persisted state
@@ -1094,6 +1129,9 @@ export function useUIStatePersistence() {
 
     // Track previous values to detect actual changes
     let prevSelectedProjectId = useProjectsStore.getState().selectedProjectId
+    let prevPinnedCanvasSettings = JSON.stringify(getPinnedCanvasSettings())
+    let prevPinnedRecentSessionIds =
+      useProjectsStore.getState().pinnedRecentSessionIds
     let prevSessionTerminalIds = useUIStore.getState().sessionTerminalIds
     let prevSessionPrimarySurface = useUIStore.getState().sessionPrimarySurface
     let prevSeenFailedWorkflowRunIds =
@@ -1121,9 +1159,22 @@ export function useUIStatePersistence() {
       // Check if expandedProjectIds, expandedFolderIds, or selectedProjectId changed
       const selectedProjectChanged =
         state.selectedProjectId !== prevSelectedProjectId
+      const nextPinnedCanvasSettings = JSON.stringify(getPinnedCanvasSettings())
+      const pinnedCanvasSettingsChanged =
+        nextPinnedCanvasSettings !== prevPinnedCanvasSettings
+      // Do not save pins that came from the server; that only echoes them.
+      const pinnedRecentSessionIdsChanged =
+        state.pinnedRecentSessionIds !== prevPinnedRecentSessionIds &&
+        state.pinnedRecentSessionIds !== serverPinnedRecentSessionIdsRef.current
 
-      if (selectedProjectChanged) {
+      if (
+        selectedProjectChanged ||
+        pinnedCanvasSettingsChanged ||
+        pinnedRecentSessionIdsChanged
+      ) {
         prevSelectedProjectId = state.selectedProjectId
+        prevPinnedCanvasSettings = nextPinnedCanvasSettings
+        prevPinnedRecentSessionIds = state.pinnedRecentSessionIds
         const currentState = getCurrentUIState()
         debouncedSaveRef.current?.(currentState)
       }

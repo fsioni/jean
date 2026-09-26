@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useChatStore } from '@/store/chat-store'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import {
   useCreateSession,
   useSendMessage,
@@ -121,7 +122,8 @@ export function useClearContextApproval({
   worktreePath,
 }: UseClearContextApprovalParams) {
   const queryClient = useQueryClient()
-  const { data: preferences } = usePreferences()
+  const serverId = parseServerResourceKey(worktreeId)?.serverId
+  const { data: preferences } = usePreferences(serverId)
   const createSession = useCreateSession()
   const sendMessage = useSendMessage()
 
@@ -286,9 +288,9 @@ export function useClearContextApproval({
         ? preferences?.yolo_effort_level
         : preferences?.build_effort_level
       const modeBackendOverride = modeBackendPref as CliBackend | null
-      const backend = (modeBackendOverride ??
-        originalBackend ??
-        undefined) as CliBackend | undefined
+      const backend = (modeBackendOverride ?? originalBackend ?? undefined) as
+        | CliBackend
+        | undefined
       const model =
         modeModelPref ??
         (modeBackendOverride

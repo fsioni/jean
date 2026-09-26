@@ -522,6 +522,7 @@ export function AuthLoginState({
         terminalId={terminalId}
         command={command}
         commandArgs={commandArgs}
+        allowPasteInput={action === 'login'}
         className="h-[min(50dvh,380px)] min-h-[200px] sm:h-[360px]"
       />
 

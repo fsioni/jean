@@ -92,6 +92,47 @@ pub fn update_wsl_config(enabled: bool, distro: String) {
     }
 }
 
+/// CLI flags whose following argument is a filesystem path the CLI will open.
+/// Shared by the detached chat launch and native CLI terminals for every
+/// backend; the list is Claude's flags today. When the CLI runs inside WSL these
+/// must be WSL paths — a Windows-form value (e.g. `C:\Users\..`) is resolved
+/// relative to the Linux cwd and fails (notably `--append-system-prompt-file`,
+/// which aborts the whole run).
+pub const WSL_PATH_VALUE_FLAGS: &[&str] =
+    &["--add-dir", "--append-system-prompt-file", "--settings"];
+
+pub fn looks_like_windows_path(value: &str) -> bool {
+    // UNC (`\\..`) or drive path (`C:\..` / `C:/..`). Anything else is left
+    // untouched so non-path values (models, inline `--settings` JSON) are never
+    // mangled.
+    value.starts_with("\\\\")
+        || (value.len() >= 3
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+            && matches!(value.as_bytes()[2], b'\\' | b'/'))
+}
+
+/// Translate Windows-form path values that follow known path flags into WSL
+/// paths, leaving every other argument untouched.
+pub fn wslify_path_args(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut translate_next = false;
+    for arg in args {
+        if translate_next {
+            translate_next = false;
+            if looks_like_windows_path(arg) {
+                out.push(crate::platform::win_to_wsl_path(arg));
+                continue;
+            }
+        }
+        if WSL_PATH_VALUE_FLAGS.contains(&arg.as_str()) {
+            translate_next = true;
+        }
+        out.push(arg.clone());
+    }
+    out
+}
+
 /// Convert a Windows path to a WSL Unix path.
 ///
 /// Handles:
@@ -208,10 +249,10 @@ fn is_windows_batch_file(path: &str) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CliLaunchPlan {
-    program: String,
-    args: Vec<String>,
-    cwd: Option<std::path::PathBuf>,
+pub(crate) struct CliLaunchPlan {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) cwd: Option<std::path::PathBuf>,
 }
 
 /// How a Windows `.cmd`/`.bat` shim gets launched.
@@ -290,7 +331,7 @@ fn cli_launch_plan(
     }
 }
 
-fn wsl_resolved_cli_launch_plan(
+pub(crate) fn wsl_resolved_cli_launch_plan(
     program: &str,
     cwd: Option<&std::path::Path>,
     is_windows: bool,
@@ -793,6 +834,67 @@ pub fn get_wsl_home_dir(_distro: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_wslify_path_args_translates_path_flag_values() {
+        let args = vec![
+            "--print".to_string(),
+            "--add-dir".to_string(),
+            r"C:\Users\foo\proj".to_string(),
+            "--append-system-prompt-file".to_string(),
+            r"\\wsl.localhost\Ubuntu-22.04\home\u\ctx.md".to_string(),
+            "--model".to_string(),
+            "claude-opus-4-8[1m]".to_string(),
+            "--settings".to_string(),
+            r"C:\Users\foo\.claude\settings.json".to_string(),
+        ];
+        let out = wslify_path_args(&args);
+        assert_eq!(out[2], "/mnt/c/Users/foo/proj");
+        assert_eq!(out[4], "/home/u/ctx.md");
+        // A non-path flag's value must be left untouched.
+        assert_eq!(out[6], "claude-opus-4-8[1m]");
+        assert_eq!(out[8], "/mnt/c/Users/foo/.claude/settings.json");
+    }
+
+    #[test]
+    fn test_wslify_path_args_leaves_non_windows_values() {
+        // Path flag whose value is already a unix path (or not a Windows path).
+        let args = vec!["--add-dir".to_string(), "/home/u/x".to_string()];
+        assert_eq!(wslify_path_args(&args), args);
+    }
+
+    #[test]
+    fn test_wslify_path_args_translates_forward_slash_drive_paths() {
+        let args = vec![
+            "--add-dir".to_string(),
+            "C:/Users/foo/proj".to_string(),
+            "--settings".to_string(),
+            r"C:\Users\foo\.claude\settings.json".to_string(),
+        ];
+        let out = wslify_path_args(&args);
+        assert_eq!(out[1], "/mnt/c/Users/foo/proj");
+        assert_eq!(out[3], "/mnt/c/Users/foo/.claude/settings.json");
+    }
+
+    #[test]
+    fn test_wslify_path_args_leaves_inline_settings_json_unchanged() {
+        let args = vec![
+            "--settings".to_string(),
+            r#"{"permissions":{"allow":["Read"]}}"#.to_string(),
+        ];
+
+        assert_eq!(wslify_path_args(&args), args);
+    }
+
+    #[test]
+    fn test_looks_like_windows_path_accepts_slash_and_backslash() {
+        assert!(looks_like_windows_path(r"C:\Users\foo"));
+        assert!(looks_like_windows_path("C:/Users/foo"));
+        assert!(looks_like_windows_path(r"\\wsl.localhost\Ubuntu\home\u"));
+        assert!(!looks_like_windows_path("/home/u"));
+        assert!(!looks_like_windows_path(r#"{"permissions":{}}"#));
+        assert!(!looks_like_windows_path("claude-opus-4-8[1m]"));
+    }
 
     #[test]
     fn detect_wsl_runtime_accepts_environment_markers() {

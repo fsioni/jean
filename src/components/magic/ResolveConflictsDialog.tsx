@@ -39,7 +39,10 @@ import {
   GROK_MODEL_OPTIONS,
   ANTIGRAVITY_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
-import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  formatGrokModelOptionLabel,
+  formatOpencodeModelLabel,
+} from '@/components/chat/toolbar/toolbar-utils'
 import { BackendLabel } from '@/components/ui/backend-label'
 import {
   getCatalogModelOptions,
@@ -87,7 +90,6 @@ export function ResolveConflictsDialog({
     activeWorktreeId ??
     sessionChatModalWorktreeId
   const { data: worktree } = useWorktree(selectedWorktreeId)
-  const { data: preferences } = usePreferences()
   const { data: projects } = useProjects()
   const project = worktree
     ? projects?.find(p => p.id === worktree.project_id)
@@ -95,20 +97,25 @@ export function ResolveConflictsDialog({
   const targetServerId = selectedWorktreeId
     ? parseServerResourceKey(selectedWorktreeId)?.serverId
     : undefined
+  const { data: preferences } = usePreferences(targetServerId)
   const { installedBackends } = useInstalledBackends({
     serverId: targetServerId,
   })
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({
     enabled: installedBackends.includes('opencode'),
+    serverId: targetServerId,
   })
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
+    serverId: targetServerId,
   })
   const { data: availableKimiModels } = useAvailableKimiModels({
     enabled: installedBackends.includes('kimi'),
+    serverId: targetServerId,
   })
   const { data: availableAntigravityModels } = useAvailableAntigravityModels({
     enabled: installedBackends.includes('antigravity'),
+    serverId: targetServerId,
   })
   const { data: modelCatalog } = useModelCatalog()
 
@@ -132,10 +139,13 @@ export function ResolveConflictsDialog({
     const models = availableGrokModels?.length
       ? availableGrokModels.map(model => ({
           value: `grok/${model.id}`,
-          label: model.label || model.id,
+          label: formatGrokModelOptionLabel(`grok/${model.id}`, model.label),
         }))
       : GROK_MODEL_OPTIONS
-    return models
+    return models.map(option => ({
+      ...option,
+      label: formatGrokModelOptionLabel(option.value, option.label),
+    }))
   }, [availableGrokModels])
   const kimiModelOptions = useMemo(() => {
     if (!availableKimiModels?.length) {
@@ -188,8 +198,7 @@ export function ResolveConflictsDialog({
               : backend === 'kimi'
                 ? (preferences?.selected_kimi_model ?? 'kimi/default')
                 : backend === 'grok'
-                  ? (preferences?.selected_grok_model ??
-                    'grok/grok-4.6')
+                  ? (preferences?.selected_grok_model ?? 'grok/grok-4.6')
                   : backend === 'antigravity'
                     ? (preferences?.selected_antigravity_model ??
                       'antigravity/auto')

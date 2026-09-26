@@ -123,6 +123,35 @@ describe('useInvestigateHandlers', () => {
     })
   })
 
+  it.each([
+    ['issue', 'list_loaded_issue_contexts'],
+    ['pr', 'list_loaded_pr_contexts'],
+  ] as const)(
+    'uses the active session context for %s investigation',
+    async (type, command) => {
+      vi.mocked(invoke).mockImplementation(async name =>
+        name === command ? ([{ number: 42 }] as never) : (undefined as never)
+      )
+      const { result, sendMessage } = renderHandlers()
+
+      await act(async () => {
+        await result.current.handleInvestigate(type)
+      })
+
+      expect(invoke).toHaveBeenCalledWith(command, {
+        sessionId: 'base-session',
+        worktreeId: 'worktree-1',
+      })
+      expect(sendMessage.mutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 'base-session',
+          message: expect.stringContaining('#42'),
+        }),
+        expect.any(Object)
+      )
+    }
+  )
+
   it('uses the dedicated Sentry prompt and execution settings', async () => {
     vi.mocked(invoke).mockImplementation(async command => {
       if (command === 'get_sentry_issue_context_contents') {

@@ -16,6 +16,8 @@ const ROUTED_ARGUMENT_KEYS = new Set([
   'target_project_id',
   'itemId',
   'item_id',
+  'itemIds',
+  'item_ids',
   'newParentId',
   'new_parent_id',
   'parentId',
@@ -310,6 +312,7 @@ export function decorateServerResult<T>(
       'add_project',
       'clone_project',
       'init_project',
+      'move_item',
       'update_project_settings',
     ].includes(command)
   ) {
@@ -333,6 +336,11 @@ export function decorateServerResult<T>(
       : sessions
     return {
       ...bootstrap,
+      runningSessions: Array.isArray(bootstrap.runningSessions)
+        ? bootstrap.runningSessions.map(sessionId =>
+            scopedId(serverId, sessionId)
+          )
+        : bootstrap.runningSessions,
       worktrees: Array.isArray(bootstrap.worktrees)
         ? bootstrap.worktrees.map(worktree =>
             decorateWorktree(serverId, worktree)

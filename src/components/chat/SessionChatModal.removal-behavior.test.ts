@@ -174,7 +174,8 @@ describe('SessionChatModal removal behavior', () => {
     expect(source).toContain('state => state.zenMode')
     expect(source).toContain('data-testid="toggle-zen-mode"')
     expect(source).not.toContain('{!(zenMode && isMobile) && (')
-    expect(source).toContain('{!zenMode && sessions.length > 0 && (')
+    expect(source).toContain('{!zenMode && showSessionTabs && (')
+    expect(source).toMatch(/sessionsForTabBar\(\s*sessions,/)
     expect(source).toContain('{!zenMode && (')
     expect(source).toContain('<ModalCloseButton')
     expect(source).toContain('onClick={handleClose}')
@@ -202,7 +203,7 @@ describe('SessionChatModal removal behavior', () => {
     const source = readSource('src/components/chat/SessionChatModal.tsx')
 
     expect(source).toMatch(
-      /viewport\.addEventListener\('wheel',[\s\S]*\}, \[sessions\.length, zenMode\]\)/
+      /viewport\.addEventListener\('wheel',[\s\S]*\}, \[showSessionTabs, zenMode\]\)/
     )
   })
 
@@ -240,7 +241,18 @@ describe('SessionChatModal removal behavior', () => {
     const source = readSource('src/components/chat/SessionChatModal.tsx')
 
     expect(source).toMatch(
-      /resolveModalSessionId\(\s*activeSessionId,\s*sessions\.map\(session => session\.id\)\s*\)/
+      /resolveModalSessionId\(\s*activeSessionId,\s*sessions\.map\(session => session\.id\),\s*sessionsData\?\.active_session_id,\s*activeSessionGone\s*\)/
+    )
+    expect(source).toContain(
+      'const activeSessionGone = !!sessionsData && missingActiveSessionFailed'
+    )
+  })
+
+  it('refreshes the session list when the modal opens', () => {
+    const source = readSource('src/components/chat/SessionChatModal.tsx')
+
+    expect(source).toMatch(
+      /useSessions\(\s*worktreeId \|\| null,\s*worktreePath \|\| null,\s*\{ refetchOnMount: 'always' \}\s*\)/
     )
   })
 

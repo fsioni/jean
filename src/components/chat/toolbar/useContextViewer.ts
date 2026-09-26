@@ -49,7 +49,8 @@ export function useContextViewer({
         const content = await getIssueContextContent(
           activeSessionId,
           ctx.number,
-          activeWorktreePath
+          activeWorktreePath,
+          worktreeId
         )
         setViewingContext({
           type: 'issue',
@@ -61,7 +62,7 @@ export function useContextViewer({
         toast.error(`Failed to load context: ${error}`)
       }
     },
-    [activeSessionId, activeWorktreePath]
+    [activeSessionId, activeWorktreePath, worktreeId]
   )
 
   const handleViewPR = useCallback(
@@ -71,7 +72,8 @@ export function useContextViewer({
         const content = await getPRContextContent(
           activeSessionId,
           ctx.number,
-          activeWorktreePath
+          activeWorktreePath,
+          worktreeId
         )
         setViewingContext({
           type: 'pr',
@@ -83,7 +85,7 @@ export function useContextViewer({
         toast.error(`Failed to load context: ${error}`)
       }
     },
-    [activeSessionId, activeWorktreePath]
+    [activeSessionId, activeWorktreePath, worktreeId]
   )
 
   const handleViewSavedContext = useCallback(

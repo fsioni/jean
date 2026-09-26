@@ -15,6 +15,12 @@ those events to browser clients and retains the existing replay behavior. The
 shared dispatcher remains the protocol compatibility boundary for browser
 commands.
 
+When browser Web Access returns from the background, it keeps the current view
+mounted but blocks input until a short WebSocket command gets a reply. A socket
+can still report `OPEN` after mobile sleep even when it cannot send commands.
+If the check fails, the client closes the socket and uses the normal full-page
+reload to restore server state.
+
 Native window, embedded browser, clipboard, picker, notification, and menu
 operations stay desktop-only. Finder/editor/terminal open commands are gated:
 

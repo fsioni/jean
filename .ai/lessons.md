@@ -10,6 +10,7 @@
 - Values, query keys, command arguments, and persisted references must include a stable resource ID and its owner when IDs are not globally unique.
 - Register ownership at adapter boundaries so path-only commands and remote assets route through the correct server.
 - Keep ownership visible in multi-source UI and test duplicate display names.
+- Return one ID form per server on every transport path (ID-routed, path-routed, explicit server). Mixed scoped/raw IDs make valid resources look missing.
 - Do not persist temporary session context under a broader worktree or project identity.
 
 ## Keep multi-server behavior at the correct boundary
@@ -71,6 +72,7 @@
 
 - Hide and disable keyboard-only actions outside native desktop unless they are useful in that runtime.
 - Do not assume Unicode modifier glyphs render in browser fonts; use explicit labels such as `Ctrl` in Web Access.
+- On plain HTTP, browser clipboard reads can fail. Use paste-event data for direct paste, and offer a text field when an action needs a manual fallback.
 - Test click or tap behavior separately from native keyboard shortcuts.
 
 ## Keep task tracking proportional

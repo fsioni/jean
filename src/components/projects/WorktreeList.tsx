@@ -258,12 +258,7 @@ export function WorktreeList({
       queryKey: [...chatQueryKeys.sessions(wt.id), 'with-counts'],
       queryFn: async (): Promise<WorktreeSessions> => {
         if (!isTauri() || !wt.id || !wt.path) {
-          return {
-            worktree_id: wt.id,
-            sessions: [],
-            active_session_id: null,
-            version: 2,
-          }
+          throw new Error('Session list is not available yet')
         }
         return invoke<WorktreeSessions>('get_sessions', {
           worktreeId: wt.id,

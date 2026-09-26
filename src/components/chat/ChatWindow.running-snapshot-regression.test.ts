@@ -13,4 +13,10 @@ describe('ChatWindow running snapshot hydration', () => {
     )
     expect(source).not.toContain('if (isSending && hasLiveStreamingState) return')
   })
+
+  it('hydrates each running message only once so refetches do not duplicate live output', () => {
+    expect(source).toMatch(
+      /hydratedRunningSnapshotsRef\.current\.has\(hydrateKey\)\) return[\s\S]*?hydratedRunningSnapshotsRef\.current\.add\(hydrateKey\)[\s\S]*?hydrateRunningSnapshot\(deferredSessionId, lastMsg/
+    )
+  })
 })

@@ -94,6 +94,8 @@ export const PI_MODEL_OPTIONS: { value: string; label: string }[] = [
 ]
 
 export const GROK_MODEL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'grok/grok-4.7-build-fast', label: 'Grok 4.7 Fast' },
+  { value: 'grok/grok-4.7', label: 'Grok 4.7' },
   { value: 'grok/grok-4.6', label: 'Grok 4.6' },
   { value: 'grok/grok-4.5', label: 'Grok 4.5' },
 ]

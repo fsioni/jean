@@ -91,7 +91,7 @@ describe('compact issue and PR rows', () => {
     expect(onClick).toHaveBeenCalledWith(true)
   })
 
-  it('shows the new-session investigation action on desktop', async () => {
+  it('shows the current-worktree investigation action on desktop', async () => {
     const user = userEvent.setup()
     const onInvestigateInNewSession = vi.fn()
     render(
@@ -115,7 +115,9 @@ describe('compact issue and PR rows', () => {
       />
     )
     await user.click(
-      screen.getByRole('button', { name: /investigate issue in new session/i })
+      screen.getByRole('button', {
+        name: /investigate issue in the current worktree/i,
+      })
     )
     expect(onInvestigateInNewSession).toHaveBeenCalledTimes(1)
   })
@@ -179,7 +181,7 @@ describe('compact issue and PR rows', () => {
 })
 
 describe('NewWorktreeItems mobile actions', () => {
-  it('offers investigating an issue in a new session', async () => {
+  it('offers investigating an issue in the current worktree', async () => {
     isMobile = true
     const user = userEvent.setup()
     const onInvestigateInNewSession = vi.fn()
@@ -209,7 +211,9 @@ describe('NewWorktreeItems mobile actions', () => {
 
     await user.click(screen.getByRole('button', { name: /issue actions/i }))
     await user.click(
-      screen.getByRole('menuitem', { name: /investigate in new session/i })
+      screen.getByRole('menuitem', {
+        name: /investigate in the current worktree/i,
+      })
     )
 
     expect(onInvestigateInNewSession).toHaveBeenCalledTimes(1)

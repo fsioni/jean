@@ -10,7 +10,13 @@ import { invoke, signOutOfWebAccess } from '@/lib/transport'
 import { loginArgsForBackend } from '@/lib/cli-auth'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Loader2, Check, ChevronsUpDown, LogOut, Play } from '@/components/icons/reicon'
+import {
+  Loader2,
+  Check,
+  ChevronsUpDown,
+  LogOut,
+  Play,
+} from '@/components/icons/reicon'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -192,6 +198,7 @@ import {
 } from '@/components/chat/toolbar/toolbar-options'
 import {
   formatCursorModelLabel,
+  formatGrokModelOptionLabel,
   formatOpencodeModelLabel,
   formatPiModelLabel,
 } from '@/components/chat/toolbar/toolbar-utils'
@@ -1209,16 +1216,16 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     availableGrokModels?.length
       ? availableGrokModels.map(model => ({
           value: `grok/${model.id}` as GrokModel,
-          label: model.label,
+          label: formatGrokModelOptionLabel(`grok/${model.id}`, model.label),
         }))
       : (GROK_MODEL_OPTIONS as { value: GrokModel; label: string }[])
   ).map(option => ({
     value: option.value,
-    label: option.label,
+    label: formatGrokModelOptionLabel(option.value, option.label),
   }))
   const selectedGrokModelLabel =
     grokModelOptions.find(option => option.value === selectedGrokModel)
-      ?.label ?? selectedGrokModel.replace(/^grok\//, '')
+      ?.label ?? formatGrokModelOptionLabel(selectedGrokModel)
   const selectedKimiModel = preferences?.selected_kimi_model ?? 'kimi/default'
   const kimiModelOptions: { value: KimiModel; label: string }[] = [
     ...(KIMI_MODEL_OPTIONS as { value: KimiModel; label: string }[]),

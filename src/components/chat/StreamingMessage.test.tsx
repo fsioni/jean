@@ -23,6 +23,32 @@ describe('StreamingMessage', () => {
     areQuestionsSkipped: vi.fn(() => false),
   }
 
+  it('shows the start of the answer when live blocks only have the tail', () => {
+    const tail = "|\n  grep -E 'reverb:start|terminal-server' |\n  grep -v grep"
+    render(
+      <StreamingMessage
+        {...baseProps}
+        contentBlocks={[
+          { type: 'tool_use', tool_call_id: 'bash-1' },
+          { type: 'text', text: tail },
+        ]}
+        toolCalls={[
+          {
+            id: 'bash-1',
+            name: 'Bash',
+            input: { command: 'docker exec coolify ps aux' },
+          },
+        ]}
+        streamingContent={`Check processes:\n\n\`\`\`bash\ndocker exec coolify ps aux ${tail}`}
+      />
+    )
+
+    expect(screen.getByText(/Check processes/)).toBeVisible()
+    expect(document.querySelector('code.language-bash')?.textContent).toContain(
+      'docker exec coolify ps aux |'
+    )
+  })
+
   it('renders no text before the first streaming chunk arrives', () => {
     render(<StreamingMessage {...baseProps} />)
 

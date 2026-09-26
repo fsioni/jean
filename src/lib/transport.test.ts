@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { FALLBACK_APP_VERSION } from './app-version'
 
 const setWsConnectedMock = vi.fn()
@@ -341,6 +341,26 @@ describe('transport bootstrap', () => {
     })
   })
 
+  it('keeps local IDs raw for commands routed by a base-session path', async () => {
+    const sessions = {
+      worktree_id: 'worktree-1',
+      active_session_id: 'session-1',
+      sessions: [{ id: 'session-1', worktree_id: 'worktree-1' }],
+    }
+    const tauriInvoke = vi.fn().mockResolvedValue(sessions)
+    const transport = await loadNativeTransportModule(tauriInvoke)
+    const { registerServerResourcePath } =
+      await import('./server-command-routing')
+    registerServerResourcePath('local', '/Users/jean/project')
+
+    const result = await transport.invoke('get_sessions', {
+      worktreeId: 'worktree-1',
+      worktreePath: '/Users/jean/project',
+    })
+
+    expect(result).toEqual(sessions)
+  })
+
   it('opens remote worktrees in local Zed via ssh:// targets', async () => {
     const tauriInvoke = vi.fn().mockResolvedValue(undefined)
     const transport = await loadRemoteNativeTransportModule(
@@ -657,7 +677,47 @@ describe('transport bootstrap', () => {
     const ws = getWs(0)
 
     vi.advanceTimersByTime(51_000)
-    document.dispatchEvent(new Event('visibilitychange'))
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+
+    expect(ws.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks the web view on wake until the socket answers a connection check', async () => {
+    const transport = await loadTransportModule()
+    const { result } = renderHook(() => transport.useWsConnectionChecking())
+
+    await act(async () => {
+      transport.connectTransport()
+      await flushAsync()
+    })
+    const ws = getWs(0)
+
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    await waitFor(() => expect(result.current).toBe(true))
+    expect(ws.send).toHaveBeenCalledTimes(1)
+    const request = JSON.parse(ws.send.mock.calls[0]?.[0] ?? '')
+    expect(request.command).toBe('get_server_platform')
+
+    await act(async () => {
+      ws.receive({ type: 'response', id: request.id, data: 'linux' })
+    })
+    await waitFor(() => expect(result.current).toBe(false))
+    expect(ws.close).not.toHaveBeenCalled()
+  })
+
+  it('closes a zombie socket if the wake connection check does not answer', async () => {
+    vi.useFakeTimers()
+    const transport = await loadTransportModule()
+    transport.connectTransport()
+    await flushAsync()
+    const ws = getWs(0)
+
+    window.dispatchEvent(new Event('pageshow'))
+    expect(
+      transport.getLegacyWsTransport().getCheckingConnectionSnapshot()
+    ).toBe(true)
+    vi.advanceTimersByTime(3_000)
+    await flushAsync()
 
     expect(ws.close).toHaveBeenCalledTimes(1)
   })

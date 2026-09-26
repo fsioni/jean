@@ -13,6 +13,7 @@ use tauri::AppHandle;
 use crate::chat::types::LabelData;
 use crate::http_server::dispatch::dispatch_command;
 use crate::http_server::EmitExt;
+use crate::projects::github_issues::{attach_issue_context_for_session, IssueContext};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const JEAN_MCP_STDIO_ARG: &str = "--jean-mcp-stdio";
@@ -20,6 +21,8 @@ pub const JEAN_MCP_SOCKET_ENV: &str = "JEAN_MCP_SOCKET";
 pub const JEAN_MCP_TOKEN_ENV: &str = "JEAN_MCP_TOKEN";
 pub const JEAN_MCP_SESSION_ENV: &str = "JEAN_MCP_SESSION";
 pub const JEAN_MCP_DEPTH_ENV: &str = "JEAN_MCP_DEPTH";
+/// Tool Claude CLI calls via `--permission-prompt-tool` (YOLO + Chrome runs).
+pub const CLAUDE_PERMISSION_PROMPT_TOOL: &str = "claude_permission_prompt";
 
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const RATE_LIMITED_TOOLS: &[&str] = &[
@@ -237,8 +240,31 @@ fn tool_registry_core() -> Value {
         {"name":"list_archived_worktrees","description":"List archived worktrees. Optionally filter by projectId. Active worktrees are not included (use list_worktrees for those).","inputSchema":{"type":"object","properties":{"projectId":{"type":"string","description":"Optional project id to filter archived worktrees."}},"additionalProperties":false}},
         {"name":"delete_worktree","description":"Start permanently deleting an active (non-archived) worktree in the background: removes Jean tracking, git worktree, and branch. Returns started=true when cleanup is accepted, not completion. Destructive and irreversible when cleanup succeeds. Cannot delete base sessions. Prefer archive_worktree when unsure.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"}},"required":["worktreeId"],"additionalProperties":false}},
         {"name":"permanently_delete_worktree","description":"Start permanently deleting an already-archived worktree in the background (storage + git worktree/branch cleanup). Returns started=true when cleanup is accepted, not completion. Fails immediately if the worktree is not archived — archive it first, or use delete_worktree for active worktrees.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"}},"required":["worktreeId"],"additionalProperties":false}},
-        {"name":"update_worktree_labels","description":"Update native Jean worktree labels. Use action=add/remove/set/clear. Returns the updated worktree.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"action":{"type":"string","enum":["add","remove","set","clear"]},"label":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string","description":"Hex color like #eab308. Optional for add; ignored by remove."},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name"],"additionalProperties":false},"labels":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string"},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name","color"],"additionalProperties":false}}},"required":["worktreeId","action"],"additionalProperties":false}}
+        {"name":"update_worktree_labels","description":"Update native Jean worktree labels. Use action=add/remove/set/clear. Returns the updated worktree.","inputSchema":{"type":"object","properties":{"worktreeId":{"type":"string"},"action":{"type":"string","enum":["add","remove","set","clear"]},"label":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string","description":"Hex color like #eab308. Optional for add; ignored by remove."},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name"],"additionalProperties":false},"labels":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"color":{"type":"string"},"pinned":{"type":"boolean","description":"Show this label as a project-view filter tab for the current project."}},"required":["name","color"],"additionalProperties":false}}},"required":["worktreeId","action"],"additionalProperties":false}},
+        {"name":"claude_permission_prompt","description":"Internal Jean hook for Claude CLI --permission-prompt-tool. Do not call directly.","inputSchema":{"type":"object","properties":{"tool_name":{"type":"string"},"input":{"type":"object"},"tool_use_id":{"type":"string"}},"required":["tool_name"]}}
     ])
+}
+
+/// Decision for Claude CLI `--permission-prompt-tool` requests. Jean only
+/// passes that flag for YOLO runs with Chrome enabled: Claude in Chrome asks
+/// for per-site approval even in bypassPermissions mode, and headless runs
+/// turn every ask into a denial. YOLO approves everything, except the
+/// blocking tools Jean answers through its own UI (it stops the run when
+/// they appear), so those keep the default headless denial.
+fn claude_permission_decision(args: &Value) -> Value {
+    let tool_name = args
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if matches!(tool_name, "AskUserQuestion" | "ExitPlanMode") {
+        json!({
+            "behavior": "deny",
+            "message": format!("Permission to use {tool_name} was not granted."),
+        })
+    } else {
+        let input = args.get("input").cloned().unwrap_or_else(|| json!({}));
+        json!({ "behavior": "allow", "updatedInput": input })
+    }
 }
 
 fn tool_registry_session() -> Value {
@@ -1811,6 +1837,7 @@ async fn run_tool(
                 json!({ "sessionId": source, "worktreeId": worktree_id, "worktreePath": worktree_path, "projectId": project_id, "projectName": project_name, "projectPath": project_path }),
             )
         }
+        CLAUDE_PERMISSION_PROMPT_TOOL => Ok(claude_permission_decision(&args)),
         other => Err(ToolError::invalid_params(format!("Unknown tool: {other}"))),
     }
 }
@@ -2211,6 +2238,7 @@ async fn start_autoinvestigating(
         parallel_execution_prompt,
         Some(selection.execution_mode.clone()),
         Some(source.to_string()),
+        None,
         false,
     )
     .await
@@ -2405,6 +2433,7 @@ pub async fn start_background_investigation_impl(
     parallel_execution_prompt: Option<String>,
     execution_mode: Option<String>,
     source: Option<String>,
+    issue_context: Option<IssueContext>,
     force_new_session: bool,
 ) -> Result<BackgroundInvestigationResult, String> {
     let sessions = crate::chat::get_sessions(
@@ -2441,6 +2470,10 @@ pub async fn start_background_investigation_impl(
             created.id
         }
     };
+
+    if let Some(issue_context) = issue_context {
+        attach_issue_context_for_session(app, &session_id, &worktree_path, &issue_context)?;
+    }
 
     crate::chat::set_session_model(
         app.clone(),
@@ -2541,6 +2574,7 @@ pub async fn start_background_investigation(
     ai_language: Option<String>,
     parallel_execution_prompt: Option<String>,
     execution_mode: Option<String>,
+    issue_context: Option<IssueContext>,
     force_new_session: Option<bool>,
 ) -> Result<BackgroundInvestigationResult, String> {
     start_background_investigation_impl(
@@ -2558,6 +2592,7 @@ pub async fn start_background_investigation(
         parallel_execution_prompt,
         execution_mode,
         Some("ui".to_string()),
+        issue_context,
         force_new_session.unwrap_or(false),
     )
     .await
@@ -3061,6 +3096,28 @@ mod tests {
             })
             .cloned()
             .unwrap_or_else(|| panic!("{name} tool exists"))
+    }
+
+    #[test]
+    fn claude_permission_prompt_allows_all_but_blocking_tools() {
+        find_tool(&tool_registry(), CLAUDE_PERMISSION_PROMPT_TOOL);
+
+        let allow = claude_permission_decision(&json!({
+            "tool_name": "mcp__claude-in-chrome__navigate",
+            "input": { "url": "https://example.com", "tabId": 1 },
+        }));
+        assert_eq!(allow["behavior"], "allow");
+        assert_eq!(allow["updatedInput"]["url"], "https://example.com");
+
+        for tool_name in ["WebSearch", "WebFetch", "Bash"] {
+            let allow = claude_permission_decision(&json!({ "tool_name": tool_name }));
+            assert_eq!(allow["behavior"], "allow", "{tool_name} must be allowed");
+        }
+
+        for tool_name in ["AskUserQuestion", "ExitPlanMode"] {
+            let deny = claude_permission_decision(&json!({ "tool_name": tool_name }));
+            assert_eq!(deny["behavior"], "deny", "{tool_name} must stay denied");
+        }
     }
 
     #[test]

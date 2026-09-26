@@ -10,6 +10,7 @@ import { isPanelTerminal, useTerminalStore } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { projectsQueryKeys } from '@/services/projects'
 import { chatQueryKeys } from '@/services/chat'
+import { claudeCliQueryKeys } from '@/services/claude-cli'
 import type {
   AllSessionsResponse,
   QueuedMessage,
@@ -180,6 +181,11 @@ export function applyCacheInvalidationKeys(
       case 'ui-state':
         queryClient.invalidateQueries({
           queryKey: ['ui-state'],
+        })
+        break
+      case 'claude-usage':
+        queryClient.invalidateQueries({
+          queryKey: claudeCliQueryKeys.usage(),
         })
         break
       case 'contexts':

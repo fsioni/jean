@@ -40,8 +40,10 @@ const mocks = vi.hoisted(() => {
     gitPush: vi.fn(),
     openExternal: vi.fn(),
     activeWorktreePath: null as string | null,
+    hasIssueContexts: false,
     selectedWorktreeId: 'wt-1',
     installedBackendsOptions: vi.fn(),
+    preferencesServerId: vi.fn(),
     worktreePaths: {} as Record<string, string>,
     worktree,
   }
@@ -181,28 +183,33 @@ vi.mock('@/services/projects', () => ({
 }))
 
 vi.mock('@/services/github', () => ({
-  useLoadedIssueContexts: () => ({ data: [] }),
+  useLoadedIssueContexts: () => ({
+    data: mocks.hasIssueContexts ? [{ number: 123 }] : [],
+  }),
   useLoadedPRContexts: () => ({ data: [] }),
   useLoadedAdvisoryContexts: () => ({ data: [] }),
 }))
 
 vi.mock('@/services/preferences', () => ({
-  usePreferences: () => ({
-    data: {
-      default_backend: 'claude',
-      selected_model: 'claude-opus-4-8[1m]',
-      selected_codex_model: 'gpt-5.5',
-      magic_prompt_models: {},
-      magic_prompt_efforts: {},
-      magic_prompt_modes: {},
-      magic_prompts: {
-        resolve_conflicts: 'Resolve and finish.',
+  usePreferences: (serverId?: string) => {
+    mocks.preferencesServerId(serverId)
+    return {
+      data: {
+        default_backend: 'claude',
+        selected_model: 'claude-opus-4-8[1m]',
+        selected_codex_model: 'gpt-5.5',
+        magic_prompt_models: {},
+        magic_prompt_efforts: {},
+        magic_prompt_modes: {},
+        magic_prompts: {
+          resolve_conflicts: 'Resolve and finish.',
+        },
+        magic_prompt_backends: {
+          resolve_conflicts_backend: 'codex',
+        },
       },
-      magic_prompt_backends: {
-        resolve_conflicts_backend: 'codex',
-      },
-    },
-  }),
+    }
+  },
 }))
 
 vi.mock('@/services/opencode-cli', () => ({
@@ -273,6 +280,7 @@ describe('MagicModal manual PR link', () => {
     mocks.worktree.pr_number = null
     mocks.worktree.pr_url = null
     mocks.activeWorktreePath = null
+    mocks.hasIssueContexts = false
     mocks.selectedWorktreeId = 'wt-1'
     mocks.invokeMock.mockImplementation((command: string) => {
       if (command === 'detect_and_link_pr') return Promise.resolve(null)
@@ -295,6 +303,7 @@ describe('MagicModal manual PR link', () => {
     expect(mocks.installedBackendsOptions).toHaveBeenCalledWith({
       serverId: 'remote-1',
     })
+    expect(mocks.preferencesServerId).toHaveBeenCalledWith('remote-1')
   })
 
   it('renders touch-friendly grouped actions for the mobile menu', () => {
@@ -311,6 +320,16 @@ describe('MagicModal manual PR link', () => {
       within(mobileMenu).getByRole('button', { name: 'Save Context' })
     ).toHaveClass('min-h-12')
     expect(mobileMenu.querySelector('kbd')).not.toBeInTheDocument()
+  })
+
+  it('uses the issue icon for the Issue investigation action', () => {
+    render(<MagicModal />)
+
+    const issueAction = within(
+      screen.getByTestId('magic-column-right')
+    ).getByRole('button', { name: 'Issue I' })
+    expect(issueAction.querySelector('svg circle')).toBeInTheDocument()
+    expect(issueAction.querySelector('svg path')).not.toBeInTheDocument()
   })
 
   it('opens a Link PR dialog and shows checking state while searching current branch', async () => {
@@ -660,6 +679,31 @@ describe('MagicModal manual PR link', () => {
     expect(
       screen.getByRole('button', { name: /check github issues/i })
     ).toBeInTheDocument()
+  })
+
+  it('only sends the comment and close issue action when issue context is loaded', async () => {
+    const user = userEvent.setup()
+    mocks.activeWorktreePath = '/repo/worktree'
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    const { rerender } = render(<MagicModal />)
+    const action = screen.getByRole('button', {
+      name: /comment & close issue/i,
+    })
+    expect(action).toBeDisabled()
+
+    mocks.hasIssueContexts = true
+    rerender(<MagicModal />)
+    await user.click(
+      screen.getByRole('button', { name: /comment & close issue/i })
+    )
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'magic-command',
+        detail: { command: 'comment-and-close-issue' },
+      })
+    )
+    dispatchSpy.mockRestore()
   })
 
   it('does not show the removed smoke test magic command', () => {

@@ -6,8 +6,8 @@ use super::types::{
 };
 use crate::http_server::EmitExt;
 use crate::projects::github_issues::{
-    get_github_contexts_dir, get_session_advisory_refs, get_session_issue_refs,
-    get_session_pr_refs, get_session_security_refs,
+    get_github_contexts_dir, get_preferred_issue_refs, get_preferred_pr_refs,
+    get_session_advisory_refs, get_session_security_refs,
 };
 use crate::projects::linear_issues::get_session_linear_refs;
 use crate::projects::sentry_issues::get_session_sentry_refs;
@@ -297,6 +297,20 @@ fn stream_event_input_delta(msg: &serde_json::Value) -> Option<(usize, &str)> {
     }
 
     Some((index, delta.get("partial_json")?.as_str()?))
+}
+
+/// Complete tool input from streamed `input_json_delta` chunks, or `None`
+/// while the JSON is still incomplete. Claude CLI sends an empty first delta
+/// after a `content_block_start` with `input: {}`; that is not a finished input.
+fn streamed_tool_input(
+    start_input: &serde_json::Value,
+    input_buf: &str,
+) -> Option<serde_json::Value> {
+    if input_buf.trim().is_empty() {
+        let has_input = start_input.as_object().is_some_and(|obj| !obj.is_empty());
+        return has_input.then(|| start_input.clone());
+    }
+    serde_json::from_str(input_buf).ok()
 }
 
 // =============================================================================
@@ -649,6 +663,15 @@ fn build_claude_args(
     // Chrome browser integration (beta)
     if chrome_enabled {
         args.push("--chrome".to_string());
+        // Claude in Chrome asks for per-site approval even in bypassPermissions
+        // mode (allow rules do not skip it), and headless runs deny every ask.
+        // In YOLO, route every ask to Jean MCP, which approves it.
+        if execution_mode == Some("yolo") {
+            if let Some(tool) = jean_permission_prompt_tool(mcp_config) {
+                args.push("--permission-prompt-tool".to_string());
+                args.push(tool);
+            }
+        }
     }
 
     // Build combined system prompt parts
@@ -762,16 +785,7 @@ fn build_claude_args(
     let mut all_context_paths: Vec<std::path::PathBuf> = Vec::new();
 
     // Check for issue context files (shared storage)
-    // Merge session_id refs + worktree_id refs (worktree refs cover PR/issue-based worktrees
-    // where the background thread may not have copied refs to the session yet)
-    let mut issue_keys = get_session_issue_refs(app, session_id).unwrap_or_default();
-    if let Ok(wt_keys) = get_session_issue_refs(app, worktree_id) {
-        for key in wt_keys {
-            if !issue_keys.contains(&key) {
-                issue_keys.push(key);
-            }
-        }
-    }
+    let issue_keys = get_preferred_issue_refs(app, session_id, worktree_id);
     if !issue_keys.is_empty() {
         if let Ok(contexts_dir) = get_github_contexts_dir(app) {
             log::debug!(
@@ -796,14 +810,7 @@ fn build_claude_args(
     }
 
     // Check for PR context files (shared storage)
-    let mut pr_keys = get_session_pr_refs(app, session_id).unwrap_or_default();
-    if let Ok(wt_keys) = get_session_pr_refs(app, worktree_id) {
-        for key in wt_keys {
-            if !pr_keys.contains(&key) {
-                pr_keys.push(key);
-            }
-        }
-    }
+    let pr_keys = get_preferred_pr_refs(app, session_id, worktree_id);
     if !pr_keys.is_empty() {
         if let Ok(contexts_dir) = get_github_contexts_dir(app) {
             for key in pr_keys {
@@ -1142,6 +1149,17 @@ fn append_mcp_config_args(args: &mut Vec<String>, mcp_config: Option<&str>) {
             }
         }
     }
+}
+
+/// Jean MCP permission hook tool name, when the Jean MCP server is in `mcp_config`.
+fn jean_permission_prompt_tool(mcp_config: Option<&str>) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(mcp_config?).ok()?;
+    let server_name = crate::jean_mcp_config::current_mode().server_name();
+    parsed.get("mcpServers")?.get(server_name)?;
+    Some(format!(
+        "mcp__{server_name}__{}",
+        crate::jean_mcp_core::CLAUDE_PERMISSION_PROMPT_TOOL
+    ))
 }
 
 /// Execute Claude CLI in detached mode.
@@ -1557,13 +1575,8 @@ pub fn tail_claude_output(
                     let input_buf = pending_stream_tool_inputs.entry(index).or_default();
                     input_buf.push_str(partial_json);
 
-                    let input = if input_buf.trim().is_empty() {
-                        pending_tool.input.clone()
-                    } else {
-                        match serde_json::from_str::<serde_json::Value>(input_buf) {
-                            Ok(value) => value,
-                            Err(_) => continue,
-                        }
+                    let Some(input) = streamed_tool_input(&pending_tool.input, input_buf) else {
+                        continue;
                     };
 
                     if pending_tool.name == "AskUserQuestion" || pending_tool.name == "ExitPlanMode"
@@ -1920,8 +1933,10 @@ pub fn tail_claude_output(
                                         }
                                     }
                                     "thinking" => {
-                                        if let Some(thinking) =
-                                            block.get("thinking").and_then(|v| v.as_str())
+                                        if let Some(thinking) = block
+                                            .get("thinking")
+                                            .and_then(|v| v.as_str())
+                                            .filter(|t| !t.is_empty())
                                         {
                                             // Thinking events must not overtake buffered text.
                                             flush_pending_chunks(
@@ -2279,6 +2294,18 @@ pub fn tail_claude_output(
                             if let Err(e) = app.emit_all("chat:compacted", &compacted_event) {
                                 log::error!("Failed to emit compacted: {e}");
                             }
+                        }
+                    }
+                }
+                "rate_limit_event" => {
+                    // Free usage data from the CLI — keeps the Usage UI fresh
+                    // without hitting the rate-limited OAuth usage API.
+                    if crate::claude_cli::record_claude_rate_limit_event(&msg) {
+                        if let Err(e) = app.emit_all(
+                            "cache:invalidate",
+                            &serde_json::json!({ "keys": ["claude-usage"] }),
+                        ) {
+                            log::error!("Failed to emit claude-usage cache invalidation: {e}");
                         }
                     }
                 }
@@ -2709,6 +2736,21 @@ mod tests {
     }
 
     #[test]
+    fn streamed_tool_input_waits_for_complete_json() {
+        let empty = serde_json::json!({});
+        // Claude CLI 2.1.x sends `input: {}` then an empty first delta.
+        assert_eq!(streamed_tool_input(&empty, ""), None);
+        assert_eq!(streamed_tool_input(&empty, "{\"questions\": [{"), None);
+        assert_eq!(
+            streamed_tool_input(&empty, "{\"questions\": []}"),
+            Some(serde_json::json!({ "questions": [] }))
+        );
+
+        let full = serde_json::json!({ "plan": "Do it" });
+        assert_eq!(streamed_tool_input(&full, ""), Some(full.clone()));
+    }
+
+    #[test]
     fn extracts_stream_event_input_json_delta() {
         let msg = serde_json::json!({
             "type": "stream_event",
@@ -2743,5 +2785,20 @@ mod tests {
         assert!(args.contains(&"mcp__jean-dev__*".to_string()));
         assert!(args.contains(&"mcp__github".to_string()));
         assert!(args.contains(&"mcp__github__*".to_string()));
+    }
+
+    #[test]
+    fn permission_prompt_tool_requires_jean_mcp_server() {
+        let server = crate::jean_mcp_config::current_mode().server_name();
+        let config = format!(r#"{{"mcpServers":{{"{server}":{{"type":"stdio"}}}}}}"#);
+        assert_eq!(
+            jean_permission_prompt_tool(Some(&config)),
+            Some(format!("mcp__{server}__claude_permission_prompt"))
+        );
+        assert_eq!(
+            jean_permission_prompt_tool(Some(r#"{"mcpServers":{"github":{}}}"#)),
+            None
+        );
+        assert_eq!(jean_permission_prompt_tool(None), None);
     }
 }

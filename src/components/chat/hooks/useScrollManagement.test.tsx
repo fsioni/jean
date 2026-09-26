@@ -328,6 +328,28 @@ describe('useScrollManagement streaming auto-scroll', () => {
 
     expect(getByTestId('is-at-bottom')).toHaveTextContent('true')
   })
+
+  it('shows the bottom action when a short viewport leaves content below it', () => {
+    const { getByTestId, viewport } = setupHook({ isSending: false })
+    defineReadonlyNumber(viewport, 'clientHeight', 400)
+    defineReadonlyNumber(viewport, 'scrollHeight', 1000)
+    viewport.scrollTop = 550
+
+    fireEvent.scroll(viewport)
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('false')
+  })
+
+  it('keeps the bottom action hidden at the actual viewport edge', () => {
+    const { getByTestId, viewport } = setupHook({ isSending: false })
+    defineReadonlyNumber(viewport, 'clientHeight', 400)
+    defineReadonlyNumber(viewport, 'scrollHeight', 1000)
+    viewport.scrollTop = 600
+
+    fireEvent.scroll(viewport)
+
+    expect(getByTestId('is-at-bottom')).toHaveTextContent('true')
+  })
 })
 
 describe('useScrollManagement session scroll retention (issue #594)', () => {

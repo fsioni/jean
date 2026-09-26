@@ -39,6 +39,39 @@ describe('hydrateRunningSnapshot', () => {
     })
   })
 
+  it('ignores empty thinking blocks so live blocks are not duplicated', () => {
+    // Live streaming skips Claude's empty thinking placeholder.
+    useChatStore.setState({
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Checking the card.' },
+          { type: 'tool_use', tool_call_id: 'tool-1' },
+        ],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: 'Checking the card.' },
+          { type: 'tool_use', tool_call_id: 'tool-1' },
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: 'Sending the purchase.' },
+        ],
+      })
+    )
+
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      [
+        { type: 'text', text: 'Checking the card.' },
+        { type: 'tool_use', tool_call_id: 'tool-1' },
+        { type: 'text', text: 'Sending the purchase.' },
+      ]
+    )
+  })
+
   it('skips hydration while sending by default', () => {
     useChatStore.setState({
       sendingSessionIds: { 'session-1': true },
@@ -195,6 +228,75 @@ describe('hydrateRunningSnapshot', () => {
     expect(
       useChatStore.getState().activeToolCalls['session-1']?.map(tool => tool.id)
     ).toEqual(['tool-1', 'tool-2', 'tool-3'])
+  })
+
+  it('does not append an older live prefix to a newer snapshot', () => {
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Windows 10 LTSC helps.' },
+          { type: 'tool_use', tool_call_id: 'tool-1' },
+        ],
+      },
+    })
+
+    const snapshot = assistantMessage({
+      content_blocks: [
+        { type: 'text', text: 'Windows 10 LTSC helps.' },
+        { type: 'tool_use', tool_call_id: 'tool-1' },
+        { type: 'text', text: 'On native Windows, Claude writes' },
+      ],
+    })
+    hydrateRunningSnapshot('session-1', snapshot, { allowWhileSending: true })
+    hydrateRunningSnapshot('session-1', snapshot, { allowWhileSending: true })
+
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      snapshot.content_blocks
+    )
+  })
+
+  it('keeps live blocks that extend beyond an older snapshot', () => {
+    const liveBlocks = [
+      { type: 'text' as const, text: 'Looking for Windows-only paths.' },
+      { type: 'tool_use' as const, tool_call_id: 'tool-1' },
+      { type: 'text' as const, text: 'Found the issue.' },
+    ]
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      streamingContentBlocks: { 'session-1': liveBlocks },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({ content_blocks: liveBlocks.slice(0, 2) }),
+      { allowWhileSending: true }
+    )
+
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      liveBlocks
+    )
+  })
+
+  it('uses the longer text block when a snapshot and live stream share a prefix', () => {
+    useChatStore.setState({
+      sendingSessionIds: { 'session-1': true },
+      streamingContentBlocks: {
+        'session-1': [{ type: 'text', text: 'Windows 10' }],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [{ type: 'text', text: 'Windows 10 LTSC helps.' }],
+      }),
+      { allowWhileSending: true }
+    )
+
+    expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
+      [{ type: 'text', text: 'Windows 10 LTSC helps.' }]
+    )
   })
 
   it('seeds replay dedupe when requested, even if snapshot was already hydrated', () => {

@@ -2,7 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { invoke } from '@/lib/transport'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore, type InvestigationOverride } from '@/store/ui-store'
-import { usePreferences } from '@/services/preferences'
+import {
+  loadPreferencesForServer,
+  preferencesQueryKeys,
+  usePreferences,
+} from '@/services/preferences'
 import { chatQueryKeys } from '@/services/chat'
 import { resolveBackend, supportsAdaptiveThinking } from '@/lib/model-utils'
 import { applyYoloInvestigationFixDirective } from '@/lib/investigation-prompt'
@@ -21,6 +25,8 @@ import { logger } from '@/lib/logger'
 import { useQueryClient } from '@tanstack/react-query'
 import { projectsQueryKeys } from '@/services/projects'
 import type { Worktree } from '@/types/projects'
+import { parseServerResourceKey } from '@/lib/server-resource'
+import { LOCAL_SERVER_ID } from '@/types/server-resource'
 
 type InvestigationType =
   | 'issue'
@@ -35,11 +41,10 @@ type InvestigationType =
  *
  * Owns the entire auto-investigate path for both CMD+Click background creates
  * and foreground creates that open a session modal. Always queues the prompt
- * through `start_background_investigation` so remote/web clients (where the
- * frontend queue processor does not drain) still start investigations even when
+ * through `start_background_investigation` so the backend starts it even when
  * the worktree becomes active or opens in a modal.
  *
- * Must be mounted at App level alongside useQueueProcessor.
+ * Must be mounted at App level.
  */
 export function useBackgroundInvestigation(): void {
   const { data: preferences } = usePreferences()
@@ -55,7 +60,6 @@ export function useBackgroundInvestigation(): void {
   // direct cleanup path (avoids nested-callback timer ownership issues).
   const [retryScheduled, setRetryScheduled] = useState(false)
 
-  // Ref for unstable preferences dependency; keeps effect deps stable.
   const preferencesRef = useRef(preferences)
   useLayoutEffect(() => {
     preferencesRef.current = preferences
@@ -522,11 +526,21 @@ const investigationConfig = {
 async function processBackgroundInvestigation(
   worktreeId: string,
   type: InvestigationType,
-  preferences: ReturnType<typeof usePreferences>['data'],
+  localPreferences: ReturnType<typeof usePreferences>['data'],
   cliVersion: string | null,
   queryClient: ReturnType<typeof useQueryClient>,
   override?: InvestigationOverride
 ): Promise<void> {
+  const serverId =
+    parseServerResourceKey(worktreeId)?.serverId ?? LOCAL_SERVER_ID
+  const preferences =
+    serverId === LOCAL_SERVER_ID
+      ? localPreferences
+      : await queryClient.fetchQuery({
+          queryKey: preferencesQueryKeys.preferences(serverId),
+          queryFn: () => loadPreferencesForServer(serverId),
+          staleTime: 1000 * 60 * 5,
+        })
   const worktreePath = useChatStore.getState().worktreePaths[worktreeId]
   if (!worktreePath) {
     // Throw so the caller keeps the auto-investigate flag and retries instead
@@ -613,6 +627,7 @@ async function processBackgroundInvestigation(
     aiLanguage: preferences?.ai_language,
     executionMode,
     forceNewSession: override?.forceNewSession,
+    issueContext: override?.issueContext,
   })
 
   const sessionId = result.sessionId

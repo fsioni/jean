@@ -1,3 +1,4 @@
+import type { Session, WorktreeSessions } from '@/types/chat'
 import type { SessionCardData } from './session-card-utils'
 
 export function sortSessionCardsForTabs(
@@ -22,11 +23,65 @@ export function sortSessionCardsForTabs(
  * transient response can be empty or omit the active session. Selecting the
  * first returned session here would move the user without an explicit action.
  * Removal handlers select the next session before they clear the old one.
+ *
+ * Drop the store's session only when it is confirmed gone (the direct lookup
+ * failed), so a stale id never leaves the tab row without a selection.
  */
 export function resolveModalSessionId(
   activeSessionId: string | undefined,
+  sessionIds: readonly string[],
+  backendActiveSessionId?: string | null,
+  activeSessionGone = false
+): string | null {
+  if (activeSessionId && !activeSessionGone) return activeSessionId
+  if (backendActiveSessionId && sessionIds.includes(backendActiveSessionId)) {
+    return backendActiveSessionId
+  }
+  return sessionIds[0] ?? null
+}
+
+/**
+ * Seed the client selection from persisted session data without replacing a
+ * selection that the user already made. A sessions-list refresh can
+ * temporarily omit the running session, so list membership is not evidence
+ * that the current selection is invalid.
+ */
+export function resolveInitialActiveSessionId(
+  currentActiveSessionId: string | undefined,
+  backendActiveSessionId: string | null,
   sessionIds: readonly string[]
 ): string | null {
-  if (activeSessionId) return activeSessionId
-  return sessionIds[0] ?? null
+  if (currentActiveSessionId) return null
+  return backendActiveSessionId ?? sessionIds[0] ?? null
+}
+
+/**
+ * Keep the open session in the tab row when the worktree list is empty or
+ * still loading. Chat already renders from the active session id.
+ */
+export function sessionsForTabBar(
+  sessions: readonly Session[],
+  activeSession: Session | null | undefined
+): Session[] {
+  if (!activeSession) return [...sessions]
+  if (sessions.some(session => session.id === activeSession.id)) {
+    return [...sessions]
+  }
+  return [...sessions, activeSession]
+}
+
+/** Add one known session to a list cache without dropping sessions already there. */
+export function mergeSessionIntoWorktreeSessions(
+  current: WorktreeSessions | undefined,
+  worktreeId: string,
+  session: Session
+): WorktreeSessions {
+  if (current?.sessions.some(item => item.id === session.id)) return current
+  return {
+    worktree_id: current?.worktree_id || worktreeId,
+    sessions: current ? [...current.sessions, session] : [session],
+    active_session_id: current?.active_session_id ?? session.id,
+    version: current?.version ?? 2,
+    branch_naming_completed: current?.branch_naming_completed ?? false,
+  }
 }

@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useChatStore } from '@/store/chat-store'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import {
   useSendMessage,
   markPlanApproved,
@@ -84,7 +85,8 @@ export function usePlanApproval({
   worktreePath,
 }: UsePlanApprovalParams) {
   const queryClient = useQueryClient()
-  const { data: preferences } = usePreferences()
+  const serverId = parseServerResourceKey(worktreeId)?.serverId
+  const { data: preferences } = usePreferences(serverId)
   const sendMessage = useSendMessage()
   const { data: cliStatus } = useClaudeCliStatus()
 

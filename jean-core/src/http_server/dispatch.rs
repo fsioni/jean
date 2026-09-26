@@ -165,7 +165,6 @@ pub async fn dispatch_command(
         "save_ui_state" => {
             let ui_state = field(&args, "uiState", "ui_state")?;
             crate::save_ui_state(app.clone(), ui_state).await?;
-            emit_cache_invalidation(app, &["ui-state"]);
             Ok(Value::Null)
         }
 
@@ -208,14 +207,14 @@ pub async fn dispatch_command(
             let project_ids: Option<Vec<String>> = field_opt(&args, "projectIds", "project_ids")?;
             let offset: Option<usize> = from_field_opt(&args, "offset")?;
             let limit: Option<usize> = from_field_opt(&args, "limit")?;
-            let include_session_id: Option<String> =
-                field_opt(&args, "includeSessionId", "include_session_id")?;
+            let include_session_ids: Option<Vec<String>> =
+                field_opt(&args, "includeSessionIds", "include_session_ids")?;
             let result = crate::projects::get_recent_worktrees(
                 app.clone(),
                 project_ids,
                 offset,
                 limit,
-                include_session_id,
+                include_session_ids,
             )
             .await?;
             to_value(result)
@@ -889,11 +888,13 @@ pub async fn dispatch_command(
         }
         "get_issue_context_content" => {
             let session_id: String = field(&args, "sessionId", "session_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let issue_number: u32 = field(&args, "issueNumber", "issue_number")?;
             let project_path: String = field(&args, "projectPath", "project_path")?;
             let result = crate::projects::get_issue_context_content(
                 app.clone(),
                 session_id,
+                worktree_id,
                 issue_number,
                 project_path,
             )
@@ -902,11 +903,13 @@ pub async fn dispatch_command(
         }
         "get_pr_context_content" => {
             let session_id: String = field(&args, "sessionId", "session_id")?;
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
             let pr_number: u32 = field(&args, "prNumber", "pr_number")?;
             let project_path: String = field(&args, "projectPath", "project_path")?;
             let result = crate::projects::get_pr_context_content(
                 app.clone(),
                 session_id,
+                worktree_id,
                 pr_number,
                 project_path,
             )
@@ -1184,6 +1187,8 @@ pub async fn dispatch_command(
                 field_opt(&args, "executionMode", "execution_mode")?;
             let force_new_session: Option<bool> =
                 field_opt(&args, "forceNewSession", "force_new_session")?;
+            let issue_context: Option<crate::projects::IssueContext> =
+                field_opt(&args, "issueContext", "issue_context")?;
             let result = crate::jean_mcp_core::start_background_investigation(
                 app.clone(),
                 worktree_id,
@@ -1198,6 +1203,7 @@ pub async fn dispatch_command(
                 ai_language,
                 parallel_execution_prompt,
                 execution_mode,
+                issue_context,
                 force_new_session,
             )
             .await?;
@@ -2054,6 +2060,7 @@ pub async fn dispatch_command(
             let result =
                 crate::projects::move_item(app.clone(), item_id, new_parent_id, target_index)
                     .await?;
+            emit_cache_invalidation(app, &["projects"]);
             to_value(result)
         }
         "reorder_items" => {

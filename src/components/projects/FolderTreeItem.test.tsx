@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { render, screen } from '@/test/test-utils'
 import type { Project } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -42,7 +43,7 @@ describe('FolderTreeItem', () => {
 
   it('lets the rename input shrink inside the folder row', () => {
     render(
-      <FolderTreeItem folder={folder} depth={0}>
+      <FolderTreeItem folder={folder} depth={0} childCount={0}>
         <div />
       </FolderTreeItem>
     )
@@ -50,5 +51,26 @@ describe('FolderTreeItem', () => {
     expect(screen.getByRole('textbox', { name: 'Rename folder' })).toHaveClass(
       'min-w-0'
     )
+  })
+
+  it('shows the direct child count only while collapsed', async () => {
+    useProjectsStore.setState({ editingFolderId: null })
+    const user = userEvent.setup()
+    render(
+      <FolderTreeItem folder={folder} depth={0} childCount={2}>
+        <div>Child rows</div>
+      </FolderTreeItem>
+    )
+
+    expect(screen.getByRole('status', { name: '2 items' })).toHaveTextContent(
+      '2'
+    )
+    expect(screen.queryByText('Child rows')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Expand folder' }))
+    expect(
+      screen.queryByRole('status', { name: '2 items' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('Child rows')).toBeInTheDocument()
   })
 })

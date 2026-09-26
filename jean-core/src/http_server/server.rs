@@ -62,6 +62,27 @@ struct WsAuth {
     /// when the disk copy is stale. Used to scope the init payload to only the
     /// worktrees/sessions the user is currently viewing.
     selected_project: Option<String>,
+    /// `?download=true` makes file routes send `Content-Disposition: attachment`.
+    #[serde(default)]
+    download: bool,
+}
+
+/// `Content-Disposition` value that makes browsers save the file under its own name.
+fn attachment_disposition(path: &std::path::Path) -> String {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "download".to_string());
+    let encoded: String = name
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect();
+    format!("attachment; filename*=UTF-8''{encoded}")
 }
 
 #[derive(Deserialize)]
@@ -1079,12 +1100,15 @@ async fn project_file_handler(
 
     let mime = mime_from_extension(&canonical);
     match tokio::fs::read(&canonical).await {
-        Ok(bytes) => Response::builder()
-            .header("Content-Type", mime)
-            .header("Cache-Control", "private, max-age=3600")
-            .body(Body::from(bytes))
-            .unwrap()
-            .into_response(),
+        Ok(bytes) => {
+            let mut builder = Response::builder()
+                .header("Content-Type", mime)
+                .header("Cache-Control", "private, max-age=3600");
+            if params.download {
+                builder = builder.header("Content-Disposition", attachment_disposition(&canonical));
+            }
+            builder.body(Body::from(bytes)).unwrap().into_response()
+        }
         Err(_) => (StatusCode::NOT_FOUND, "Cannot read file").into_response(),
     }
 }
@@ -1432,13 +1456,21 @@ pub async fn get_server_status(app: AppHandle) -> ServerStatus {
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_host_option_label, bind_host_option_rank, display_host_for_bind_ip,
-        display_ip_for_bind_ip_with_candidates, embedded_asset_path_for_request, format_http_url,
-        is_tailscale_ipv4, parse_bind_ip, path_is_in_known_roots, token_from_query_or_bearer,
-        validate_bind_host,
+        attachment_disposition, bind_host_option_label, bind_host_option_rank,
+        display_host_for_bind_ip, display_ip_for_bind_ip_with_candidates,
+        embedded_asset_path_for_request, format_http_url, is_tailscale_ipv4, parse_bind_ip,
+        path_is_in_known_roots, token_from_query_or_bearer, validate_bind_host,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn attachment_disposition_percent_encodes_file_name() {
+        assert_eq!(
+            attachment_disposition(std::path::Path::new("/tmp/out/my show\"reel.mp4")),
+            "attachment; filename*=UTF-8''my%20show%22reel.mp4"
+        );
+    }
 
     #[test]
     fn parse_bind_ip_accepts_localhost_and_ip_literals() {

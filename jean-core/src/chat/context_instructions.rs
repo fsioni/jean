@@ -1,8 +1,8 @@
 use serde::Serialize;
 
 use crate::projects::github_issues::{
-    get_github_contexts_dir, get_session_advisory_refs, get_session_issue_refs,
-    get_session_pr_refs, get_session_security_refs,
+    get_github_contexts_dir, get_preferred_issue_refs, get_preferred_pr_refs,
+    get_session_advisory_refs, get_session_security_refs,
 };
 use crate::projects::linear_issues::get_session_linear_refs;
 use crate::projects::sentry_issues::get_session_sentry_refs;
@@ -159,14 +159,7 @@ fn collect_context_paths(
 ) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
 
-    let mut issue_keys = get_session_issue_refs(app, session_id).unwrap_or_default();
-    if let Ok(wt_keys) = get_session_issue_refs(app, worktree_id) {
-        for key in wt_keys {
-            if !issue_keys.contains(&key) {
-                issue_keys.push(key);
-            }
-        }
-    }
+    let issue_keys = get_preferred_issue_refs(app, session_id, worktree_id);
     if !issue_keys.is_empty() {
         if let Ok(contexts_dir) = get_github_contexts_dir(app) {
             for key in issue_keys {
@@ -182,14 +175,7 @@ fn collect_context_paths(
         }
     }
 
-    let mut pr_keys = get_session_pr_refs(app, session_id).unwrap_or_default();
-    if let Ok(wt_keys) = get_session_pr_refs(app, worktree_id) {
-        for key in wt_keys {
-            if !pr_keys.contains(&key) {
-                pr_keys.push(key);
-            }
-        }
-    }
+    let pr_keys = get_preferred_pr_refs(app, session_id, worktree_id);
     if !pr_keys.is_empty() {
         if let Ok(contexts_dir) = get_github_contexts_dir(app) {
             for key in pr_keys {

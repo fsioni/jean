@@ -25,6 +25,7 @@ interface MagicCommandHandlers {
   handleCheckGitHubIssues: () => void
   handleCommit: () => void
   handleCommitAndPush: () => void
+  handleCommentAndCloseIssue: () => void
   handlePull: () => void
   handlePush: () => void
   handleRevertLastCommit: () => void
@@ -68,6 +69,7 @@ export function useMagicCommands({
   handleCheckGitHubIssues,
   handleCommit,
   handleCommitAndPush,
+  handleCommentAndCloseIssue,
   handlePull,
   handlePush,
   handleRevertLastCommit,
@@ -91,6 +93,7 @@ export function useMagicCommands({
     handleCheckGitHubIssues,
     handleCommit,
     handleCommitAndPush,
+    handleCommentAndCloseIssue,
     handlePull,
     handlePush,
     handleRevertLastCommit,
@@ -115,6 +118,7 @@ export function useMagicCommands({
       handleCheckGitHubIssues,
       handleCommit,
       handleCommitAndPush,
+      handleCommentAndCloseIssue,
       handlePull,
       handlePush,
       handleRevertLastCommit,
@@ -172,6 +176,9 @@ export function useMagicCommands({
           break
         case 'commit-and-push':
           handlers.handleCommitAndPush()
+          break
+        case 'comment-and-close-issue':
+          handlers.handleCommentAndCloseIssue()
           break
         case 'pull':
           handlers.handlePull()

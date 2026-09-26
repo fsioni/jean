@@ -5,11 +5,13 @@ import type { Project } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useRenameFolder } from '@/services/projects'
 import { FolderContextMenu } from './FolderContextMenu'
+import { CollapsedCountBadge } from './CollapsedCountBadge'
 
 interface FolderTreeItemProps {
   folder: Project
   children: React.ReactNode
   depth: number
+  childCount: number
   isDropTarget?: boolean
 }
 
@@ -17,6 +19,7 @@ export function FolderTreeItem({
   folder,
   children,
   depth,
+  childCount,
   isDropTarget,
 }: FolderTreeItemProps) {
   const {
@@ -154,6 +157,11 @@ export function FolderTreeItem({
           ) : (
             <span className="flex-1 truncate text-sm">{folder.name}</span>
           )}
+          <CollapsedCountBadge
+            count={childCount}
+            label="items"
+            isExpanded={isExpanded}
+          />
         </div>
 
         {/* Children (nested projects/folders) */}

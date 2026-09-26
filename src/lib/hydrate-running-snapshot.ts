@@ -21,10 +21,46 @@ function blocksOverlap(snapshot: ContentBlock, live: ContentBlock): boolean {
   }
 }
 
+function blocksSharePrefix(
+  full: ContentBlock[],
+  prefix: ContentBlock[]
+): boolean {
+  if (prefix.length === 0 || full.length < prefix.length) return false
+
+  return prefix.every((block, index) => {
+    const candidate = full[index]
+    if (!candidate || candidate.type !== block.type) return false
+
+    switch (block.type) {
+      case 'text':
+        return (
+          candidate.type === 'text' && candidate.text.startsWith(block.text)
+        )
+      case 'thinking':
+        return (
+          candidate.type === 'thinking' &&
+          candidate.thinking.startsWith(block.thinking)
+        )
+      case 'tool_use':
+        return (
+          candidate.type === 'tool_use' &&
+          candidate.tool_call_id === block.tool_call_id
+        )
+      case 'user_input':
+        return candidate.type === 'user_input' && candidate.text === block.text
+    }
+  })
+}
+
 function mergeSnapshotBlocks(
   snapshot: ContentBlock[],
   live: ContentBlock[]
 ): ContentBlock[] {
+  // A refreshed snapshot and the live stream often share their beginning.
+  // Keep the longer sequence instead of appending the shorter one twice.
+  if (blocksSharePrefix(snapshot, live)) return snapshot
+  if (blocksSharePrefix(live, snapshot)) return live
+
   const maxOverlap = Math.min(snapshot.length, live.length)
   let overlap = 0
 
@@ -83,7 +119,15 @@ export function hydrateRunningSnapshot(
   options: { allowWhileSending?: boolean; dedupeReplayedOutput?: boolean } = {}
 ): void {
   const store = useChatStore.getState()
-  const normalized = coalesceContentBlocks(lastMsg.content_blocks ?? [])
+  // Live streaming never adds empty text/thinking blocks. Drop them here so
+  // the snapshot and live blocks line up and merge without duplicates.
+  const normalized = coalesceContentBlocks(
+    (lastMsg.content_blocks ?? []).filter(
+      block =>
+        !(block.type === 'thinking' && !block.thinking) &&
+        !(block.type === 'text' && !block.text)
+    )
+  )
   if (options.dedupeReplayedOutput) {
     store.setStreamingReplayContentBlocks(sessionId, normalized)
   }

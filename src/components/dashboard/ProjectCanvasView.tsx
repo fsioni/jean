@@ -976,7 +976,7 @@ export function ProjectCanvasView({
   projectId,
   project,
 }: ProjectCanvasViewProps) {
-  const { data: preferences } = usePreferences()
+  const { data: preferences } = usePreferences(project.serverId)
   const worktreeSortMode = useProjectsStore(
     state =>
       state.projectCanvasSettings[projectId]?.worktreeSortMode ?? 'created'
@@ -1161,12 +1161,7 @@ export function ProjectCanvasView({
         queryKey: [...chatQueryKeys.sessions(wt.id), 'with-counts'],
         queryFn: async (): Promise<WorktreeSessions> => {
           if (!hasBackendTransport() || !wt.id || !wt.path) {
-            return {
-              worktree_id: wt.id,
-              sessions: [],
-              active_session_id: null,
-              version: 2,
-            }
+            throw new Error('Session list is not available yet')
           }
           return invoke<WorktreeSessions>('get_sessions', {
             worktreeId: wt.id,
@@ -2847,9 +2842,7 @@ export function ProjectCanvasView({
 
   // Keyboard navigation - disable when any modal/dialog is open
   const isModalOpen =
-    !!selectedWorktreeModal ||
-    worktreeLabelModalOpen ||
-    !!labelDeleteTarget
+    !!selectedWorktreeModal || worktreeLabelModalOpen || !!labelDeleteTarget
   const { cardRefs } = useCanvasKeyboardNav({
     cards: flatCards,
     selectedIndex,

@@ -22,6 +22,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
 import { usePreferences } from '@/services/preferences'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import { useGhLogin } from '@/hooks/useGhLogin'
 import { IssuePreviewModal } from '@/components/worktree/IssuePreviewModal'
 import { githubQueryKeys } from '@/services/github'
@@ -74,7 +75,10 @@ export function LoadContextModal({
 }: LoadContextModalProps) {
   const queryClient = useQueryClient()
   const { triggerLogin: triggerGhLogin, isGhInstalled } = useGhLogin()
-  const { data: preferences } = usePreferences()
+  const serverId = worktreeId
+    ? parseServerResourceKey(worktreeId)?.serverId
+    : undefined
+  const { data: preferences } = usePreferences(serverId)
 
   // Navigation state
   const [activeTab, setActiveTab] = useState<TabId>('issues')

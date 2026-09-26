@@ -19,20 +19,26 @@ let kimiInstalled: boolean
 let isMobile: boolean
 let defaultExecutionMode: 'plan' | 'build' | 'yolo'
 let defaultBackend: 'claude' | 'codex'
+let remoteDefaultBackend: 'claude' | 'codex'
+const preferenceTargets: (string | undefined)[] = []
 const cliStatusTargets = new Map<string, string | undefined>()
 
 vi.mock('@/services/preferences', () => ({
-  usePreferences: () => ({
-    data: {
-      default_new_session_kind: 'chat',
-      default_execution_mode: defaultExecutionMode,
-      default_backend: defaultBackend,
-      selected_model: 'claude-opus-4-8[1m]',
-      selected_codex_model: 'gpt-5.6-sol',
-      default_effort_level: 'max',
-      default_codex_reasoning_effort: 'xhigh',
-    },
-  }),
+  usePreferences: (serverId?: string) => {
+    preferenceTargets.push(serverId)
+    return {
+      data: {
+        default_new_session_kind: 'chat',
+        default_execution_mode: defaultExecutionMode,
+        default_backend:
+          serverId === 'remote-1' ? remoteDefaultBackend : defaultBackend,
+        selected_model: 'claude-opus-4-8[1m]',
+        selected_codex_model: 'gpt-5.6-sol',
+        default_effort_level: 'max',
+        default_codex_reasoning_effort: 'xhigh',
+      },
+    }
+  },
 }))
 
 vi.mock('@/services/chat', () => ({
@@ -155,6 +161,8 @@ describe('NewSessionModeModal', () => {
     isMobile = false
     defaultExecutionMode = 'plan'
     defaultBackend = 'claude'
+    remoteDefaultBackend = 'claude'
+    preferenceTargets.length = 0
     invoke.mockResolvedValue({
       commandArgs: ['--context-arg', 'context-value'],
     })
@@ -187,6 +195,41 @@ describe('NewSessionModeModal', () => {
 
     expect(cliStatusTargets.get('claude')).toBe('remote-1')
     expect(cliStatusTargets.get('codex')).toBe('remote-1')
+    expect(preferenceTargets).toContain('remote-1')
+  })
+
+  it('uses the owning remote server defaults for a new chat session', () => {
+    defaultBackend = 'claude'
+    remoteDefaultBackend = 'codex'
+    mutate.mockImplementation(
+      (
+        args: { backend?: string },
+        opts?: {
+          onSuccess?: (session: { id: string; backend: 'codex' }) => void
+        }
+      ) => {
+        expect(args.backend).toBeUndefined()
+        opts?.onSuccess?.({ id: 'remote-session', backend: 'codex' })
+      }
+    )
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: 'remote-1:worktree-1',
+      worktreePath: '/remote/project',
+      origin: 'chat',
+    })
+
+    render(<NewSessionModeModal />)
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(preferenceTargets).toContain('remote-1')
+    expect(invoke).toHaveBeenCalledWith(
+      'update_session_state',
+      expect.objectContaining({
+        sessionId: 'remote-session',
+        selectedModel: 'gpt-5.6-sol',
+        selectedEffortLevel: 'xhigh',
+      })
+    )
   })
 
   it('defaults Enter to a normal Jean chat session', () => {
@@ -212,7 +255,6 @@ describe('NewSessionModeModal', () => {
       {
         worktreeId: 'worktree-1',
         worktreePath: '/tmp/worktree-1',
-        backend: 'claude',
       },
       expect.any(Object)
     )
@@ -229,8 +271,10 @@ describe('NewSessionModeModal', () => {
     mutate.mockImplementation(
       (
         _args: unknown,
-        opts?: { onSuccess?: (session: { id: string }) => void }
-      ) => opts?.onSuccess?.({ id: 'session-defaults' })
+        opts?: {
+          onSuccess?: (session: { id: string; backend?: 'codex' }) => void
+        }
+      ) => opts?.onSuccess?.({ id: 'session-defaults', backend: 'codex' })
     )
     useUIStore.getState().openNewSessionModeModal({
       worktreeId: 'worktree-1',
@@ -242,7 +286,7 @@ describe('NewSessionModeModal', () => {
     fireEvent.keyDown(window, { key: 'Enter' })
 
     expect(mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ backend: 'codex' }),
+      expect.not.objectContaining({ backend: expect.anything() }),
       expect.any(Object)
     )
     expect(invoke).toHaveBeenCalledWith(
@@ -278,7 +322,6 @@ describe('NewSessionModeModal', () => {
         {
           worktreeId: 'worktree-1',
           worktreePath: '/tmp/worktree-1',
-          backend: 'claude',
         },
         expect.any(Object)
       )

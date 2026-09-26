@@ -1260,7 +1260,7 @@ impl SessionMetadata {
             })
     }
 
-    fn updated_at(&self) -> u64 {
+    pub(crate) fn updated_at(&self) -> u64 {
         self.runs
             .last()
             .map(|run| run.ended_at.unwrap_or(run.started_at))
@@ -1709,10 +1709,10 @@ impl RunEntry {
     pub fn rendered_message_count(&self) -> u32 {
         if !self.is_renderable_in_chat_history() {
             0
-        } else if self.assistant_message_id.is_some() {
-            2 // user + assistant (incl. cancelled partial output)
+        } else if self.renders_assistant_message() {
+            2 // user + assistant (incl. partial output still in the run log)
         } else {
-            1 // user only (running/resumable/crashed before response)
+            1 // user only (no assistant output yet)
         }
     }
 
@@ -1720,8 +1720,14 @@ impl RunEntry {
         if !self.is_renderable_in_chat_history() {
             false
         } else {
+            // Resumable matches Running: after Jean restarts, a detached Grok
+            // host may still be writing, and the partial reply is already in
+            // the run log. Hiding it until the turn finishes drops that text.
             self.assistant_message_id.is_some()
-                || matches!(self.status, RunStatus::Running | RunStatus::Crashed)
+                || matches!(
+                    self.status,
+                    RunStatus::Running | RunStatus::Resumable | RunStatus::Crashed
+                )
         }
     }
 }
@@ -2695,8 +2701,22 @@ mod tests {
         assert!(run.renders_assistant_message());
         assert_eq!(run.rendered_message_count(), 2);
 
+        // A detached turn that is still alive after Jean restarts has no
+        // assistant id yet. The partial run log must still render.
+        run.assistant_message_id = None;
+        run.status = RunStatus::Resumable;
+        run.cancelled = false;
+        assert!(run.is_renderable_in_chat_history());
+        assert!(run.renders_assistant_message());
+        assert_eq!(run.rendered_message_count(), 2);
+        run.status = RunStatus::Running;
+        assert!(run.renders_assistant_message());
+        assert_eq!(run.rendered_message_count(), 2);
+
         // Instant cancel (no assistant id) stays fully hidden.
         run.assistant_message_id = None;
+        run.status = RunStatus::Cancelled;
+        run.cancelled = true;
         assert!(!run.is_renderable_in_chat_history());
         assert!(!run.renders_assistant_message());
         assert_eq!(run.rendered_message_count(), 0);

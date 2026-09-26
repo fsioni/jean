@@ -14,6 +14,7 @@ import {
   Wand2,
   BookmarkPlus,
   Bug,
+  CircleDot,
   RefreshCw,
   Undo2,
   Link2,
@@ -113,7 +114,10 @@ import {
   GROK_MODEL_OPTIONS,
   ANTIGRAVITY_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
-import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import {
+  formatGrokModelOptionLabel,
+  formatOpencodeModelLabel,
+} from '@/components/chat/toolbar/toolbar-utils'
 import {
   getCatalogModelOptions,
   useModelCatalog,
@@ -135,6 +139,7 @@ type MagicOption =
   | 'check-github-issues'
   | 'commit'
   | 'commit-and-push'
+  | 'comment-and-close-issue'
   | 'pull'
   | 'push'
   | 'sync'
@@ -291,6 +296,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           key: 'P',
         },
         {
+          id: 'comment-and-close-issue',
+          label: 'Comment & Close Issue',
+          icon: Bug,
+          key: 'H',
+        },
+        {
           id: 'revert-last-commit',
           label: 'Revert Commit',
           icon: Undo2,
@@ -354,7 +365,7 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
     {
       header: 'Investigate',
       options: [
-        { id: 'investigate-issue', label: 'Issue', icon: Bug, key: 'I' },
+        { id: 'investigate-issue', label: 'Issue', icon: CircleDot, key: 'I' },
         {
           id: 'investigate-pr',
           label: 'PR',
@@ -395,6 +406,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   q: 'check-github-issues',
   c: 'commit',
   p: 'commit-and-push',
+  h: 'comment-and-close-issue',
   t: 'sync',
   d: 'pull',
   u: 'push',
@@ -503,15 +515,19 @@ export function MagicModal() {
   })
   const { data: availableOpencodeModels } = useAvailableOpencodeModels({
     enabled: installedBackends.includes('opencode'),
+    serverId: targetServerId,
   })
   const { data: availableGrokModels } = useAvailableGrokModels({
     enabled: installedBackends.includes('grok'),
+    serverId: targetServerId,
   })
   const { data: availableKimiModels } = useAvailableKimiModels({
     enabled: installedBackends.includes('kimi'),
+    serverId: targetServerId,
   })
   const { data: availableAntigravityModels } = useAvailableAntigravityModels({
     enabled: installedBackends.includes('antigravity'),
+    serverId: targetServerId,
   })
   const { data: modelCatalog } = useModelCatalog()
 
@@ -546,7 +562,7 @@ export function MagicModal() {
 
   const queryClient = useQueryClient()
   const selectedProjectId = useProjectsStore(state => state.selectedProjectId)
-  const { data: preferences } = usePreferences()
+  const { data: preferences } = usePreferences(targetServerId)
   const { data: projects } = useProjects()
   const project = worktree
     ? projects?.find(p => p.id === worktree.project_id)
@@ -565,10 +581,13 @@ export function MagicModal() {
     const models = availableGrokModels?.length
       ? availableGrokModels.map(model => ({
           value: `grok/${model.id}`,
-          label: model.label || model.id,
+          label: formatGrokModelOptionLabel(`grok/${model.id}`, model.label),
         }))
       : GROK_MODEL_OPTIONS
-    return models
+    return models.map(option => ({
+      ...option,
+      label: formatGrokModelOptionLabel(option.value, option.label),
+    }))
   }, [availableGrokModels])
   const kimiModelOptions = useMemo(() => {
     if (!availableKimiModels?.length) {
@@ -2438,6 +2457,7 @@ ${resolveInstructions}`
     const isSelected = selectedOption === option.id
     const isDisabled =
       (isOnCanvas && !CANVAS_ALLOWED_OPTIONS.has(option.id)) ||
+      (option.id === 'comment-and-close-issue' && !hasIssueContexts) ||
       (option.id === 'investigate-issue' &&
         !hasIssueContexts &&
         !hasSentryContexts) ||

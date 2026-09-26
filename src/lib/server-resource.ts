@@ -1,7 +1,8 @@
-import type {
-  ServerId,
-  ServerOwned,
-  ServerResourceRef,
+import {
+  LOCAL_SERVER_ID,
+  type ServerId,
+  type ServerOwned,
+  type ServerResourceRef,
 } from '@/types/server-resource'
 
 export function serverResourceKey(reference: ServerResourceRef): string {
@@ -19,6 +20,15 @@ export function parseServerResourceKey(key: string): ServerResourceRef | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Strip a `local:` scope. Local IDs are raw, but versions before 1.0.7 could
+ * persist scoped base-session IDs that no longer match session lists.
+ */
+export function toRawLocalResourceId(key: string): string {
+  const reference = parseServerResourceKey(key)
+  return reference?.serverId === LOCAL_SERVER_ID ? reference.resourceId : key
 }
 
 export function withServerId<T extends object>(

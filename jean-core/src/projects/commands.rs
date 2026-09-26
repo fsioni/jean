@@ -1119,6 +1119,7 @@ pub async fn list_worktrees(app: AppHandle, project_id: String) -> Result<Vec<Wo
 pub struct ProjectBootstrap {
     pub worktrees: Vec<Worktree>,
     pub sessions_by_worktree: HashMap<String, crate::chat::types::WorktreeSessions>,
+    pub running_sessions: Vec<String>,
 }
 
 /// One recent prompted session with its owning worktree metadata.
@@ -1149,7 +1150,7 @@ pub async fn get_recent_worktrees(
     project_ids: Option<Vec<String>>,
     offset: Option<usize>,
     limit: Option<usize>,
-    include_session_id: Option<String>,
+    include_session_ids: Option<Vec<String>>,
 ) -> Result<RecentWorktreesResponse, String> {
     let data = load_projects_data(&app)?;
     let project_filter =
@@ -1228,12 +1229,13 @@ pub async fn get_recent_worktrees(
     let offset = offset.unwrap_or(0).min(total);
     let limit = limit.unwrap_or(10).clamp(1, 100);
     let mut page = items[offset..total.min(offset + limit)].to_vec();
-    if let Some(include_id) = include_session_id {
-        if !page.iter().any(|item| item.session.id == include_id) {
-            if let Some(item) = items.into_iter().find(|item| item.session.id == include_id) {
-                page.push(item);
-            }
-        }
+    if let Some(include_ids) = include_session_ids {
+        let include_ids: std::collections::HashSet<_> = include_ids.into_iter().collect();
+        let visible_ids: std::collections::HashSet<_> =
+            page.iter().map(|item| item.session.id.clone()).collect();
+        page.extend(items.into_iter().filter(|item| {
+            include_ids.contains(&item.session.id) && !visible_ids.contains(&item.session.id)
+        }));
     }
     Ok(RecentWorktreesResponse {
         items: page,
@@ -1283,14 +1285,25 @@ pub async fn bootstrap_project(
         })
         .collect();
 
-    let sessions_by_worktree = futures_util::future::join_all(session_futures)
-        .await
+    let sessions_by_worktree: HashMap<String, crate::chat::types::WorktreeSessions> =
+        futures_util::future::join_all(session_futures)
+            .await
+            .into_iter()
+            .collect();
+
+    let project_session_ids: std::collections::HashSet<&str> = sessions_by_worktree
+        .values()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.as_str()))
+        .collect();
+    let running_sessions = crate::chat::registry::get_running_sessions()
         .into_iter()
+        .filter(|session_id| project_session_ids.contains(session_id.as_str()))
         .collect();
 
     Ok(ProjectBootstrap {
         worktrees,
         sessions_by_worktree,
+        running_sessions,
     })
 }
 
@@ -8277,40 +8290,15 @@ pub async fn create_pr_with_ai_content(
         }
     }
 
-    // Gather issue/PR context for this session AND worktree.
-    // References may be stored under the session ID (manually loaded issues) or
-    // the worktree ID (issues attached at worktree creation time), so we look up both.
+    // Session issue/PR attachments replace worktree attachments of the same type.
     let effective_session_id = session_id.as_deref().unwrap_or("");
     let worktree_id = &worktree.id;
 
-    let (mut issue_nums, mut pr_nums, _security_nums) =
-        get_session_context_numbers(&app, effective_session_id).unwrap_or_default();
-    let mut context_content =
-        get_session_context_content(&app, effective_session_id, &project.path).unwrap_or_default();
-
-    if worktree_id != effective_session_id {
-        let (wt_issue_nums, wt_pr_nums, _wt_security_nums) =
-            get_session_context_numbers(&app, worktree_id).unwrap_or_default();
-        for n in wt_issue_nums {
-            if !issue_nums.contains(&n) {
-                issue_nums.push(n);
-            }
-        }
-        for n in wt_pr_nums {
-            if !pr_nums.contains(&n) {
-                pr_nums.push(n);
-            }
-        }
-        let wt_content =
-            get_session_context_content(&app, worktree_id, &project.path).unwrap_or_default();
-        if !wt_content.is_empty() {
-            if context_content.is_empty() {
-                context_content = wt_content;
-            } else {
-                context_content = format!("{context_content}\n\n{wt_content}");
-            }
-        }
-    }
+    let (issue_nums, pr_nums, _security_nums) =
+        get_session_context_numbers(&app, effective_session_id, worktree_id).unwrap_or_default();
+    let context_content =
+        get_session_context_content(&app, effective_session_id, worktree_id, &project.path)
+            .unwrap_or_default();
 
     // Generate PR content using Claude CLI
     log::trace!("Generating PR content with AI");
