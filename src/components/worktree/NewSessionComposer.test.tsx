@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getNewWorktreeDraftId, NewSessionComposer } from './NewSessionComposer'
 import type * as NewSessionFlow from './new-session-flow'
 import { useChatStore } from '@/store/chat-store'
+import { resolveServerCommand } from '@/lib/server-command-routing'
+import { serverResourceKey } from '@/lib/server-resource'
 
 const {
   flowMocks,
@@ -922,6 +924,43 @@ describe('NewSessionComposer', () => {
 })
 
 describe('getNewWorktreeDraftId', () => {
+  it.each([
+    ['project-a', 'local', 'project-a'],
+    [null, 'local', 'unknown'],
+    [
+      serverResourceKey({ serverId: 'remote:a', resourceId: 'project-a' }),
+      'remote:a',
+      'project-a',
+    ],
+    [
+      serverResourceKey({ serverId: 'local', resourceId: 'project-a' }),
+      'local',
+      'project-a',
+    ],
+  ])(
+    'routes attachments for project %s to its owner',
+    (projectId, serverId, resourceId) => {
+      const args = {
+        sessionId: getNewWorktreeDraftId(projectId),
+        data: 'image-data',
+        mimeType: 'image/png',
+      }
+
+      expect(resolveServerCommand(args)).toEqual({
+        serverId,
+        args: { ...args, sessionId: `__new-worktree-draft__:${resourceId}` },
+      })
+    }
+  )
+
+  it('isolates drafts for the same project ID on different servers', () => {
+    expect(getNewWorktreeDraftId('project-a')).not.toBe(
+      getNewWorktreeDraftId(
+        serverResourceKey({ serverId: 'remote', resourceId: 'project-a' })
+      )
+    )
+  })
+
   it('isolates unfinished prompts and attachments by project', () => {
     expect(getNewWorktreeDraftId('project-a')).not.toBe(
       getNewWorktreeDraftId('project-b')

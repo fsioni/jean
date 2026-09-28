@@ -53,6 +53,7 @@ import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { invoke, listen } from '@/lib/transport'
 import { generateId } from '@/lib/uuid'
+import { parseServerResourceKey, serverResourceKey } from '@/lib/server-resource'
 import { resolveDefaultModelForBackend } from '@/lib/session-defaults'
 import { usePatchPreferences, usePreferences } from '@/services/preferences'
 import { useChatStore } from '@/store/chat-store'
@@ -83,7 +84,12 @@ import {
 } from './new-session-flow'
 
 export function getNewWorktreeDraftId(projectId: string | null): string {
-  return `__new-worktree-draft__:${projectId ?? 'unknown'}`
+  const project = projectId ? parseServerResourceKey(projectId) : null
+  // Attachment commands route by session ID, even before a session exists.
+  return serverResourceKey({
+    serverId: project?.serverId ?? 'local',
+    resourceId: `__new-worktree-draft__:${project?.resourceId ?? projectId ?? 'unknown'}`,
+  })
 }
 
 export interface NewSessionComposerSettings {
