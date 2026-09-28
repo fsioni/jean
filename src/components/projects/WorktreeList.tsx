@@ -21,6 +21,13 @@ import {
 } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge'
 import { isBaseSession, type Worktree } from '@/types/projects'
 import type { WorktreeSessions } from '@/types/chat'
+import type { JenkinsWorktreeStatus } from '@/types/jenkins'
+import { jenkinsQueryKeys } from '@/services/jenkins'
+import { useCanvasStoreState } from '@/components/chat/hooks/useCanvasStoreState'
+import {
+  computeSessionCardData,
+  isActionableWaitingStatus,
+} from '@/components/chat/session-card-utils'
 import { invoke } from '@/lib/transport'
 import { cn } from '@/lib/utils'
 import { chatQueryKeys } from '@/services/chat'
@@ -318,32 +325,85 @@ export function WorktreeList({
     return [...sortedPending, ...sortedReady]
   }, [pendingWorktrees, readyWorktrees, sessionsByWorktreeId, worktreeSortMode])
 
-  const categoryGroups = useMemo(
-    () =>
-      groupWorktreesByCategory(
-        sortedWorktrees.map(worktree => ({
-          item: worktree,
-          category: classifyWorktreeCategory({
-            isBase: isBaseSession(worktree),
-            worktreeStatus: worktree.status,
-            standbyReason: worktree.standby_reason,
-            standbyUntil: worktree.standby_until,
-            hasHumanAttention: false,
-            hasAiActivity: false,
-            hasPullRequest: worktree.pr_number != null,
-            ciOverallStatus:
-              worktree.cached_check_status === 'success'
-                ? 'SUCCESS'
-                : worktree.cached_check_status === 'pending'
-                  ? 'BUILDING'
-                  : worktree.cached_check_status === 'failure'
-                    ? 'FAILURE'
-                    : undefined,
-            now: Math.floor(Date.now() / 1000),
-          }),
-        }))
-      ),
-    [sortedWorktrees]
+  const storeState = useCanvasStoreState()
+  // The global Jenkins poller fills this cache. Grouping must not start one
+  // additional network request per worktree.
+  const ciQueries = useQueries({
+    queries: sortedWorktrees.map(worktree => ({
+      queryKey: jenkinsQueryKeys.status(worktree.id),
+      queryFn: (): JenkinsWorktreeStatus => {
+        throw new Error(
+          'Worktree categories read Jenkins status from cache only'
+        )
+      },
+      enabled: false,
+      staleTime: Infinity,
+      gcTime: 1000 * 60 * 5,
+    })),
+  })
+
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const currentTime = Math.floor(Date.now() / 1000)
+    setNow(currentTime)
+    const nextExpiry = Math.min(
+      ...sortedWorktrees.flatMap(worktree =>
+        worktree.standby_reason?.trim() &&
+        worktree.standby_until &&
+        worktree.standby_until > currentTime
+          ? [worktree.standby_until]
+          : []
+      )
+    )
+    if (!Number.isFinite(nextExpiry)) return
+    const timer = setTimeout(
+      () => setNow(Math.floor(Date.now() / 1000)),
+      Math.min(nextExpiry * 1000 - Date.now(), 2_147_483_647)
+    )
+    return () => clearTimeout(timer)
+  }, [sortedWorktrees, now])
+
+  const categoryGroups = groupWorktreesByCategory(
+    sortedWorktrees.map((worktree, index) => {
+      const statuses = (sessionsByWorktreeId.get(worktree.id)?.sessions ?? [])
+        .filter(session => !session.archived_at)
+        .map(session => computeSessionCardData(session, storeState).status)
+      const ciStatus = ciQueries[index]?.data
+      return {
+        item: worktree,
+        category: classifyWorktreeCategory({
+          isBase: isBaseSession(worktree),
+          worktreeStatus: worktree.status,
+          standbyReason: worktree.standby_reason,
+          standbyUntil: worktree.standby_until,
+          hasHumanAttention: statuses.some(
+            status =>
+              isActionableWaitingStatus(status) ||
+              status === 'review' ||
+              status === 'crashed'
+          ),
+          hasAiActivity: statuses.some(
+            status =>
+              status === 'planning' ||
+              status === 'vibing' ||
+              status === 'yoloing' ||
+              status === 'reviewing'
+          ),
+          hasPullRequest: worktree.pr_number != null,
+          ciOverallStatus:
+            ciStatus?.overallStatus ??
+            (worktree.cached_check_status === 'success'
+              ? 'SUCCESS'
+              : worktree.cached_check_status === 'pending'
+                ? 'BUILDING'
+                : worktree.cached_check_status === 'failure'
+                  ? 'FAILURE'
+                  : undefined),
+          previewStatus: ciStatus?.previewFreshness?.status,
+          now,
+        }),
+      }
+    })
   )
   const [openCategories, setOpenCategories] = useState<
     Record<WorktreeCategory, boolean>

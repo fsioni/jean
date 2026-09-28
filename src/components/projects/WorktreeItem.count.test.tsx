@@ -28,6 +28,7 @@ vi.mock('@/services/chat', () => ({
 }))
 vi.mock('@/services/projects', () => ({
   useRenameWorktree: () => ({ mutate: vi.fn() }),
+  useProjects: () => ({ data: [] }),
 }))
 vi.mock('@/components/chat/hooks/useCanvasStoreState', () => ({
   useCanvasStoreState: () => ({}),
@@ -54,11 +55,35 @@ vi.mock('./WorktreeContextMenu', () => ({
 vi.mock('@/components/chat/CloseWorktreeDialog', () => ({
   CloseWorktreeDialog: () => null,
 }))
-vi.mock('@/components/jenkins/WorktreeCiStatus', () => ({
-  WorktreeCiStatus: () => null,
+vi.mock('@/services/jenkins', () => ({
+  useJenkinsStatusCached: () => ({
+    data: {
+      worktreeId: 'wt-1',
+      prId: '42',
+      pipeline: null,
+      stages: [],
+      integrationAttempts: [],
+      preview: null,
+      previewUrl: null,
+      previewFreshness: null,
+      queue: null,
+      overallStatus: 'SUCCESS',
+      verdictSource: 'github',
+      checkedAt: 0,
+    },
+  }),
 }))
-vi.mock('@/components/clickup/ClickUpStatusLink', () => ({
-  ClickUpStatusLink: () => null,
+vi.mock('@/services/clickup', () => ({
+  useResolvedClickUpTaskId: () => ({ data: 'task-1' }),
+  useClickUpTask: () => ({
+    data: {
+      id: 'task-1',
+      name: 'Feature task',
+      status: { status: 'IN PROGRESS' },
+      assignees: [],
+      url: 'https://app.clickup.com/t/task-1',
+    },
+  }),
 }))
 
 const worktree: Worktree = {
@@ -113,4 +138,23 @@ describe('WorktreeItem count', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
+})
+
+describe('WorktreeItem status placement', () => {
+  it.each(['CI OK', 'IN PROGRESS'])(
+    'does not show the %s title-bar pill in the sidebar',
+    label => {
+      render(
+        <WorktreeItem
+          worktree={{ ...worktree, pr_number: 42 }}
+          projectId="project-1"
+          projectPath="/tmp/project"
+          defaultBranch="main"
+        />
+      )
+
+      expect(screen.getByText('feature')).toBeInTheDocument()
+      expect(screen.queryByText(label)).not.toBeInTheDocument()
+    }
+  )
 })

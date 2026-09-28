@@ -35,6 +35,8 @@ import {
 import { DismissButton } from '@/components/ui/dismiss-button'
 import { StatusIndicator } from '@/components/ui/status-indicator'
 import { GitStatusBadges } from '@/components/ui/git-status-badges'
+import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
+import { ClickUpStatusLink } from '@/components/clickup/ClickUpStatusLink'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { CloseWorktreeDialog } from './CloseWorktreeDialog'
 import { useChatStore } from '@/store/chat-store'
@@ -106,10 +108,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
-import {
-  MODAL_TERMINAL_PRIMARY_ROW_CLASS,
-  MODAL_TERMINAL_SECONDARY_ROW_CLASS,
-} from './modal-terminal-layout'
+import { MODAL_TERMINAL_SECONDARY_ROW_CLASS } from './modal-terminal-layout'
 import {
   getStackedBaseBranch,
   resolveStackedOnPr,
@@ -1045,14 +1044,9 @@ export function SessionChatModal({
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {!zenMode && (
             <div className="shrink-0 border-b border-border/40 sm:text-left">
-              <div
-                className={cn(
-                  'flex items-center justify-between gap-2 px-4 py-2',
-                  MODAL_TERMINAL_PRIMARY_ROW_CLASS
-                )}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <h2 className="text-sm font-medium min-w-0 flex-1 truncate">
+              <div className="flex h-auto items-start justify-between gap-2 px-4 py-2 sm:h-11 sm:items-center">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-initial sm:flex-nowrap">
+                  <h2 className="text-sm font-medium min-w-0 flex-1 basis-full truncate sm:basis-auto">
                     {project && !isMobile && (
                       <span className="text-muted-foreground font-normal">
                         <button
@@ -1069,6 +1063,23 @@ export function SessionChatModal({
                     )}
                     {isBase ? 'Base Session' : (worktree?.name ?? 'Worktree')}
                   </h2>
+                  {worktree && (
+                    <>
+                      <WorktreeCiStatus
+                        projectId={worktree.project_id}
+                        worktreeId={worktreeId}
+                        prId={
+                          worktree.pr_number != null
+                            ? String(worktree.pr_number)
+                            : null
+                        }
+                      />
+                      <ClickUpStatusLink
+                        projectId={worktree.project_id}
+                        worktreeId={worktreeId}
+                      />
+                    </>
+                  )}
                   {!zenMode && stackedBaseBranch && (
                     <span className="inline-flex shrink min-w-0 items-center gap-1 rounded border border-border/50 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
                       <GitBranchPlus className="h-2.5 w-2.5" />
