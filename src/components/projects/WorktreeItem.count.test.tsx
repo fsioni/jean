@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { render, screen } from '@/test/test-utils'
+import { render, screen, within } from '@/test/test-utils'
 import type { Worktree } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { WorktreeItem } from './WorktreeItem'
@@ -64,8 +64,14 @@ vi.mock('@/services/jenkins', () => ({
       stages: [],
       integrationAttempts: [],
       preview: null,
-      previewUrl: null,
-      previewFreshness: null,
+      previewUrl: 'https://42.preview.example.com',
+      previewFreshness: {
+        status: 'DOWN',
+        previewSha: null,
+        shaSource: null,
+        prHeadSha: null,
+        behindBy: null,
+      },
       queue: null,
       overallStatus: 'SUCCESS',
       verdictSource: 'github',
@@ -141,20 +147,26 @@ describe('WorktreeItem count', () => {
 })
 
 describe('WorktreeItem status placement', () => {
-  it.each(['CI OK', 'IN PROGRESS'])(
-    'does not show the %s title-bar pill in the sidebar',
-    label => {
-      render(
-        <WorktreeItem
-          worktree={{ ...worktree, pr_number: 42 }}
-          projectId="project-1"
-          projectPath="/tmp/project"
-          defaultBranch="main"
-        />
-      )
+  it('shows the CI verdict and preview state on a PR worktree', () => {
+    render(
+      <WorktreeItem
+        worktree={{ ...worktree, pr_number: 42 }}
+        projectId="project-1"
+        projectPath="/tmp/project"
+        defaultBranch="main"
+      />
+    )
 
-      expect(screen.getByText('feature')).toBeInTheDocument()
-      expect(screen.queryByText(label)).not.toBeInTheDocument()
-    }
-  )
+    expect(screen.getByRole('button', { name: 'CI OK' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Preview hors ligne' })
+    ).toBeInTheDocument()
+    const worktreeRow = screen.getByText('feature').closest('[role="button"]')
+    expect(worktreeRow).not.toBeNull()
+    expect(
+      within(worktreeRow as HTMLElement).queryByRole('button', {
+        name: 'CI OK',
+      })
+    ).not.toBeInTheDocument()
+  })
 })

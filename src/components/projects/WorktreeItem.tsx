@@ -19,6 +19,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { TerminalStatusIndicator } from '@/hooks/useWorktreeTerminalStatus'
+import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import { WorktreeContextMenu } from './WorktreeContextMenu'
 import { useWorktreeMenuActions } from './useWorktreeMenuActions'
 import { CloseWorktreeDialog } from '@/components/chat/CloseWorktreeDialog'
@@ -854,6 +855,21 @@ export function WorktreeItem({
           />
         </div>
       </WorktreeContextMenu>
+
+      {worktree.pr_number != null && (
+        <div
+          className={cn(
+            'px-2 pb-1 empty:hidden',
+            isNarrowSidebar ? 'pl-4' : 'pl-7'
+          )}
+        >
+          <WorktreeCiStatus
+            projectId={projectId}
+            worktreeId={worktree.id}
+            prId={String(worktree.pr_number)}
+          />
+        </div>
+      )}
 
       {/* Expandable session list grouped by status */}
       {isExpanded && sessionGroups.length > 0 && (

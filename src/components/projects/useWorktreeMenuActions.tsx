@@ -14,6 +14,13 @@ import { usePreferences } from '@/services/preferences'
 import { useSessions } from '@/services/chat'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useUIStore } from '@/store/ui-store'
+import {
+  useResolvedClickUpTaskId,
+  useHasClickUpAccess,
+} from '@/services/clickup'
+import { useFinishAiPipelinePr } from '@/services/ai-pipeline'
+import { reportSteps } from '@/lib/ai-pipeline-steps'
+import { toast } from 'sonner'
 
 interface UseWorktreeMenuActionsProps {
   worktree: Worktree
@@ -26,6 +33,8 @@ export function useWorktreeMenuActions({
 }: UseWorktreeMenuActionsProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showStandbyDialog, setShowStandbyDialog] = useState(false)
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false)
+  const [isContextMenuOpen, setIsContextMenuOpen] = useState(false)
   const archiveWorktree = useArchiveWorktree()
   const closeBaseSession = useCloseBaseSession()
   const deleteWorktree = useDeleteWorktree()
@@ -38,6 +47,12 @@ export function useWorktreeMenuActions({
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
   const isBase = isBaseSession(worktree)
   const isStandby = Boolean(worktree.standby_reason && worktree.standby_until)
+  const hasClickUpAccess = useHasClickUpAccess(projectId)
+  const { data: linkedTaskId } = useResolvedClickUpTaskId(worktree.id, {
+    enabled: isContextMenuOpen && worktree.pr_number != null,
+  })
+  const finishPr = useFinishAiPipelinePr(projectId)
+  const canFinishPr = hasClickUpAccess && !!linkedTaskId
 
   const hasMessages = sessionsData?.sessions?.some(
     session => session.messages.length > 0
@@ -123,12 +138,31 @@ export function useWorktreeMenuActions({
     updateStandby.mutate({ worktreeId: worktree.id, projectId })
   }, [projectId, updateStandby, worktree.id])
 
+  const handleFinishPr = useCallback(() => {
+    if (!canFinishPr || worktree.pr_number == null || finishPr.isPending) return
+    setShowFinishConfirm(false)
+    const toastId = toast.loading('Terminer : ClickUp → TO DEPLOY + merge…')
+    finishPr.mutate(
+      { worktreePath: worktree.path, taskId: linkedTaskId },
+      {
+        onSuccess: result =>
+          reportSteps(toastId, 'PR terminée', [result.clickup, result.merge]),
+        onError: error => toast.error(`Échec : ${error}`, { id: toastId }),
+      }
+    )
+  }, [canFinishPr, finishPr, linkedTaskId, worktree.path, worktree.pr_number])
+
   return {
     // State
     showDeleteConfirm,
     setShowDeleteConfirm,
     showStandbyDialog,
     setShowStandbyDialog,
+    showFinishConfirm,
+    setShowFinishConfirm,
+    setIsContextMenuOpen,
+    canFinishPr,
+    linkedTaskId,
     isBase,
     isStandby,
     hasMessages,
@@ -146,6 +180,8 @@ export function useWorktreeMenuActions({
     handleDelete,
     handleSetStandby,
     handleClearStandby,
+    handleFinishPr,
+    isFinishingPr: finishPr.isPending,
     isUpdatingStandby: updateStandby.isPending,
   }
 }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import {
   CheckCircle2,
   XCircle,
@@ -7,8 +8,15 @@ import {
   Globe,
   Settings2,
   HelpCircle,
+  ExternalLink,
 } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Tooltip,
   TooltipTrigger,
@@ -18,6 +26,7 @@ import { useJenkinsStatusCached } from '@/services/jenkins'
 import { useProjects } from '@/services/projects'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
 import { PIPELINE_JOB } from '@/components/jenkins/jenkins-jobs'
+import { JenkinsStageList, formatDuration } from './JenkinsStageList'
 
 interface WorktreeCiStatusProps {
   projectId: string
@@ -148,20 +157,121 @@ function testablePill(status: JenkinsWorktreeStatus): PillSpec | null {
   }
 }
 
-function Pill({ spec }: { spec: PillSpec }) {
+function Pill({
+  spec,
+  status,
+}: {
+  spec: PillSpec
+  status?: JenkinsWorktreeStatus
+}) {
+  const interactive = status && ['ci', 'preview', 'testable'].includes(spec.key)
+  const trigger = interactive ? (
+    <button
+      type="button"
+      onClick={event => event.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()}
+      className={cn(
+        'inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium leading-none hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        spec.tone
+      )}
+    >
+      {spec.icon}
+      {spec.label}
+    </button>
+  ) : (
+    <span
+      className={cn(
+        'inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium leading-none',
+        spec.tone
+      )}
+    >
+      {spec.icon}
+      {spec.label}
+    </span>
+  )
+
+  if (interactive) {
+    const showCi = spec.key !== 'preview'
+    const showPreview = spec.key !== 'ci'
+    return (
+      <Popover>
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-80 space-y-3 p-3 font-sans text-sm"
+        >
+          {showCi && (
+            <div className="space-y-2">
+              <div className="font-medium">
+                {spec.key === 'testable' ? 'CI OK' : spec.label}
+              </div>
+              {status.pipeline ? (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">Dernier build</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      status.pipeline?.url && openUrl(status.pipeline.url)
+                    }
+                    disabled={!status.pipeline.url}
+                    className="inline-flex items-center gap-1 hover:underline disabled:cursor-default"
+                  >
+                    #{status.pipeline.number}
+                    <ExternalLink className="size-3" />
+                  </button>
+                  {status.pipeline.durationMs > 0 &&
+                    formatDuration(status.pipeline.durationMs)}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">
+                  {status.verdictSource === 'github'
+                    ? 'Verdict GitHub — build purgé de l’historique Jenkins'
+                    : 'Aucun build Jenkins disponible'}
+                </div>
+              )}
+              {status.stages.length > 0 && (
+                <JenkinsStageList
+                  stages={status.stages}
+                  attempts={status.integrationAttempts}
+                />
+              )}
+            </div>
+          )}
+          {showPreview && status.previewUrl && (
+            <div className="space-y-2">
+              <div className="font-medium">
+                {spec.key === 'testable' ? 'Preview à jour' : spec.tooltip}
+              </div>
+              {status.previewFreshness && (
+                <div className="text-xs text-muted-foreground">
+                  Preview :{' '}
+                  {status.previewFreshness.previewSha?.slice(0, 7) ?? '—'} · PR
+                  : {status.previewFreshness.prHeadSha?.slice(0, 7) ?? '—'}
+                  {status.previewFreshness.behindBy != null &&
+                    status.previewFreshness.behindBy > 0 &&
+                    ` · ${status.previewFreshness.behindBy} commit(s) de retard`}
+                </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (status.previewUrl) openUrl(status.previewUrl)
+                }}
+              >
+                <ExternalLink className="size-3.5" />
+                Ouvrir la preview
+              </Button>
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+    )
+  }
+
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium leading-none',
-            spec.tone
-          )}
-        >
-          {spec.icon}
-          {spec.label}
-        </span>
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent>{spec.tooltip}</TooltipContent>
     </Tooltip>
   )
@@ -172,8 +282,7 @@ function Pill({ spec }: { spec: PillSpec }) {
  * **shaped + labelled pills** on their own line — readable without color.
  *
  * Reads the poller-fed cache only (`useJenkinsStatusCached`); never fetches, so
- * it scales to N rows. The detailed popovers stay in the worktree
- * (`JenkinsStatusBadge` / `PreviewBadge`).
+ * it scales to N rows. Details are shown from the cached status on click.
  *
  * Renders nothing when: no PR; project not loaded; configured but not polled
  * yet. Otherwise it always says *something* — "CI non configuré" when the
@@ -206,6 +315,7 @@ export function WorktreeCiStatus({
         {pills.map(spec => (
           <Pill
             key={spec.key}
+            status={status}
             spec={
               spec.key === 'ci' && note
                 ? { ...spec, tooltip: `${spec.tooltip}${note}` }

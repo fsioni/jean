@@ -87,7 +87,10 @@ export function useClickUpStatusOptions() {
  * Resolve the ClickUp task id linked to a worktree (manual override or the
  * `CU-<id>` branch convention). Returns null when nothing is linked.
  */
-export function useResolvedClickUpTaskId(worktreeId: string | null) {
+export function useResolvedClickUpTaskId(
+  worktreeId: string | null,
+  options?: { enabled?: boolean }
+) {
   return useQuery({
     queryKey: clickupQueryKeys.resolvedTask(worktreeId ?? ''),
     queryFn: async (): Promise<string | null> => {
@@ -98,7 +101,7 @@ export function useResolvedClickUpTaskId(worktreeId: string | null) {
       )
       return result ?? null
     },
-    enabled: !!worktreeId,
+    enabled: !!worktreeId && (options?.enabled ?? true),
     staleTime: 1000 * 30,
     gcTime: 1000 * 60 * 5,
     retry: 0,

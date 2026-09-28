@@ -3,6 +3,7 @@ import {
   Archive,
   Code,
   FolderOpen,
+  GitMerge,
   Play,
   Terminal,
   Trash2,
@@ -59,6 +60,13 @@ export function WorktreeContextMenu({
     setShowDeleteConfirm,
     showStandbyDialog,
     setShowStandbyDialog,
+    showFinishConfirm,
+    setShowFinishConfirm,
+    setIsContextMenuOpen,
+    canFinishPr,
+    linkedTaskId,
+    handleFinishPr,
+    isFinishingPr,
     isBase,
     isStandby,
     runScripts,
@@ -76,7 +84,7 @@ export function WorktreeContextMenu({
   } = actions
 
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={setIsContextMenuOpen}>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         {runScripts.length === 1 && (
@@ -151,6 +159,16 @@ export function WorktreeContextMenu({
             </ContextMenuItem>
           ))}
 
+        {!isBase && worktree.pr_number != null && (
+          <ContextMenuItem
+            onSelect={() => setShowFinishConfirm(true)}
+            disabled={!canFinishPr || isFinishingPr}
+          >
+            <GitMerge className="mr-2 h-4 w-4" />
+            TO DEPLOY + merge PR…
+          </ContextMenuItem>
+        )}
+
         <ContextMenuItem onClick={handleArchiveOrClose}>
           {isBase ? (
             <>
@@ -200,6 +218,30 @@ export function WorktreeContextMenu({
             >
               Delete
               <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showFinishConfirm} onOpenChange={setShowFinishConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Terminer la PR #{worktree.pr_number} ?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              La tâche ClickUp {linkedTaskId} passera en TO DEPLOY, puis la PR
+              du worktree « {worktree.name} » sera mergée. Ces deux étapes sont
+              exécutées dans cet ordre et leur résultat sera affiché séparément.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleFinishPr}
+              disabled={!canFinishPr || isFinishingPr}
+            >
+              Confirmer
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

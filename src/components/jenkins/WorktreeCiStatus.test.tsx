@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { WorktreeCiStatus } from './WorktreeCiStatus'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
 
@@ -12,6 +13,7 @@ vi.mock('@/services/jenkins', () => ({
 vi.mock('@/services/projects', () => ({
   useProjects: () => mockUseProjects(),
 }))
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
 function statusWith(
   partial: Partial<JenkinsWorktreeStatus>
@@ -61,9 +63,68 @@ beforeEach(() => {
   mockUseJenkinsStatusCached.mockReset()
   mockUseProjects.mockReset()
   mockUseProjects.mockReturnValue({ data: [] })
+  vi.mocked(openUrl).mockClear()
 })
 
 describe('WorktreeCiStatus', () => {
+  it('opens CI details without activating the parent worktree row', () => {
+    const onRowClick = vi.fn()
+    mockUseJenkinsStatusCached.mockReturnValue({
+      data: statusWith({
+        pipeline: {
+          number: 7,
+          result: 'SUCCESS',
+          building: false,
+          timestampMs: 0,
+          durationMs: 1000,
+          url: 'https://ci.example.com/job/pipeline/7/',
+          prId: '42',
+          branch: 'feature',
+        },
+        stages: [{ name: 'Build', status: 'SUCCESS', durationMs: 1000 }],
+      }),
+    })
+    render(
+      <div onClick={onRowClick} onKeyDown={onRowClick}>
+        <WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />
+      </div>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'CI OK' }))
+    expect(onRowClick).not.toHaveBeenCalled()
+    expect(screen.getByText('Build')).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'CI OK' }), {
+      key: 'Enter',
+    })
+    expect(onRowClick).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /#7/ }))
+    expect(openUrl).toHaveBeenCalledWith(
+      'https://ci.example.com/job/pipeline/7/'
+    )
+  })
+
+  it('opens preview details and the preview URL from its pill', () => {
+    mockUseJenkinsStatusCached.mockReturnValue({
+      data: statusWith({
+        previewUrl: 'https://42.preview.example.com',
+        previewFreshness: {
+          status: 'DOWN',
+          previewSha: 'aaaaaaa',
+          shaSource: 'preview',
+          prHeadSha: 'bbbbbbb',
+          behindBy: null,
+        },
+      }),
+    })
+    render(<WorktreeCiStatus projectId="p1" worktreeId="wt-1" prId="42" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview hors ligne' }))
+    expect(
+      screen.getByText('Preview hors ligne (injoignable)')
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ouvrir la preview' }))
+    expect(openUrl).toHaveBeenCalledWith('https://42.preview.example.com')
+  })
   it('renders nothing without a PR (the badge lives at the PR level)', () => {
     mockUseJenkinsStatusCached.mockReturnValue({ data: undefined })
     const { container } = render(
