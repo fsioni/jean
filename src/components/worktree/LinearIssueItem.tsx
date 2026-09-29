@@ -83,7 +83,7 @@ export function LinearIssueItem({
           </span>
           <span className="text-sm font-medium truncate">{issue.title}</span>
           {isNewIssue(issue.createdAt) && (
-            <span className="shrink-0 rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium text-green-600 border border-green-500/20">
+            <span className="shrink-0 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success border border-success/20">
               New
             </span>
           )}
@@ -135,7 +135,7 @@ export function LinearIssueItem({
               {isCreating ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                <Wand2 className="h-3 w-3 text-current dark:text-yellow-400" />
+                <Wand2 className="h-3 w-3 text-current" />
               )}
             </button>
           </TooltipTrigger>

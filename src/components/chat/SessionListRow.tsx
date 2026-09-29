@@ -122,7 +122,6 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
                 <span className="inline-flex shrink-0">
                   <StatusIndicator
                     status={config.indicatorStatus}
-                    variant={config.indicatorVariant}
                     shape={config.indicatorShape}
                     label={config.label}
                     className="h-2 w-2 shrink-0"
@@ -156,7 +155,7 @@ export const SessionListRow = forwardRef<HTMLDivElement, SessionCardProps>(
 
             {/* Blocked badge */}
             {card.hasPermissionDenials && (
-              <span className="flex items-center h-5 px-1.5 text-[10px] uppercase tracking-wide border border-yellow-500/50 text-yellow-600 dark:text-yellow-400 rounded shrink-0">
+              <span className="flex items-center h-5 px-1.5 text-[10px] uppercase tracking-wide border border-warning/50 text-warning rounded shrink-0">
                 <Shield className="mr-0.5 h-2.5 w-2.5" />
                 {card.permissionDenialCount}
               </span>

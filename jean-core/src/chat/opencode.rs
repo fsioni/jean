@@ -253,6 +253,7 @@ impl SharedSseSubscriber {
             input,
             output: None,
             parent_tool_use_id: None,
+            is_error: None,
         });
     }
 
@@ -3277,6 +3278,7 @@ pub fn execute_opencode_http(
                     input: input.clone(),
                     output: None,
                     parent_tool_use_id: None,
+                    is_error: None,
                 });
                 content_blocks.push(ContentBlock::ToolUse {
                     tool_call_id: tool_call_id.clone(),

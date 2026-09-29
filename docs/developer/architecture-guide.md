@@ -16,7 +16,7 @@ High-level architectural overview and mental models for the Jean desktop applica
 
 `load_issue_context` and `load_pr_context` attach references to a session through Inject Context or the chat `#` picker. The chat `@` picker adds files, not issues or PRs. A worktree can also have issue or PR references from its creation. For each type independently, explicit session references replace worktree references in the loaded-context lists and AI prompts. If a session has no references of that type, the worktree references are the fallback. Older sessions can contain copied worktree references; when they also contain a distinct session reference, only the distinct reference is effective. Do not copy worktree references into new sessions or merge the two scopes in a new prompt path. The shared context files remain reference-counted.
 
-In the chat `#` picker, the plus action attaches an issue or PR to the active session and removes the typed `#` query from the chat draft. The sparkle action attaches it first, then replaces that query with the configured investigation magic prompt for the selected issue or PR. It does not send the draft. On native desktop, Enter selects the row and Shift+Enter inserts the investigation prompt; mobile and Web Access show the tap actions without keyboard hints.
+In the chat `#` picker, the plus action attaches an issue or PR to the active session and removes the typed `#` query from the chat draft. The sparkle action replaces that query with the configured investigation magic prompt and sends it right away: `ChatInput` calls `onSubmit` with a `beforeSend` callback that loads the context, and `handleSubmit` awaits it before it sends. The send is bound to the session that was active at submit time, so the user can switch sessions or worktrees while the context loads. If the load fails, the draft is restored and nothing is sent. On native desktop, Enter selects the row and Shift+Enter starts the investigation; mobile and Web Access show the tap actions without keyboard hints.
 
 The picker shows issues and PRs in separate batches of eight. Each group has its own Load more button while more results are available. A new search or picker open resets both groups to eight results. The existing GitHub search finds results beyond the loaded list.
 
@@ -116,6 +116,15 @@ must use scoped server resource IDs. `useClientViewStatePersistence()` migrates 
 server UI-state values on first load and then makes the client record
 authoritative. Keep session data, running terminal metadata, drafts, and other
 operational state in the backend persistence paths.
+
+Each server owns the pins of its own recent sessions. Pins change only through
+`set_recent_session_pinned` (one ID per call); `save_ui_state` keeps the pins
+that are on disk, so a full save from one client cannot drop another client's
+pin. Native Jean reads each remote server's pins with
+`get_pinned_recent_session_ids` and merges them with its local pins
+(`src/services/recent-session-pins.ts`). An "Unknown command" answer marks an
+older server; native Jean then keeps that server's pins in its local UI state
+and moves them to the server after the server is updated.
 
 Servers expose `get_server_preferences`, `update_server_preferences`, and
 `get_server_capabilities`. Server preference responses omit client fields and
@@ -283,7 +292,7 @@ Additional systems (no dedicated docs yet):
   `TERMINAL_SESSIONS`. Don't remove the `uiStateInitialized` guard without
   re-checking the race.
 
-- **Background Tasks** - Git/PR polling with focus-aware intervals (`src-tauri/src/background_tasks/`); Auto Fix issue polling/planning/yolo handoff and scheduler active-hours window via `chrono` local time with midnight-crossing support (`src-tauri/src/auto_fix/`)
+- **Background Tasks** - Git/PR polling with focus-aware intervals (`src-tauri/src/background_tasks/`); Auto Fix (Mr. Robot) issue polling/planning/yolo handoff and scheduler active-hours window via `chrono` local time with midnight-crossing support (`jean-core/src/auto_fix/`). Scans list only issue numbers + labels; worktrees are never auto-archived; closed/ineligible ones stop using capacity, get their queued or running plan-mode investigation stopped, and never go to yolo; failed starts/yolo runs give up after 3 attempts; GitHub rate limits defer the project 15 min. Runtime status (last scan, errors, failed issues) is in memory and exposed via `get_auto_fix_status` / `clear_auto_fix_failures`
 - **HTTP Server** - Tauri-free Axum server + WebSocket from `jean-core`; `src-server` provides the standalone Tokio adapter. See [server-architecture.md](./server-architecture.md).
 - **Diagnostics** - CPU/memory monitoring panel (`src-tauri/src/diagnostics/`)
 - **MCP** - Model Context Protocol server integration with per-project overrides (`src/services/mcp.ts`). First-party **Jean MCP** (`jean-core/src/jean_mcp_core.rs`) exposes project/worktree/session tools, usage + session model controls (`get_usage`, `set_session_model`), Run-command / panel-command dev environments (`get_run_environments`: running state, worktree/base session, startup command, ports, URL), plus the ship loop: `create_commit`, `push_worktree`, `detect_open_pr`, `link_worktree_pr`, `unlink_worktree_pr`, `create_pull_request`, `merge_pull_request`, `run_review` (thin wrappers over existing project commands). MCP `create_session` reuses an empty, idle chat session in the worktree before it creates another session; terminal, queued, running, archived, or previously used sessions are never reused. PR tools resolve repository paths from Jean's worktree ID; creation and linking persist the PR number and URL on the worktree.

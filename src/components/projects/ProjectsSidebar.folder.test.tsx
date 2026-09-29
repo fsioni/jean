@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@/test/test-utils'
 import { ProjectsSidebar } from './ProjectsSidebar'
+import { useUIStore } from '@/store/ui-store'
 
 const mocks = vi.hoisted(() => ({
   createFolder: vi.fn(),
+  isMobile: false,
 }))
 
 vi.mock('@/services/projects', () => ({
@@ -14,7 +16,7 @@ vi.mock('@/services/projects', () => ({
 vi.mock('@/hooks/useInstalledBackends', () => ({
   useInstalledBackends: () => ({ installedBackends: [] }),
 }))
-vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => false }))
+vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mocks.isMobile }))
 vi.mock('@/components/layout/SidebarWidthContext', () => ({
   useSidebarWidth: () => 280,
 }))
@@ -26,7 +28,25 @@ vi.mock('./ProjectTree', () => ({ ProjectTree: () => null }))
 vi.mock('./RecentWorktreesList', () => ({ RecentWorktreesList: () => null }))
 
 describe('ProjectsSidebar folder creation', () => {
-  beforeEach(() => mocks.createFolder.mockReset())
+  beforeEach(() => {
+    mocks.createFolder.mockReset()
+    mocks.isMobile = false
+  })
+
+  it('shows a close button only on mobile, which hides the sidebar', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<ProjectsSidebar />)
+    expect(
+      screen.queryByRole('button', { name: 'Close sidebar' })
+    ).not.toBeInTheDocument()
+    unmount()
+
+    mocks.isMobile = true
+    useUIStore.setState({ leftSidebarVisible: true })
+    render(<ProjectsSidebar />)
+    await user.click(screen.getByRole('button', { name: 'Close sidebar' }))
+    expect(useUIStore.getState().leftSidebarVisible).toBe(false)
+  })
 
   it('offers New folder in the search-row plus menu', async () => {
     const user = userEvent.setup()

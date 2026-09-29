@@ -63,12 +63,19 @@ function DiffBlock({
   )
 }
 
+/**
+ * Normalized file change. `name` is `'Edit'`, `'NotebookEdit'`, or `'Write'`;
+ * a Write carries the full new file content in `new_string` (`old_string` is
+ * '' because the prior content is not part of the tool call).
+ */
 export interface EditTool {
   name: string
   input: {
     file_path: string
     old_string?: string
     new_string?: string
+    /** Edit replaced every occurrence of old_string. */
+    replace_all?: boolean
   }
 }
 
@@ -95,6 +102,7 @@ function replaceLast(
  *
  * Forward Edit replaces `oldStr` with `newStr`. Reverse:
  * - Non-empty `newStr`: replace the last occurrence of `newStr` with `oldStr`
+ *   (every occurrence when the edit used `replace_all`)
  * - Empty `newStr` (content deleted): if the file is now empty, restore `oldStr`
  *   (the common "AI emptied the whole file" case). Partial deletions without a
  *   known index cannot be uniquely reversed and are left unchanged so the
@@ -103,7 +111,8 @@ function replaceLast(
 export function undoEdit(
   content: string,
   oldStr: string,
-  newStr: string
+  newStr: string,
+  replaceAll = false
 ): string {
   if (newStr === '') {
     // Whole-file (or remaining-content) deletion ends in an empty buffer.
@@ -113,9 +122,96 @@ export function undoEdit(
     return content
   }
   if (content.includes(newStr)) {
-    return replaceLast(content, newStr, oldStr)
+    return replaceAll
+      ? content.split(newStr).join(oldStr)
+      : replaceLast(content, newStr, oldStr)
   }
   return content
+}
+
+/** Apply one edit forward (used from a known state, e.g. a Write's content). */
+export function applyEdit(content: string, edit: EditTool): string {
+  const newStr = edit.input.new_string ?? ''
+  if (edit.name === 'Write') return newStr
+  const oldStr = edit.input.old_string ?? ''
+  // Edit with empty old_string creates a file; otherwise it cannot be placed.
+  if (oldStr === '') return content === '' ? newStr : content
+  if (!content.includes(oldStr)) return content
+  return edit.input.replace_all
+    ? content.split(oldStr).join(newStr)
+    : content.replace(oldStr, () => newStr)
+}
+
+/**
+ * File content after `edits`, when it is knowable without the disk: replay
+ * forward from the last Write (whose content is the whole file). Null when
+ * `edits` contains no Write.
+ */
+function contentAfterLastWrite(edits: EditTool[]): string | null {
+  let lastWrite = -1
+  edits.forEach((edit, i) => {
+    if (edit.name === 'Write') lastWrite = i
+  })
+  if (lastWrite === -1) return null
+  return edits.slice(lastWrite).reduce(applyEdit, '')
+}
+
+/**
+ * Reconstruct the file content before and after one message's edits.
+ *
+ * - After: reverse-replay `subsequentEdits` (newest first) from the on-disk
+ *   `current` content. A Write erases history — the content before it is
+ *   unknown — so reverse replay stops there and "after" is instead derived
+ *   forward from this message's own last Write, or from the known state
+ *   before this message (`previousEdits`).
+ * - Before: if this message wrote the whole file, the prior content is only
+ *   known from `previousEdits` (last earlier Write + edits); otherwise ''
+ *   (shown as a new file). Without a Write, reverse-replay this message's edits.
+ *
+ * Returns null when "after" cannot be determined (caller falls back to
+ * `patchFromEdits`).
+ */
+export function reconstructFileStates(
+  current: string,
+  edits: EditTool[],
+  subsequentEdits: EditTool[],
+  previousEdits: EditTool[] = []
+): { before: string; after: string } | null {
+  const knownBefore = contentAfterLastWrite(previousEdits)
+
+  let after: string | null = current
+  for (const edit of [...subsequentEdits].reverse()) {
+    if (edit.name === 'Write') {
+      after = null
+      break
+    }
+    after = undoEdit(
+      after,
+      edit.input.old_string ?? '',
+      edit.input.new_string ?? '',
+      edit.input.replace_all
+    )
+  }
+  if (after === null) {
+    after =
+      contentAfterLastWrite(edits) ??
+      (knownBefore !== null ? edits.reduce(applyEdit, knownBefore) : null)
+  }
+  if (after === null) return null
+
+  if (edits.some(edit => edit.name === 'Write')) {
+    return { before: knownBefore ?? '', after }
+  }
+  let before = after
+  for (const edit of [...edits].reverse()) {
+    before = undoEdit(
+      before,
+      edit.input.old_string ?? '',
+      edit.input.new_string ?? '',
+      edit.input.replace_all
+    )
+  }
+  return { before, after }
 }
 
 /**
@@ -155,7 +251,7 @@ export function patchFromEdits(
 type DiffStyle = 'split' | 'unified'
 
 /** Stable default so omit/undefined doesn't allocate a new [] each render. */
-const EMPTY_SUBSEQUENT_EDITS: EditTool[] = []
+const EMPTY_EDITS: EditTool[] = []
 
 interface MessageDiffModalProps {
   isOpen: boolean
@@ -163,6 +259,8 @@ interface MessageDiffModalProps {
   filePath: string
   edits: EditTool[]
   subsequentEdits?: EditTool[]
+  /** Edits to this file from messages BEFORE this one (oldest first). */
+  previousEdits?: EditTool[]
   worktreePath?: string
   /** Precomputed unified patch for backends (Codex) that report diffs directly. */
   patch?: string | null
@@ -173,7 +271,8 @@ export function MessageDiffModal({
   onClose,
   filePath,
   edits,
-  subsequentEdits = EMPTY_SUBSEQUENT_EDITS,
+  subsequentEdits = EMPTY_EDITS,
+  previousEdits = EMPTY_EDITS,
   worktreePath,
   patch,
 }: MessageDiffModalProps) {
@@ -234,26 +333,23 @@ export function MessageDiffModal({
     // before the query has resolved (undefined).
     if (fileContent === undefined) return null
     try {
-      // Step 1: undo subsequent messages' edits → get file state right after THIS message
-      let afterThis = fileContent
-      for (const edit of [...subsequentEdits].reverse()) {
-        const oldStr = edit.input.old_string ?? ''
-        const newStr = edit.input.new_string ?? ''
-        afterThis = undoEdit(afterThis, oldStr, newStr)
-      }
-      // Step 2: undo this message's edits → get file state before THIS message
-      let beforeThis = afterThis
-      for (const edit of [...edits].reverse()) {
-        const oldStr = edit.input.old_string ?? ''
-        const newStr = edit.input.new_string ?? ''
-        beforeThis = undoEdit(beforeThis, oldStr, newStr)
-      }
+      const states = reconstructFileStates(
+        fileContent,
+        edits,
+        subsequentEdits,
+        previousEdits
+      )
 
       let rawPatch: string | null = null
-      if (beforeThis !== afterThis) {
-        rawPatch = createPatch(relativePath, beforeThis, afterThis, '', '', {
-          context: 3,
-        })
+      if (states && states.before !== states.after) {
+        rawPatch = createPatch(
+          relativePath,
+          states.before,
+          states.after,
+          '',
+          '',
+          { context: 3 }
+        )
       } else {
         // Reverse-replay produced no change (common when new_string is empty
         // but the file is not fully empty, or content drifted). Fall back to
@@ -267,7 +363,7 @@ export function MessageDiffModal({
     } catch {
       return null
     }
-  }, [fileContent, edits, subsequentEdits, relativePath, patch])
+  }, [fileContent, edits, subsequentEdits, previousEdits, relativePath, patch])
 
   const currentStats = useMemo(
     () =>
@@ -338,11 +434,11 @@ export function MessageDiffModal({
               <span className="truncate">{getFilename(filePath)}</span>
               {hasCurrentStats && (
                 <span className="shrink-0 font-mono text-sm font-semibold">
-                  <span className="text-green-500">
+                  <span className="text-success">
                     +{currentStats.additions}
                   </span>
                   <span className="mx-1 text-muted-foreground">/</span>
-                  <span className="text-red-500">
+                  <span className="text-destructive">
                     -{currentStats.deletions}
                   </span>
                 </span>

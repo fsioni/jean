@@ -361,8 +361,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       : grokReasoningOptions,
     selectedGrokModel
   )
-  const selectedClaudeModel =
-    preferences?.selected_model ?? 'claude-opus-4-8[1m]'
+  const selectedClaudeModel = preferences?.selected_model ?? 'claude-opus-5-5'
   const claudeReasoning = getCatalogModelReasoning(
     modelCatalog,
     'claude',
@@ -2484,7 +2483,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               </p>
             )}
             {codexStatus?.installed && codexStatus.sandbox_ready === false && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 px-1">
+              <p className="text-xs text-warning px-1">
                 {codexStatus.sandbox_message ??
                   'Codex sandbox requires bubblewrap. Install it with: sudo apt install bubblewrap'}
               </p>
@@ -3025,7 +3024,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               }
             >
               <Select
-                value={preferences?.selected_model ?? 'claude-opus-4-8[1m]'}
+                value={preferences?.selected_model ?? 'claude-opus-5-5'}
                 onValueChange={handleModelChange}
               >
                 <SelectTrigger className="w-full sm:w-80">
@@ -3184,7 +3183,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
             <InlineField
               label="Goal execution mode"
-              description="Mode used when starting a Codex /goal"
+              description="Mode used when starting a Codex or Claude /goal"
             >
               <Select
                 value={preferences?.codex_goal_execution_mode ?? 'build'}

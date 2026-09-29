@@ -154,7 +154,7 @@ export function TitleBar({
                     }
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 rounded-none text-pink-500 hover:text-pink-400"
+                    className="h-6 w-6 rounded-none text-pink-600 hover:text-pink-500 dark:text-pink-500 dark:hover:text-pink-400"
                   >
                     <Heart className="size-3.5" />
                   </Button>

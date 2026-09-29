@@ -237,6 +237,7 @@ import {
 import { openCanvasConflictResolution } from './conflict-resolution-navigation'
 import { getCanvasDiffRequest } from './canvas-diff-request'
 import { resolveModalWorktreeSnapshot } from './modal-worktree-snapshot'
+import { LOCAL_SERVER_ID } from '@/types/server-resource'
 
 interface ProjectCanvasViewProps {
   projectId: string
@@ -797,14 +798,14 @@ function WorktreeSectionHeader({
                   {worktree.security_alert_number && (
                     <>
                       <span className="text-border">·</span>
-                      <ShieldAlert className="h-2.5 w-2.5 text-orange-500" />#
+                      <ShieldAlert className="h-2.5 w-2.5 text-warning" />#
                       {worktree.security_alert_number}
                     </>
                   )}
                   {worktree.advisory_ghsa_id && (
                     <>
                       <span className="text-border">·</span>
-                      <ShieldAlert className="h-2.5 w-2.5 text-orange-500" />
+                      <ShieldAlert className="h-2.5 w-2.5 text-warning" />
                       <span className="max-w-20 truncate">
                         {worktree.advisory_ghsa_id}
                       </span>
@@ -858,14 +859,14 @@ function WorktreeSectionHeader({
                 {worktree.security_alert_number && (
                   <>
                     <span className="text-border">·</span>
-                    <ShieldAlert className="h-2.5 w-2.5 shrink-0 text-orange-500" />
+                    <ShieldAlert className="h-2.5 w-2.5 shrink-0 text-warning" />
                     #{worktree.security_alert_number}
                   </>
                 )}
                 {worktree.advisory_ghsa_id && (
                   <>
                     <span className="text-border">·</span>
-                    <ShieldAlert className="h-2.5 w-2.5 shrink-0 text-orange-500" />
+                    <ShieldAlert className="h-2.5 w-2.5 shrink-0 text-warning" />
                     <span className="max-w-20 truncate">
                       {worktree.advisory_ghsa_id}
                     </span>
@@ -907,27 +908,27 @@ function WorktreeSectionHeader({
         {showDetails && sessionMetrics && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             {sessionMetrics.waitingCount > 0 && (
-              <span className="rounded bg-yellow-500/90 px-2 py-0.5 text-black">
+              <span className="rounded bg-warning px-2 py-0.5 text-warning-foreground">
                 {sessionMetrics.waitingCount} waiting
               </span>
             )}
             {sessionMetrics.planningCount > 0 && (
-              <span className="rounded bg-sky-500/10 px-2 py-0.5 text-sky-600">
+              <span className="rounded bg-info/10 px-2 py-0.5 text-info">
                 {sessionMetrics.planningCount} planning
               </span>
             )}
             {sessionMetrics.buildingCount > 0 && (
-              <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-indigo-600">
+              <span className="rounded bg-info/10 px-2 py-0.5 text-info">
                 {sessionMetrics.buildingCount} building
               </span>
             )}
             {sessionMetrics.yoloCount > 0 && (
-              <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+              <span className="rounded bg-destructive/10 px-2 py-0.5 text-destructive">
                 {sessionMetrics.yoloCount} yolo
               </span>
             )}
             {sessionMetrics.reviewCount > 0 && (
-              <span className="rounded bg-green-500/10 px-2 py-0.5 text-green-600">
+              <span className="rounded bg-success/10 px-2 py-0.5 text-success">
                 {sessionMetrics.reviewCount} review
               </span>
             )}
@@ -977,6 +978,8 @@ export function ProjectCanvasView({
   project,
 }: ProjectCanvasViewProps) {
   const { data: preferences } = usePreferences(project.serverId)
+  // Display preference of this client, not of the project's server
+  const { data: localPreferences } = usePreferences(LOCAL_SERVER_ID)
   const worktreeSortMode = useProjectsStore(
     state =>
       state.projectCanvasSettings[projectId]?.worktreeSortMode ?? 'created'
@@ -1005,6 +1008,13 @@ export function ProjectCanvasView({
     state =>
       (state.projectCanvasActiveFilters[projectId] ?? 'all') as CanvasFilterTab
   )
+  // Cmd/Ctrl+1-9 opens Recent sessions while the Recent list is visible (see
+  // isRecentSessionsShortcutActive), so hide the worktree shortcut hints then.
+  const leftSidebarVisible = useUIStore(state => state.leftSidebarVisible)
+  const recentTabActive = useProjectsStore(
+    state => state.sidebarActiveTab === 'recent'
+  )
+  const recentOwnsDigitShortcuts = leftSidebarVisible && recentTabActive
   const isMobile = useIsMobile()
   const canOpenEditor = canOpenInEditor()
   const canOpenTerminal = canOpenInTerminal()
@@ -3120,7 +3130,7 @@ export function ProjectCanvasView({
                             openNewWorktree({ projectId, tab: 'issues' })
                           }}
                         >
-                          <CircleDot className="h-4 w-4 text-green-600" />
+                          <CircleDot className="h-4 w-4 text-success" />
                           {mobileIssueCount > 0
                             ? `${mobileIssueCount} Issues`
                             : 'Issues'}
@@ -3130,7 +3140,7 @@ export function ProjectCanvasView({
                             openNewWorktree({ projectId, tab: 'prs' })
                           }}
                         >
-                          <GitPullRequestArrow className="h-4 w-4 text-blue-600" />
+                          <GitPullRequestArrow className="h-4 w-4 text-info" />
                           {mobilePRCount > 0 ? `${mobilePRCount} PRs` : 'PRs'}
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -3141,7 +3151,7 @@ export function ProjectCanvasView({
                           }
                         >
                           {mobileFailedWorkflowCount > 0 ? (
-                            <AlertCircle className="h-4 w-4 text-red-600" />
+                            <AlertCircle className="h-4 w-4 text-destructive" />
                           ) : (
                             <Activity className="h-4 w-4" />
                           )}
@@ -3156,7 +3166,7 @@ export function ProjectCanvasView({
                             openNewWorktree({ projectId, tab: 'security' })
                           }}
                         >
-                          <ShieldAlert className="h-4 w-4 text-orange-600" />
+                          <ShieldAlert className="h-4 w-4 text-warning" />
                           {mobileSecurityCount > 0
                             ? `${mobileSecurityCount} Security`
                             : 'Security'}
@@ -3609,7 +3619,9 @@ export function ProjectCanvasView({
                     )
                   }
                   const thisShortcut =
-                    ++shortcutNum <= 9 ? shortcutNum : undefined
+                    ++shortcutNum <= 9 && !recentOwnsDigitShortcuts
+                      ? shortcutNum
+                      : undefined
                   return (
                     <SortableCanvasWorktreeSection
                       key={section.worktree.id}
@@ -3633,7 +3645,9 @@ export function ProjectCanvasView({
                         <WorktreeSectionHeader
                           worktree={section.worktree}
                           projectId={projectId}
-                          gitSyncButton={preferences?.git_sync_button ?? true}
+                          gitSyncButton={
+                            localPreferences?.git_sync_button ?? true
+                          }
                           defaultBranch={project.default_branch}
                           openPRs={openPRs}
                           cards={section.cards}

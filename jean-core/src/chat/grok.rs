@@ -943,6 +943,7 @@ fn upsert_tool_call(tool_calls: &mut Vec<ToolCall>, parsed: &ParsedToolCall) {
         input: parsed.input.clone(),
         output: None,
         parent_tool_use_id: None,
+        is_error: None,
     });
 }
 
@@ -1553,6 +1554,7 @@ fn inject_synthetic_plan(response: &mut GrokResponse) -> Option<String> {
         }),
         output: None,
         parent_tool_use_id: None,
+        is_error: None,
     });
     response.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: id.clone(),
@@ -5509,6 +5511,7 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
                 input: serde_json::json!({ "source": "grok", "plan": "thin" }),
                 output: None,
                 parent_tool_use_id: None,
+                is_error: None,
             }],
             content_blocks: vec![
                 ContentBlock::Text {

@@ -120,6 +120,8 @@ export interface ToolCall {
   input: unknown
   /** Output/result from tool execution (from tool_result messages) */
   output?: string
+  /** True when the tool result was an error (failed/denied). Only set on error. */
+  is_error?: boolean
   /** Parent tool use ID for sub-agent tool calls (for parallel task attribution) */
   parent_tool_use_id?: string
   /** Live events streamed during long-running tools (e.g. Monitor). */
@@ -585,6 +587,8 @@ export interface ToolResultEvent {
   worktree_id: string // Kept for backward compatibility
   tool_use_id: string
   output: string
+  /** True when the tool result was an error (omitted otherwise) */
+  is_error?: boolean
 }
 
 /**

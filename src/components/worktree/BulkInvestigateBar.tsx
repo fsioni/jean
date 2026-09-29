@@ -41,7 +41,7 @@ export function BulkInvestigateBar({
         {isLoading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+          <Wand2 className="h-4 w-4 text-current" />
         )}
         {isLoading ? 'Starting…' : `Investigate ${count} ${noun} in background`}
       </Button>

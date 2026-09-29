@@ -130,9 +130,10 @@ describe('model option helpers', () => {
 
   it('offers Claude 1M variants alongside standard context models', () => {
     expect(modelOptions.map(option => option.value)).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
       'claude-fable-5-1',
       'claude-fable-5',
-      'claude-opus-5-5',
       'claude-opus-5',
       'claude-sonnet-5',
       'claude-opus-4-8[1m]',
@@ -140,10 +141,11 @@ describe('model option helpers', () => {
       'claude-opus-4-7[1m]',
       'claude-opus-4-7',
       'claude-opus-4-6[1m]',
-      'claude-opus-4-6',
-      'claude-opus-4-5-20251101',
       'claude-sonnet-4-6[1m]',
+      'claude-opus-4-6',
       'claude-sonnet-4-6',
+      'claude-opus-4-5-20251101',
+      'claude-haiku-4-5',
       'haiku',
     ])
     expect(normalizeClaudeModel('claude-fable-5-1')).toBe('claude-fable-5-1')
@@ -151,11 +153,21 @@ describe('model option helpers', () => {
     expect(normalizeClaudeModel('claude-fable-5')).toBe('claude-fable-5')
     expect(normalizeClaudeModel('claude-opus-5-5')).toBe('claude-opus-5-5')
     expect(normalizeClaudeModel('claude-opus-5')).toBe('claude-opus-5')
+    expect(normalizeClaudeModel('claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
     expect(normalizeClaudeModel('claude-sonnet-5')).toBe('claude-sonnet-5')
     expect(normalizeClaudeModel('claude-opus-4-8')).toBe('claude-opus-4-8')
     expect(normalizeClaudeModel('claude-opus-4-7')).toBe('claude-opus-4-7')
     expect(normalizeClaudeModel('claude-opus-4-6')).toBe('claude-opus-4-6')
     expect(normalizeClaudeModel('claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
+    expect(normalizeClaudeModel('claude-haiku-4-5')).toBe('claude-haiku-4-5')
+    // Unknown-but-plausible Claude ids pass through (no silent upgrade)
+    expect(normalizeClaudeModel('claude-haiku-9-9')).toBe('claude-haiku-9-9')
+    expect(normalizeClaudeModel('claude-opus-6[1m]')).toBe('claude-opus-6[1m]')
+    // Only empty/invalid values fall back to the default
+    expect(normalizeClaudeModel('')).toBe('claude-opus-5-5')
+    expect(normalizeClaudeModel('gpt-5.5')).toBe('claude-opus-5-5')
+    expect(normalizeClaudeModel('claude-')).toBe('claude-opus-5-5')
+    expect(normalizeClaudeModel('toString')).toBe('claude-opus-5-5')
     // Custom CLI providers keep Claude Code aliases for ANTHROPIC_DEFAULT_* routing
     expect(
       normalizeClaudeModel('sonnet', { preserveProviderAliases: true })
@@ -170,7 +182,9 @@ describe('model option helpers', () => {
 
   it('offers GPT 6 and GPT 5.6 variants in Codex selectors', () => {
     const values = codexDefaultModelOptions.map(option => option.value)
-    expect(values.slice(0, 9)).toEqual([
+    expect(values.slice(0, 11)).toEqual([
+      'gpt-6.1-sol',
+      'gpt-6.1-sol-fast',
       'gpt-6-astra',
       'gpt-6-sol',
       'gpt-6-luna',
@@ -182,6 +196,8 @@ describe('model option helpers', () => {
       'gpt-5.6-luna',
     ])
     expect(values).not.toContain('gpt-5.6')
+    expect(normalizeCodexModel('gpt-6.1-sol')).toBe('gpt-6.1-sol')
+    expect(normalizeCodexModel('gpt-6.1-sol-fast')).toBe('gpt-6.1-sol-fast')
     expect(normalizeCodexModel('gpt-6-astra')).toBe('gpt-6-astra')
     expect(normalizeCodexModel('gpt-6-sol')).toBe('gpt-6-sol')
     expect(normalizeCodexModel('gpt-6-luna')).toBe('gpt-6-luna')
@@ -584,7 +600,7 @@ describe('preferences service', () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
       expect(result.current.data?.theme).toBe('system')
-      expect(result.current.data?.selected_model).toBe('claude-opus-4-8[1m]')
+      expect(result.current.data?.selected_model).toBe('claude-opus-5-5')
       expect(result.current.data?.jean_mcp_enabled).toBe(true)
     })
 

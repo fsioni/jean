@@ -167,6 +167,14 @@ pub async fn dispatch_command(
             crate::save_ui_state(app.clone(), ui_state).await?;
             Ok(Value::Null)
         }
+        "get_pinned_recent_session_ids" => {
+            to_value(crate::get_pinned_recent_session_ids(app.clone()).await?)
+        }
+        "set_recent_session_pinned" => {
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let pinned: bool = from_field(&args, "pinned")?;
+            to_value(crate::set_recent_session_pinned(app.clone(), session_id, pinned).await?)
+        }
 
         // =====================================================================
         // Projects
@@ -355,6 +363,15 @@ pub async fn dispatch_command(
             .await?;
             emit_cache_invalidation(app, &["projects"]);
             to_value(result)
+        }
+        "get_auto_fix_status" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            to_value(crate::auto_fix::scheduler::get_auto_fix_status(&project_id))
+        }
+        "clear_auto_fix_failures" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            crate::auto_fix::scheduler::clear_auto_fix_failures(&project_id);
+            Ok(Value::Null)
         }
         "reorder_projects" => {
             let project_ids: Vec<String> = field(&args, "projectIds", "project_ids")?;

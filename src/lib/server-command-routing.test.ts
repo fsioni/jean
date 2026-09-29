@@ -131,6 +131,21 @@ describe('server command routing', () => {
     })
   })
 
+  it('routes remote folder commands and strips the folder id', () => {
+    expect(
+      resolveServerCommand({ folderId: 'remote:folder', name: 'Renamed' })
+    ).toEqual({
+      serverId: 'remote',
+      args: { folderId: 'folder', name: 'Renamed' },
+    })
+  })
+
+  it('decorates a renamed remote folder', () => {
+    expect(
+      decorateServerResult('remote', 'rename_folder', { id: 'folder' })
+    ).toMatchObject({ id: 'remote:folder', serverId: 'remote' })
+  })
+
   it('decorates a moved remote project', () => {
     expect(
       decorateServerResult('remote', 'move_item', {

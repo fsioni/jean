@@ -22,8 +22,8 @@ preferences pane.
 | `open_in_modal`             | `Cmd+O`           | Open worktree in editor/terminal/finder |
 | `open_magic_modal`          | `Cmd+M`           | Open magic git commands menu            |
 | `new_session`               | `Cmd+T`           | Create new chat session                 |
-| `next_session`              | `Cmd+Alt+Right`   | Switch to next session tab              |
-| `previous_session`          | `Cmd+Alt+Left`    | Switch to previous session tab          |
+| `next_session`              | `Cmd+Right`       | Switch to next session tab              |
+| `previous_session`          | `Cmd+Left`        | Switch to previous session tab          |
 | `close_session_or_worktree` | `Cmd+W`           | Close session or remove worktree        |
 | `new_worktree`              | `Cmd+N`           | Create new worktree                     |
 | `next_worktree`             | `Cmd+Alt+Down`    | Switch to next worktree                 |
@@ -33,6 +33,14 @@ preferences pane.
 | `restore_last_archived`     | `Cmd+Shift+Alt+T` | Restore most recently archived item     |
 
 **Note:** `Cmd` on Mac, `Ctrl` on Windows/Linux.
+
+`Cmd+Left`/`Cmd+Right` switch session tabs only when the focused text field is
+empty; otherwise they move the caret as usual.
+
+`Cmd+1`–`Cmd+9` (fixed, not configurable) opens the first nine rows of the
+Recent sidebar list while it is visible. Otherwise it switches session tabs in
+the session modal or opens a worktree by index. Hold `Cmd` for 200 ms to show
+the number hints on the rows or tabs (native desktop only).
 
 ## Architecture
 
@@ -85,8 +93,8 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
   open_magic_modal: 'mod+m',
   new_session: 'mod+t', // Open configured default new session
   open_new_session_modal: 'mod+shift+t',
-  next_session: 'mod+alt+arrowright',
-  previous_session: 'mod+alt+arrowleft',
+  next_session: 'mod+arrowright',
+  previous_session: 'mod+arrowleft',
   close_session_or_worktree: 'mod+w',
   new_worktree: 'mod+n',
   next_worktree: 'mod+alt+arrowdown',

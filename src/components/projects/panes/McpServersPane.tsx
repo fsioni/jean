@@ -78,7 +78,7 @@ function HealthIndicator({
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
-              <CheckCircle className="size-3.5 text-green-600 dark:text-green-400" />
+              <CheckCircle className="size-3.5 text-success" />
             </span>
           </TooltipTrigger>
           <TooltipContent>Server is connected and ready</TooltipContent>
@@ -89,7 +89,7 @@ function HealthIndicator({
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
-              <ShieldAlert className="size-3.5 text-amber-600 dark:text-amber-400" />
+              <ShieldAlert className="size-3.5 text-warning" />
             </span>
           </TooltipTrigger>
           <TooltipContent>{mcpAuthHint(backend)}</TooltipContent>
@@ -100,7 +100,7 @@ function HealthIndicator({
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
-              <XCircle className="size-3.5 text-red-600 dark:text-red-400" />
+              <XCircle className="size-3.5 text-destructive" />
             </span>
           </TooltipTrigger>
           <TooltipContent>

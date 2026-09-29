@@ -170,7 +170,7 @@ const CommentInputBar = memo(function CommentInputBar({
         type="button"
         onClick={handleSubmit}
         disabled={!inputValue.trim()}
-        className="px-2 py-1 bg-black text-white dark:bg-yellow-500 dark:text-black hover:bg-black/80 dark:hover:bg-yellow-400 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+        className="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/80 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Add
       </button>
@@ -1091,8 +1091,10 @@ export function GitDiffModal({
                     <Kbd className="hidden h-4 min-w-4 px-1 text-[10px] opacity-70 sm:inline-flex">
                       {DIFF_TYPE_SHORTCUTS.uncommitted}
                     </Kbd>
-                    <span className="text-green-500">+{uncommittedAdded}</span>
-                    <span className="text-red-500">-{uncommittedRemoved}</span>
+                    <span className="text-success">+{uncommittedAdded}</span>
+                    <span className="text-destructive">
+                      -{uncommittedRemoved}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -1109,8 +1111,8 @@ export function GitDiffModal({
                     <Kbd className="hidden h-4 min-w-4 px-1 text-[10px] opacity-70 sm:inline-flex">
                       {DIFF_TYPE_SHORTCUTS.branch}
                     </Kbd>
-                    <span className="text-green-500">+{branchAdded}</span>
-                    <span className="text-red-500">-{branchRemoved}</span>
+                    <span className="text-success">+{branchAdded}</span>
+                    <span className="text-destructive">-{branchRemoved}</span>
                   </button>
                   <button
                     type="button"
@@ -1513,12 +1515,12 @@ export function GitDiffModal({
                                 </span>
                                 <div className="flex items-center gap-1 shrink-0 text-xs">
                                   {file.additions > 0 && (
-                                    <span className="text-green-500">
+                                    <span className="text-success">
                                       +{file.additions}
                                     </span>
                                   )}
                                   {file.deletions > 0 && (
-                                    <span className="text-red-500">
+                                    <span className="text-destructive">
                                       -{file.deletions}
                                     </span>
                                   )}
@@ -1705,12 +1707,12 @@ export function GitDiffModal({
                                   </span>
                                   <div className="flex items-center gap-1 shrink-0">
                                     {file.additions > 0 && (
-                                      <span className="text-green-500">
+                                      <span className="text-success">
                                         +{file.additions}
                                       </span>
                                     )}
                                     {file.deletions > 0 && (
-                                      <span className="text-red-500">
+                                      <span className="text-destructive">
                                         -{file.deletions}
                                       </span>
                                     )}

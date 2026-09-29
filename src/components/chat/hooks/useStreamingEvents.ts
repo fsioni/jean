@@ -365,15 +365,26 @@ export default function useStreamingEvents({
       // before sendMessage.mutate, so it's already in sendingSessionIds).
       const isSender = !!useChatStore.getState().sendingSessionIds[session_id]
       // A new turn supersedes the previous turn's waiting state and denials.
+      // It also drops tool calls/blocks that pauseSession kept for a question or
+      // plan: otherwise non-sender clients (web access, queue, MCP) re-show the
+      // old question and bake it into the next chat:done message (#779).
+      // chat:sending is emitted before the new run starts, so no new-run tool
+      // events can be lost here.
       useChatStore.setState(state => {
         if (
           !state.waitingForInputSessionIds[session_id] &&
           !state.reviewingSessions[session_id] &&
           !state.pendingPermissionDenials[session_id] &&
-          !state.deniedMessageContext[session_id]
+          !state.deniedMessageContext[session_id] &&
+          !state.activeToolCalls[session_id] &&
+          !state.streamingContentBlocks[session_id]
         ) {
           return state
         }
+        const { [session_id]: _toolCalls, ...activeToolCalls } =
+          state.activeToolCalls
+        const { [session_id]: _blocks, ...streamingContentBlocks } =
+          state.streamingContentBlocks
         const { [session_id]: _waiting, ...waitingForInputSessionIds } =
           state.waitingForInputSessionIds
         const { [session_id]: _reviewing, ...reviewingSessions } =
@@ -387,6 +398,8 @@ export default function useStreamingEvents({
           reviewingSessions,
           pendingPermissionDenials,
           deniedMessageContext,
+          activeToolCalls,
+          streamingContentBlocks,
         }
       })
       addSendingSession(session_id)
@@ -579,6 +592,9 @@ export default function useStreamingEvents({
         ) {
           return
         }
+        // Buffered text/thinking arrived before this tool; commit it first so
+        // the tool block lands after it (not above it) while streaming.
+        flushPendingStreamFor(session_id)
         addToolBlock(session_id, tool_call_id)
       }
     )
@@ -610,6 +626,26 @@ export default function useStreamingEvents({
         addThinkingBlock(sid, buffered)
       }
       thinkingBuffer = {}
+    }
+
+    /**
+     * Commit one session's buffered thinking + text immediately. Call before
+     * adding ordered content blocks (tool/user-input) so they land after the
+     * text that preceded them. Pending timers stay armed for other sessions.
+     */
+    function flushPendingStreamFor(sessionId: string) {
+      const thinking = thinkingBuffer[sessionId]
+      if (thinking) {
+        const { [sessionId]: _thinking, ...restThinking } = thinkingBuffer
+        thinkingBuffer = restThinking
+        addThinkingBlock(sessionId, thinking)
+      }
+      const text = chunkBuffer[sessionId]
+      if (text) {
+        const { [sessionId]: _text, ...restChunks } = chunkBuffer
+        chunkBuffer = restChunks
+        appendStreamingChunk(sessionId, text)
+      }
     }
 
     function scheduleThinkingFlush() {
@@ -676,6 +712,7 @@ export default function useStreamingEvents({
       ) {
         return
       }
+      flushPendingStreamFor(session_id)
       addUserInputBlock(session_id, text)
     })
 
@@ -683,7 +720,7 @@ export default function useStreamingEvents({
     const unlistenToolResult = listen<ToolResultEvent>(
       'chat:tool_result',
       event => {
-        const { session_id, tool_use_id, output } = event.payload
+        const { session_id, tool_use_id, output, is_error } = event.payload
 
         // Check if this tool was in pending denials - if so, it ran anyway
         // (e.g., yolo mode, or tool was pre-approved via allowedTools)
@@ -711,11 +748,14 @@ export default function useStreamingEvents({
         // in both the "Final output" block and the outer raw-output panel.
         if (toolCall?.name === 'Monitor') return
 
-        // For Read tools, store empty placeholder instead of full content (can be large)
+        // For Read tools, store empty placeholder instead of full content (can be large).
+        // Read output is never rendered (see shouldRenderRawOutput), so live and
+        // reloaded history look the same.
         updateToolCallOutput(
           session_id,
           tool_use_id,
-          toolCall?.name === 'Read' ? '' : output
+          toolCall?.name === 'Read' ? '' : output,
+          is_error
         )
       }
     )
@@ -938,6 +978,7 @@ export default function useStreamingEvents({
           input: { questions },
         }
         addToolCall(session_id, toolCall)
+        flushPendingStreamFor(session_id)
         addToolBlock(session_id, toolCall.id)
 
         if (next === current) return
@@ -1713,6 +1754,7 @@ export default function useStreamingEvents({
       const {
         lastSentMessages,
         streamingContents,
+        activeToolCalls,
         setInputDraft,
         clearLastSentMessage,
         setError,
@@ -1773,9 +1815,11 @@ export default function useStreamingEvents({
       setError(session_id, displayError)
 
       // Check if CLI produced streaming content BEFORE clearing state.
-      // If content was streamed, the CLI ran — don't remove the user message
-      // or rollback, as the conversation is persisted in JSONL on disk (#209).
-      const hasStreamedContent = !!streamingContents[session_id]
+      // If content or tool calls were streamed, the CLI ran — don't remove the
+      // user message or rollback, as the conversation is persisted on disk (#209).
+      const hasStreamedContent =
+        !!streamingContents[session_id] ||
+        (activeToolCalls[session_id]?.length ?? 0) > 0
 
       // Restore the input that failed so user can retry
       const lastMessage = lastSentMessages[session_id]
@@ -1976,6 +2020,15 @@ export default function useStreamingEvents({
         const shouldRestoreMessage =
           !hasContent && !hasQueuedMessages && !hasCurrentDraft
         const shouldHydrateCancelledFromBackend = !undo_send && !hasContent
+        // Assistant replies from earlier turns, known before this cancel.
+        const priorAssistantIds = new Set(
+          (
+            queryClient.getQueryData<Session>(chatQueryKeys.session(session_id))
+              ?.messages ?? []
+          )
+            .filter(message => message.role === 'assistant')
+            .map(message => message.id)
+        )
 
         const removeLatestUserMessageFromCache = () => {
           queryClient.setQueryData<Session>(
@@ -2161,13 +2214,14 @@ export default function useStreamingEvents({
                 session_id,
                 resolvedWorktreeId
               ).then(session => {
-                const assistant = session
-                  ? [...session.messages]
-                      .reverse()
-                      .find(message => message.role === 'assistant')
-                  : undefined
+                // Only output of the cancelled turn counts. A reply from an
+                // earlier turn must not retract the restored draft.
+                const lastMessage = session?.messages.at(-1)
+                const assistant =
+                  lastMessage?.role === 'assistant' ? lastMessage : undefined
                 if (
                   !assistant ||
+                  priorAssistantIds.has(assistant.id) ||
                   !hasMeaningfulAssistantPayload(
                     assistant.content,
                     assistant.content_blocks,

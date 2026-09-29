@@ -136,6 +136,16 @@ describe('ChatToolbar pending questions', () => {
 
     expect(screen.getByText('Model')).toBeInTheDocument()
   })
+
+  it('keeps every execution mode dropdown enabled while waiting for question input', () => {
+    renderChatToolbar({ hasPendingQuestions: true, executionMode: 'yolo' })
+
+    const modeButtons = screen.getAllByRole('button', { name: /^yolo$/i })
+    expect(modeButtons.length).toBeGreaterThanOrEqual(2)
+    for (const button of modeButtons) {
+      expect(button).toBeEnabled()
+    }
+  })
 })
 
 describe('ChatToolbar zen mode', () => {

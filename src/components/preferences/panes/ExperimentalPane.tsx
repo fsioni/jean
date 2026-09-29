@@ -25,7 +25,7 @@ export const ExperimentalPane: React.FC = () => {
   const patchPreferences = usePatchPreferences()
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
+      <div className="rounded-lg border border-warning/20 bg-warning/5 p-4">
         <p className="text-sm text-muted-foreground">
           These features are experimental and may change or be removed in future
           versions. Use at your own risk.

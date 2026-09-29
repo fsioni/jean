@@ -137,20 +137,33 @@ export function hydrateRunningSnapshot(
   // intentionally seeds it before calling hydrate.
   if (!options.allowWhileSending && store.sendingSessionIds[sessionId]) return
 
-  useChatStore.setState(state => ({
-    streamingContentBlocks: {
-      ...state.streamingContentBlocks,
-      [sessionId]: mergeSnapshotBlocks(
-        normalized,
-        state.streamingContentBlocks[sessionId] ?? []
-      ),
-    },
-    activeToolCalls: {
-      ...state.activeToolCalls,
-      [sessionId]: mergeSnapshotToolCalls(
-        lastMsg.tool_calls ?? [],
-        state.activeToolCalls[sessionId] ?? []
-      ),
-    },
-  }))
+  useChatStore.setState(state => {
+    // Live tool calls that are missing from the running snapshot and already
+    // answered belong to an earlier paused turn (question/plan kept by
+    // pauseSession). Drop them so they do not resurface in this turn (#779).
+    const snapshotToolIds = new Set((lastMsg.tool_calls ?? []).map(t => t.id))
+    const answered = state.answeredQuestions[sessionId]
+    const isStale = (toolId: string) =>
+      !snapshotToolIds.has(toolId) && (answered?.has(toolId) ?? false)
+    const liveToolCalls = (state.activeToolCalls[sessionId] ?? []).filter(
+      tool => !isStale(tool.id)
+    )
+    const liveBlocks = (state.streamingContentBlocks[sessionId] ?? []).filter(
+      block => block.type !== 'tool_use' || !isStale(block.tool_call_id)
+    )
+
+    return {
+      streamingContentBlocks: {
+        ...state.streamingContentBlocks,
+        [sessionId]: mergeSnapshotBlocks(normalized, liveBlocks),
+      },
+      activeToolCalls: {
+        ...state.activeToolCalls,
+        [sessionId]: mergeSnapshotToolCalls(
+          lastMsg.tool_calls ?? [],
+          liveToolCalls
+        ),
+      },
+    }
+  })
 }

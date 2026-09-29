@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { extractFilePath, resolveWorktreeFilePath } from './local-file'
+import { afterEach, describe, expect, it } from 'vitest'
+import { useChatStore } from '@/store/chat-store'
+import { useUIStore } from '@/store/ui-store'
+import {
+  extractFilePath,
+  getCurrentWorktree,
+  resolveWorktreeFilePath,
+} from './local-file'
 
 describe('extractFilePath', () => {
   it.each([
@@ -40,5 +46,47 @@ describe('resolveWorktreeFilePath', () => {
   it('keeps absolute paths and needs a root for relative paths', () => {
     expect(resolveWorktreeFilePath('/tmp/a.txt', null)).toBe('/tmp/a.txt')
     expect(resolveWorktreeFilePath('a/b.txt', null)).toBeNull()
+  })
+})
+
+describe('getCurrentWorktree', () => {
+  afterEach(() => {
+    useUIStore.setState({
+      sessionChatModalOpen: false,
+      sessionChatModalWorktreeId: null,
+    })
+    useChatStore.setState({
+      activeWorktreeId: null,
+      activeWorktreePath: null,
+      worktreePaths: {},
+    })
+  })
+
+  it('uses the active worktree when the session modal is closed', () => {
+    useChatStore.setState({
+      activeWorktreeId: 'wt-active',
+      activeWorktreePath: '/repo/active',
+    })
+    expect(getCurrentWorktree()).toEqual({
+      id: 'wt-active',
+      path: '/repo/active',
+    })
+  })
+
+  it('uses the session modal worktree on the canvas view', () => {
+    useChatStore.setState({
+      activeWorktreeId: null,
+      activeWorktreePath: null,
+      worktreePaths: { 'wt-modal': '/repo/modal' },
+    })
+    useUIStore.setState({
+      sessionChatModalOpen: true,
+      sessionChatModalWorktreeId: 'wt-modal',
+    })
+    expect(getCurrentWorktree()).toEqual({
+      id: 'wt-modal',
+      path: '/repo/modal',
+    })
+    expect(resolveWorktreeFilePath('docs/a.txt')).toBe('/repo/modal/docs/a.txt')
   })
 })

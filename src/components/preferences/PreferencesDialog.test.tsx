@@ -258,7 +258,7 @@ describe('PreferencesDialog', () => {
     }
 
     expect(within(antigravityButton).getByText('Beta')).toHaveClass(
-      'bg-yellow-500/10'
+      'bg-warning/10'
     )
 
     const kimiButton = within(navigationMenu)
@@ -271,6 +271,20 @@ describe('PreferencesDialog', () => {
     expect(within(kimiButton).getByLabelText('Kimi Code')).toHaveClass(
       'translate-x-0.5'
     )
+  })
+
+  it('shows Web Access but hides Keybindings in the mobile pane selector', async () => {
+    const user = userEvent.setup()
+
+    render(<PreferencesDialog />)
+
+    await user.click(screen.getByRole('combobox'))
+
+    const options = screen
+      .getAllByRole('option')
+      .map(option => option.textContent?.trim())
+    expect(options).toContain('Web Access')
+    expect(options).not.toContain('Keybindings')
   })
 
   it('keeps the dialog open when Escape clears the desktop search', async () => {

@@ -15,10 +15,7 @@ import {
 import {
   TOOL_CALL_ROW_CLASS,
   TOOL_CALL_DETAIL_PILL_CLASS,
-  formatJeanMcpToolDetail,
-  formatJeanMcpToolLabel,
-  isJeanMcpToolName,
-  normalizeToolCallForDisplay,
+  summarizeToolCall,
 } from './ToolCallInline'
 import { EditedFilesDisplay } from './EditedFilesDisplay'
 import { StreamingMessage } from './StreamingMessage'
@@ -70,72 +67,6 @@ function summarizeLatest(
     return { label: truncate(streamingContent.trim(), 120) }
   }
   return { label: 'Working…' }
-}
-
-function summarizeToolCall(tc: ToolCall): { label: string; detail?: string } {
-  const normalized = normalizeToolCallForDisplay(
-    tc.name,
-    (tc.input ?? {}) as Record<string, unknown>
-  )
-  const input = normalized.input
-  const filePath =
-    typeof input.file_path === 'string' ? input.file_path : undefined
-  const path = typeof input.path === 'string' ? input.path : undefined
-  const command = typeof input.command === 'string' ? input.command : undefined
-  const url = typeof input.url === 'string' ? input.url : undefined
-  const pattern = typeof input.pattern === 'string' ? input.pattern : undefined
-  const description =
-    typeof input.description === 'string' ? input.description : undefined
-  const query = typeof input.query === 'string' ? input.query : undefined
-  const backend = typeof input.backend === 'string' ? input.backend : undefined
-  const toolName =
-    typeof input.tool_name === 'string'
-      ? input.tool_name
-      : typeof input.toolName === 'string'
-        ? input.toolName
-        : undefined
-  // Codex web search may nest the query under action
-  const action =
-    input.action && typeof input.action === 'object'
-      ? (input.action as Record<string, unknown>)
-      : undefined
-  const actionQuery =
-    typeof action?.query === 'string'
-      ? action.query
-      : typeof action?.url === 'string'
-        ? action.url
-        : undefined
-
-  const friendlyLabel =
-    normalized.name === 'CodexWebSearch'
-      ? 'Web Search'
-      : normalized.name === 'CodexImageView'
-        ? 'Image View'
-        : normalized.name === 'CodexImageGeneration'
-          ? 'Image Generation'
-          : normalized.name === 'CodexContextCompaction'
-            ? 'Context Compaction'
-            : isJeanMcpToolName(normalized.name)
-              ? formatJeanMcpToolLabel(normalized.name)
-              : normalized.name
-
-  const detail = isJeanMcpToolName(normalized.name)
-    ? formatJeanMcpToolDetail(input)
-    : (query ??
-      actionQuery ??
-      filePath ??
-      path ??
-      command ??
-      url ??
-      pattern ??
-      description ??
-      backend ??
-      toolName ??
-      undefined)
-  return {
-    label: friendlyLabel,
-    detail: detail ? truncate(detail, 80) : undefined,
-  }
 }
 
 function truncate(text: string, max: number): string {

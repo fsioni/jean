@@ -17,7 +17,7 @@ const preferences = {
 
 describe('resolveDefaultModelForBackend', () => {
   it.each([
-    ['claude', 'claude-opus-4-8[1m]'],
+    ['claude', 'claude-opus-5-5'],
     ['codex', 'gpt-5.6-sol'],
     ['opencode', 'opencode/gpt-5.6-sol'],
     ['cursor', 'cursor/auto'],

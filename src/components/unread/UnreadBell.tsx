@@ -73,42 +73,42 @@ function getSessionStatus(session: Session, isSending: boolean) {
     return {
       icon: AlertTriangle,
       label: 'Permission required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (hasCodexCommand) {
     return {
       icon: AlertTriangle,
       label: 'Command approval required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (hasCodexTool) {
     return {
       icon: AlertTriangle,
       label: 'Tool approval required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (hasCodexMcp) {
     return {
       icon: HelpCircle,
       label: 'MCP input required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (hasCodexUserInput) {
     return {
       icon: HelpCircle,
       label: 'Input required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (isSending) {
     return {
       icon: Loader2,
       label: 'Running',
-      className: 'text-green-500 animate-spin',
+      className: 'text-foreground animate-spin dark:text-success',
     }
   }
   if (session.waiting_for_input) {
@@ -116,14 +116,14 @@ function getSessionStatus(session: Session, isSending: boolean) {
     return {
       icon: isPlan ? FileText : HelpCircle,
       label: isPlan ? 'Plan approval required' : 'Input required',
-      className: 'text-yellow-500',
+      className: 'text-warning',
     }
   }
   if (session.scheduled_wakeup) {
     return {
       icon: CirclePause,
       label: 'Scheduled',
-      className: 'text-cyan-500',
+      className: 'text-info',
     }
   }
   const config: Record<
@@ -133,7 +133,7 @@ function getSessionStatus(session: Session, isSending: boolean) {
     completed: {
       icon: CheckCircle2,
       label: 'Completed',
-      className: 'text-green-500',
+      className: 'text-success',
     },
     cancelled: {
       icon: CirclePause,
@@ -494,7 +494,7 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
           <button
             type="button"
             onClick={handleTriggerClick}
-            className="relative z-[1] flex items-center gap-1.5 truncate rounded-md bg-background px-1.5 text-sm font-medium text-yellow-400 cursor-pointer"
+            className="relative z-[1] flex items-center gap-1.5 truncate rounded-md bg-background px-1.5 text-sm font-medium text-warning cursor-pointer"
           >
             <BellDot
               className={cn(

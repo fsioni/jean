@@ -163,6 +163,68 @@ describe('prefetchSessions', () => {
       'tool-1': [{ questionIndex: 0, selectedOptions: [1] }],
     })
   })
+
+  it('merges prefetched answers with in-memory answers instead of replacing them (#779)', async () => {
+    useChatStore.setState({
+      answeredQuestions: {
+        'session-1': new Set(['memory-tool']),
+        'session-other': new Set(['other-tool']),
+      },
+      submittedAnswers: {
+        'session-1': {
+          'memory-tool': [{ questionIndex: 0, selectedOptions: [2] }],
+          'shared-tool': [{ questionIndex: 0, selectedOptions: [2] }],
+        },
+      },
+    })
+    const { invoke } = await import('@/lib/transport')
+    ;(invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      worktree_id: 'wt-1',
+      sessions: [
+        {
+          id: 'session-1',
+          name: 'Session 1',
+          order: 0,
+          created_at: 1,
+          updated_at: 1,
+          messages: [],
+          version: 2,
+          answered_questions: ['disk-tool'],
+          submitted_answers: {
+            'disk-tool': [{ questionIndex: 0, selectedOptions: [0] }],
+            'shared-tool': [{ questionIndex: 0, selectedOptions: [0] }],
+          },
+          fixed_findings: [],
+          waiting_for_input: false,
+        },
+      ],
+      active_session_id: 'session-1',
+      version: 2,
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+
+    await prefetchSessions(queryClient, 'wt-1', '/tmp/wt-1')
+
+    const state = useChatStore.getState()
+    expect(state.answeredQuestions['session-1']).toEqual(
+      new Set(['disk-tool', 'memory-tool'])
+    )
+    expect(state.answeredQuestions['session-other']).toEqual(
+      new Set(['other-tool'])
+    )
+    expect(state.submittedAnswers['session-1']).toEqual({
+      'disk-tool': [{ questionIndex: 0, selectedOptions: [0] }],
+      'memory-tool': [{ questionIndex: 0, selectedOptions: [2] }],
+      // In-memory answer wins over the on-disk one
+      'shared-tool': [{ questionIndex: 0, selectedOptions: [2] }],
+    })
+  })
 })
 
 describe('reconnectNativeCliSession', () => {

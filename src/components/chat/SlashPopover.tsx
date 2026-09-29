@@ -97,7 +97,9 @@ export function SlashPopover({
     if (
       triggerKind !== 'skill' &&
       isAtPromptStart &&
-      (sessionBackend === 'codex' || sessionBackend === 'grok')
+      (sessionBackend === 'codex' ||
+        sessionBackend === 'grok' ||
+        sessionBackend === 'claude')
     ) {
       fuzzySearchItems([GOAL_BUILTIN], searchQuery, 1).forEach(cmd => {
         items.push({ type: 'command', backend: sessionBackend, data: cmd })
@@ -302,9 +304,9 @@ export function SlashPopover({
                           )}
                         >
                           {isCommand ? (
-                            <Terminal className="h-4 w-4 shrink-0 text-blue-500" />
+                            <Terminal className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : (
-                            <Wand2 className="h-4 w-4 shrink-0 text-purple-500" />
+                            <Wand2 className="h-4 w-4 shrink-0 text-purple-600 dark:text-purple-400" />
                           )}
                           <div className="flex flex-col min-w-0">
                             <span className="truncate text-sm font-medium">

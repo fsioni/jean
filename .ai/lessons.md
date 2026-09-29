@@ -19,6 +19,8 @@
 - Treat remote profiles as parallel adapters. Do not replace the native app's local core with a global backend switch.
 - A server can remain connected and selectable while excluded from aggregate dashboard results.
 - Gate native-only connections, aggregation, routing, caches, and ownership labels with `isNativeApp()`.
+- Store user state about a remote resource (pins, flags) on the server that owns it, not only in native local UI state, or Web Access clients of that server will not see it.
+- Change state that several clients edit through narrow per-item commands on the owning server. Full snapshot saves must not overwrite it.
 
 ## Make state transitions atomic and observable
 
@@ -103,3 +105,9 @@
 - When fixing UI flicker, removing duplicate requests is not sufficient. Verify the actual first-paint and transition behavior. If the user reports that one header field appears late, test the rendered visibility gate, not only the data source wiring.
 
 - When a remote attachment works for the backend but not in the UI, verify both upload routing and client preview URL ownership. A remote filesystem path is not directly loadable by the native webview; render it through the owning server file URL.
+
+## Use theme tokens for color, not Tailwind hues
+
+- UI chrome is monochrome (`primary`, `foreground`, `muted-foreground`, `accent`). Use color only for status.
+- Status colors: `success`, `warning`, `info`, `destructive` (+ `*-foreground` on solid backgrounds). They have light and dark values in `src/App.css`; opacity modifiers work (`bg-warning/10`).
+- Do not add hardcoded hues such as `text-yellow-400`: they are tuned for one theme and fail contrast in the other. For categorical identity colors (file types, brands, GitHub closed/merged purple), use a `-600` + `dark:-400` pair.

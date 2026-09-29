@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@/test/test-utils'
-import { EditedFilesDisplay } from './EditedFilesDisplay'
-import type { ToolCall } from '@/types/chat'
+import { EditedFilesDisplay, getClaudeFileEdits } from './EditedFilesDisplay'
+import type { ChatMessage, ToolCall } from '@/types/chat'
 
 const diffModalMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./MessageDiffModal', () => ({
-  MessageDiffModal: (props: { patch?: string | null }) => {
+  MessageDiffModal: (
+    props: { patch?: string | null } & Record<string, unknown>
+  ) => {
     diffModalMock(props)
     return <div data-testid="message-diff-modal">{props.patch}</div>
   },
@@ -109,5 +111,209 @@ describe('EditedFilesDisplay', () => {
     ).toHaveClass('truncate')
     expect(screen.getByText('+1')).toBeVisible()
     expect(screen.getByText('-1')).toBeVisible()
+  })
+
+  it('shows Claude Write, MultiEdit, and NotebookEdit file changes', () => {
+    const toolCalls: ToolCall[] = [
+      {
+        id: 'w-1',
+        name: 'Write',
+        input: { file_path: '/repo/src/new-file.ts', content: 'a\nb\nc\n' },
+      },
+      {
+        id: 'm-1',
+        name: 'MultiEdit',
+        input: {
+          file_path: '/repo/src/multi.ts',
+          edits: [
+            { old_string: 'one\n', new_string: 'uno\n' },
+            { old_string: 'two\n', new_string: 'dos\ntres\n' },
+          ],
+        },
+      },
+      {
+        id: 'n-1',
+        name: 'NotebookEdit',
+        input: {
+          notebook_path: '/repo/analysis.ipynb',
+          cell_id: 'cell-1',
+          new_source: 'print(1)',
+        },
+      },
+      { id: 'r-1', name: 'Read', input: { file_path: '/repo/src/read.ts' } },
+    ]
+
+    render(<EditedFilesDisplay toolCalls={toolCalls} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edited 3 files' }))
+
+    expect(screen.getByText('new-file.ts')).toBeVisible()
+    expect(screen.getByText('multi.ts')).toBeVisible()
+    expect(screen.getByText('analysis.ipynb')).toBeVisible()
+    expect(screen.queryByText('read.ts')).not.toBeInTheDocument()
+    expect(screen.getAllByText('+3')).toHaveLength(2)
+    expect(screen.getByText('-2')).toBeVisible()
+  })
+
+  it('passes normalized MultiEdit edits to the diff modal', () => {
+    const toolCalls: ToolCall[] = [
+      {
+        id: 'm-1',
+        name: 'MultiEdit',
+        input: {
+          file_path: '/repo/src/multi.ts',
+          edits: [
+            { old_string: 'one', new_string: 'uno' },
+            { old_string: 'two', new_string: 'dos' },
+          ],
+        },
+      },
+    ]
+
+    render(<EditedFilesDisplay toolCalls={toolCalls} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edited 1 file' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View changes to multi.ts' })
+    )
+
+    expect(diffModalMock.mock.lastCall?.[0].edits).toEqual([
+      {
+        name: 'Edit',
+        input: {
+          file_path: '/repo/src/multi.ts',
+          old_string: 'one',
+          new_string: 'uno',
+        },
+      },
+      {
+        name: 'Edit',
+        input: {
+          file_path: '/repo/src/multi.ts',
+          old_string: 'two',
+          new_string: 'dos',
+        },
+      },
+    ])
+  })
+  it('skips failed or denied edit tool calls', () => {
+    const toolCalls: ToolCall[] = [
+      {
+        id: 'e-1',
+        name: 'Edit',
+        input: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' },
+        is_error: true,
+      },
+      {
+        id: 'w-1',
+        name: 'Write',
+        input: { file_path: '/repo/b.ts', content: 'x' },
+        is_error: true,
+      },
+    ]
+    expect(toolCalls.flatMap(getClaudeFileEdits)).toEqual([])
+
+    const { container } = render(<EditedFilesDisplay toolCalls={toolCalls} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('keeps replace_all on Edit and MultiEdit inner edits', () => {
+    expect(
+      getClaudeFileEdits({
+        id: 'e-1',
+        name: 'Edit',
+        input: {
+          file_path: '/repo/a.ts',
+          old_string: 'a',
+          new_string: 'b',
+          replace_all: true,
+        },
+      })
+    ).toEqual([
+      {
+        name: 'Edit',
+        input: {
+          file_path: '/repo/a.ts',
+          old_string: 'a',
+          new_string: 'b',
+          replace_all: true,
+        },
+      },
+    ])
+    expect(
+      getClaudeFileEdits({
+        id: 'm-1',
+        name: 'MultiEdit',
+        input: {
+          file_path: '/repo/a.ts',
+          edits: [{ old_string: 'a', new_string: 'b', replace_all: true }],
+        },
+      })[0]?.input.replace_all
+    ).toBe(true)
+  })
+
+  it('passes earlier and later edits of the selected file to the diff modal', () => {
+    const file = '/repo/src/a.ts'
+    const messages = [
+      {
+        id: 'm0',
+        tool_calls: [
+          { id: 't0', name: 'Write', input: { file_path: file, content: 'x' } },
+          {
+            id: 't0b',
+            name: 'Write',
+            input: { file_path: '/repo/other.ts', content: 'y' },
+          },
+        ],
+      },
+      {
+        id: 'm1',
+        tool_calls: [
+          {
+            id: 't1',
+            name: 'Edit',
+            input: { file_path: file, old_string: 'x', new_string: 'z' },
+          },
+        ],
+      },
+      {
+        id: 'm2',
+        tool_calls: [
+          {
+            id: 't2',
+            name: 'Edit',
+            input: { file_path: file, old_string: 'z', new_string: 'w' },
+            is_error: true,
+          },
+          { id: 't3', name: 'Write', input: { file_path: file, content: 'q' } },
+        ],
+      },
+    ] as unknown as ChatMessage[]
+
+    render(
+      <EditedFilesDisplay
+        toolCalls={messages[1]?.tool_calls}
+        getMessages={() => messages}
+        messageIndex={1}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edited 1 file' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View changes to a.ts' })
+    )
+
+    const props = diffModalMock.mock.lastCall?.[0]
+    expect(props.previousEdits).toEqual([
+      {
+        name: 'Write',
+        input: { file_path: file, old_string: '', new_string: 'x' },
+      },
+    ])
+    expect(props.subsequentEdits).toEqual([
+      {
+        name: 'Write',
+        input: { file_path: file, old_string: '', new_string: 'q' },
+      },
+    ])
   })
 })

@@ -14,6 +14,7 @@ import {
   Copy,
   GitBranchPlus,
   GitPullRequestArrow,
+  Globe,
   Maximize,
   Minimize,
   Pencil,
@@ -21,6 +22,7 @@ import {
   Tag,
   Play,
   Plus,
+  Terminal,
   Trash2,
 } from '@/components/icons/reicon'
 import { ModalCloseButton } from '@/components/ui/modal-close-button'
@@ -43,6 +45,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { useUIStore } from '@/store/ui-store'
+import { useProjectsStore } from '@/store/projects-store'
 import {
   useSessions,
   useSession,
@@ -55,6 +58,7 @@ import {
 import { resolveBackendCliPath } from '@/services/cli-binary'
 import { usePreferences } from '@/services/preferences'
 import { parseServerResourceKey } from '@/lib/server-resource'
+import { LOCAL_SERVER_ID } from '@/types/server-resource'
 import { usePackageScripts, type PackageScript } from '@/services/projects'
 import { useGitHubPRs } from '@/services/github'
 import {
@@ -105,6 +109,10 @@ import { WorktreeDropdownMenu } from '@/components/projects/WorktreeDropdownMenu
 import { LabelModal } from './LabelModal'
 import { useSessionArchive } from './hooks/useSessionArchive'
 import { useIsMobile } from '@/hooks/use-mobile'
+import {
+  isModOnlyHeld,
+  useModifierHintsVisible,
+} from '@/hooks/useModifierHintsVisible'
 import { pushNeedsRemotePicker, useRemotePicker } from '@/hooks/useRemotePicker'
 import { useIsTouchDevice } from '@/hooks/use-touch-device'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
@@ -167,6 +175,48 @@ function useOffScreenWaiting(
   return { hasLeft, hasRight }
 }
 
+function HeaderSurfaceToggle({
+  label,
+  icon: Icon,
+  isOpen,
+  shortcut,
+  onClick,
+}: {
+  label: string
+  icon: typeof Terminal
+  isOpen: boolean
+  shortcut: string | undefined
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            'h-7 w-7 text-muted-foreground hover:text-foreground',
+            isOpen && 'bg-muted text-foreground'
+          )}
+          aria-label={`Toggle ${label.toLowerCase()}`}
+          aria-pressed={isOpen}
+          onClick={onClick}
+        >
+          <Icon className="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {label}
+        {isNativeApp() && (
+          <kbd className="ml-1 text-[0.625rem] opacity-60">
+            {formatShortcutDisplay(shortcut)}
+          </kbd>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 interface SessionChatModalProps {
   worktreeId: string
   worktreePath: string
@@ -194,6 +244,16 @@ export function SessionChatModal({
     state => state.modalTerminalOpen[worktreeId] ?? false
   )
   const leftSidebarVisible = useUIStore(state => state.leftSidebarVisible)
+  // While the Recent list is visible, Cmd/Ctrl+1-9 opens Recent sessions,
+  // so the session tab number hints are hidden.
+  const recentTabActive = useProjectsStore(
+    state => state.sidebarActiveTab === 'recent'
+  )
+  const recentShortcutsActive = leftSidebarVisible && recentTabActive
+  const showTabShortcutHints = useModifierHintsVisible(
+    isModOnlyHeld,
+    isOpen && isNativeApp() && !isMobile && !recentShortcutsActive
+  )
   // Left-edge swipe right: open the sidebar without leaving the worktree.
   const swipeOpenSidebar = useCallback(() => {
     useUIStore.getState().setLeftSidebarVisible(true)
@@ -892,7 +952,9 @@ export function SessionChatModal({
     [pickRemoteOrRun, worktree, worktreePath, project]
   )
 
-  const gitSyncButton = preferences?.git_sync_button ?? true
+  // Display preference of this client, not of the worktree's server
+  const { data: localPreferences } = usePreferences(LOCAL_SERVER_ID)
+  const gitSyncButton = localPreferences?.git_sync_button ?? true
 
   const handleSync = useCallback(
     (e: React.MouseEvent) => {
@@ -1166,6 +1228,32 @@ export function SessionChatModal({
                   )}
                   {!zenMode && (
                     <>
+                      {!isMobile && (
+                        <>
+                          <HeaderSurfaceToggle
+                            label="Terminal"
+                            icon={Terminal}
+                            isOpen={isModalTerminalOpen}
+                            shortcut={
+                              localPreferences?.keybindings?.toggle_terminal ??
+                              DEFAULT_KEYBINDINGS.toggle_terminal
+                            }
+                            onClick={handleToggleModalTerminal}
+                          />
+                          {isNativeApp() && (
+                            <HeaderSurfaceToggle
+                              label="Browser"
+                              icon={Globe}
+                              isOpen={isBrowserModalOpen}
+                              shortcut={
+                                localPreferences?.keybindings?.toggle_browser ??
+                                DEFAULT_KEYBINDINGS.toggle_browser
+                              }
+                              onClick={handleToggleModalBrowser}
+                            />
+                          )}
+                        </>
+                      )}
                       {/* Desktop: secondary tools that are not in the menu */}
                       <div className="hidden lg:flex items-center gap-1">
                         <OpenInButton
@@ -1213,7 +1301,7 @@ export function SessionChatModal({
                 <button
                   type="button"
                   onClick={() => scrollToFirstWaiting('left')}
-                  className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-500 animate-blink rounded-r z-10 cursor-pointer"
+                  className="absolute left-0 top-0 bottom-0 w-1 bg-warning animate-blink rounded-r z-10 cursor-pointer"
                   aria-label="Scroll to waiting session"
                 />
               )}
@@ -1221,7 +1309,7 @@ export function SessionChatModal({
                 <button
                   type="button"
                   onClick={() => scrollToFirstWaiting('right')}
-                  className="absolute right-0 top-0 bottom-0 w-1 bg-yellow-500 animate-blink rounded-l z-10 cursor-pointer"
+                  className="absolute right-0 top-0 bottom-0 w-1 bg-warning animate-blink rounded-l z-10 cursor-pointer"
                   aria-label="Scroll to waiting session"
                 />
               )}
@@ -1264,19 +1352,18 @@ export function SessionChatModal({
                                 isUnreadSession(session) &&
                                 'bg-muted/60 text-foreground/90 hover:bg-muted/80',
                               isActionableWaitingStatus(status) &&
-                                'bg-yellow-500/10 text-yellow-700 border-yellow-500 hover:bg-yellow-500/20 hover:text-yellow-800 dark:bg-yellow-400/10 dark:text-yellow-300 dark:border-yellow-400 dark:hover:bg-yellow-400/20 dark:hover:text-yellow-200'
+                                'bg-warning/10 text-warning border-warning hover:bg-warning/20 hover:text-warning'
                             )}
                           >
                             <StatusIndicator
                               status={config.indicatorStatus}
-                              variant={config.indicatorVariant}
                               shape={config.indicatorShape}
                               label={config.label}
                               className="h-1.5 w-1.5"
                             />
-                            {idx < 9 && (
+                            {showTabShortcutHints && idx < 9 && (
                               <kbd className="shrink-0 rounded border border-border/50 px-1 py-px text-[9px] font-medium leading-none text-muted-foreground/70">
-                                ⌘{idx + 1}
+                                {formatShortcutDisplay(`mod+${idx + 1}`)}
                               </kbd>
                             )}
                             {renamingSessionId === session.id ? (

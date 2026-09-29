@@ -16,6 +16,8 @@ const ROUTED_ARGUMENT_KEYS = new Set([
   'target_project_id',
   'itemId',
   'item_id',
+  'folderId',
+  'folder_id',
   'itemIds',
   'item_ids',
   'newParentId',
@@ -312,6 +314,8 @@ export function decorateServerResult<T>(
       'add_project',
       'clone_project',
       'init_project',
+      'create_folder',
+      'rename_folder',
       'move_item',
       'update_project_settings',
     ].includes(command)

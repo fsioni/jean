@@ -263,6 +263,7 @@ fn merge_event(response: &mut AntigravityResponse, value: &Value) -> bool {
                         input,
                         output,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                 }
             }
@@ -375,6 +376,7 @@ fn inject_plan(response: &mut AntigravityResponse) -> Option<ToolCall> {
         input: serde_json::json!({"plan": response.content.trim(), "source":"antigravity"}),
         output: None,
         parent_tool_use_id: None,
+        is_error: None,
     };
     response.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: tool.id.clone(),
@@ -903,6 +905,7 @@ mod tests {
             input: Value::Null,
             output: None,
             parent_tool_use_id: None,
+            is_error: None,
         });
         assert_eq!(
             finalize_dead_process_response(with_tool)

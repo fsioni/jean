@@ -27,7 +27,6 @@ import type {
   Question,
   QuestionAnswer,
   ReviewFinding,
-  ToolCall,
 } from '@/types/chat'
 import {
   getAskUserQuestions,
@@ -47,6 +46,7 @@ import { formatDuration, getAssistantDurationMs } from './time-utils'
 import {
   TOOL_CALL_ROW_CLASS,
   TOOL_CALL_DETAIL_PILL_CLASS,
+  summarizeToolCall,
 } from './ToolCallInline'
 import type { VirtualizedMessageListHandle } from './VirtualizedMessageList'
 import {
@@ -101,6 +101,8 @@ interface CompactMessageListProps {
   areQuestionsSkipped: (sessionId: string) => boolean
   isFindingFixed: (sessionId: string, key: string) => boolean
   onCopyToInput?: (message: ChatMessage) => void
+  /** Clear the session's active goal (goal badge on the /goal message) */
+  onClearGoal?: () => Promise<void>
   hideApproveButtons?: boolean
   shouldScrollToBottom?: boolean
   onScrollToBottomHandled?: () => void
@@ -299,35 +301,6 @@ function stripQuestionsFromMessage(message: ChatMessage): ChatMessage {
 function truncate(text: string, max: number): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine
-}
-
-function truncatePath(text: string, max: number): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim()
-  if (oneLine.length <= max) return oneLine
-  if (oneLine.includes('/')) return `…${oneLine.slice(-(max - 1))}`
-  return `${oneLine.slice(0, max - 1)}…`
-}
-
-function summarizeToolCall(tc: ToolCall): { label: string; detail?: string } {
-  const input = (tc.input ?? {}) as Record<string, unknown>
-  const filePath =
-    typeof input.file_path === 'string' ? input.file_path : undefined
-  const path = typeof input.path === 'string' ? input.path : undefined
-  const command = typeof input.command === 'string' ? input.command : undefined
-  const url = typeof input.url === 'string' ? input.url : undefined
-  const pattern = typeof input.pattern === 'string' ? input.pattern : undefined
-  const description =
-    typeof input.description === 'string' ? input.description : undefined
-
-  const pathDetail = filePath ?? path
-  if (pathDetail) {
-    return { label: tc.name, detail: truncatePath(pathDetail, 80) }
-  }
-  const detail = command ?? url ?? pattern ?? description ?? undefined
-  return {
-    label: tc.name,
-    detail: detail ? truncate(detail, 80) : undefined,
-  }
 }
 
 /**
@@ -700,6 +673,7 @@ export const CompactMessageList = memo(
         areQuestionsSkipped,
         isFindingFixed,
         onCopyToInput,
+        onClearGoal,
         hideApproveButtons,
         shouldScrollToBottom,
         onScrollToBottomHandled,
@@ -918,6 +892,7 @@ export const CompactMessageList = memo(
             areQuestionsSkipped={areQuestionsSkipped}
             isFindingFixed={isFindingFixed}
             onCopyToInput={onCopyToInput}
+            onClearGoal={onClearGoal}
             hideApproveButtons={hideApproveButtons}
             hideCancelledIndicator={extra.hideCancelledIndicator}
             hideEditedFiles={extra.hideEditedFiles}
@@ -953,6 +928,7 @@ export const CompactMessageList = memo(
           areQuestionsSkipped,
           isFindingFixed,
           onCopyToInput,
+          onClearGoal,
           hideApproveButtons,
         ]
       )

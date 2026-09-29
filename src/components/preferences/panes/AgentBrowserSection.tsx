@@ -119,12 +119,12 @@ export const AgentBrowserSection: React.FC = () => {
           <>
             <div className="flex flex-wrap items-center gap-3 text-sm">
               {status?.installed ? (
-                <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
+                <span className="flex items-center gap-1.5 text-success">
                   <CheckCircle className="size-3.5" />
                   Installed{status.version ? ` · ${status.version}` : ''}
                 </span>
               ) : (
-                <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                <span className="flex items-center gap-1.5 text-warning">
                   <XCircle className="size-3.5" />
                   Automatic agent-browser setup is not complete
                 </span>
@@ -162,7 +162,7 @@ export const AgentBrowserSection: React.FC = () => {
           <p
             className={
               binaryInstallState === 'error'
-                ? 'text-xs text-red-600 dark:text-red-400'
+                ? 'text-xs text-destructive'
                 : 'text-xs text-muted-foreground'
             }
           >

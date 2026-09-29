@@ -273,7 +273,7 @@ function getDefaultModelForBackend(
   if (backend === 'antigravity') {
     return preferences?.selected_antigravity_model ?? 'antigravity/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
+  return preferences?.selected_model ?? 'claude-opus-5-5'
 }
 
 const SESSION_BACKENDS = new Set<Session['backend']>([
@@ -576,8 +576,7 @@ export function useMessageHandlers({
       const waitingForInput =
         (state.pendingPermissionDenials[sessionId]?.length ?? 0) > 0 ||
         (state.pendingCodexPermissionRequests[sessionId]?.length ?? 0) > 0 ||
-        (state.pendingOpencodePermissionRequests[sessionId]?.length ?? 0) >
-          0 ||
+        (state.pendingOpencodePermissionRequests[sessionId]?.length ?? 0) > 0 ||
         (state.pendingCodexUserInputRequests[sessionId]?.length ?? 0) > 0 ||
         (state.pendingCodexMcpElicitationRequests[sessionId]?.length ?? 0) >
           0 ||
@@ -2876,7 +2875,10 @@ export function useMessageHandlers({
   )
 
   const handleOpencodePermissionReply = useCallback(
-    (request: OpenCodePermissionRequest, reply: 'once' | 'always' | 'reject') => {
+    (
+      request: OpenCodePermissionRequest,
+      reply: 'once' | 'always' | 'reject'
+    ) => {
       const sessionId = activeSessionIdRef.current
       const worktreeId = activeWorktreeIdRef.current
       const worktreePath = activeWorktreePathRef.current
@@ -3294,14 +3296,13 @@ Please apply this fix to the file.`
       const cachedSessionsData = queryClient.getQueryData<WorktreeSessions>(
         chatQueryKeys.sessions(worktreeId)
       )
-      const allContent =
-        (
-          cachedSessionsData?.sessions
-            ?.find((s: Session) => s.id === sessionId)
-            ?.messages?.flatMap((m: { role: string; content: string }) =>
-              m.role === 'assistant' ? [m.content] : []
-            ) ?? []
-        ).join('\n')
+      const allContent = (
+        cachedSessionsData?.sessions
+          ?.find((s: Session) => s.id === sessionId)
+          ?.messages?.flatMap((m: { role: string; content: string }) =>
+            m.role === 'assistant' ? [m.content] : []
+          ) ?? []
+      ).join('\n')
       const findings = parseReviewFindings(allContent)
       const findingIndex = findings.findIndex(
         f =>
@@ -3433,14 +3434,13 @@ Please apply all these fixes to the respective files.`
       const cachedSessionsData = queryClient.getQueryData<WorktreeSessions>(
         chatQueryKeys.sessions(worktreeId)
       )
-      const allContent =
-        (
-          cachedSessionsData?.sessions
-            ?.find((s: Session) => s.id === sessionId)
-            ?.messages?.flatMap((m: { role: string; content: string }) =>
-              m.role === 'assistant' ? [m.content] : []
-            ) ?? []
-        ).join('\n')
+      const allContent = (
+        cachedSessionsData?.sessions
+          ?.find((s: Session) => s.id === sessionId)
+          ?.messages?.flatMap((m: { role: string; content: string }) =>
+            m.role === 'assistant' ? [m.content] : []
+          ) ?? []
+      ).join('\n')
       const allFindings = parseReviewFindings(allContent)
 
       for (const { finding } of findingsWithSuggestions) {

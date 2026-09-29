@@ -45,6 +45,7 @@ export {
   EyeOff,
   File,
   FileText,
+  Flag,
   Flash,
   Flask,
   Flame,
@@ -180,7 +181,7 @@ export { PauseCircle as CirclePause } from 'reicon-react'
 export { Sidebar as Columns2 } from 'reicon-react'
 export { Backspace as Delete } from 'reicon-react'
 export { More as Ellipsis } from 'reicon-react'
-export { Export as ExternalLink } from 'reicon-react'
+export { Export5 as ExternalLink } from 'reicon-react'
 export { CodeFile as FileCode } from 'reicon-react'
 export { CodeFile as FileCode2 } from 'reicon-react'
 export { File as FileIcon } from 'reicon-react'

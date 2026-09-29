@@ -111,7 +111,7 @@ function getDefaultModelForBackend(
   if (backend === 'antigravity') {
     return preferences?.selected_antigravity_model ?? 'antigravity/auto'
   }
-  return preferences?.selected_model ?? 'claude-opus-4-8[1m]'
+  return preferences?.selected_model ?? 'claude-opus-5-5'
 }
 
 function clearWorktreeApprovalUiState(

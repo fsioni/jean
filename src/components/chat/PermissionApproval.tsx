@@ -245,7 +245,7 @@ export function PermissionApproval({
                 isExpanded && 'rotate-90'
               )}
             />
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
             <span className="truncate text-muted-foreground">
               Approved {approvedPatterns.length} tool
               {approvedPatterns.length !== 1 ? 's' : ''}
@@ -270,13 +270,13 @@ export function PermissionApproval({
 
   // Interactive approval UI
   return (
-    <div className="my-3 rounded border border-yellow-500/30 bg-yellow-500/5 p-4 font-mono text-sm">
+    <div className="my-3 rounded border border-warning/30 bg-warning/5 p-4 font-mono text-sm">
       <div className="mb-3 flex items-center gap-2">
-        <ShieldAlert className="h-5 w-5 text-yellow-500" />
+        <ShieldAlert className="h-5 w-5 text-warning" />
         <span className="font-semibold text-foreground">
           Permission Required
         </span>
-        <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-xs text-yellow-600 dark:text-yellow-400">
+        <span className="rounded bg-warning/20 px-1.5 py-0.5 text-xs text-warning">
           {uniqueDenials.length} tool{uniqueDenials.length !== 1 ? 's' : ''}{' '}
           blocked
         </span>

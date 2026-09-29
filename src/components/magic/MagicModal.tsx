@@ -1,26 +1,5 @@
 import { useCallback, useState, useRef, useEffect, useMemo } from 'react'
-import {
-  ArrowDownToLine,
-  ArrowDownUp,
-  ArrowUpToLine,
-  GitCommitHorizontal,
-  GitBranchPlus,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestArrow,
-  Eye,
-  FileText,
-  MessageSquare,
-  Wand2,
-  BookmarkPlus,
-  Bug,
-  CircleDot,
-  RefreshCw,
-  Undo2,
-  Link2,
-  ShieldAlert,
-  Loader2,
-} from '@/components/icons/reicon'
+import { Wand2, Loader2 } from '@/components/icons/reicon'
 import {
   Dialog,
   DialogContent,
@@ -129,33 +108,13 @@ import {
   startCodeReviewsSequentially,
 } from '@/lib/code-review-configs'
 import { resolveMcpConfigForSend } from '@/services/mcp'
-
-type MagicOption =
-  | 'save-context'
-  | 'load-context'
-  | 'inject-session'
-  | 'linked-projects'
-  | 'fork-session'
-  | 'check-github-issues'
-  | 'commit'
-  | 'commit-and-push'
-  | 'comment-and-close-issue'
-  | 'pull'
-  | 'push'
-  | 'sync'
-  | 'open-pr'
-  | 'link-pr'
-  | 'update-pr'
-  | 'review'
-  | 'merge'
-  | 'resolve-conflicts'
-  | 'release-notes'
-  | 'investigate-issue'
-  | 'investigate-pr'
-  | 'investigate-advisory'
-  | 'merge-pr'
-  | 'review-comments'
-  | 'revert-last-commit'
+import {
+  buildMagicColumns,
+  isMagicOptionUnavailable,
+  type MagicOption,
+  type MagicMenuOption,
+  type MagicOptionItem,
+} from '@/components/magic/magic-options'
 
 interface TriggerCodeRabbitPrReviewResponse {
   pr_number: number
@@ -194,24 +153,6 @@ const DIRECT_MAGIC_GIT_OPTIONS = new Set<MagicOption>([
   'sync',
 ])
 
-interface MagicOptionItem {
-  id: MagicOption
-  label: string
-  icon: typeof GitCommitHorizontal
-  key: string
-}
-
-interface MagicSection {
-  header: string
-  options: MagicOptionItem[]
-}
-
-interface MagicColumns {
-  left: MagicSection[]
-  right: MagicSection[]
-  all: MagicSection[]
-}
-
 type InvestigateType = 'issue' | 'pr' | 'advisory' | 'sentry-issue'
 type InvestigateSelectionMode = 'settings-default' | 'custom'
 type ResolveSelectionMode = 'settings-default' | 'custom'
@@ -246,155 +187,6 @@ function formatMagicModalOpencodeLabel(value: string): string {
   return value.startsWith('opencode/')
     ? formatted.replace(/\s+\(OpenCode\)$/, '')
     : formatted
-}
-
-function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
-  const left: MagicSection[] = [
-    {
-      header: 'Context',
-      options: [
-        {
-          id: 'save-context',
-          label: 'Save Context',
-          icon: BookmarkPlus,
-          key: 'S',
-        },
-        {
-          id: 'inject-session',
-          label: 'Inject Context',
-          icon: MessageSquare,
-          key: 'J',
-        },
-        {
-          id: 'linked-projects',
-          label: 'Linked Projects',
-          icon: Link2,
-          key: 'K',
-        },
-        {
-          id: 'fork-session',
-          label: 'Fork Session',
-          icon: GitBranchPlus,
-          key: 'W',
-        },
-        {
-          id: 'check-github-issues',
-          label: 'Check GitHub Issues',
-          icon: Bug,
-          key: 'Q',
-        },
-      ],
-    },
-    {
-      header: 'Commit',
-      options: [
-        { id: 'commit', label: 'Commit', icon: GitCommitHorizontal, key: 'C' },
-        {
-          id: 'commit-and-push',
-          label: 'Commit & Push',
-          icon: GitCommitHorizontal,
-          key: 'P',
-        },
-        {
-          id: 'comment-and-close-issue',
-          label: 'Comment & Close Issue',
-          icon: Bug,
-          key: 'H',
-        },
-        {
-          id: 'revert-last-commit',
-          label: 'Revert Commit',
-          icon: Undo2,
-          key: 'Z',
-        },
-      ],
-    },
-    {
-      header: 'Sync',
-      options: [
-        { id: 'sync', label: 'Sync', icon: ArrowDownUp, key: 'T' },
-        { id: 'pull', label: 'Pull', icon: ArrowDownToLine, key: 'D' },
-        { id: 'push', label: 'Push', icon: ArrowUpToLine, key: 'U' },
-      ],
-    },
-  ]
-
-  const right: MagicSection[] = [
-    {
-      header: 'Pull Request',
-      options: [
-        {
-          id: 'open-pr',
-          label: hasOpenPr ? 'Open' : 'Create',
-          icon: GitPullRequest,
-          key: 'O',
-        },
-        {
-          id: 'link-pr',
-          label: 'Link PR',
-          icon: Link2,
-          key: 'B',
-        },
-        { id: 'review', label: 'Review', icon: Eye, key: 'R' },
-        {
-          id: 'review-comments',
-          label: 'PR Comments',
-          icon: MessageSquare,
-          key: 'V',
-        },
-        { id: 'merge-pr', label: 'Merge', icon: GitMerge, key: 'N' },
-      ],
-    },
-    {
-      header: 'Release',
-      options: [
-        {
-          id: 'release-notes',
-          label: 'Generate Release Notes',
-          icon: FileText,
-          key: 'G',
-        },
-        {
-          id: 'update-pr',
-          label: 'Generate PR Description',
-          icon: RefreshCw,
-          key: 'E',
-        },
-      ],
-    },
-    {
-      header: 'Investigate',
-      options: [
-        { id: 'investigate-issue', label: 'Issue', icon: CircleDot, key: 'I' },
-        {
-          id: 'investigate-pr',
-          label: 'PR',
-          icon: GitPullRequestArrow,
-          key: 'A',
-        },
-        {
-          id: 'investigate-advisory',
-          label: 'Advisory',
-          icon: ShieldAlert,
-          key: 'Y',
-        },
-      ],
-    },
-    {
-      header: 'Branch',
-      options: [
-        { id: 'merge', label: 'Merge to Base', icon: GitMerge, key: 'M' },
-        {
-          id: 'resolve-conflicts',
-          label: 'Resolve Conflicts',
-          icon: GitMerge,
-          key: 'F',
-        },
-      ],
-    },
-  ]
-
-  return { left, right, all: [...left, ...right] }
 }
 
 /** Keyboard shortcut to option ID mapping */
@@ -444,7 +236,7 @@ export function MagicModal() {
   const investigateContentRef = useRef<HTMLDivElement>(null)
   const hasInitializedRef = useRef(false)
   const [selectedOption, setSelectedOption] =
-    useState<MagicOption>('save-context')
+    useState<MagicMenuOption>('save-context')
   const [investigateDialogOpen, setInvestigateDialogOpen] = useState(false)
   const [investigateType, setInvestigateType] =
     useState<InvestigateType | null>(null)
@@ -2457,14 +2249,13 @@ ${resolveInstructions}`
     const isSelected = selectedOption === option.id
     const isDisabled =
       (isOnCanvas && !CANVAS_ALLOWED_OPTIONS.has(option.id)) ||
-      (option.id === 'comment-and-close-issue' && !hasIssueContexts) ||
-      (option.id === 'investigate-issue' &&
-        !hasIssueContexts &&
-        !hasSentryContexts) ||
-      (option.id === 'investigate-pr' && !hasPrContexts) ||
-      (option.id === 'investigate-advisory' && !hasAdvisoryContexts) ||
-      (option.id === 'review-comments' && !hasOpenPr) ||
-      (option.id === 'merge-pr' && !hasOpenPr)
+      isMagicOptionUnavailable(option.id, {
+        hasOpenPr,
+        hasIssueContexts,
+        hasSentryContexts,
+        hasPrContexts,
+        hasAdvisoryContexts,
+      })
 
     return (
       <button

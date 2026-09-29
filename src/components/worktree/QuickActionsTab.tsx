@@ -306,7 +306,7 @@ export function QuickActionsTab({
                           <Star
                             className={cn(
                               'h-3.5 w-3.5',
-                              isStarred && 'fill-yellow-500 text-yellow-500'
+                              isStarred && 'fill-warning text-warning'
                             )}
                           />
                         </button>

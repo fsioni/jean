@@ -36,6 +36,7 @@ describe('hydrateRunningSnapshot', () => {
       streamingContentBlocks: {},
       streamingReplayContentBlocks: {},
       activeToolCalls: {},
+      answeredQuestions: {},
     })
   })
 
@@ -297,6 +298,115 @@ describe('hydrateRunningSnapshot', () => {
     expect(useChatStore.getState().streamingContentBlocks['session-1']).toEqual(
       [{ type: 'text', text: 'Windows 10 LTSC helps.' }]
     )
+  })
+
+  it('drops answered live-only tool calls from an earlier paused turn (#779)', () => {
+    useChatStore.setState({
+      answeredQuestions: { 'session-1': new Set(['old-question']) },
+      streamingContentBlocks: {
+        'session-1': [
+          { type: 'text', text: 'Which option?' },
+          { type: 'tool_use', tool_call_id: 'old-question' },
+        ],
+      },
+      activeToolCalls: {
+        'session-1': [
+          {
+            id: 'old-question',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [{ type: 'tool_use', tool_call_id: 'tool-1' }],
+        tool_calls: [{ id: 'tool-1', name: 'Bash', input: { command: 'ls' } }],
+      })
+    )
+
+    const state = useChatStore.getState()
+    expect(state.activeToolCalls['session-1']?.map(tool => tool.id)).toEqual([
+      'tool-1',
+    ])
+    expect(
+      state.streamingContentBlocks['session-1']?.some(
+        block =>
+          block.type === 'tool_use' && block.tool_call_id === 'old-question'
+      )
+    ).toBe(false)
+  })
+
+  it('keeps unanswered live-only tool calls', () => {
+    useChatStore.setState({
+      answeredQuestions: { 'session-1': new Set(['other-question']) },
+      streamingContentBlocks: {
+        'session-1': [{ type: 'tool_use', tool_call_id: 'live-question' }],
+      },
+      activeToolCalls: {
+        'session-1': [
+          {
+            id: 'live-question',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [{ type: 'tool_use', tool_call_id: 'tool-1' }],
+        tool_calls: [{ id: 'tool-1', name: 'Bash', input: { command: 'ls' } }],
+      })
+    )
+
+    const state = useChatStore.getState()
+    expect(state.activeToolCalls['session-1']?.map(tool => tool.id)).toEqual([
+      'tool-1',
+      'live-question',
+    ])
+    expect(state.streamingContentBlocks['session-1']).toEqual([
+      { type: 'tool_use', tool_call_id: 'tool-1' },
+      { type: 'tool_use', tool_call_id: 'live-question' },
+    ])
+  })
+
+  it('keeps answered tool calls that are part of the snapshot', () => {
+    useChatStore.setState({
+      answeredQuestions: { 'session-1': new Set(['question-1']) },
+      activeToolCalls: {
+        'session-1': [
+          {
+            id: 'question-1',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      },
+    })
+
+    hydrateRunningSnapshot(
+      'session-1',
+      assistantMessage({
+        content_blocks: [{ type: 'tool_use', tool_call_id: 'question-1' }],
+        tool_calls: [
+          {
+            id: 'question-1',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      })
+    )
+
+    expect(
+      useChatStore.getState().activeToolCalls['session-1']?.map(tool => tool.id)
+    ).toEqual(['question-1'])
   })
 
   it('seeds replay dedupe when requested, even if snapshot was already hydrated', () => {

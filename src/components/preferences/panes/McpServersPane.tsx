@@ -74,7 +74,7 @@ function HealthIndicator({
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+            <span className="flex items-center gap-1.5 text-xs text-success">
               <CheckCircle className="size-3.5" />
               connected
             </span>
@@ -86,7 +86,7 @@ function HealthIndicator({
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <span className="flex items-center gap-1.5 text-xs text-warning">
               <ShieldAlert className="size-3.5" />
               needs auth
             </span>
@@ -98,7 +98,7 @@ function HealthIndicator({
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <span className="flex items-center gap-1.5 text-xs text-destructive">
               <XCircle className="size-3.5" />
               connection failed
             </span>

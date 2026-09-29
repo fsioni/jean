@@ -4,13 +4,14 @@ import { WebAccessPane } from './WebAccessPane'
 import { defaultPreferences } from '@/types/preferences'
 
 const invokeMock = vi.fn()
+const isNativeAppMock = vi.fn(() => false)
 
 vi.mock('@/lib/transport', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }))
 
 vi.mock('@/lib/environment', () => ({
-  isNativeApp: () => false,
+  isNativeApp: () => isNativeAppMock(),
   hasBackend: () => true,
 }))
 
@@ -25,11 +26,13 @@ vi.mock('@/lib/platform', () => ({
   openExternal: vi.fn(),
 }))
 
-describe('WebAccessPane in browser/headless mode', () => {
+describe('WebAccessPane', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isNativeAppMock.mockReturnValue(false)
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'load_preferences') return Promise.resolve(defaultPreferences)
+      if (command === 'load_preferences')
+        return Promise.resolve(defaultPreferences)
       if (command === 'get_http_server_status') {
         return Promise.resolve({
           running: true,
@@ -45,13 +48,36 @@ describe('WebAccessPane in browser/headless mode', () => {
     })
   })
 
-  it('shows web access controls in browser mode so headless users can configure it', async () => {
+  it('shows web access settings read-only in browser/headless mode', async () => {
     render(<WebAccessPane />)
 
     await waitFor(() => {
-      expect(screen.getByText('Enable HTTP server')).toBeInTheDocument()
+      expect(screen.getByText('Running')).toBeInTheDocument()
     })
-    expect(screen.queryByText(/only available in the desktop app/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/read-only in web access/i)).toBeInTheDocument()
     expect(screen.getByDisplayValue('secret-token')).toBeInTheDocument()
+    for (const control of screen.getAllByRole('switch')) {
+      expect(control).toBeDisabled()
+    }
+    expect(screen.getByDisplayValue('3456')).toBeDisabled()
+    expect(screen.getByDisplayValue('127.0.0.1')).toBeDisabled()
+    // Token show + copy, plus open + copy for the localhost URL — no regenerate
+    expect(screen.getAllByRole('button')).toHaveLength(4)
+  })
+
+  it('keeps web access settings editable in the desktop app', async () => {
+    isNativeAppMock.mockReturnValue(true)
+    render(<WebAccessPane />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Running')).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByText(/read-only in web access/i)
+    ).not.toBeInTheDocument()
+    for (const control of screen.getAllByRole('switch')) {
+      expect(control).toBeEnabled()
+    }
+    expect(screen.getByDisplayValue('127.0.0.1')).toBeEnabled()
   })
 })

@@ -4,6 +4,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSessionStatePersistence } from './useSessionStatePersistence'
 import { useChatStore } from '@/store/chat-store'
+import { isSessionStateHydrating } from '@/lib/session-state-hydration'
 import type { WorktreeSessions } from '@/types/chat'
 import type { ReviewResponse } from '@/types/projects'
 
@@ -94,6 +95,126 @@ describe('useSessionStatePersistence', () => {
         queuedMessage,
       ])
     })
+  })
+
+  it('merges stale on-disk answered questions with in-memory answers on load (#779)', async () => {
+    const sessionsData: WorktreeSessions = {
+      worktree_id: 'worktree-1',
+      active_session_id: 'session-1',
+      version: 1,
+      sessions: [
+        {
+          id: 'session-1',
+          name: 'Question session',
+          order: 0,
+          created_at: 1,
+          updated_at: 2,
+          messages: [],
+          backend: 'claude',
+          answered_questions: ['disk-question'],
+          submitted_answers: {
+            'disk-question': [{ questionIndex: 0, selectedOptions: [0] }],
+            'shared-question': [{ questionIndex: 0, selectedOptions: [0] }],
+          },
+        },
+      ],
+    }
+    mockUseSessions.mockReturnValue({ data: sessionsData })
+    useChatStore.setState({
+      answeredQuestions: { 'session-1': new Set(['memory-question']) },
+      submittedAnswers: {
+        'session-1': {
+          'memory-question': [{ questionIndex: 0, selectedOptions: [1] }],
+          'shared-question': [{ questionIndex: 0, selectedOptions: [1] }],
+        },
+      },
+    })
+
+    const hydratingDuringAnsweredUpdate: boolean[] = []
+    const unsubscribe = useChatStore.subscribe((state, prev) => {
+      if (state.answeredQuestions !== prev.answeredQuestions) {
+        hydratingDuringAnsweredUpdate.push(isSessionStateHydrating())
+      }
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    const wrapper = createWrapper(queryClient)
+
+    try {
+      renderHook(() => useSessionStatePersistence(), { wrapper })
+
+      await waitFor(() => {
+        expect(
+          useChatStore
+            .getState()
+            .answeredQuestions['session-1']?.has('disk-question')
+        ).toBe(true)
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    const state = useChatStore.getState()
+    expect(state.answeredQuestions['session-1']).toEqual(
+      new Set(['disk-question', 'memory-question'])
+    )
+    expect(state.submittedAnswers['session-1']).toEqual({
+      'disk-question': [{ questionIndex: 0, selectedOptions: [0] }],
+      'memory-question': [{ questionIndex: 0, selectedOptions: [1] }],
+      // In-memory answer wins over the on-disk one
+      'shared-question': [{ questionIndex: 0, selectedOptions: [1] }],
+    })
+    // Applied inside the hydration guard so it is not written straight back
+    expect(hydratingDuringAnsweredUpdate).toEqual([true])
+    expect(isSessionStateHydrating()).toBe(false)
+  })
+
+  it('keeps in-memory answered questions when disk has no new ids', async () => {
+    const sessionsData: WorktreeSessions = {
+      worktree_id: 'worktree-1',
+      active_session_id: 'session-1',
+      version: 1,
+      sessions: [
+        {
+          id: 'session-1',
+          name: 'Question session',
+          order: 0,
+          created_at: 1,
+          updated_at: 2,
+          messages: [],
+          backend: 'claude',
+          answered_questions: ['question-1'],
+        },
+      ],
+    }
+    mockUseSessions.mockReturnValue({ data: sessionsData })
+    const inMemory = new Set(['question-1', 'question-2'])
+    useChatStore.setState({
+      answeredQuestions: { 'session-1': inMemory },
+      submittedAnswers: {},
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    const wrapper = createWrapper(queryClient)
+
+    renderHook(() => useSessionStatePersistence(), { wrapper })
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    // Stale disk list must not drop question-2 (no replacement at all)
+    expect(useChatStore.getState().answeredQuestions['session-1']).toBe(
+      inMemory
+    )
   })
 
   it('does not change a selected plan-waiting Codex session to review', async () => {

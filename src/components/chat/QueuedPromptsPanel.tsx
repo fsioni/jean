@@ -244,7 +244,7 @@ export const QueuedPromptsPanel = memo(function QueuedPromptsPanel({
                             e.stopPropagation()
                             saveEditing()
                           }}
-                          className="rounded p-0.5 text-muted-foreground hover:bg-green-600 hover:text-white disabled:opacity-40 transition-colors"
+                          className="rounded p-0.5 text-muted-foreground hover:bg-primary hover:text-primary-foreground disabled:opacity-40 transition-colors"
                         >
                           <Check className="h-3.5 w-3.5" />
                         </button>
@@ -303,7 +303,7 @@ export const QueuedPromptsPanel = memo(function QueuedPromptsPanel({
                                 e.stopPropagation()
                                 onSendNow(sessionId, msg.id)
                               }}
-                              className="rounded p-0.5 text-muted-foreground hover:bg-green-600 hover:text-white transition-colors"
+                              className="rounded p-0.5 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors"
                             >
                               <Play className="h-3.5 w-3.5" />
                             </button>

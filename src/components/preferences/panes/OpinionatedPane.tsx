@@ -141,7 +141,7 @@ const PLUGINS: PluginDefinition[] = [
     id: 'pstack',
     name: 'pstack',
     description:
-      'Poteto\'s cross-backend engineering skill pack. Adds Poteto Mode, architecture and investigation workflows, TDD, concise writing, verification, and focused parallel work.',
+      "Poteto's cross-backend engineering skill pack. Adds Poteto Mode, architecture and investigation workflows, TDD, concise writing, verification, and focused parallel work.",
     githubUrl: 'https://github.com/cursor/plugins/tree/main/pstack',
     scope: 'ai-backends',
     backends: [
@@ -271,7 +271,7 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
               variant="secondary"
               className="min-w-0 max-w-full gap-1 text-xs"
             >
-              <CheckCircle className="h-3 w-3 text-green-500" />
+              <CheckCircle className="h-3 w-3 text-success" />
               <span>{statusLabel}</span>
               {status.version &&
                 (plugin.scope === 'ai-backends' ? (

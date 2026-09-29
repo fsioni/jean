@@ -71,8 +71,7 @@ export function AgentWidget({
             <span
               className={cn(
                 'rounded bg-muted/50 px-1.5 py-0.5 text-xs',
-                allCompleted &&
-                  'bg-green-500/20 text-green-600 dark:text-green-400'
+                allCompleted && 'bg-success/20 text-success'
               )}
             >
               {completedCount}/{totalCount}
@@ -113,11 +112,11 @@ function AgentItem({ agent }: AgentItemProps) {
       <span className="mt-0.5 shrink-0">
         {agent.status === 'completed' ? (
           <CheckCircle2
-            className="h-4 w-4 text-green-500"
+            className="h-4 w-4 text-success"
             aria-label="Completed"
           />
         ) : agent.status === 'errored' ? (
-          <XCircle className="h-4 w-4 text-amber-500" aria-label="Errored" />
+          <XCircle className="h-4 w-4 text-warning" aria-label="Errored" />
         ) : agent.status === 'interrupted' ? (
           <CirclePause
             className="h-4 w-4 text-muted-foreground"

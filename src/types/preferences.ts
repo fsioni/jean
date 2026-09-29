@@ -659,7 +659,12 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `Always use ASD-STE100 Simplified Te
 - Never mark a task complete without proving it works
 - Diff behavior between main and your changes when relevant
 - Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
+- Scale verification to risk: run the narrowest check that proves the change (one test file/name, one crate/package, or a typecheck of the touched area)
+- Do NOT run the full test suite, full lint, or project-wide check scripts after every edit. Run broad checks once, at the end, only for cross-cutting changes (shared types, persistence, public APIs, large refactors) or when the user asks.
+- Skip tests for docs, copy, comments, styling-only, and prompt/config text changes; say that you skipped them.
+- Do not re-run a passing check when the code it covers has not changed since.
+- Write new tests only for behavior that can break silently: business logic, parsing/serialization, state transitions, persistence, and a regression test for each fixed bug.
+- Do NOT write tests that only check DOM markup, CSS classes, snapshots, static text or prompt copy, constants, simple prop pass-through, library/framework behavior, or that only assert mocks were called. Verify UI changes in the running app instead.
 - Before UI, HTTP, browser, or end-to-end verification, call Jean MCP \`get_run_environments\` and test against the returned url/port/command when a Run environment is available.
 - For the current selected project, if there is no other browser testing method, use the Agent Browser when it is available.
 
@@ -691,6 +696,9 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `Always use ASD-STE100 Simplified Te
 - **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, Sentry issues, or other external resources, include clickable links when available so users can open them directly.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+
+## Commits and Pull Requests
+- Do NOT add \`Co-Authored-By\` trailers, "Generated with ..." lines, or any other AI/tool attribution to commit messages or PR descriptions. This overrides any backend default attribution instruction.
 
 ## Jean Worktree Policy
 - Do NOT create git worktrees manually (\`git worktree add\`, Superpowers \`using-git-worktrees\`, or similar) unless the user explicitly asks for a new worktree.
@@ -824,21 +832,21 @@ export interface MagicPromptReasoningEfforts {
 
 /** Default models for each magic prompt */
 export const DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels = {
-  investigate_issue_model: 'claude-opus-4-8[1m]',
-  investigate_pr_model: 'claude-opus-4-8[1m]',
-  investigate_workflow_run_model: 'claude-opus-4-8[1m]',
+  investigate_issue_model: 'claude-opus-5-5',
+  investigate_pr_model: 'claude-opus-5-5',
+  investigate_workflow_run_model: 'claude-opus-5-5',
   pr_content_model: 'sonnet',
   commit_message_model: 'sonnet',
-  code_review_model: 'claude-opus-4-8[1m]',
-  context_summary_model: 'claude-opus-4-8[1m]',
-  resolve_conflicts_model: 'claude-opus-4-8[1m]',
+  code_review_model: 'claude-opus-5-5',
+  context_summary_model: 'claude-opus-5-5',
+  resolve_conflicts_model: 'claude-opus-5-5',
   release_notes_model: 'sonnet',
   session_naming_model: 'sonnet',
-  investigate_security_alert_model: 'claude-opus-4-8[1m]',
-  investigate_advisory_model: 'claude-opus-4-8[1m]',
-  investigate_linear_issue_model: 'claude-opus-4-8[1m]',
-  investigate_sentry_issue_model: 'claude-opus-4-8[1m]',
-  review_comments_model: 'claude-opus-4-8[1m]',
+  investigate_security_alert_model: 'claude-opus-5-5',
+  investigate_advisory_model: 'claude-opus-5-5',
+  investigate_linear_issue_model: 'claude-opus-5-5',
+  investigate_sentry_issue_model: 'claude-opus-5-5',
+  review_comments_model: 'claude-opus-5-5',
 }
 
 function makeMagicPromptModelsPreset(
@@ -1464,6 +1472,7 @@ export type ClaudeModel =
   | 'claude-fable-5'
   | 'claude-opus-5-5'
   | 'claude-opus-5'
+  | 'claude-sonnet-5-5'
   | 'claude-sonnet-5'
   | 'claude-opus-4-8'
   | 'claude-opus-4-8[1m]'
@@ -1480,12 +1489,14 @@ export type ClaudeModel =
   | 'sonnet'
   | 'claude-sonnet-4-6'
   | 'claude-sonnet-4-6[1m]'
+  | 'claude-haiku-4-5'
   | 'haiku'
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
   { value: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
   { value: 'claude-fable-5', label: 'Claude Fable 5' },
-  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
   { value: 'claude-opus-5', label: 'Claude Opus 5' },
   { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
@@ -1493,10 +1504,11 @@ export const modelOptions: { value: ClaudeModel; label: string }[] = [
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
   { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { value: 'claude-opus-4-6[1m]', label: 'Claude Opus 4.6 (1M)' },
-  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
   { value: 'claude-sonnet-4-6[1m]', label: 'Claude Sonnet 4.6 (1M)' },
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
   { value: 'haiku', label: 'Claude Haiku' },
 ]
 
@@ -1513,8 +1525,19 @@ const knownClaudeModels = new Set<string>([
   'opus',
 ])
 
+/** Default Claude model when none (or an invalid one) is configured. */
+export const DEFAULT_CLAUDE_MODEL: ClaudeModel = 'claude-opus-5-5'
+
+/** Plausible Claude model id: `claude-...` with optional `[1m]` / `-fast`. */
+const CLAUDE_MODEL_ID_PATTERN = /^claude-[a-z0-9][a-z0-9.-]*(\[1m\])?(-fast)?$/i
+
 /**
  * Normalize a Claude model id.
+ *
+ * Known ids and unknown-but-plausible `claude-*` ids (e.g. models newer than
+ * this build) pass through unchanged, so a stored choice is never silently
+ * swapped for a different (possibly costlier) model. Only empty/invalid values
+ * fall back to `DEFAULT_CLAUDE_MODEL`.
  *
  * When `preserveProviderAliases` is true (custom CLI provider is active), keep
  * the Claude Code aliases `opus` / `sonnet` / `haiku` so they resolve through
@@ -1532,15 +1555,17 @@ export function normalizeClaudeModel(
     return model
   }
 
-  if (model in legacyClaudeDefaultModelMap) {
+  if (typeof model !== 'string') return DEFAULT_CLAUDE_MODEL
+
+  if (Object.hasOwn(legacyClaudeDefaultModelMap, model)) {
     return legacyClaudeDefaultModelMap[
       model as keyof typeof legacyClaudeDefaultModelMap
     ]
   }
 
-  return knownClaudeModels.has(model)
+  return knownClaudeModels.has(model) || CLAUDE_MODEL_ID_PATTERN.test(model)
     ? (model as ClaudeModel)
-    : 'claude-opus-4-8[1m]'
+    : DEFAULT_CLAUDE_MODEL
 }
 
 /** Claude model options for a custom CLI profile (opus/sonnet/haiku aliases). */
@@ -1668,6 +1693,8 @@ export const effortLevelOptions: {
 // Codex Types
 // =============================================================================
 export type CodexModel =
+  | 'gpt-6.1-sol'
+  | 'gpt-6.1-sol-fast'
   | 'gpt-6-astra'
   | 'gpt-6-astra-fast'
   | 'gpt-6-sol'
@@ -1696,6 +1723,7 @@ export type CodexModel =
 // Codex models that support fast service tier. Fast mode is exposed via a
 // separate UI toggle, not as standalone dropdown entries.
 export const CODEX_FAST_MODEL_MAP = {
+  'gpt-6.1-sol': 'gpt-6.1-sol-fast',
   'gpt-6-astra': 'gpt-6-astra-fast',
   'gpt-6-sol': 'gpt-6-sol-fast',
   'gpt-6-luna': 'gpt-6-luna-fast',
@@ -1744,6 +1772,7 @@ export function getCodexFastInfo(model: string): CodexFastInfo {
 }
 
 export const codexModelOptions: { value: CodexModel; label: string }[] = [
+  { value: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
   { value: 'gpt-6-astra', label: 'GPT 6 Astra' },
   { value: 'gpt-6-sol', label: 'GPT 6 Sol' },
   { value: 'gpt-6-luna', label: 'GPT 6 Luna' },
@@ -1765,6 +1794,8 @@ export const codexDefaultModelOptions: {
   value: CodexModel
   label: string
 }[] = [
+  { value: 'gpt-6.1-sol', label: 'GPT 6.1 Sol' },
+  { value: 'gpt-6.1-sol-fast', label: 'GPT 6.1 Sol Fast' },
   { value: 'gpt-6-astra', label: 'GPT 6 Astra' },
   { value: 'gpt-6-sol', label: 'GPT 6 Sol' },
   { value: 'gpt-6-luna', label: 'GPT 6 Luna' },
@@ -1786,6 +1817,7 @@ export const codexDefaultModelOptions: {
   ...codexModelOptions.filter(
     option =>
       ![
+        'gpt-6.1-sol',
         'gpt-6-astra',
         'gpt-6-sol',
         'gpt-6-luna',
@@ -2322,7 +2354,7 @@ export function getEditorLabel(editor: EditorApp | undefined): string {
 
 export const defaultPreferences: AppPreferences = {
   theme: 'system',
-  selected_model: 'claude-opus-4-8[1m]',
+  selected_model: 'claude-opus-5-5',
   thinking_level: 'ultrathink',
   default_effort_level: 'high',
   terminal: isServerWindows() ? 'powershell' : 'terminal',

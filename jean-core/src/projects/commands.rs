@@ -4164,10 +4164,12 @@ pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), 
 
     let data = load_projects_data(&app)?;
 
-    let worktree = data
-        .find_worktree(&worktree_id)
-        .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?
-        .clone();
+    // Already gone from storage (e.g. load_projects_data drops worktrees whose folder
+    // was deleted outside Jean). Treat as a no-op so stale clients can remove the row.
+    let Some(worktree) = data.find_worktree(&worktree_id).cloned() else {
+        log::warn!("Worktree {worktree_id} not found in storage, treating delete as done");
+        return Ok(());
+    };
 
     log::trace!(
         "Found worktree: id={}, name={}, branch={}, path={}",
@@ -4243,7 +4245,15 @@ pub async fn delete_worktree(app: AppHandle, worktree_id: String) -> Result<(), 
     thread::spawn(move || {
         // Run teardown script before git operations (directory still exists)
         let mut teardown_output: Option<String> = None;
-        if let Some(ref script) = teardown_script {
+        // Skip teardown when the checkout is gone (folder deleted or left empty outside
+        // Jean). The script would fail and block cleanup of a worktree that no longer exists.
+        let checkout_exists = Path::new(&worktree_path).join(".git").exists();
+        if teardown_script.is_some() && !checkout_exists {
+            log::warn!(
+                "Background: Worktree checkout missing at {worktree_path}, skipping teardown script"
+            );
+        }
+        if let Some(ref script) = teardown_script.filter(|_| checkout_exists) {
             log::trace!("Background: Running teardown script for {worktree_name}");
             match git::run_teardown_script(&worktree_path, &project_path, &worktree_branch, script)
             {
@@ -4876,10 +4886,11 @@ pub async fn permanently_delete_worktree(
 
     let data = load_projects_data(&app)?;
 
-    let worktree = data
-        .find_worktree(&worktree_id)
-        .ok_or_else(|| format!("Worktree not found: {worktree_id}"))?
-        .clone();
+    // Already gone from storage (e.g. its folder was deleted outside Jean): nothing to do.
+    let Some(worktree) = data.find_worktree(&worktree_id).cloned() else {
+        log::warn!("Worktree {worktree_id} not found in storage, treating delete as done");
+        return Ok(());
+    };
 
     // Verify it's archived
     if worktree.archived_at.is_none() {
@@ -7741,38 +7752,11 @@ pub async fn cancel_create_pr_with_ai_content(worktree_path: String) -> Result<b
 }
 
 /// Extract structured output from Claude CLI stream-json response
-/// Handles the StructuredOutput tool call pattern used with --json-schema
+/// (`--json-schema`: final `result.structured_output`, else last StructuredOutput call).
 fn extract_structured_output(output: &str) -> Result<String, String> {
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let parsed: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if parsed.get("type").and_then(|t| t.as_str()) == Some("assistant") {
-            if let Some(message) = parsed.get("message") {
-                if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
-                    for block in content {
-                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                            && block.get("name").and_then(|n| n.as_str())
-                                == Some("StructuredOutput")
-                        {
-                            if let Some(input) = block.get("input") {
-                                return Ok(input.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Err("No structured output found in Claude response".to_string())
+    crate::chat::claude::extract_claude_structured_output(output)
+        .map(|value| value.to_string())
+        .ok_or_else(|| "No structured output found in Claude response".to_string())
 }
 
 fn extract_claude_stream_error(stdout: &str) -> Option<String> {
@@ -13067,10 +13051,11 @@ pub async fn delete_folder(app: AppHandle, folder_id: String) -> Result<(), Stri
 
     let mut data = load_projects_data(&app)?;
 
-    // Verify it's a folder
-    let folder = data
-        .find_project(&folder_id)
-        .ok_or_else(|| format!("Folder not found: {folder_id}"))?;
+    // Already gone: treat as deleted so stale entries can always be removed
+    let Some(folder) = data.find_project(&folder_id) else {
+        log::warn!("Folder not found, treating as already deleted: {folder_id}");
+        return Ok(());
+    };
 
     if !folder.is_folder {
         return Err("Cannot delete: not a folder".to_string());

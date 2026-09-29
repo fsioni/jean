@@ -224,9 +224,9 @@ function ReviewStateBadge({ state }: { state: string }) {
     <span
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
         isApproved
-          ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+          ? 'bg-success/15 text-success'
           : isChangesRequested
-            ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+            ? 'bg-destructive/15 text-destructive'
             : 'bg-muted text-muted-foreground'
       }`}
     >
@@ -882,7 +882,7 @@ export function ReviewCommentsDialog() {
                                   )}
                                 </p>
                                 {comment.isResolved && (
-                                  <span className="inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-green-500/15 text-green-600 dark:text-green-400">
+                                  <span className="inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-success/15 text-success">
                                     <CheckCircle2 className="size-2.5" />
                                     Resolved
                                   </span>

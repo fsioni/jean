@@ -47,14 +47,14 @@ type DiffStyle = 'split' | 'unified'
 function getStatusColor(type: string) {
   switch (type) {
     case 'new':
-      return 'text-green-500'
+      return 'text-success'
     case 'deleted':
-      return 'text-red-500'
+      return 'text-destructive'
     case 'rename-pure':
     case 'rename-changed':
-      return 'text-yellow-500'
+      return 'text-warning'
     default:
-      return 'text-blue-500'
+      return 'text-info'
   }
 }
 
@@ -201,10 +201,12 @@ export function FileDiffModal({
           {matchingFile && (
             <span className="text-muted-foreground font-normal text-xs ml-2">
               {stats.additions > 0 && (
-                <span className="text-green-500">+{stats.additions}</span>
+                <span className="text-success">+{stats.additions}</span>
               )}
               {stats.deletions > 0 && (
-                <span className="text-red-500 ml-1">-{stats.deletions}</span>
+                <span className="text-destructive ml-1">
+                  -{stats.deletions}
+                </span>
               )}
             </span>
           )}

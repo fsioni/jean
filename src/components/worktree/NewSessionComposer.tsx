@@ -53,7 +53,10 @@ import { useInstalledBackends } from '@/hooks/useInstalledBackends'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { invoke, listen } from '@/lib/transport'
 import { generateId } from '@/lib/uuid'
-import { parseServerResourceKey, serverResourceKey } from '@/lib/server-resource'
+import {
+  parseServerResourceKey,
+  serverResourceKey,
+} from '@/lib/server-resource'
 import { resolveDefaultModelForBackend } from '@/lib/session-defaults'
 import { usePatchPreferences, usePreferences } from '@/services/preferences'
 import { useChatStore } from '@/store/chat-store'
@@ -825,9 +828,8 @@ export function NewSessionComposer({
           canSwitchBackendWithTab
           focusChatShortcut=""
           showFocusHint={false}
-          clearOnSubmit={false}
           onSubmit={event => {
-            event.preventDefault()
+            event?.preventDefault()
             void handleCreate()
           }}
           onCancel={() => undefined}
@@ -895,11 +897,11 @@ export function NewSessionComposer({
                             aria-pressed={favoriteBranches.has(branch)}
                             className="ml-auto flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                             onPointerDown={event => {
-                              event.preventDefault()
+                              event?.preventDefault()
                               event.stopPropagation()
                             }}
                             onClick={event => {
-                              event.preventDefault()
+                              event?.preventDefault()
                               event.stopPropagation()
                               const key = `${projectId}:${branch}`
                               patchPreferences.mutate({

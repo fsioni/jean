@@ -125,7 +125,6 @@ interface ProjectsUIState {
   setProjectCanvasActiveFilter: (projectId: string, filter: string) => void
   setSidebarServerFilter: (serverId: string | null) => void
   setPinnedRecentSessionIds: (sessionIds: string[]) => void
-  toggleRecentSessionPinned: (sessionId: string) => void
   setGitHubDashboardFavoriteProjectIds: (projectIds: string[]) => void
   toggleGitHubDashboardFavoriteProject: (projectId: string) => void
 }
@@ -422,19 +421,6 @@ export const useProjectsStore = create<ProjectsUIState>()(
               : { pinnedRecentSessionIds: sessionIds },
           undefined,
           'setPinnedRecentSessionIds'
-        ),
-
-      toggleRecentSessionPinned: sessionId =>
-        set(
-          state => ({
-            pinnedRecentSessionIds: state.pinnedRecentSessionIds.includes(
-              sessionId
-            )
-              ? state.pinnedRecentSessionIds.filter(id => id !== sessionId)
-              : [...state.pinnedRecentSessionIds, sessionId],
-          }),
-          undefined,
-          'toggleRecentSessionPinned'
         ),
 
       setGitHubDashboardFavoriteProjectIds: projectIds =>

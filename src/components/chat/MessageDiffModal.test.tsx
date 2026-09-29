@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@/test/test-utils'
-import { MessageDiffModal, undoEdit, patchFromEdits } from './MessageDiffModal'
+import {
+  MessageDiffModal,
+  undoEdit,
+  applyEdit,
+  patchFromEdits,
+  reconstructFileStates,
+  type EditTool,
+} from './MessageDiffModal'
 import { useState, type ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 import { invoke } from '@/lib/transport'
@@ -78,6 +85,101 @@ describe('undoEdit', () => {
   it('leaves partial empty-new_string deletes unchanged', () => {
     // Without a deletion index we cannot uniquely re-insert.
     expect(undoEdit('remaining', 'deleted-part', '')).toBe('remaining')
+  })
+})
+
+describe('replace_all edits', () => {
+  it('undoes every occurrence when the edit used replace_all', () => {
+    expect(undoEdit('Y and Y and Y', 'X', 'Y', true)).toBe('X and X and X')
+  })
+
+  it('applies every occurrence forward when the edit used replace_all', () => {
+    expect(applyEdit('X X', edit('X', 'Y', { replace_all: true }))).toBe('Y Y')
+    expect(applyEdit('X X', edit('X', 'Y'))).toBe('Y X')
+  })
+})
+
+const FILE = '/repo/src/file.ts'
+
+function edit(
+  oldStr: string,
+  newStr: string,
+  extra: Partial<EditTool['input']> = {}
+): EditTool {
+  return {
+    name: 'Edit',
+    input: {
+      file_path: FILE,
+      old_string: oldStr,
+      new_string: newStr,
+      ...extra,
+    },
+  }
+}
+
+function write(content: string): EditTool {
+  return {
+    name: 'Write',
+    input: { file_path: FILE, old_string: '', new_string: content },
+  }
+}
+
+describe('reconstructFileStates', () => {
+  it('reverse-replays Edits from disk content', () => {
+    expect(reconstructFileStates('a\nc\n', [edit('b\n', 'c\n')], [])).toEqual({
+      before: 'a\nb\n',
+      after: 'a\nc\n',
+    })
+  })
+
+  it('handles a later Write after an earlier Edit (prior content known)', () => {
+    // Earlier message wrote the file, this message edited it, a later message
+    // overwrote everything — the disk no longer reflects this edit.
+    const states = reconstructFileStates(
+      'rewritten\n',
+      [edit('two\n', '2\n')],
+      [write('rewritten\n')],
+      [write('one\ntwo\n')]
+    )
+    expect(states).toEqual({ before: 'one\ntwo\n', after: 'one\n2\n' })
+  })
+
+  it('returns null after a later Write when prior content is unknown', () => {
+    // Caller falls back to patchFromEdits instead of diffing an empty file.
+    expect(
+      reconstructFileStates(
+        'rewritten\n',
+        [edit('two\n', '2\n')],
+        [write('rewritten\n')]
+      )
+    ).toBeNull()
+  })
+
+  it('handles a Write in this message followed by a later Edit', () => {
+    expect(
+      reconstructFileStates('a\nc\n', [write('a\nb\n')], [edit('b\n', 'c\n')])
+    ).toEqual({ before: '', after: 'a\nb\n' })
+  })
+
+  it('derives the after state from this Write when a later Write exists', () => {
+    expect(
+      reconstructFileStates(
+        'final\n',
+        [write('mine\n'), edit('mine', 'ours')],
+        [write('final\n')]
+      )
+    ).toEqual({ before: '', after: 'ours\n' })
+  })
+
+  it('diffs an overwrite Write against the previously known content', () => {
+    expect(
+      reconstructFileStates(
+        'new\nshared\n',
+        [write('new\nshared\n')],
+        [],
+        [write('old\nshared\n'), edit('shared', 'shared')]
+      )
+    ).toEqual({ before: 'old\nshared\n', after: 'new\nshared\n' })
   })
 })
 
@@ -375,5 +477,23 @@ describe('MessageDiffModal empty-file edits', () => {
     const diff = await screen.findByTestId('file-diff')
     expect(diff).toHaveTextContent('removed head')
     expect(screen.queryByText('No changes to display')).not.toBeInTheDocument()
+  })
+  it('diffs an overwrite Write against earlier known content', async () => {
+    mockFileContent = 'new line\nshared\n'
+    render(
+      <MessageDiffModal
+        isOpen
+        onClose={vi.fn()}
+        filePath="/repo/src/file.ts"
+        worktreePath="/repo"
+        edits={[write('new line\nshared\n')]}
+        previousEdits={[write('old line\nshared\n')]}
+      />
+    )
+
+    const diff = await screen.findByTestId('file-diff')
+    expect(diff).toHaveTextContent('old line')
+    expect(screen.getByText('+1')).toBeVisible()
+    expect(screen.getByText('-1')).toBeVisible()
   })
 })

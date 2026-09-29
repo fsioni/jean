@@ -49,6 +49,57 @@ describe('shouldLetChatInputHandleAction', () => {
       false
     )
   })
+
+  it('lets Cmd/Ctrl+Arrow move the caret when it is not at the text edge', () => {
+    const input = document.createElement('textarea')
+    input.value = 'draft'
+
+    input.setSelectionRange(2, 2)
+    expect(shouldLetChatInputHandleAction('next_session', input, false)).toBe(
+      true
+    )
+    expect(
+      shouldLetChatInputHandleAction('previous_session', input, false)
+    ).toBe(true)
+
+    // A text selection always belongs to the field
+    input.setSelectionRange(0, 5)
+    expect(shouldLetChatInputHandleAction('next_session', input, false)).toBe(
+      true
+    )
+  })
+
+  it('switches sessions when the caret is already at the text edge', () => {
+    const input = document.createElement('textarea')
+    input.value = 'draft'
+
+    input.setSelectionRange(5, 5)
+    expect(shouldLetChatInputHandleAction('next_session', input, false)).toBe(
+      false
+    )
+    expect(
+      shouldLetChatInputHandleAction('previous_session', input, false)
+    ).toBe(true)
+
+    input.setSelectionRange(0, 0)
+    expect(
+      shouldLetChatInputHandleAction('previous_session', input, false)
+    ).toBe(false)
+    expect(shouldLetChatInputHandleAction('next_session', input, false)).toBe(
+      true
+    )
+  })
+
+  it('switches sessions from an empty text field or a non-text target', () => {
+    const input = document.createElement('textarea')
+
+    expect(shouldLetChatInputHandleAction('next_session', input, false)).toBe(
+      false
+    )
+    expect(
+      shouldLetChatInputHandleAction('previous_session', document.body, false)
+    ).toBe(false)
+  })
 })
 
 const { mockInvoke, mockListen, mockDisposeTerminal, mockEnvironment } =

@@ -1,7 +1,6 @@
 import type {
   IndicatorShape,
   IndicatorStatus,
-  IndicatorVariant,
 } from '@/components/ui/status-indicator'
 import {
   isAskUserQuestion,
@@ -164,7 +163,6 @@ export const statusConfig: Record<
   {
     label: string
     indicatorStatus: IndicatorStatus
-    indicatorVariant?: IndicatorVariant
     indicatorShape?: IndicatorShape
   }
 > = {
@@ -183,12 +181,10 @@ export const statusConfig: Record<
   yoloing: {
     label: 'Yoloing',
     indicatorStatus: 'running',
-    indicatorVariant: 'destructive',
   },
   reviewing: {
     label: 'Reviewing',
     indicatorStatus: 'running',
-    indicatorVariant: 'loading',
   },
   waiting: {
     label: 'Waiting',
@@ -508,13 +504,18 @@ export function computeSessionCardData(
     }
 
     // Check the last assistant message for pending questions/plans
+    let hasFollowUpUserMessage = false
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]
+      if (msg?.role === 'user') hasFollowUpUserMessage = true
       if (msg?.role === 'assistant' && msg.tool_calls) {
-        // Check for unanswered questions
-        hasPendingQuestion = msg.tool_calls.some(
-          tc => isAskUserQuestion(tc) && !answeredSet?.has(tc.id)
-        )
+        // Check for unanswered questions (a later user message answers them,
+        // matching MessageItem)
+        hasPendingQuestion =
+          !hasFollowUpUserMessage &&
+          msg.tool_calls.some(
+            tc => isAskUserQuestion(tc) && !answeredSet?.has(tc.id)
+          )
         // Check for unanswered plan approval
         const hasExitPlan = msg.tool_calls.some(isPlanToolCall)
         if (hasExitPlan && !msg.plan_approved && !approvedPlanIds.has(msg.id)) {

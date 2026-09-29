@@ -9,6 +9,7 @@ import {
   Server,
   Settings,
   Settings2,
+  X,
 } from '@/components/icons/reicon'
 import { Input } from '@/components/ui/input'
 import { useSidebarWidth } from '@/components/layout/SidebarWidthContext'
@@ -143,27 +144,39 @@ export function ProjectsSidebar() {
     <div className="flex h-full flex-col">
       {/* Content */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div
-          className="grid grid-cols-2 border-b border-border/40 px-2 pt-1"
-          role="tablist"
-          aria-label="Sidebar view"
-        >
-          {(['projects', 'recent'] as const).map(tab => (
+        <div className="flex items-center border-b border-border/40 px-2 pt-1">
+          <div
+            className="grid flex-1 grid-cols-2"
+            role="tablist"
+            aria-label="Sidebar view"
+          >
+            {(['projects', 'recent'] as const).map(tab => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab}
+                className={`relative h-8 text-xs font-medium capitalize transition-colors ${
+                  activeTab === tab
+                    ? 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {isMobile && (
             <button
-              key={tab}
               type="button"
-              role="tab"
-              aria-selected={activeTab === tab}
-              className={`relative h-8 text-xs font-medium capitalize transition-colors ${
-                activeTab === tab
-                  ? 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-              onClick={() => setActiveTab(tab)}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              onClick={() => closeMobileSidebarIfNeeded(isMobile)}
+              aria-label="Close sidebar"
             >
-              {tab}
+              <X className="size-4" />
             </button>
-          ))}
+          )}
         </div>
         {activeTab === 'projects' ? (
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

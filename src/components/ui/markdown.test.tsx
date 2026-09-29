@@ -17,6 +17,20 @@ describe('Markdown', () => {
     )
   })
 
+  it('opens inline-code file paths in the viewer on click', () => {
+    useChatStore.setState({ activeWorktreePath: '/repo/worktree' })
+    useUIStore.getState().setViewingFilePath(null)
+
+    render(<Markdown>{'See `docs/hello.txt` and `bun run dev`.'}</Markdown>)
+    fireEvent.click(screen.getByText('bun run dev'))
+    expect(useUIStore.getState().viewingFilePath).toBeNull()
+
+    fireEvent.click(screen.getByText('docs/hello.txt'))
+    expect(useUIStore.getState().viewingFilePath).toBe(
+      '/repo/worktree/docs/hello.txt'
+    )
+  })
+
   it('preserves ordered-list start attributes from parsed markdown', () => {
     const { container } = render(
       <Markdown>{'1. First\n\nInterlude\n\n2. Second'}</Markdown>

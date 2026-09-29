@@ -43,14 +43,10 @@ export function GitStatusBadges({
   const syncTooltip = (() => {
     const parts: string[] = []
     if (behindCount > 0) {
-      parts.push(
-        `pull ${behindCount} commit${behindCount > 1 ? 's' : ''}`
-      )
+      parts.push(`pull ${behindCount} commit${behindCount > 1 ? 's' : ''}`)
     }
     if (unpushedCount > 0) {
-      parts.push(
-        `push ${unpushedCount} commit${unpushedCount > 1 ? 's' : ''}`
-      )
+      parts.push(`push ${unpushedCount} commit${unpushedCount > 1 ? 's' : ''}`)
     }
     if (parts.length === 0) return 'Sync with remote'
     return `Sync: ${parts.join(', ')}`
@@ -66,9 +62,9 @@ export function GitStatusBadges({
               onClick={onDiffClick}
               className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 text-xs font-medium leading-none transition-opacity"
             >
-              <span className="text-green-500">+{diffAdded}</span>
+              <span className="text-success">+{diffAdded}</span>
               <span className="text-muted-foreground">/</span>
-              <span className="text-red-500">-{diffRemoved}</span>
+              <span className="text-destructive">-{diffRemoved}</span>
             </button>
           </TooltipTrigger>
           <TooltipContent>{`+${diffAdded}/-${diffRemoved} lines — click to view diff`}</TooltipContent>
@@ -82,9 +78,9 @@ export function GitStatusBadges({
               onClick={onBranchDiffClick}
               className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 text-xs font-medium leading-none hover:opacity-70 transition-opacity"
             >
-              <span className="text-green-500">+{branchDiffAdded}</span>
+              <span className="text-success">+{branchDiffAdded}</span>
               <span className="text-muted-foreground">/</span>
-              <span className="text-red-500">-{branchDiffRemoved}</span>
+              <span className="text-destructive">-{branchDiffRemoved}</span>
             </button>
           </TooltipTrigger>
           <TooltipContent>{`+${branchDiffAdded}/-${branchDiffRemoved} lines vs base — click to view diff`}</TooltipContent>
@@ -96,7 +92,7 @@ export function GitStatusBadges({
             <button
               type="button"
               onClick={onSync}
-              className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-500 transition-colors hover:bg-violet-500/20"
+              className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 transition-colors hover:bg-violet-500/20"
             >
               <ArrowDownUp className="h-3 w-3" />
               {behindCount > 0 && unpushedCount > 0
@@ -131,7 +127,7 @@ export function GitStatusBadges({
                 <button
                   type="button"
                   onClick={onPush}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] font-medium text-orange-500 transition-colors hover:bg-orange-500/20"
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20"
                 >
                   <ArrowUp className="h-3 w-3" />
                   {unpushedCount}

@@ -716,9 +716,7 @@ export function MobileSettingsMenu({
               <Plug
                 className={cn(
                   'h-4 w-4',
-                  activeMcpCount > 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-muted-foreground'
+                  activeMcpCount > 0 ? 'text-success' : 'text-muted-foreground'
                 )}
               />
               <span>MCP</span>
@@ -734,7 +732,7 @@ export function MobileSettingsMenu({
                   className={cn(
                     'mr-2 h-4 w-4',
                     activeMcpCount > 0
-                      ? 'text-emerald-600 dark:text-emerald-400'
+                      ? 'text-success'
                       : 'text-muted-foreground'
                   )}
                 />
@@ -976,7 +974,7 @@ export function MobileSettingsMenu({
                         handleViewIssue(ctx)
                       }}
                     >
-                      <CircleDot className="h-4 w-4 text-green-500" />
+                      <CircleDot className="h-4 w-4 text-success" />
                       <span className="truncate">
                         #{ctx.number} {ctx.title}
                       </span>
@@ -1011,7 +1009,7 @@ export function MobileSettingsMenu({
                         handleViewPR(ctx)
                       }}
                     >
-                      <GitPullRequest className="h-4 w-4 text-green-500" />
+                      <GitPullRequest className="h-4 w-4 text-success" />
                       <span className="truncate">
                         #{ctx.number} {ctx.title}
                       </span>
@@ -1047,7 +1045,7 @@ export function MobileSettingsMenu({
                         handleViewSecurityAlert(ctx)
                       }}
                     >
-                      <Shield className="h-4 w-4 text-orange-500" />
+                      <Shield className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         #{ctx.number} {ctx.packageName} ({ctx.severity})
                       </span>
@@ -1086,7 +1084,7 @@ export function MobileSettingsMenu({
                         handleViewAdvisory(ctx)
                       }}
                     >
-                      <ShieldAlert className="h-4 w-4 text-orange-500" />
+                      <ShieldAlert className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         {ctx.ghsaId} — {ctx.summary}
                       </span>
@@ -1126,7 +1124,7 @@ export function MobileSettingsMenu({
                         handleViewLinear(ctx)
                       }}
                     >
-                      <LinearIcon className="h-4 w-4 text-violet-500" />
+                      <LinearIcon className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                       <span className="truncate">
                         {ctx.identifier} {ctx.title}
                       </span>
@@ -1167,7 +1165,7 @@ export function MobileSettingsMenu({
                         handleViewSentry(ctx)
                       }}
                     >
-                      <Sentry className="h-4 w-4 text-orange-500" />
+                      <Sentry className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         {ctx.shortId} {ctx.title}
                       </span>
@@ -1209,7 +1207,7 @@ export function MobileSettingsMenu({
                         handleViewSavedContext(ctx)
                       }}
                     >
-                      <FolderOpen className="h-4 w-4 text-blue-500" />
+                      <FolderOpen className="h-4 w-4 text-info" />
                       <span className="truncate">{ctx.name || ctx.slug}</span>
                     </DropdownMenuItem>
                   ))}
@@ -1352,7 +1350,7 @@ export function MobileSettingsMenu({
                     className={cn(
                       'h-3.5 w-3.5',
                       favoritePackageScriptSet.has(script.name) &&
-                        'fill-yellow-500 text-yellow-500'
+                        'fill-warning text-warning'
                     )}
                   />
                 </button>

@@ -223,19 +223,20 @@ export function CommandPalette() {
                 onSelect={() => handleCommandSelect(cmd.id)}
                 className="items-start"
               >
-                {cmd.avatarUrl ? (
-                  <img
-                    src={cmd.avatarUrl}
-                    alt={cmd.label}
-                    className="mt-0.5 size-4 shrink-0 rounded object-cover"
-                  />
-                ) : (
-                  <div className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded bg-muted-foreground/20">
-                    <span className="text-[10px] font-medium uppercase">
+                {/* One line tall so the icon centers on the label's first line */}
+                <span className="flex h-lh shrink-0 items-center leading-snug">
+                  {cmd.avatarUrl ? (
+                    <img
+                      src={cmd.avatarUrl}
+                      alt={cmd.label}
+                      className="size-4 rounded object-cover"
+                    />
+                  ) : (
+                    <span className="flex size-4 items-center justify-center rounded bg-muted-foreground/20 text-[10px] leading-none font-medium uppercase">
                       {cmd.avatarFallback}
                     </span>
-                  </div>
-                )}
+                  )}
+                </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="truncate leading-snug">{cmd.label}</span>
                   {cmd.description && (
@@ -261,7 +262,9 @@ export function CommandPalette() {
                   className="items-start"
                 >
                   {command.icon && (
-                    <command.icon className="mt-0.5 size-4 shrink-0" />
+                    <span className="flex h-lh shrink-0 items-center leading-snug">
+                      <command.icon className="size-4" />
+                    </span>
                   )}
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate leading-snug">

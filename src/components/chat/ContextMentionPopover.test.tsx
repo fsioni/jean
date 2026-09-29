@@ -166,7 +166,7 @@ describe('ContextMentionPopover', () => {
 
     fireEvent.click(
       screen.getByRole('button', {
-        name: 'Add PR #45 and insert investigation prompt',
+        name: 'Add PR #45 and start investigating',
       })
     )
     expect(onSelectContext).toHaveBeenCalledWith(items[1], true)

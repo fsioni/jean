@@ -247,6 +247,59 @@ pub async fn list_github_issues(
     })
 }
 
+#[derive(Deserialize)]
+struct IssueLabelsEntry {
+    number: u32,
+    #[serde(default)]
+    labels: Vec<GitHubLabel>,
+}
+
+/// Lightweight open-issue listing for Mr. Robot scans: numbers and labels only.
+///
+/// Unlike `list_github_issues` this skips bodies and the search-API total count
+/// (search has a low rate limit), and runs `gh` off the async runtime.
+pub async fn list_open_issue_labels(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<crate::auto_fix::types::AutoFixIssueCandidate>, String> {
+    let gh = resolve_gh_binary(&app);
+    let output = tokio::task::spawn_blocking(move || {
+        gh_command(&gh, &project_path)
+            .args([
+                "issue",
+                "list",
+                "--json",
+                "number,labels",
+                "-L",
+                "1000",
+                "--state",
+                "open",
+            ])
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Failed to run gh issue list: {e}"))?
+    .map_err(|e| format!("Failed to run gh issue list: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_gh_cli_auth_error(&stderr) {
+            return Err("GitHub CLI not authenticated. Run 'gh auth login' first.".to_string());
+        }
+        return Err(format!("gh issue list failed: {}", stderr.trim()));
+    }
+
+    let entries: Vec<IssueLabelsEntry> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh issue list output: {e}"))?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| crate::auto_fix::types::AutoFixIssueCandidate {
+            number: entry.number,
+            labels: entry.labels.into_iter().map(|label| label.name).collect(),
+        })
+        .collect())
+}
+
 /// Get accurate total issue count from GitHub search API
 ///
 /// Uses `gh api search/issues` to get the real total count without fetching all issues.

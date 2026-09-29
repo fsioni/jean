@@ -144,7 +144,6 @@ import {
   getCurrentPromptWindow,
   remapIndexForWindow,
 } from './compact-history-window'
-import { CodexGoalBanner } from './CodexGoalBanner'
 import { StreamingStatusBar } from './StreamingStatusBar'
 import { ChatErrorFallback } from './ChatErrorFallback'
 import { logger } from '@/lib/logger'
@@ -1062,13 +1061,6 @@ function ChatWindowContent({
         defaultExecutionMode)
       : defaultExecutionMode
   )
-  // Executing mode - the mode the currently-running prompt was sent with
-  // Uses activeSessionId for immediate status feedback (not deferred)
-  const executingMode = useChatStore(state =>
-    activeSessionId ? state.executingModes[activeSessionId] : undefined
-  )
-  // Streaming execution mode - uses executing mode when sending, otherwise selected mode
-  const streamingExecutionMode = executingMode ?? executionMode
   // Whether this session is waiting for user input (AskUserQuestion/ExitPlanMode)
   const rawIsWaitingForInput = useChatStore(state =>
     activeSessionId
@@ -1619,7 +1611,6 @@ function ChatWindowContent({
     createSession,
     queryClient,
     markAtBottom,
-    sessionsData,
     clearInputDraft,
     clearChatInputState: () => clearChatInputStateRef.current?.(),
   })
@@ -1644,6 +1635,49 @@ function ChatWindowContent({
       queuedAt: Date.now(),
     })
   }, [getMcpConfig, sendMessageNow])
+
+  // Claude's goal lives in the CLI session: queue `/goal clear` (a local CLI
+  // command, no model turn) and cancel a running goal loop so the queue drains.
+  const handleClearClaudeGoal = useCallback(async () => {
+    if (!activeSessionId) return
+    const wasSending = useChatStore.getState().isSending(activeSessionId)
+    sendMessageNow({
+      id: generateId(),
+      message: '/goal clear',
+      pendingImages: [],
+      pendingFiles: [],
+      pendingSkills: [],
+      pendingTextFiles: [],
+      model: selectedModelRef.current,
+      provider: selectedProviderRef.current,
+      executionMode: executionModeRef.current,
+      thinkingLevel: selectedThinkingLevelRef.current,
+      effortLevel: useAdaptiveThinkingRef.current
+        ? selectedEffortLevelRef.current
+        : undefined,
+      mcpConfig: getMcpConfig(),
+      backend: selectedBackendRef.current,
+      queuedAt: Date.now(),
+    })
+    if (wasSending) await handleCancel()
+  }, [activeSessionId, getMcpConfig, handleCancel, sendMessageNow])
+
+  // Shared by the goal badge on the /goal message: clear Jean's goal mirror,
+  // then (Claude only) clear the goal kept in the CLI session.
+  const handleClearGoal = useCallback(async () => {
+    if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
+    await invoke('codex_goal_clear', {
+      worktreeId: activeWorktreeId,
+      worktreePath: activeWorktreePath,
+      sessionId: activeSessionId,
+    })
+    if (selectedBackendRef.current === 'claude') await handleClearClaudeGoal()
+  }, [
+    activeSessionId,
+    activeWorktreeId,
+    activeWorktreePath,
+    handleClearClaudeGoal,
+  ])
 
   const handleCommentAndCloseIssue = useCallback(() => {
     if (!loadedIssueContexts?.length) {
@@ -2445,18 +2479,20 @@ function ChatWindowContent({
                   <div className="flex h-full min-h-0 flex-col">
                     {/* Messages area */}
                     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-                      {/* Session label badge - absolute positioned to avoid covering content */}
-                      {sessionLabel && (
-                        <span
-                          className="absolute top-2 right-4 z-20 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
-                          style={{
-                            backgroundColor: sessionLabel.color,
-                            color: getLabelTextColor(sessionLabel.color),
-                          }}
-                        >
-                          {sessionLabel.name}
-                        </span>
-                      )}
+                      {/* Top-right badges (session label) - absolute positioned to avoid covering content */}
+                      <div className="absolute top-2 right-4 z-20 flex items-center gap-2">
+                        {sessionLabel && (
+                          <span
+                            className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              backgroundColor: sessionLabel.color,
+                              color: getLabelTextColor(sessionLabel.color),
+                            }}
+                          >
+                            {sessionLabel.name}
+                          </span>
+                        )}
+                      </div>
                       <ChatSearchBar scrollContainerRef={scrollViewportRef} />
                       {/* Bottom fade gradient so messages don't hard-cut at the input area */}
                       <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-8 bg-gradient-to-b from-transparent to-background" />
@@ -2530,12 +2566,6 @@ function ChatWindowContent({
                                   }
                                 />
                               )}
-                            <CodexGoalBanner
-                              sessionId={activeSessionId ?? null}
-                              worktreeId={activeWorktreeId ?? null}
-                              worktreePath={activeWorktreePath ?? null}
-                              isCodexBackend={isCodexBackend}
-                            />
                             {isLoading ||
                             isSessionsLoading ||
                             isSessionSwitching ? (
@@ -2613,6 +2643,7 @@ function ChatWindowContent({
                                     areQuestionsSkipped={areQuestionsSkipped}
                                     isFindingFixed={isFindingFixed}
                                     onCopyToInput={handleCopyToInput}
+                                    onClearGoal={handleClearGoal}
                                     shouldScrollToBottom={isAtBottom}
                                     onScrollToBottomHandled={
                                       handleScrollToBottomHandled
@@ -2693,6 +2724,7 @@ function ChatWindowContent({
                                     areQuestionsSkipped={areQuestionsSkipped}
                                     isFindingFixed={isFindingFixed}
                                     onCopyToInput={handleCopyToInput}
+                                    onClearGoal={handleClearGoal}
                                     shouldScrollToBottom={isAtBottom}
                                     onScrollToBottomHandled={
                                       handleScrollToBottomHandled
@@ -2758,9 +2790,6 @@ function ChatWindowContent({
                                 <StreamingStatusBar
                                   isSending={isSending}
                                   sendStartedAt={sendStartedAt}
-                                  streamingExecutionMode={
-                                    streamingExecutionMode
-                                  }
                                   restoredRunStatus={
                                     !isSending &&
                                     !isWaitingForInput &&

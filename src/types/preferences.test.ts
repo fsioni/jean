@@ -118,8 +118,8 @@ describe('magic prompt preference resolvers', () => {
     expect(defaultPreferences.default_grok_reasoning_effort).toBe('high')
   })
 
-  it('defaults Claude to Opus 4.8 and Codex/OpenCode to GPT 5.6 Sol', () => {
-    expect(defaultPreferences.selected_model).toBe('claude-opus-4-8[1m]')
+  it('defaults Claude to Opus 5.5 and Codex/OpenCode to GPT 5.6 Sol', () => {
+    expect(defaultPreferences.selected_model).toBe('claude-opus-5-5')
     expect(defaultPreferences.selected_codex_model).toBe('gpt-5.6-sol')
     expect(defaultPreferences.selected_opencode_model).toBe(
       'opencode/gpt-5.6-sol'
@@ -148,7 +148,7 @@ describe('magic prompt preference resolvers', () => {
   it('provides dedicated defaults for Sentry investigations', () => {
     expect(
       defaultPreferences.magic_prompt_models.investigate_sentry_issue_model
-    ).toBe('claude-opus-4-8[1m]')
+    ).toBe('claude-opus-5-5')
     expect(
       defaultPreferences.magic_prompt_modes.investigate_sentry_issue_mode
     ).toBe('plan')

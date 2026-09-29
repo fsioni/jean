@@ -44,6 +44,10 @@ import { FilePathCopyRow } from './FilePathCopyRow'
 // Lazy load CodeEditor (Pierre File + edit mode) so the main bundle stays lean
 const CodeEditor = lazy(() => import('@/components/ui/code-editor'))
 
+// Match the dialog close (X) button: same height, grey icon, square on mobile
+const HEADER_ICON_BUTTON_CLASS =
+  'h-7 text-muted-foreground max-sm:w-7 max-sm:px-0'
+
 function isMarkdownFile(filename: string | null | undefined): boolean {
   if (!filename) return false
   return /\.(md|markdown)$/i.test(filename)
@@ -323,7 +327,7 @@ export function FileContentModal({
         overlayClassName="z-[90]"
         className="!w-screen !h-dvh !max-w-screen !max-h-none !rounded-none p-0 sm:!w-[calc(100vw-4rem)] sm:!max-w-[calc(100vw-4rem)] sm:!h-auto sm:max-h-[85vh] sm:!rounded-lg sm:p-4 bg-background/95 z-[90]"
       >
-        <div className="flex flex-col gap-1 px-4 pt-4 pr-14 sm:px-0 sm:pt-0 sm:pr-8">
+        <div className="flex min-w-0 flex-col gap-1 px-4 pt-4 pr-14 sm:px-0 sm:pt-0 sm:pr-8">
           <DialogTitle>
             <div className="flex items-center gap-2">
               {isImage ? (
@@ -341,6 +345,7 @@ export function FileContentModal({
                       <Button
                         variant="ghost"
                         size="sm"
+                        className={HEADER_ICON_BUTTON_CLASS}
                         onClick={handleToggleEdit}
                         disabled={isSaving}
                       >
@@ -350,6 +355,7 @@ export function FileContentModal({
                       <Button
                         variant="default"
                         size="sm"
+                        className="h-7 max-sm:w-7 max-sm:px-0"
                         onClick={handleSave}
                         disabled={!hasChanges || isSaving}
                       >
@@ -365,6 +371,7 @@ export function FileContentModal({
                     <Button
                       variant="ghost"
                       size="sm"
+                      className={HEADER_ICON_BUTTON_CLASS}
                       onClick={handleToggleEdit}
                     >
                       <Pencil className="h-4 w-4 sm:mr-1" />
@@ -375,6 +382,7 @@ export function FileContentModal({
                     <Button
                       variant="ghost"
                       size="sm"
+                      className={HEADER_ICON_BUTTON_CLASS}
                       onClick={handleOpenExternal}
                     >
                       <ExternalLink className="h-4 w-4 sm:mr-1" />

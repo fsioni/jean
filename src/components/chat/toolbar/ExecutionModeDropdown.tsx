@@ -39,7 +39,7 @@ const MODE_META: Record<
     label: 'Plan',
     description: 'Read-only',
     icon: ClipboardList,
-    iconClassName: 'text-yellow-600 dark:text-yellow-400',
+    iconClassName: 'text-warning',
   },
   build: {
     label: 'Build',
@@ -50,9 +50,8 @@ const MODE_META: Record<
     label: 'Yolo',
     description: 'No limits!',
     icon: Zap,
-    iconClassName: 'text-red-500 dark:text-red-400',
-    itemClassName:
-      'text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400',
+    iconClassName: 'text-destructive',
+    itemClassName: 'text-destructive focus:text-destructive',
   },
 }
 

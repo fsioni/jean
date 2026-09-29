@@ -256,18 +256,6 @@ describe('ProjectsStore', () => {
       expect(useProjectsStore.getState().sidebarActiveTab).toBe('recent')
     })
 
-    it('pins and unpins a recent session', () => {
-      const { toggleRecentSessionPinned } = useProjectsStore.getState()
-
-      toggleRecentSessionPinned('session-1')
-      expect(useProjectsStore.getState().pinnedRecentSessionIds).toEqual([
-        'session-1',
-      ])
-
-      toggleRecentSessionPinned('session-1')
-      expect(useProjectsStore.getState().pinnedRecentSessionIds).toEqual([])
-    })
-
     it('stores worktree sort mode per project', () => {
       const { setProjectCanvasWorktreeSortMode } = useProjectsStore.getState()
 

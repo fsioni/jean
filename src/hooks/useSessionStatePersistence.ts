@@ -380,22 +380,38 @@ export function useSessionStatePersistence() {
       // Build updated state
       const updates: Partial<typeof currentState> = {}
 
-      // Load answered questions
+      // Load answered questions. Merge with in-memory state: sessionsData can
+      // be up to 5 minutes stale, and replacing would drop answers (e.g. a
+      // skip) made since the last fetch, re-showing old questions (#779).
       if (session.answered_questions && session.answered_questions.length > 0) {
-        updates.answeredQuestions = {
-          ...currentState.answeredQuestions,
-          [activeSessionId]: new Set(session.answered_questions),
+        const inMemory = currentState.answeredQuestions[activeSessionId]
+        if (
+          !inMemory ||
+          session.answered_questions.some(id => !inMemory.has(id))
+        ) {
+          updates.answeredQuestions = {
+            ...currentState.answeredQuestions,
+            [activeSessionId]: new Set([
+              ...session.answered_questions,
+              ...(inMemory ?? []),
+            ]),
+          }
         }
       }
 
-      // Load submitted answers
+      // Load submitted answers (in-memory answers win over on-disk ones)
       if (
         session.submitted_answers &&
         Object.keys(session.submitted_answers).length > 0
       ) {
-        updates.submittedAnswers = {
-          ...currentState.submittedAnswers,
-          [activeSessionId]: session.submitted_answers,
+        const inMemory = currentState.submittedAnswers[activeSessionId] ?? {}
+        if (
+          Object.keys(session.submitted_answers).some(id => !(id in inMemory))
+        ) {
+          updates.submittedAnswers = {
+            ...currentState.submittedAnswers,
+            [activeSessionId]: { ...session.submitted_answers, ...inMemory },
+          }
         }
       }
 
@@ -592,9 +608,15 @@ export function useSessionStatePersistence() {
         }
       }
 
-      // Apply all updates at once
+      // Apply all updates at once. Hydration guard: this is disk state, so
+      // useImmediateSessionStateSave must not write it straight back.
       if (Object.keys(updates).length > 0) {
-        useChatStore.setState(updates)
+        beginSessionStateHydration()
+        try {
+          useChatStore.setState(updates)
+        } finally {
+          endSessionStateHydration()
+        }
       }
 
       // Store initial state as last saved to avoid immediate re-save

@@ -627,6 +627,7 @@ fn upsert_codex_plan_tool_call(
         input,
         output: None,
         parent_tool_use_id: None,
+        is_error: None,
     });
     content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: tool_id.to_string(),
@@ -684,6 +685,10 @@ fn emit_codex_plan_tool_call(
 /// to end in `-fast` are left unchanged.
 pub(crate) fn split_fast_model(model: &str) -> (&str, bool) {
     match model {
+        "gpt-6.1-sol-fast" => ("gpt-6.1-sol", true),
+        "gpt-6-astra-fast" => ("gpt-6-astra", true),
+        "gpt-6-sol-fast" => ("gpt-6-sol", true),
+        "gpt-6-luna-fast" => ("gpt-6-luna", true),
         "gpt-5.6" | "gpt-5-6-sol" => ("gpt-5.6-sol", false),
         "gpt-5-6-terra" => ("gpt-5.6-terra", false),
         "gpt-5-6-luna" => ("gpt-5.6-luna", false),
@@ -3634,6 +3639,7 @@ fn upsert_file_change_tool_call(
             input: changes,
             output: None,
             parent_tool_use_id: None,
+            is_error: None,
         });
         content_blocks.push(ContentBlock::ToolUse {
             tool_call_id: tool_id.clone(),
@@ -3692,6 +3698,7 @@ fn process_codex_event(
                         input: serde_json::json!({ "command": command }),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -3776,6 +3783,7 @@ fn process_codex_event(
                         input: arguments.clone(),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -3821,6 +3829,7 @@ fn process_codex_event(
                         input: input.clone(),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -3861,6 +3870,7 @@ fn process_codex_event(
                         input: input.clone(),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -3909,6 +3919,7 @@ fn process_codex_event(
                         input: arguments.clone(),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -3979,6 +3990,7 @@ fn process_codex_event(
                         input: input.clone(),
                         output: None,
                         parent_tool_use_id: None,
+                        is_error: None,
                     });
                     content_blocks.push(ContentBlock::ToolUse {
                         tool_call_id: tool_id.clone(),
@@ -4210,6 +4222,7 @@ fn process_codex_event(
                                 input: input.clone(),
                                 output: Some("completed".to_string()),
                                 parent_tool_use_id: None,
+                                is_error: None,
                             });
                             content_blocks.push(ContentBlock::ToolUse {
                                 tool_call_id: tool_id.clone(),
@@ -4255,6 +4268,7 @@ fn process_codex_event(
                             input: input.clone(),
                             output: (!output.is_empty()).then_some(output.clone()),
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4641,6 +4655,7 @@ pub fn parse_codex_run_to_message(
                             input: serde_json::json!({ "command": command }),
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4687,6 +4702,7 @@ pub fn parse_codex_run_to_message(
                             input: arguments,
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4713,6 +4729,7 @@ pub fn parse_codex_run_to_message(
                             input: item.clone(),
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4734,6 +4751,7 @@ pub fn parse_codex_run_to_message(
                             input: item.clone(),
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4757,6 +4775,7 @@ pub fn parse_codex_run_to_message(
                             input,
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: tool_id.clone(),
@@ -4966,6 +4985,7 @@ pub fn parse_codex_run_to_message(
                                 input,
                                 output: Some("completed".to_string()),
                                 parent_tool_use_id: None,
+                                is_error: None,
                             });
                             content_blocks.push(ContentBlock::ToolUse {
                                 tool_call_id: tool_id,
@@ -4996,6 +5016,7 @@ pub fn parse_codex_run_to_message(
                                 input,
                                 output: (!output.is_empty()).then_some(output),
                                 parent_tool_use_id: None,
+                                is_error: None,
                             });
                             content_blocks.push(ContentBlock::ToolUse {
                                 tool_call_id: tool_id,
@@ -5821,6 +5842,15 @@ mod tests {
         assert_eq!(split_fast_model("gpt-5.6"), ("gpt-5.6-sol", false));
         assert_eq!(split_fast_model("gpt-5-6-sol"), ("gpt-5.6-sol", false));
         assert_eq!(split_fast_model("gpt-5-6-sol-fast"), ("gpt-5.6-sol", true));
+    }
+
+    #[test]
+    fn split_fast_model_recognises_gpt_6_fast_models() {
+        assert_eq!(split_fast_model("gpt-6.1-sol-fast"), ("gpt-6.1-sol", true));
+        assert_eq!(split_fast_model("gpt-6-astra-fast"), ("gpt-6-astra", true));
+        assert_eq!(split_fast_model("gpt-6-sol-fast"), ("gpt-6-sol", true));
+        assert_eq!(split_fast_model("gpt-6-luna-fast"), ("gpt-6-luna", true));
+        assert_eq!(split_fast_model("gpt-6.1-sol"), ("gpt-6.1-sol", false));
     }
 
     #[test]

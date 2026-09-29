@@ -337,8 +337,8 @@ export function ContextMentionPopover({
                             </button>
                             <button
                               type="button"
-                              aria-label={`Add ${item.label} and insert investigation prompt`}
-                              title={`Add ${item.label} and insert investigation prompt`}
+                              aria-label={`Add ${item.label} and start investigating`}
+                              title={`Add ${item.label} and start investigating`}
                               className="flex min-h-8 items-center gap-1 rounded px-1.5 hover:bg-muted"
                               onClick={event => {
                                 event.stopPropagation()

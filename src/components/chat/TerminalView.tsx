@@ -477,7 +477,7 @@ export function TerminalView({
             <Terminal className="h-3.5 w-3.5" />
             <span>Terminal</span>
             {hasRunningPanelTerminal && (
-              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
             )}
             <div className="flex-1" />
             <ChevronUp className="h-3.5 w-3.5" />
@@ -541,7 +541,7 @@ export function TerminalView({
                 >
                   {/* Running indicator */}
                   {isRunning && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" />
                   )}
                   <span className="max-w-[100px] truncate">
                     {terminal.label}
@@ -604,7 +604,7 @@ export function TerminalView({
               <button
                 type="button"
                 onClick={handleCloseAll}
-                className="flex h-full shrink-0 items-center px-2 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-red-400"
+                className="flex h-full shrink-0 items-center px-2 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive"
                 aria-label="Close all terminals"
               >
                 <X className="h-3.5 w-3.5" />

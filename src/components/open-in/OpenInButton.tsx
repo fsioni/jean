@@ -119,13 +119,13 @@ export function OpenInButton({
 
   return (
     <div
-      className={`hidden h-7 items-center rounded-md border border-border/50 bg-muted/50 sm:inline-flex ${className ?? ''}`}
+      className={`hidden h-7 items-center rounded-md border border-primary bg-primary sm:inline-flex dark:border-border/50 dark:bg-muted/50 ${className ?? ''}`}
     >
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            className="h-full rounded-r-none border-0 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+            className="h-full rounded-r-none border-0 px-2.5 text-xs text-primary-foreground/85 hover:bg-primary-foreground/10 hover:text-primary-foreground dark:text-muted-foreground dark:hover:text-foreground"
             onClick={() => openAction(effectiveDefault)}
           >
             Open in {defaultLabel}
@@ -133,13 +133,13 @@ export function OpenInButton({
         </TooltipTrigger>
         <TooltipContent>Open in {defaultLabel}</TooltipContent>
       </Tooltip>
-      <div className="h-4 w-px bg-border/50" />
+      <div className="h-4 w-px bg-primary-foreground/20 dark:bg-border/50" />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon"
-            className="h-full w-6 rounded-l-none border-0 px-0 text-muted-foreground hover:text-foreground"
+            className="h-full w-6 rounded-l-none border-0 px-0 text-primary-foreground/85 hover:bg-primary-foreground/10 hover:text-primary-foreground dark:text-muted-foreground dark:hover:text-foreground"
           >
             <ChevronDown className="h-3 w-3" />
           </Button>

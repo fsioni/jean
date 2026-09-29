@@ -55,7 +55,7 @@ export function NewIssuesBadge({
           aria-label={`Open ${totalCount} GitHub issue${totalCount > 1 ? 's' : ''} in a new session`}
           onClick={handleClick}
           className={cn(
-            'shrink-0 rounded bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-600 transition-colors hover:bg-green-500/20',
+            'shrink-0 rounded bg-success/10 px-1.5 py-0.5 text-[11px] font-medium text-success transition-colors hover:bg-success/20',
             className
           )}
         >

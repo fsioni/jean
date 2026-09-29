@@ -509,7 +509,6 @@ describe('computeSessionCardData', () => {
     expect(card.status).toBe('reviewing')
     expect(statusConfig[card.status]).toMatchObject({
       indicatorStatus: 'running',
-      indicatorVariant: 'loading',
     })
   })
 
@@ -782,6 +781,73 @@ describe('computeSessionCardData', () => {
 
     expect(card.isWaiting).toBe(false)
     expect(card.status).toBe('yoloing')
+  })
+
+  describe('pending question from persisted messages', () => {
+    const questionMessage = {
+      id: 'assistant-1',
+      session_id: 'session-1',
+      role: 'assistant' as const,
+      content: 'Which option?',
+      timestamp: 1,
+      tool_calls: [
+        {
+          id: 'question-1',
+          name: 'AskUserQuestion',
+          input: { questions: [] },
+        },
+      ],
+    }
+
+    it('treats an unanswered AskUserQuestion in the last assistant message as pending', () => {
+      const session = createBaseSession({ messages: [questionMessage] })
+
+      const card = computeSessionCardData(session, createBaseStoreState())
+
+      expect(card.hasQuestion).toBe(true)
+      expect(card.isWaiting).toBe(true)
+    })
+
+    it('does not treat a question as pending when a user message follows it (#779)', () => {
+      const session = createBaseSession({
+        messages: [
+          questionMessage,
+          {
+            id: 'user-1',
+            session_id: 'session-1',
+            role: 'user',
+            content: 'My answer',
+            timestamp: 2,
+            tool_calls: [],
+          },
+        ],
+      })
+
+      const card = computeSessionCardData(session, createBaseStoreState())
+
+      expect(card.hasQuestion).toBe(false)
+      expect(card.isWaiting).toBe(false)
+    })
+
+    it('still treats it as pending when the user message came before the question', () => {
+      const session = createBaseSession({
+        messages: [
+          {
+            id: 'user-1',
+            session_id: 'session-1',
+            role: 'user',
+            content: 'Do the thing',
+            timestamp: 0,
+            tool_calls: [],
+          },
+          questionMessage,
+        ],
+      })
+
+      const card = computeSessionCardData(session, createBaseStoreState())
+
+      expect(card.hasQuestion).toBe(true)
+    })
   })
 
   it('shows a running Claude turn instead of a hidden old permission denial', () => {

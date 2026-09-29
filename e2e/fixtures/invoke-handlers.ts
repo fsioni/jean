@@ -74,6 +74,8 @@ export const defaultResponses: Record<string, unknown> = {
   // UI State
   load_ui_state: uiState,
   save_ui_state: null,
+  get_pinned_recent_session_ids: [],
+  set_recent_session_pinned: [],
 
   // CLI checks
   check_claude_cli_installed: { installed: true, version: '1.0.0' },

@@ -18,16 +18,95 @@ import {
 import { MessageDiffModal } from './MessageDiffModal'
 import type { EditTool } from './MessageDiffModal'
 
-function isEditTool(
-  toolCall: ToolCall
-): toolCall is ToolCall & { input: EditTool['input'] } {
-  return (
-    toolCall.name === 'Edit' &&
-    typeof toolCall.input === 'object' &&
-    toolCall.input !== null &&
-    'file_path' in toolCall.input &&
-    typeof (toolCall.input as Record<string, unknown>).file_path === 'string'
-  )
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * Normalize Claude file-changing tool calls into old/new string edits.
+ * - Edit: one replacement
+ * - MultiEdit: one entry per inner edit
+ * - Write: whole file content (kept as name 'Write'; prior content unknown)
+ * - NotebookEdit: new cell source
+ * Failed/denied tool calls (`is_error`) changed nothing and are skipped.
+ */
+export function getClaudeFileEdits(toolCall: ToolCall): EditTool[] {
+  if (toolCall.is_error === true) return []
+  const input = asRecord(toolCall.input)
+  if (!input) return []
+
+  switch (toolCall.name) {
+    case 'Edit': {
+      const filePath = asString(input.file_path)
+      if (!filePath) return []
+      return [
+        {
+          name: 'Edit',
+          input: {
+            file_path: filePath,
+            old_string: asString(input.old_string),
+            new_string: asString(input.new_string),
+            ...(input.replace_all === true && { replace_all: true }),
+          },
+        },
+      ]
+    }
+    case 'MultiEdit': {
+      const filePath = asString(input.file_path)
+      if (!filePath || !Array.isArray(input.edits)) return []
+      return input.edits.flatMap(edit => {
+        const e = asRecord(edit)
+        if (!e) return []
+        return [
+          {
+            name: 'Edit',
+            input: {
+              file_path: filePath,
+              old_string: asString(e.old_string),
+              new_string: asString(e.new_string),
+              ...(e.replace_all === true && { replace_all: true }),
+            },
+          },
+        ]
+      })
+    }
+    case 'Write': {
+      const filePath = asString(input.file_path)
+      if (!filePath) return []
+      return [
+        {
+          name: 'Write',
+          input: {
+            file_path: filePath,
+            old_string: '',
+            new_string: asString(input.content) ?? '',
+          },
+        },
+      ]
+    }
+    case 'NotebookEdit': {
+      const filePath = asString(input.notebook_path)
+      if (!filePath) return []
+      return [
+        {
+          name: 'NotebookEdit',
+          input: {
+            file_path: filePath,
+            old_string: '',
+            new_string: asString(input.new_source) ?? '',
+          },
+        },
+      ]
+    }
+    default:
+      return []
+  }
 }
 
 interface CodexFileChange {
@@ -109,7 +188,7 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
 
   const editTools = useMemo(
-    () => (toolCalls ?? []).filter(isEditTool),
+    () => (toolCalls ?? []).flatMap(getClaudeFileEdits),
     [toolCalls]
   )
 
@@ -180,9 +259,22 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
     return getMessages()
       .slice(messageIndex + 1)
       .flatMap(msg =>
-        (msg.tool_calls ?? []).flatMap(tc =>
-          isEditTool(tc) && tc.input.file_path === selectedFilePath ? [tc] : []
-        )
+        (msg.tool_calls ?? [])
+          .flatMap(getClaudeFileEdits)
+          .filter(edit => edit.input.file_path === selectedFilePath)
+      )
+  }, [selectedFilePath, getMessages, messageIndex])
+
+  // Edits on selectedFilePath from messages BEFORE this one — lets the diff
+  // recover the prior content when this message overwrote the file (Write).
+  const previousEdits = useMemo(() => {
+    if (!selectedFilePath || !getMessages || messageIndex == null) return []
+    return getMessages()
+      .slice(0, messageIndex)
+      .flatMap(msg =>
+        (msg.tool_calls ?? [])
+          .flatMap(getClaudeFileEdits)
+          .filter(edit => edit.input.file_path === selectedFilePath)
       )
   }, [selectedFilePath, getMessages, messageIndex])
 
@@ -230,13 +322,13 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
                       {stats &&
                         (stats.additions > 0 || stats.deletions > 0) && (
                           <span className="flex shrink-0 items-center font-mono text-xs opacity-80">
-                            <span className="text-green-500">
+                            <span className="text-success">
                               +{stats.additions}
                             </span>
                             <span className="text-muted-foreground mx-0.5">
                               /
                             </span>
-                            <span className="text-red-500">
+                            <span className="text-destructive">
                               -{stats.deletions}
                             </span>
                           </span>
@@ -258,6 +350,7 @@ export const EditedFilesDisplay = memo(function EditedFilesDisplay({
           filePath={selectedFilePath}
           edits={selectedEdits}
           subsequentEdits={subsequentEdits}
+          previousEdits={previousEdits}
           worktreePath={worktreePath}
           patch={selectedCodexPatch}
         />

@@ -10,8 +10,10 @@ import type {
 } from '@/types/chat'
 import {
   getAskUserQuestions,
+  getCodexUserInputRequestId,
   normalizeQuestionMultipleField,
 } from '@/types/chat'
+import { useChatStore } from '@/store/chat-store'
 import { copyToClipboard } from '@/lib/clipboard'
 import { AskUserQuestion } from './AskUserQuestion'
 import {
@@ -120,6 +122,18 @@ export const StreamingMessage = memo(function StreamingMessage({
         contentBlocks: displayBlocks,
       }),
     [toolCalls, streamingContent, displayBlocks]
+  )
+  // Codex user-input questions are answered while the turn runs; Claude
+  // AskUserQuestion is answered only after chat:done pauses the session.
+  const pendingCodexUserInputRequests = useChatStore(
+    state => state.pendingCodexUserInputRequests[sessionId]
+  )
+  const codexQuestionIds = useMemo(
+    () =>
+      new Set(
+        (pendingCodexUserInputRequests ?? []).map(getCodexUserInputRequestId)
+      ),
+    [pendingCodexUserInputRequests]
   )
   const hiddenPlanTextBlockIndices = useMemo(
     () => getPlanTextBlockIndicesToHide(displayBlocks, resolvedPlan.content),
@@ -295,6 +309,7 @@ export const StreamingMessage = memo(function StreamingMessage({
                                         taskToolCall={item.taskTool}
                                         subToolCalls={item.subTools}
                                         allToolCalls={toolCalls}
+                                        nestedSubTools={item.nestedSubTools}
                                         onFileClick={onFileClick}
                                         isStreaming={true}
                                         isIncomplete={isIncomplete}
@@ -357,6 +372,15 @@ export const StreamingMessage = memo(function StreamingMessage({
                                             : undefined
                                         }
                                         toolOutput={item.tool.output}
+                                        // Claude: the run is being stopped;
+                                        // answering before chat:done races the
+                                        // completion (#779). OpenCode/Codex
+                                        // answer in-flight, so keep them live.
+                                        submitDisabled={
+                                          item.tool.name ===
+                                            'AskUserQuestion' &&
+                                          !codexQuestionIds.has(item.tool.id)
+                                        }
                                       />
                                     )
                                   }

@@ -283,7 +283,7 @@ export const ChatToolbar = memo(function ChatToolbar({
         <span className="truncate">· {selectedModelLabel}</span>
         {getModelFastInfo(selectedBackend, selectedModel).isFast && (
           <Zap
-            className="h-3 w-3 shrink-0 fill-current text-yellow-500"
+            className="h-3 w-3 shrink-0 fill-current text-warning"
             aria-label="Fast mode"
           />
         )}
@@ -616,7 +616,6 @@ export const ChatToolbar = memo(function ChatToolbar({
             <ExecutionModeDropdown
               executionMode={executionMode}
               availableModes={availableExecutionModes}
-              disabled={hasPendingQuestions}
               onSetExecutionMode={onSetExecutionMode}
               className="flex @xl:hidden shrink-0"
               align="end"

@@ -558,6 +558,47 @@ describe('ChatStore', () => {
       expect(toolCalls?.[0]?.output).toBe('file contents')
     })
 
+    it('stores is_error from tool results only when true', () => {
+      const { addToolCall, updateToolCallOutput } = useChatStore.getState()
+
+      addToolCall('session-1', mockToolCall)
+      updateToolCallOutput('session-1', 'tool-1', 'denied', true)
+      let toolCall = useChatStore.getState().activeToolCalls['session-1']?.[0]
+      expect(toolCall?.output).toBe('denied')
+      expect(toolCall?.is_error).toBe(true)
+
+      // Same output + flag is a no-op (no new state reference)
+      const before = useChatStore.getState().activeToolCalls
+      updateToolCallOutput('session-1', 'tool-1', 'denied', true)
+      expect(useChatStore.getState().activeToolCalls).toBe(before)
+
+      // Omitted flag keeps the existing error state
+      updateToolCallOutput('session-1', 'tool-1', 'denied again')
+      toolCall = useChatStore.getState().activeToolCalls['session-1']?.[0]
+      expect(toolCall?.is_error).toBe(true)
+
+      // Explicit false clears the key entirely
+      updateToolCallOutput('session-1', 'tool-1', 'ok', false)
+      toolCall = useChatStore.getState().activeToolCalls['session-1']?.[0]
+      expect(toolCall?.output).toBe('ok')
+      expect(toolCall && 'is_error' in toolCall).toBe(false)
+    })
+
+    it('keeps is_error on an early tool_result stub', () => {
+      const { addToolCall, updateToolCallOutput } = useChatStore.getState()
+
+      updateToolCallOutput('session-1', 'tool-edit-1', 'failed', true)
+      addToolCall('session-1', {
+        id: 'tool-edit-1',
+        name: 'Edit',
+        input: { file_path: '/a.ts', old_string: 'a', new_string: 'b' },
+      })
+
+      const toolCall = useChatStore.getState().activeToolCalls['session-1']?.[0]
+      expect(toolCall?.name).toBe('Edit')
+      expect(toolCall?.is_error).toBe(true)
+    })
+
     it('keeps tool_result when it arrives before tool_use (issue #572)', () => {
       const { addToolCall, updateToolCallOutput } = useChatStore.getState()
 
@@ -1404,11 +1445,7 @@ describe('ChatStore', () => {
         .setScheduledWakeup('tool-target', wakeup, targetSessionId)
       useChatStore
         .getState()
-        .setScheduledWakeup(
-          'tool-retained',
-          retainedWakeup,
-          retainedSessionId
-        )
+        .setScheduledWakeup('tool-retained', retainedWakeup, retainedSessionId)
 
       useChatStore
         .getState()
@@ -1420,7 +1457,9 @@ describe('ChatStore', () => {
         expect(record[targetSessionId]).toBeUndefined()
         expect(record[retainedSessionId]).toBe('retained-value')
       }
-      expect(state.activeSessionIds).toEqual({ 'worktree-2': retainedSessionId })
+      expect(state.activeSessionIds).toEqual({
+        'worktree-2': retainedSessionId,
+      })
       expect(state.sessionWorktreeMap).toEqual({
         [retainedSessionId]: 'worktree-2',
       })

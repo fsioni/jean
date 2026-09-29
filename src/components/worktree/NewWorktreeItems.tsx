@@ -130,7 +130,9 @@ export function IssueItem({
         <CircleDot
           className={cn(
             'h-4 w-4 mt-0.5 flex-shrink-0',
-            issue.state === 'OPEN' ? 'text-green-500' : 'text-purple-500'
+            issue.state === 'OPEN'
+              ? 'text-success'
+              : 'text-purple-600 dark:text-purple-400'
           )}
         />
       )}
@@ -149,7 +151,7 @@ export function IssueItem({
               {issue.title}
             </span>
             {isNewIssue(issue.created_at) && (
-              <span className="shrink-0 rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium text-green-600 border border-green-500/20">
+              <span className="shrink-0 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success border border-success/20">
                 New
               </span>
             )}
@@ -229,10 +231,10 @@ export function PRItem({
           className={cn(
             'h-4 w-4 mt-0.5 flex-shrink-0',
             pr.state === 'OPEN'
-              ? 'text-green-500'
+              ? 'text-success'
               : pr.state === 'MERGED'
-                ? 'text-purple-500'
-                : 'text-red-500'
+                ? 'text-purple-600 dark:text-purple-400'
+                : 'text-destructive'
           )}
         />
       )}
@@ -344,10 +346,10 @@ export function BranchItem({
 // =============================================================================
 
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: 'bg-red-500/10 text-red-600 border-red-500/20',
-  high: 'bg-orange-500/10 text-orange-600 border-orange-500/20',
-  medium: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
-  low: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+  critical: 'bg-destructive/10 text-destructive border-destructive/20',
+  high: 'bg-warning/10 text-warning border-warning/20',
+  medium: 'bg-warning/10 text-warning border-warning/20',
+  low: 'bg-info/10 text-info border-info/20',
 }
 
 function ItemActions({
@@ -388,17 +390,17 @@ function ItemActions({
             Preview
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => onInvestigate(false)}>
-            <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+            <Wand2 className="h-4 w-4 text-current" />
             Investigate
           </DropdownMenuItem>
           {onInvestigateInNewSession && (
             <DropdownMenuItem onClick={onInvestigateInNewSession}>
-              <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+              <Wand2 className="h-4 w-4 text-current" />
               Investigate in the Current Worktree
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => onInvestigate(true)}>
-            <Wand2 className="h-4 w-4 text-current dark:text-yellow-400" />
+            <Wand2 className="h-4 w-4 text-current" />
             Investigate in Background
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -457,7 +459,7 @@ function ItemActions({
             disabled={isCreating}
             className="inline-flex h-6 w-6 items-center justify-center rounded px-1 text-foreground/80 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            <Wand2 className="h-3 w-3 text-current dark:text-yellow-400" />
+            <Wand2 className="h-3 w-3 text-current" />
           </button>
         </TooltipTrigger>
         <TooltipContent>
@@ -524,7 +526,7 @@ export function SecurityAlertItem({
         <Shield
           className={cn(
             'h-4 w-4 mt-0.5 flex-shrink-0',
-            alert.state === 'open' ? 'text-orange-500' : 'text-muted-foreground'
+            alert.state === 'open' ? 'text-warning' : 'text-muted-foreground'
           )}
         />
       )}
@@ -631,7 +633,7 @@ export function AdvisoryItem({
           className={cn(
             'h-4 w-4 mt-0.5 flex-shrink-0',
             advisory.state === 'published'
-              ? 'text-orange-500'
+              ? 'text-warning'
               : 'text-muted-foreground'
           )}
         />

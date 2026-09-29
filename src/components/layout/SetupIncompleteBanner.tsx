@@ -101,14 +101,14 @@ export function SetupIncompleteBanner() {
   if (ghReady && hasAiBackendReady) return null
 
   return (
-    <div className="flex w-full shrink-0 items-center justify-center gap-2 bg-amber-500/15 px-4 py-1.5 text-xs text-amber-400">
+    <div className="flex w-full shrink-0 items-center justify-center gap-2 bg-warning/15 px-4 py-1.5 text-xs text-warning">
       <span>
         Setup incomplete — Jean requires GitHub CLI and at least one AI backend.
       </span>
       <button
         type="button"
         onClick={handleCompleteSetup}
-        className="rounded-md bg-amber-500/20 px-2 py-0.5 font-medium text-amber-300 transition-colors hover:bg-amber-500/30"
+        className="rounded-md bg-warning/20 px-2 py-0.5 font-medium text-warning transition-colors hover:bg-warning/30"
       >
         Complete Setup
       </button>

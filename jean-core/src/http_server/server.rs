@@ -1066,7 +1066,8 @@ fn path_is_in_known_roots(path: &std::path::Path, roots: &[std::path::PathBuf]) 
 
 /// Serve files from known project/worktree directories (authenticated).
 /// Used by browser-mode clients for auto-detected project avatars, matching
-/// the native asset protocol's project directory allowlist.
+/// the native asset protocol's project directory allowlist. With
+/// `?download=true`, any absolute file path is allowed.
 async fn project_file_handler(
     AxumPath(filepath): AxumPath<String>,
     headers: HeaderMap,
@@ -1090,12 +1091,16 @@ async fn project_file_handler(
         return (StatusCode::NOT_FOUND, "Not a file").into_response();
     }
 
-    let roots = match canonicalize_known_project_roots(&state.app) {
-        Ok(roots) => roots,
-        Err(response) => return response,
-    };
-    if !path_is_in_known_roots(&canonical, &roots) {
-        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+    // Explicit downloads may read any file: web access users already have full
+    // server access (terminals, agents). Previews stay limited to projects.
+    if !params.download {
+        let roots = match canonicalize_known_project_roots(&state.app) {
+            Ok(roots) => roots,
+            Err(response) => return response,
+        };
+        if !path_is_in_known_roots(&canonical, &roots) {
+            return (StatusCode::FORBIDDEN, "Access denied").into_response();
+        }
     }
 
     let mime = mime_from_extension(&canonical);

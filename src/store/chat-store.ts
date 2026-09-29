@@ -43,7 +43,7 @@ export type { ClaudeModel, CodexModel }
 export type { ManualSessionStatus }
 
 /** Default model to use when none is selected (fallback only - preferences take priority) */
-export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-4-8[1m]'
+export const DEFAULT_MODEL: ClaudeModel = 'claude-opus-5-5'
 
 /** Default Codex model */
 export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-5.6-sol'
@@ -427,7 +427,9 @@ interface ChatUIState {
   updateToolCallOutput: (
     sessionId: string,
     toolUseId: string,
-    output: string
+    output: string,
+    /** From `chat:tool-result`. Omit to keep the existing error flag. */
+    isError?: boolean
   ) => void
   /** Append a live event (Monitor notification, status change) to a tool call. */
   appendToolEvent: (
@@ -463,10 +465,7 @@ interface ChatUIState {
     sessionId: string,
     toolCallId: string
   ) => boolean
-  consumeStreamingReplayUserInput: (
-    sessionId: string,
-    text: string
-  ) => boolean
+  consumeStreamingReplayUserInput: (sessionId: string, text: string) => boolean
   clearStreamingReplayContentBlocks: (sessionId: string) => void
 
   // Actions - Thinking content (session-based, for extended thinking)
@@ -1166,8 +1165,7 @@ export const useChatStore = create<ChatUIState>()(
             const mappedSessionId =
               sessionId ?? state.scheduledWakeupSessionIds[toolCallId]
             const sessionMappingUnchanged =
-              mappedSessionId ===
-              state.scheduledWakeupSessionIds[toolCallId]
+              mappedSessionId === state.scheduledWakeupSessionIds[toolCallId]
 
             if (wakeupUnchanged && sessionMappingUnchanged) return state
 
@@ -1251,10 +1249,7 @@ export const useChatStore = create<ChatUIState>()(
                   },
                 }
               }
-              if (
-                status !== 'review' &&
-                sessionId in state.reviewingSessions
-              ) {
+              if (status !== 'review' && sessionId in state.reviewingSessions) {
                 const { [sessionId]: _, ...rest } = state.reviewingSessions
                 return { reviewingSessions: rest }
               }
@@ -1480,10 +1475,7 @@ export const useChatStore = create<ChatUIState>()(
           state => {
             // Guard: skip no-op updates to avoid re-renders on every streaming chunk
             if (state.sendingSessionIds[sessionId]) {
-              if (
-                startTime == null ||
-                state.sendStartedAt[sessionId] != null
-              ) {
+              if (startTime == null || state.sendStartedAt[sessionId] != null) {
                 return state
               }
               return {
@@ -1788,16 +1780,27 @@ export const useChatStore = create<ChatUIState>()(
           'addToolCall'
         ),
 
-      updateToolCallOutput: (sessionId, toolUseId, output) =>
+      updateToolCallOutput: (sessionId, toolUseId, output, isError) =>
         set(
           state => {
             const toolCalls = state.activeToolCalls[sessionId] ?? []
             const existing = toolCalls.find(tc => tc.id === toolUseId)
+            // Store `is_error` only when true (matches Rust's skip-if-false).
+            const nextIsError = (isError ?? existing?.is_error) === true
             if (existing) {
-              if (existing.output === output) return state
-              const updatedToolCalls = toolCalls.map(tc =>
-                tc.id === toolUseId ? { ...tc, output } : tc
-              )
+              if (
+                existing.output === output &&
+                (existing.is_error === true) === nextIsError
+              ) {
+                return state
+              }
+              const updatedToolCalls = toolCalls.map(tc => {
+                if (tc.id !== toolUseId) return tc
+                const { is_error: _prevIsError, ...rest } = tc
+                return nextIsError
+                  ? { ...rest, output, is_error: true }
+                  : { ...rest, output }
+              })
               return {
                 activeToolCalls: {
                   ...state.activeToolCalls,
@@ -1818,6 +1821,7 @@ export const useChatStore = create<ChatUIState>()(
                     name: 'Tool',
                     input: {},
                     output,
+                    ...(nextIsError ? { is_error: true } : {}),
                   },
                 ],
               },
@@ -3698,10 +3702,8 @@ export const useChatStore = create<ChatUIState>()(
             } = state.pendingCodexCommandApprovalRequests
             const { [sessionId]: _cpr, ...pendingCodexPermissionRequests } =
               state.pendingCodexPermissionRequests
-            const {
-              [sessionId]: _opr,
-              ...pendingOpencodePermissionRequests
-            } = state.pendingOpencodePermissionRequests
+            const { [sessionId]: _opr, ...pendingOpencodePermissionRequests } =
+              state.pendingOpencodePermissionRequests
             const { [sessionId]: _cui, ...pendingCodexUserInputRequests } =
               state.pendingCodexUserInputRequests
             const {
@@ -3882,10 +3884,7 @@ export const useChatStore = create<ChatUIState>()(
         ),
 
       clearWorktreeState: worktreeId => {
-        const sessionIds = collectSessionIdsForWorktree(
-          get(),
-          worktreeId
-        )
+        const sessionIds = collectSessionIdsForWorktree(get(), worktreeId)
 
         set(
           state => {
@@ -3893,10 +3892,7 @@ export const useChatStore = create<ChatUIState>()(
               state,
               worktreeId
             )
-            const updates = clearSessionScopedState(
-              state,
-              currentSessionIds
-            )
+            const updates = clearSessionScopedState(state, currentSessionIds)
             const allSessionIds = new Set([...sessionIds, ...currentSessionIds])
             const activeSessionIds = omitRecordEntries(
               state.activeSessionIds,
@@ -3907,14 +3903,13 @@ export const useChatStore = create<ChatUIState>()(
             const sessionWorktreeMap = omitRecordEntries(
               state.sessionWorktreeMap,
               (sessionId, mappedWorktreeId) =>
-                mappedWorktreeId === worktreeId ||
-                allSessionIds.has(sessionId)
+                mappedWorktreeId === worktreeId || allSessionIds.has(sessionId)
             )
             const lastOpenedPerProject = omitRecordEntries(
               state.lastOpenedPerProject,
               (_, value) =>
                 (value as { worktreeId: string; sessionId: string })
-                    .worktreeId === worktreeId ||
+                  .worktreeId === worktreeId ||
                 allSessionIds.has(
                   (value as { worktreeId: string; sessionId: string }).sessionId
                 )
@@ -3947,9 +3942,7 @@ export const useChatStore = create<ChatUIState>()(
             if (setupScriptResults !== state.setupScriptResults) {
               updates.setupScriptResults = setupScriptResults
             }
-            if (
-              worktreeLoadingOperations !== state.worktreeLoadingOperations
-            ) {
+            if (worktreeLoadingOperations !== state.worktreeLoadingOperations) {
               updates.worktreeLoadingOperations = worktreeLoadingOperations
             }
             if (state.activeWorktreeId === worktreeId) {

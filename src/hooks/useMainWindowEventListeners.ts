@@ -79,11 +79,49 @@ export function shouldLetChatInputHandleAction(
   target: EventTarget | null,
   planDialogOpen: boolean
 ): boolean {
+  if (action === 'next_session' || action === 'previous_session') {
+    // Cmd/Ctrl+Arrow moves the caret in text fields. Switch sessions only
+    // when the caret already sits at the edge of the text in that direction,
+    // so the first press moves the caret and the next press switches.
+    return canCaretMove(target, action === 'next_session' ? 'end' : 'start')
+  }
   return (
     action === 'approve_plan' &&
     !planDialogOpen &&
     target instanceof Element &&
     target.closest('[data-chat-input]') !== null
+  )
+}
+
+function canCaretMove(
+  target: EventTarget | null,
+  toward: 'start' | 'end'
+): boolean {
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  ) {
+    const { selectionStart, selectionEnd, value } = target
+    // Inputs without selection support (e.g. type="number") cannot report a
+    // caret, so keep the old rule: any text means the field owns the key.
+    if (selectionStart === null || selectionEnd === null) {
+      return value.length > 0
+    }
+    if (selectionStart !== selectionEnd) return true
+    return toward === 'start' ? selectionStart > 0 : selectionEnd < value.length
+  }
+  return (
+    target instanceof HTMLElement &&
+    target.isContentEditable === true &&
+    (target.textContent ?? '').length > 0
+  )
+}
+
+/** Cmd/Ctrl+1-9 opens Recent sessions while the Recent list is visible. */
+export function isRecentSessionsShortcutActive(): boolean {
+  return (
+    useUIStore.getState().leftSidebarVisible &&
+    useProjectsStore.getState().sidebarActiveTab === 'recent'
   )
 }
 
@@ -966,7 +1004,8 @@ export function useMainWindowEventListeners() {
         }
       }
 
-      // Mod+1–9: switch session tabs (when modal open), dashboard tabs, or worktree by index
+      // Mod+1–9: dashboard tabs, Recent sessions (when the Recent list is
+      // visible), session tabs (when modal open), or worktree by index
       // Use platform mod (Cmd on macOS native, Ctrl elsewhere) so Ctrl+digit reaches terminals.
       if (isModKeyEvent(e) && !e.shiftKey && !e.altKey) {
         // Use e.code (physical key) since e.key can vary with CMD held on macOS
@@ -975,7 +1014,16 @@ export function useMainWindowEventListeners() {
         if (digit >= 1 && digit <= 9) {
           e.preventDefault()
           e.stopPropagation()
-          if (useUIStore.getState().sessionChatModalOpen) {
+          if (
+            isRecentSessionsShortcutActive() &&
+            !useUIStore.getState().githubDashboardOpen
+          ) {
+            window.dispatchEvent(
+              new CustomEvent('open-recent-session-by-index', {
+                detail: { index: digit - 1 },
+              })
+            )
+          } else if (useUIStore.getState().sessionChatModalOpen) {
             window.dispatchEvent(
               new CustomEvent('switch-session', {
                 detail: { index: digit - 1 },

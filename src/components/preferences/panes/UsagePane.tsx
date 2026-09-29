@@ -76,14 +76,14 @@ function clampPercent(value: number): number {
 function barClass(usedPercent: number): string {
   const p = clampPercent(usedPercent)
   if (p >= 90) return 'bg-destructive'
-  if (p >= 70) return 'bg-amber-500'
+  if (p >= 70) return 'bg-warning'
   return 'bg-primary'
 }
 
 function percentClass(usedPercent: number): string {
   const p = clampPercent(usedPercent)
   if (p >= 90) return 'text-destructive'
-  if (p >= 70) return 'text-amber-500'
+  if (p >= 70) return 'text-warning'
   return 'text-foreground'
 }
 
@@ -240,8 +240,7 @@ export const UsagePane: React.FC = () => {
     enabled: !!claudeStatus.data?.installed,
   })
   const claudeUsage = useClaudeUsage({
-    enabled:
-      !!claudeStatus.data?.installed && !!claudeAuth.data?.authenticated,
+    enabled: !!claudeStatus.data?.installed && !!claudeAuth.data?.authenticated,
   })
 
   const codexStatus = useCodexCliStatus()
@@ -342,7 +341,8 @@ export const UsagePane: React.FC = () => {
     if (claudeUsage.isLoading) {
       return <LoadingLine label="Loading usage…" />
     }
-    if (claudeUsage.isError) {
+    // Keep showing last-good data when only a background refetch failed.
+    if (claudeUsage.isError && !claudeUsage.data) {
       return (
         <ErrorLine
           message={claudeErrorMessage}
@@ -366,11 +366,7 @@ export const UsagePane: React.FC = () => {
       <div className="space-y-2">
         <MetaLine items={[extra]} />
         <div className="space-y-3">
-          <UsageRow
-            label="5-hour session"
-            usage={data.session}
-            nowMs={nowMs}
-          />
+          <UsageRow label="5-hour session" usage={data.session} nowMs={nowMs} />
           <UsageRow label="Weekly" usage={data.weekly} nowMs={nowMs} />
           <UsageRow
             label="Weekly · Sonnet"
@@ -389,7 +385,8 @@ export const UsagePane: React.FC = () => {
     if (codexUsage.isLoading) {
       return <LoadingLine label="Loading usage…" />
     }
-    if (codexUsage.isError) {
+    // Keep showing last-good data when only a background refetch failed.
+    if (codexUsage.isError && !codexUsage.data) {
       return (
         <ErrorLine
           message={codexErrorMessage}
@@ -462,7 +459,8 @@ export const UsagePane: React.FC = () => {
     if (grokUsage.isLoading) {
       return <LoadingLine label="Loading usage…" />
     }
-    if (grokUsage.isError) {
+    // Keep showing last-good data when only a background refetch failed.
+    if (grokUsage.isError && !grokUsage.data) {
       return (
         <ErrorLine
           message={grokErrorMessage}

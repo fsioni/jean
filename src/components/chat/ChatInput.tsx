@@ -74,8 +74,10 @@ interface ChatInputProps {
   canSwitchBackendWithTab?: boolean
   focusChatShortcut: string
   showFocusHint?: boolean
-  clearOnSubmit?: boolean
-  onSubmit: (e: React.FormEvent, options?: { forceSteer?: boolean }) => void
+  onSubmit: (
+    e: React.FormEvent | undefined,
+    options?: { forceSteer?: boolean; beforeSend?: () => Promise<void> }
+  ) => void
   onCancel: () => void
   onSwitchBackendWithTab?: () => void
   onCommandExecute?: (command: ClaudeCommand) => void
@@ -100,7 +102,6 @@ export const ChatInput = memo(function ChatInput({
   canSwitchBackendWithTab = false,
   focusChatShortcut,
   showFocusHint = true,
-  clearOnSubmit = true,
   onSubmit,
   onCancel,
   onSwitchBackendWithTab,
@@ -659,14 +660,8 @@ export const ChatInput = memo(function ChatInput({
             .setInputDraft(activeSessionId, valueRef.current)
         }
         onSubmit(e, forceSteer ? { forceSteer: true } : undefined)
-        if (clearOnSubmit) {
-          // Clear input immediately (don't wait for store subscription)
-          valueRef.current = ''
-          setShowHint(true)
-          const textarea = e.target as HTMLTextAreaElement
-          textarea.value = ''
-          resizeTextarea()
-        }
+        // The submit handler clears accepted messages through the registered
+        // clear handler. A blocked submit must keep the visible draft intact.
       }
       // Shift+Enter adds a new line (default behavior)
     },
@@ -681,7 +676,6 @@ export const ChatInput = memo(function ChatInput({
       canSwitchBackendWithTab,
       onSwitchBackendWithTab,
       isMobile,
-      clearOnSubmit,
       resizeTextarea,
       selectedBackend,
       onSteerModifierChange,
@@ -1088,9 +1082,7 @@ export const ChatInput = memo(function ChatInput({
     async (item: ContextMentionItem, investigate = false) => {
       if (!activeSessionId) return
 
-      const toastId = toast.loading(`Loading ${item.label} context...`)
-
-      try {
+      const loadContext = async () => {
         if (item.type === 'issue' && item.issue && activeWorktreePath) {
           await loadIssueContext(
             activeSessionId,
@@ -1137,59 +1129,94 @@ export const ChatInput = memo(function ChatInput({
           throw new Error('Missing context information')
         }
 
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: githubQueryKeys.all }),
-          queryClient.invalidateQueries({ queryKey: linearQueryKeys.all }),
-        ])
+        // Refresh in the background. Refetching every GitHub/Linear query can
+        // take many seconds, and the investigate send must not wait for it.
+        void queryClient.invalidateQueries({ queryKey: githubQueryKeys.all })
+        void queryClient.invalidateQueries({ queryKey: linearQueryKeys.all })
+      }
 
+      // Replace the `#query` mention with `insertion`. Returns false when the
+      // mention is no longer in the input.
+      const replaceMention = (insertion: string) => {
         const triggerIndex = hashTriggerIndex
-        if (triggerIndex !== null && inputRef.current) {
-          const currentValue = valueRef.current
-          const mention = /^#[^\s]*/.exec(currentValue.slice(triggerIndex))
-          if (mention) {
-            const token = contextMentionToken(item)
-            let insertion = ''
-            if (investigate && item.type === 'issue') {
-              insertion = (
-                investigateIssuePrompt?.trim() ||
-                DEFAULT_INVESTIGATE_ISSUE_PROMPT
-              )
-                .replace(/\{issueWord\}/g, 'issue')
-                .replace(/\{issueRefs\}/g, token)
-            } else if (investigate && item.type === 'pr') {
-              insertion = (
-                investigatePRPrompt?.trim() || DEFAULT_INVESTIGATE_PR_PROMPT
-              )
-                .replace(/\{prWord\}/g, 'PR')
-                .replace(/\{prRefs\}/g, `#${item.pr?.number}`)
+        if (triggerIndex === null || !inputRef.current) return false
+        const currentValue = valueRef.current
+        const mention = /^#[^\s]*/.exec(currentValue.slice(triggerIndex))
+        if (!mention) return false
+
+        const newValue =
+          currentValue.slice(0, triggerIndex) +
+          insertion +
+          currentValue.slice(triggerIndex + mention[0].length)
+
+        inputRef.current.value = newValue
+        valueRef.current = newValue
+        useChatStore.getState().setInputDraft(activeSessionId, newValue)
+        resizeTextarea()
+        const isEmpty = !newValue.trim()
+        setShowHint(isEmpty)
+        onHasValueChangeRef.current?.(!isEmpty)
+
+        requestAnimationFrame(() => {
+          const newCursorPos = triggerIndex + insertion.length
+          inputRef.current?.setSelectionRange(newCursorPos, newCursorPos)
+        })
+        return true
+      }
+
+      const closePopover = () => {
+        setContextMentionOpen(false)
+        setHashTriggerIndex(null)
+        setContextMentionQuery('')
+      }
+
+      let investigatePrompt = ''
+      if (investigate && item.type === 'issue') {
+        investigatePrompt = (
+          investigateIssuePrompt?.trim() || DEFAULT_INVESTIGATE_ISSUE_PROMPT
+        )
+          .replace(/\{issueWord\}/g, 'issue')
+          .replace(/\{issueRefs\}/g, contextMentionToken(item))
+      } else if (investigate && item.type === 'pr') {
+        investigatePrompt = (
+          investigatePRPrompt?.trim() || DEFAULT_INVESTIGATE_PR_PROMPT
+        )
+          .replace(/\{prWord\}/g, 'PR')
+          .replace(/\{prRefs\}/g, `#${item.pr?.number}`)
+      }
+
+      // Investigate: insert the prompt and send it right away. The send waits
+      // for the context to load and stays bound to this session, so the user
+      // can switch to another session or worktree meanwhile.
+      if (investigatePrompt && replaceMention(investigatePrompt)) {
+        closePopover()
+        onSubmit(undefined, {
+          beforeSend: async () => {
+            const toastId = toast.loading(`Loading ${item.label} context...`)
+            try {
+              await loadContext()
+              toast.success(`Loaded ${item.label} context, investigating`, {
+                id: toastId,
+              })
+            } catch (error) {
+              toast.error(`Failed to load context: ${error}`, { id: toastId })
+              throw error
             }
-            const newValue =
-              currentValue.slice(0, triggerIndex) +
-              insertion +
-              currentValue.slice(triggerIndex + mention[0].length)
+          },
+        })
+        inputRef.current?.focus()
+        return
+      }
 
-            inputRef.current.value = newValue
-            valueRef.current = newValue
-            useChatStore.getState().setInputDraft(activeSessionId, newValue)
-            resizeTextarea()
-            const isEmpty = !newValue.trim()
-            setShowHint(isEmpty)
-            onHasValueChangeRef.current?.(!isEmpty)
-
-            requestAnimationFrame(() => {
-              const newCursorPos = triggerIndex + insertion.length
-              inputRef.current?.setSelectionRange(newCursorPos, newCursorPos)
-            })
-          }
-        }
-
+      const toastId = toast.loading(`Loading ${item.label} context...`)
+      try {
+        await loadContext()
+        replaceMention('')
         toast.success(`Loaded ${item.label} context`, { id: toastId })
       } catch (error) {
         toast.error(`Failed to load context: ${error}`, { id: toastId })
       } finally {
-        setContextMentionOpen(false)
-        setHashTriggerIndex(null)
-        setContextMentionQuery('')
+        closePopover()
         inputRef.current?.focus()
       }
     },
@@ -1202,6 +1229,7 @@ export const ChatInput = memo(function ChatInput({
       inputRef,
       investigateIssuePrompt,
       investigatePRPrompt,
+      onSubmit,
       resizeTextarea,
     ]
   )

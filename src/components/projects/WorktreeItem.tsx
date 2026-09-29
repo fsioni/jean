@@ -1,9 +1,6 @@
 import { useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import { StatusIndicator } from '@/components/ui/status-indicator'
-import type {
-  IndicatorStatus,
-  IndicatorVariant,
-} from '@/components/ui/status-indicator'
+import type { IndicatorStatus } from '@/components/ui/status-indicator'
 import {
   ArrowDown,
   ArrowDownUp,
@@ -188,10 +185,13 @@ export function WorktreeItem({
       // Skip sessions that are currently streaming (handled by isStreamingWaitingQuestion)
       if (useChatStore.getState().sendingSessionIds[session.id]) continue
 
-      // Find last assistant message by iterating from end (avoids array copy from .reverse())
+      // Find last assistant message by iterating from end (avoids array copy from .reverse()).
+      // A later user message means its questions were answered (matches MessageItem).
       let lastAssistantMsg = null
       for (let i = session.messages.length - 1; i >= 0; i--) {
-        if (session.messages[i]?.role === 'assistant') {
+        const role = session.messages[i]?.role
+        if (role === 'user') break
+        if (role === 'assistant') {
           lastAssistantMsg = session.messages[i]
           break
         }
@@ -285,49 +285,16 @@ export function WorktreeItem({
     return false
   })
 
-  // Get execution mode for running session (yolo vs vibing/plan)
-  const runningSessionExecutionMode = useChatStore(state => {
-    for (const [sessionId, isSending] of Object.entries(
-      state.sendingSessionIds
-    )) {
-      if (isSending && state.sessionWorktreeMap[sessionId] === worktree.id) {
-        return (
-          state.executingModes[sessionId] ??
-          state.executionModes[sessionId] ??
-          'plan'
-        )
-      }
-    }
-    return 'plan'
-  })
-
-  // Determine indicator status and variant for StatusIndicator component
-  const { indicatorStatus, indicatorVariant } = useMemo((): {
-    indicatorStatus: IndicatorStatus
-    indicatorVariant?: IndicatorVariant
-  } => {
-    if (isWaitingQuestion || isWaitingPlan) {
-      return { indicatorStatus: 'waiting' }
-    }
-    if (isChatRunning) {
-      return {
-        indicatorStatus: 'running',
-        indicatorVariant:
-          runningSessionExecutionMode === 'yolo' ? 'destructive' : 'default',
-      }
-    }
-    if (loadingOperation) {
-      return { indicatorStatus: 'running', indicatorVariant: 'loading' }
-    }
-    if (isReviewing) {
-      return { indicatorStatus: 'review' }
-    }
-    return { indicatorStatus: 'idle' }
+  // Determine indicator status for StatusIndicator component
+  const indicatorStatus = useMemo((): IndicatorStatus => {
+    if (isWaitingQuestion || isWaitingPlan) return 'waiting'
+    if (isChatRunning || loadingOperation) return 'running'
+    if (isReviewing) return 'review'
+    return 'idle'
   }, [
     isWaitingQuestion,
     isWaitingPlan,
     isChatRunning,
-    runningSessionExecutionMode,
     loadingOperation,
     isReviewing,
   ])
@@ -718,11 +685,7 @@ export function WorktreeItem({
             onDoubleClick={handleDoubleClick}
           >
             {/* Chat status indicator (spinner/dot) */}
-            <StatusIndicator
-              status={indicatorStatus}
-              variant={indicatorVariant}
-              className="h-2 w-2"
-            />
+            <StatusIndicator status={indicatorStatus} className="h-2 w-2" />
 
             {/* Terminal running/failed indicator */}
             <TerminalStatusIndicator worktreeId={worktree.id} />
@@ -754,7 +717,7 @@ export function WorktreeItem({
                   aria-label={
                     isExpanded ? 'Collapse sessions' : 'Expand sessions'
                   }
-                    className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover/worktree:opacity-50 hover:!opacity-100 hover:bg-accent-foreground/10"
+                  className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover/worktree:opacity-50 hover:!opacity-100 hover:bg-accent-foreground/10"
                   onClick={handleChevronClick}
                 >
                   <ChevronDown
@@ -774,7 +737,7 @@ export function WorktreeItem({
                   <button
                     type="button"
                     onClick={handleSync}
-                    className="shrink-0 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-500 transition-colors hover:bg-violet-500/20"
+                    className="shrink-0 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 transition-colors hover:bg-violet-500/20"
                   >
                     <span className="flex items-center gap-0.5">
                       <ArrowDownUp className="h-3 w-3" />
@@ -829,7 +792,7 @@ export function WorktreeItem({
                       <button
                         type="button"
                         onClick={handlePush}
-                        className="shrink-0 rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] font-medium text-orange-500 transition-colors hover:bg-orange-500/20"
+                        className="shrink-0 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20"
                       >
                         <span className="flex items-center gap-0.5">
                           <ArrowUp className="h-3 w-3" />
@@ -848,9 +811,11 @@ export function WorktreeItem({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium">
-                    <span className="text-green-500">+{uncommittedAdded}</span>
+                    <span className="text-success">+{uncommittedAdded}</span>
                     <span className="text-muted-foreground">/</span>
-                    <span className="text-red-500">-{uncommittedRemoved}</span>
+                    <span className="text-destructive">
+                      -{uncommittedRemoved}
+                    </span>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>{`Uncommitted: +${uncommittedAdded}/-${uncommittedRemoved} lines`}</TooltipContent>
@@ -895,7 +860,6 @@ export function WorktreeItem({
                 <div className="flex items-center gap-1.5 pl-3 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <StatusIndicator
                     status={groupConfig.indicatorStatus}
-                    variant={groupConfig.indicatorVariant}
                     shape={groupConfig.indicatorShape}
                     label={group.title}
                     className="h-1.5 w-1.5 shrink-0"
@@ -931,7 +895,6 @@ export function WorktreeItem({
                     >
                       <StatusIndicator
                         status={config.indicatorStatus}
-                        variant={config.indicatorVariant}
                         shape={config.indicatorShape}
                         label={config.label}
                         className="h-1.5 w-1.5 shrink-0"

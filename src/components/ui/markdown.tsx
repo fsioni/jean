@@ -21,7 +21,7 @@ import { remarkFixInterruptedLists } from '@/lib/remark-fix-interrupted-lists'
 import { Copy, Check, Table, ListChecks } from '@/components/icons/reicon'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/clipboard'
-import { extractFilePath, resolveWorktreeFilePath } from '@/lib/local-file'
+import { extractFilePath, openLocalFile } from '@/lib/local-file'
 import {
   Tooltip,
   TooltipTrigger,
@@ -30,7 +30,6 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat-store'
-import { useUIStore } from '@/store/ui-store'
 import { convertFileSrc } from '@/lib/transport'
 
 interface MarkdownProps {
@@ -90,10 +89,14 @@ function openLocalFileLink(href: string | undefined): boolean {
     return false
   }
 
-  const path = resolveWorktreeFilePath(decodeURIComponent(href))
-  if (!path) return false
-  useUIStore.getState().setViewingFilePath(path)
-  return true
+  return openLocalFile(decodeURIComponent(href))
+}
+
+function handleFilePathClick(event: React.MouseEvent<HTMLElement>) {
+  // Keep drag-to-select usable: only a plain click opens the file.
+  if (window.getSelection()?.toString().trim()) return
+  const path = event.currentTarget.dataset.filePath
+  if (path && !openLocalFile(path)) toast.error('Cannot resolve file path')
 }
 
 function CodeBlock({ children }: { children: ReactNode }) {
@@ -416,14 +419,20 @@ const components: Components = {
     if (isBlock) {
       return <code className={className}>{children}</code>
     }
-    // Inline code. File paths get a "Download file" item in the message
-    // context menu (see MessageThreadContextMenu).
+    // Inline code. File paths open in the file viewer on click, and get
+    // Open/Download items in the message context menu
+    // (see MessageThreadContextMenu).
     const filePath =
       typeof children === 'string' ? extractFilePath(children) : null
     return (
       <code
-        className="rounded-md bg-muted px-1.5 py-0.5 text-[0.875em]"
+        className={cn(
+          'rounded-md bg-muted px-1.5 py-0.5 text-[0.875em]',
+          filePath &&
+            'underline decoration-dotted underline-offset-2 hover:text-foreground'
+        )}
         data-file-path={filePath ?? undefined}
+        onClick={filePath ? handleFilePathClick : undefined}
       >
         {children}
       </code>

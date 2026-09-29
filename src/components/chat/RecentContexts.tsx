@@ -187,7 +187,7 @@ export function RecentContexts({
           {isLoading ? (
             <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
           ) : isAttached ? (
-            <Check className="h-3 w-3 shrink-0 text-green-500" />
+            <Check className="h-3 w-3 shrink-0 text-success" />
           ) : (
             <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
           )}

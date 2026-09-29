@@ -161,7 +161,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_ISSUE_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_pr',
@@ -184,7 +184,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_PR_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_workflow_run',
@@ -213,7 +213,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_WORKFLOW_RUN_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_security_alert',
@@ -237,7 +237,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_SECURITY_ALERT_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_advisory',
@@ -259,7 +259,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_ADVISORY_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_linear_issue',
@@ -286,7 +286,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_LINEAR_ISSUE_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'investigate_sentry_issue',
@@ -313,7 +313,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
     ],
   },
@@ -342,7 +342,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_CODE_REVIEW_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'review_comments',
@@ -366,7 +366,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
           },
         ],
         defaultValue: DEFAULT_REVIEW_COMMENTS_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'commit_message',
@@ -440,7 +440,7 @@ const PROMPT_SECTIONS: PromptSection[] = [
         description: 'Instructions appended to conflict resolution prompts.',
         variables: [],
         defaultValue: DEFAULT_RESOLVE_CONFLICTS_PROMPT,
-        defaultModel: 'claude-opus-4-8[1m]',
+        defaultModel: 'claude-opus-5-5',
       },
       {
         key: 'release_notes',

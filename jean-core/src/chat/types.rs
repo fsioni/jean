@@ -298,6 +298,38 @@ impl EffortLevel {
             EffortLevel::Other(value) => Some(value.as_str()),
         }
     }
+
+    /// Value for Claude CLI's `--effort` flag, which accepts only
+    /// low/medium/high/xhigh/max. `Minimal` maps to the nearest level (`low`).
+    /// `Ultracode` returns `None`: Claude enables it via the `ultracode`
+    /// settings key (implies xhigh), see [`EffortLevel::is_claude_ultracode`].
+    /// Unknown catalog values are omitted so the CLI default applies.
+    pub fn claude_effort_flag(&self) -> Option<&'static str> {
+        match self {
+            EffortLevel::Off | EffortLevel::Adaptive | EffortLevel::Ultracode => None,
+            EffortLevel::Minimal | EffortLevel::Low => Some("low"),
+            EffortLevel::Medium => Some("medium"),
+            EffortLevel::High => Some("high"),
+            EffortLevel::Xhigh => Some("xhigh"),
+            EffortLevel::Max => Some("max"),
+            EffortLevel::Other(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "low" => Some("low"),
+                "med" | "medium" => Some("medium"),
+                "high" => Some("high"),
+                "xhigh" => Some("xhigh"),
+                "max" => Some("max"),
+                _ => {
+                    log::warn!("Unsupported Claude effort level '{value}', using CLI default");
+                    None
+                }
+            },
+        }
+    }
+
+    /// Whether Claude should run with the `ultracode` session setting.
+    pub fn is_claude_ultracode(&self) -> bool {
+        matches!(self, EffortLevel::Ultracode)
+    }
 }
 
 impl ThinkingLevel {
@@ -351,6 +383,9 @@ pub struct ToolCall {
     /// Parent tool use ID for sub-agent tool calls (for parallel task attribution)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_tool_use_id: Option<String>,
+    /// `Some(true)` when the tool result was flagged `is_error` (failed tool)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
 }
 
 /// A permission denial when a tool requires approval
@@ -2104,6 +2139,29 @@ mod tests {
     }
 
     #[test]
+    fn claude_effort_flag_maps_to_cli_accepted_values() {
+        assert_eq!(EffortLevel::Off.claude_effort_flag(), None);
+        assert_eq!(EffortLevel::Adaptive.claude_effort_flag(), None);
+        assert_eq!(EffortLevel::Minimal.claude_effort_flag(), Some("low"));
+        assert_eq!(EffortLevel::Low.claude_effort_flag(), Some("low"));
+        assert_eq!(EffortLevel::Medium.claude_effort_flag(), Some("medium"));
+        assert_eq!(EffortLevel::High.claude_effort_flag(), Some("high"));
+        assert_eq!(EffortLevel::Xhigh.claude_effort_flag(), Some("xhigh"));
+        assert_eq!(EffortLevel::Max.claude_effort_flag(), Some("max"));
+        assert_eq!(EffortLevel::Ultracode.claude_effort_flag(), None);
+        assert!(EffortLevel::Ultracode.is_claude_ultracode());
+        assert!(!EffortLevel::Max.is_claude_ultracode());
+        assert_eq!(
+            EffortLevel::Other("MED".to_string()).claude_effort_flag(),
+            Some("medium")
+        );
+        assert_eq!(
+            EffortLevel::Other("turbo".to_string()).claude_effort_flag(),
+            None
+        );
+    }
+
+    #[test]
     fn effort_level_accepts_catalog_defined_values() {
         let effort = serde_json::from_str::<EffortLevel>("\"turbo\"").unwrap();
         assert_eq!(effort.effort_value(), Some("turbo"));
@@ -2341,6 +2399,7 @@ mod tests {
             input: serde_json::json!({"file_path": "/test.txt"}),
             output: Some("file contents".to_string()),
             parent_tool_use_id: None,
+            is_error: None,
         };
 
         let json = serde_json::to_string(&tool_call).unwrap();
@@ -2358,6 +2417,7 @@ mod tests {
             input: serde_json::json!({}),
             output: None,
             parent_tool_use_id: Some("call-123".to_string()),
+            is_error: None,
         };
 
         let json = serde_json::to_string(&tool_call).unwrap();

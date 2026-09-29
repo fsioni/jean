@@ -838,13 +838,11 @@ function ConnectionRow({
     <div className="rounded-md border p-2">
       {/* Top row: name + version always share full width so versions align */}
       <div className="flex w-full items-center gap-2 text-left text-sm font-medium">
-        <span className="size-2 shrink-0 rounded-full bg-green-500" />
+        <span className="size-2 shrink-0 rounded-full bg-success" />
         {name}
         <span
           className={`ml-auto shrink-0 text-xs font-normal ${
-            versionWarning
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-muted-foreground'
+            versionWarning ? 'text-warning' : 'text-muted-foreground'
           }`}
           title={
             versionWarning ? 'Remote version differs from this app' : undefined

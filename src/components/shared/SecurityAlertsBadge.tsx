@@ -63,7 +63,7 @@ export function SecurityAlertsBadge({
           aria-label={`Open ${totalCount} security alert${totalCount > 1 ? 's' : ''} in a new session`}
           onClick={handleClick}
           className={cn(
-            'shrink-0 rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] font-medium text-orange-600 transition-colors hover:bg-orange-500/20',
+            'shrink-0 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20',
             className
           )}
         >

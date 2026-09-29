@@ -243,7 +243,6 @@ const navigationEntries: NavigationEntry[] = [
     id: 'web-access',
     name: 'Web Access',
     icon: Globe,
-    desktopOnly: true,
   },
   {
     type: 'item',

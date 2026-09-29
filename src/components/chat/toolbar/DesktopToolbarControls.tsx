@@ -380,7 +380,7 @@ export function DesktopToolbarControls({
                       key={ctx.number}
                       onClick={() => handleViewIssue(ctx)}
                     >
-                      <CircleDot className="h-4 w-4 text-green-500" />
+                      <CircleDot className="h-4 w-4 text-success" />
                       <span className="truncate">
                         #{ctx.number} {ctx.title}
                       </span>
@@ -413,7 +413,7 @@ export function DesktopToolbarControls({
                       key={ctx.number}
                       onClick={() => handleViewPR(ctx)}
                     >
-                      <GitPullRequest className="h-4 w-4 text-green-500" />
+                      <GitPullRequest className="h-4 w-4 text-success" />
                       <span className="truncate">
                         #{ctx.number} {ctx.title}
                       </span>
@@ -447,7 +447,7 @@ export function DesktopToolbarControls({
                       key={ctx.number}
                       onClick={() => handleViewSecurityAlert(ctx)}
                     >
-                      <Shield className="h-4 w-4 text-orange-500" />
+                      <Shield className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         #{ctx.number} {ctx.packageName} ({ctx.severity})
                       </span>
@@ -484,7 +484,7 @@ export function DesktopToolbarControls({
                       key={ctx.ghsaId}
                       onClick={() => handleViewAdvisory(ctx)}
                     >
-                      <ShieldAlert className="h-4 w-4 text-orange-500" />
+                      <ShieldAlert className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         {ctx.ghsaId} — {ctx.summary}
                       </span>
@@ -522,7 +522,7 @@ export function DesktopToolbarControls({
                       key={ctx.identifier}
                       onClick={() => handleViewLinear(ctx)}
                     >
-                      <LinearIcon className="h-4 w-4 text-violet-500" />
+                      <LinearIcon className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                       <span className="truncate">
                         {ctx.identifier} {ctx.title}
                       </span>
@@ -561,7 +561,7 @@ export function DesktopToolbarControls({
                       key={ctx.id}
                       onClick={() => handleViewSentry(ctx)}
                     >
-                      <Sentry className="h-4 w-4 text-orange-500" />
+                      <Sentry className="h-4 w-4 text-warning" />
                       <span className="truncate">
                         {ctx.shortId} {ctx.title}
                       </span>
@@ -601,7 +601,7 @@ export function DesktopToolbarControls({
                       key={ctx.slug}
                       onClick={() => handleViewSavedContext(ctx)}
                     >
-                      <FolderOpen className="h-4 w-4 text-blue-500" />
+                      <FolderOpen className="h-4 w-4 text-info" />
                       <span className="truncate">{ctx.name || ctx.slug}</span>
                     </DropdownMenuItem>
                   ))}
@@ -658,7 +658,7 @@ export function DesktopToolbarControls({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="hidden @xl:flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-amber-600 dark:text-amber-400 transition-colors cursor-pointer hover:bg-muted/80"
+                className="hidden @xl:flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-warning transition-colors cursor-pointer hover:bg-muted/80"
                 onClick={onResolvePrConflicts}
               >
                 <GitMerge className="h-3 w-3" />

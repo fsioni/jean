@@ -1,4 +1,5 @@
 import { createRef } from 'react'
+import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { ChatInput } from './ChatInput'
@@ -150,7 +151,8 @@ describe('ChatInput attachments', () => {
   const renderInput = (
     activeSessionId = 'session-1',
     investigateIssuePrompt?: string,
-    investigatePRPrompt?: string
+    investigatePRPrompt?: string,
+    onSubmit = vi.fn()
   ) => {
     const formRef = createRef<HTMLFormElement>()
     const inputRef = createRef<HTMLTextAreaElement>()
@@ -162,7 +164,7 @@ describe('ChatInput attachments', () => {
         isSending={false}
         executionMode="build"
         focusChatShortcut="⌘K"
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
         onCancel={vi.fn()}
         formRef={formRef}
         inputRef={inputRef}
@@ -228,7 +230,6 @@ describe('ChatInput attachments', () => {
         isSending={false}
         executionMode="plan"
         focusChatShortcut=""
-        clearOnSubmit={false}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
         formRef={formRef}
@@ -244,11 +245,14 @@ describe('ChatInput attachments', () => {
     expect(prompt).toHaveValue('Keep me')
   })
 
-  it('attaches an issue before adding its magic investigation prompt to the draft', async () => {
+  it('sends the issue investigation prompt after the context loads', async () => {
     invokeMock.mockResolvedValue(undefined)
+    const onSubmit = vi.fn()
     const textarea = renderInput(
       'session-1',
-      'Investigate the loaded GitHub {issueWord} ({issueRefs})'
+      'Investigate the loaded GitHub {issueWord} ({issueRefs})',
+      undefined,
+      onSubmit
     )
 
     fireEvent.change(textarea, { target: { value: '#42' } })
@@ -256,18 +260,60 @@ describe('ChatInput attachments', () => {
       screen.getByRole('button', { name: 'Investigate selected issue' })
     )
 
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('load_issue_context', {
-        sessionId: 'session-1',
-        issueNumber: 123,
-        projectPath: '/tmp/worktree',
-      })
-      expect(storeState.setInputDraft).toHaveBeenCalledWith(
-        'session-1',
-        'Investigate the loaded GitHub issue (#123)'
-      )
-    })
+    // Prompt is in the input and submitted right away; the context load is
+    // deferred to beforeSend so the send stays bound to this session.
     expect(textarea.value).toBe('Investigate the loaded GitHub issue (#123)')
+    expect(storeState.setInputDraft).toHaveBeenCalledWith(
+      'session-1',
+      'Investigate the loaded GitHub issue (#123)'
+    )
+    expect(onSubmit).toHaveBeenCalledWith(undefined, {
+      beforeSend: expect.any(Function),
+    })
+    expect(invokeMock).not.toHaveBeenCalled()
+
+    await onSubmit.mock.calls[0]?.[1].beforeSend()
+    expect(invokeMock).toHaveBeenCalledWith('load_issue_context', {
+      sessionId: 'session-1',
+      issueNumber: 123,
+      projectPath: '/tmp/worktree',
+    })
+  })
+
+  it('does not wait for the query refetch before sending the investigation', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const invalidate = vi
+      .spyOn(QueryClient.prototype, 'invalidateQueries')
+      .mockReturnValue(new Promise<void>(() => undefined))
+    const onSubmit = vi.fn()
+    const textarea = renderInput('session-1', undefined, undefined, onSubmit)
+
+    fireEvent.change(textarea, { target: { value: '#42' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Investigate selected issue' })
+    )
+
+    // A slow refetch of all GitHub/Linear queries must not delay the send.
+    await expect(
+      onSubmit.mock.calls[0]?.[1].beforeSend()
+    ).resolves.toBeUndefined()
+    expect(invalidate).toHaveBeenCalled()
+    invalidate.mockRestore()
+  })
+
+  it('fails beforeSend when the investigation context cannot load', async () => {
+    invokeMock.mockRejectedValue(new Error('boom'))
+    const onSubmit = vi.fn()
+    const textarea = renderInput('session-1', undefined, undefined, onSubmit)
+
+    fireEvent.change(textarea, { target: { value: '#42' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Investigate selected issue' })
+    )
+
+    await expect(onSubmit.mock.calls[0]?.[1].beforeSend()).rejects.toThrow(
+      'boom'
+    )
   })
 
   it('removes the typed hash and number after attaching an issue', async () => {
@@ -304,12 +350,14 @@ describe('ChatInput attachments', () => {
     expect(textarea.value).toBe('Check this ')
   })
 
-  it('attaches a PR before adding its magic investigation prompt to the draft', async () => {
+  it('sends the PR investigation prompt after the context loads', async () => {
     invokeMock.mockResolvedValue(undefined)
+    const onSubmit = vi.fn()
     const textarea = renderInput(
       'session-1',
       undefined,
-      'Investigate the loaded GitHub {prWord} ({prRefs})'
+      'Investigate the loaded GitHub {prWord} ({prRefs})',
+      onSubmit
     )
 
     fireEvent.change(textarea, { target: { value: '#' } })
@@ -317,18 +365,18 @@ describe('ChatInput attachments', () => {
       screen.getByRole('button', { name: 'Investigate selected PR' })
     )
 
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('load_pr_context', {
-        sessionId: 'session-1',
-        prNumber: 45,
-        projectPath: '/tmp/worktree',
-      })
-      expect(storeState.setInputDraft).toHaveBeenCalledWith(
-        'session-1',
-        'Investigate the loaded GitHub PR (#45)'
-      )
-    })
     expect(textarea.value).toBe('Investigate the loaded GitHub PR (#45)')
+    expect(onSubmit).toHaveBeenCalledWith(undefined, {
+      beforeSend: expect.any(Function),
+    })
+    expect(invokeMock).not.toHaveBeenCalled()
+
+    await onSubmit.mock.calls[0]?.[1].beforeSend()
+    expect(invokeMock).toHaveBeenCalledWith('load_pr_context', {
+      sessionId: 'session-1',
+      prNumber: 45,
+      projectPath: '/tmp/worktree',
+    })
   })
 
   it('removes the typed hash and number after attaching a PR', async () => {
@@ -837,6 +885,7 @@ describe('ChatInput IME composition (issue #584)', () => {
   }) => {
     const formRef = createRef<HTMLFormElement>()
     const inputRef = createRef<HTMLTextAreaElement>()
+    let clearInput: (() => void) | null = null
     const onSubmit = vi.fn()
 
     render(
@@ -847,6 +896,9 @@ describe('ChatInput IME composition (issue #584)', () => {
         executionMode="build"
         focusChatShortcut="⌘K"
         onSubmit={onSubmit}
+        onRegisterClearHandler={handler => {
+          clearInput = handler
+        }}
         onCancel={vi.fn()}
         formRef={formRef}
         inputRef={inputRef}
@@ -856,7 +908,7 @@ describe('ChatInput IME composition (issue #584)', () => {
     )
 
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
-    return { textarea, onSubmit }
+    return { textarea, onSubmit, acceptSubmit: () => clearInput?.() }
   }
 
   it('submits on normal Enter when not composing', () => {
@@ -867,6 +919,27 @@ describe('ChatInput IME composition (issue #584)', () => {
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', keyCode: 13 })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps text visible when the submit handler does not accept the message', () => {
+    const { textarea, onSubmit } = renderWithSubmit()
+    fireEvent.change(textarea, { target: { value: 'keep this draft' } })
+
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', keyCode: 13 })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(textarea.value).toBe('keep this draft')
+  })
+
+  it('clears accepted messages through the registered submit handler', () => {
+    const { textarea, onSubmit, acceptSubmit } = renderWithSubmit()
+    onSubmit.mockImplementation(acceptSubmit)
+    fireEvent.change(textarea, { target: { value: 'send this message' } })
+
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', keyCode: 13 })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(textarea.value).toBe('')
   })
 
   it('submits as a steer when the primary modifier is held', () => {

@@ -138,7 +138,7 @@ function ConnectionIndicator() {
       <TooltipTrigger asChild>
         <div className="inline-flex h-7 items-center gap-1.5 px-2 text-[11px] leading-none text-muted-foreground">
           <span
-            className={`inline-block size-2 ${connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}
+            className={`inline-block size-2 ${connected ? 'bg-success' : 'bg-destructive animate-pulse'}`}
           />
         </div>
       </TooltipTrigger>
@@ -463,7 +463,7 @@ export function FloatingDock() {
               <DropdownMenuItem
                 onClick={() => openExternal('https://jean.build/sponsorships/')}
               >
-                <Heart className="mr-2 h-4 w-4 text-pink-500" />
+                <Heart className="mr-2 h-4 w-4 text-pink-600 dark:text-pink-500" />
                 Sponsor Jean
               </DropdownMenuItem>
             </>

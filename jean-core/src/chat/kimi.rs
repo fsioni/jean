@@ -437,6 +437,7 @@ fn inject_synthetic_plan(response: &mut KimiResponse) -> Option<ToolCall> {
         }),
         output: None,
         parent_tool_use_id: None,
+        is_error: None,
     };
     response.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: tool.id.clone(),
@@ -871,6 +872,7 @@ fn apply_kimi_stream_item(response: &mut KimiResponse, item: &KimiStreamItem) {
                     input: input.clone(),
                     output: None,
                     parent_tool_use_id: None,
+                    is_error: None,
                 });
             }
         }
@@ -1384,6 +1386,7 @@ fn execute_kimi_child(
                             input: input.clone(),
                             output: None,
                             parent_tool_use_id: None,
+                            is_error: None,
                         });
                     }
                     emit(

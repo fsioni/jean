@@ -31,6 +31,31 @@ export interface ProjectAutoFixSettings {
   active_hours_end?: number
 }
 
+/** A GitHub issue Mr. Robot failed to start (in-memory backend state). */
+export interface AutoFixFailedIssue {
+  issueNumber: number
+  attempts: number
+  error: string
+  /** Unix seconds */
+  failedAt: number
+  gaveUp: boolean
+}
+
+/**
+ * Runtime Mr. Robot status for a project (`get_auto_fix_status`).
+ * All timestamps are unix seconds. Resets when the app restarts.
+ */
+export interface AutoFixStatus {
+  lastScanAt: number | null
+  nextScanAt: number | null
+  /** GitHub rate limit backoff */
+  rateLimitedUntil: number | null
+  lastError: { message: string; at: number } | null
+  failedIssues: AutoFixFailedIssue[]
+  startingIssues: number[]
+  pendingYoloSessions: number
+}
+
 /**
  * Status of a worktree (for tracking background operations)
  */

@@ -724,8 +724,7 @@ export function BackendModelPickerContent({
                               <Zap
                                 className={cn(
                                   'h-3 w-3',
-                                  isSelectedFast &&
-                                    'fill-yellow-500 text-yellow-500'
+                                  isSelectedFast && 'fill-warning text-warning'
                                 )}
                               />
                               <span>Fast</span>
@@ -769,7 +768,7 @@ export function BackendModelPickerContent({
                           <Star
                             className={cn(
                               'h-3.5 w-3.5',
-                              isFavorite && 'fill-yellow-500 text-yellow-500'
+                              isFavorite && 'fill-warning text-warning'
                             )}
                           />
                         </button>
@@ -871,7 +870,7 @@ function SidebarBackends({
                 {isBetaBackend(backend) && (
                   <span
                     aria-hidden
-                    className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-yellow-500"
+                    className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-warning"
                   />
                 )}
               </button>

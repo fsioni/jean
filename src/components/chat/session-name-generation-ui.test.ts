@@ -23,4 +23,13 @@ describe('session name generation UI', () => {
     expect(source).toContain('setSessionNaming(event.payload.session_id, true)')
     expect(source).toContain('setSessionNaming(event.payload.session_id, false)')
   })
+
+  it('manual rename emits session-renamed so the loading label clears', () => {
+    const source = readFileSync('jean-core/src/chat/commands.rs', 'utf8')
+    const renameFn = source.slice(
+      source.indexOf('pub async fn rename_session('),
+      source.indexOf('pub async fn regenerate_session_name(')
+    )
+    expect(renameFn).toContain('"session-renamed"')
+  })
 })
