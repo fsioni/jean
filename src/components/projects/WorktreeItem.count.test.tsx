@@ -105,7 +105,10 @@ const worktree: Worktree = {
 describe('WorktreeItem count', () => {
   beforeEach(() => {
     mocks.sessions = []
-    useProjectsStore.setState({ expandedWorktreeIds: new Set() })
+    useProjectsStore.setState({
+      expandedWorktreeIds: new Set(),
+      selectedWorktreeId: null,
+    })
   })
 
   it('shows the session count only while collapsed', async () => {
@@ -168,5 +171,41 @@ describe('WorktreeItem status placement', () => {
         name: 'CI OK',
       })
     ).not.toBeInTheDocument()
+    const hoverSurface = worktreeRow?.parentElement
+    expect(hoverSurface).toHaveClass('hover:bg-accent/50')
+    expect(
+      within(hoverSurface as HTMLElement).getByRole('button', {
+        name: 'CI OK',
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(hoverSurface as HTMLElement).getByRole('button', {
+        name: 'Preview hors ligne',
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Expand sessions' })).toHaveClass(
+      'group-hover/worktree:opacity-50'
+    )
+  })
+
+  it('extends the selected background and indicator across the badges', () => {
+    useProjectsStore.setState({ selectedWorktreeId: 'wt-1' })
+    render(
+      <WorktreeItem
+        worktree={{ ...worktree, pr_number: 42 }}
+        projectId="project-1"
+        projectPath="/tmp/project"
+        defaultBranch="main"
+      />
+    )
+
+    const worktreeRow = screen.getByText('feature').closest('[role="button"]')
+    const surface = worktreeRow?.parentElement
+    expect(surface).toHaveClass('bg-primary/10', 'before:h-full')
+    expect(
+      within(surface as HTMLElement).getByRole('button', {
+        name: 'Preview hors ligne',
+      })
+    ).toBeInTheDocument()
   })
 })

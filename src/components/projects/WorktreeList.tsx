@@ -38,6 +38,7 @@ import {
   getWorktreeLastActivity,
 } from './worktree-sort-utils'
 import { WorktreeItem } from './WorktreeItem'
+import { useRecoverWorktreePrLinks } from './useRecoverWorktreePrLinks'
 import { WorktreeItemSkeleton } from './WorktreeItemSkeleton'
 import {
   DRAG_SCOPE_WORKTREE_LIST,
@@ -232,6 +233,7 @@ export function WorktreeList({
   searchActive = false,
   loadSessionCounts = true,
 }: WorktreeListProps) {
+  useRecoverWorktreePrLinks(projectId, worktrees)
   const reorderWorktrees = useReorderWorktrees()
   const worktreeSortMode = useProjectsStore(
     state =>

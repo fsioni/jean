@@ -622,10 +622,10 @@ export function GeneralPane({
           </div>
           <InlineField
             label="Preview URL template"
-            description="Optional. Use {branch} where the branch slug should be inserted."
+            description="Optional. Use {pr} where the pull request number should be inserted."
           >
             <Input
-              placeholder="https://{branch}.preview.example.com"
+              placeholder="https://{pr}.preview.example.com"
               value={
                 jenkinsPreviewUrl ?? project?.jenkins_preview_url_template ?? ''
               }

@@ -62,4 +62,14 @@ describe('GeneralPane project avatar', () => {
       firstSrc
     )
   })
+
+  it('documents the PR number placeholder used by the preview resolver', () => {
+    render(<GeneralPane projectId="project-1" projectPath="/projects/jean" />)
+    expect(
+      screen.getByText(/Use \{pr\} where the pull request number/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByPlaceholderText('https://{pr}.preview.example.com')
+    ).toBeInTheDocument()
+  })
 })
