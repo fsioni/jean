@@ -1,8 +1,8 @@
 use super::coalesce::ChunkCoalescer;
-use super::run_log::{tool_result_content_to_string, tool_result_is_error};
+use super::run_log::{claude_subagent_usage, tool_result_content_to_string, tool_result_is_error};
 use super::types::{
     is_claude_compaction_summary_text, CompactMetadata, ContentBlock, EffortLevel,
-    PermissionDenial, PermissionDeniedEvent, ThinkingLevel, ToolCall, UsageData,
+    PermissionDenial, PermissionDeniedEvent, SubagentUsage, ThinkingLevel, ToolCall, UsageData,
 };
 use crate::http_server::EmitExt;
 use crate::projects::github_issues::{
@@ -228,6 +228,15 @@ struct ToolResultEvent {
     /// `Some(true)` when the tool result was flagged `is_error`
     #[serde(skip_serializing_if = "Option::is_none")]
     is_error: Option<bool>,
+}
+
+/// Payload for Claude subagent (Task/Agent) token/tool/time totals
+#[derive(serde::Serialize, Clone)]
+struct SubagentUsageEvent {
+    session_id: String,
+    worktree_id: String,
+    tool_use_id: String,
+    usage: SubagentUsage,
 }
 
 /// Payload for live tool-event (e.g. Monitor notifications) streamed to frontend.
@@ -669,6 +678,7 @@ fn build_claude_args(
     chrome_enabled: bool,
     custom_profile_name: Option<&str>,
     include_recap: bool,
+    working_dir: &std::path::Path,
 ) -> (Vec<String>, Vec<(String, String)>) {
     let mut args = Vec::new();
     let mut env_vars = Vec::new();
@@ -776,6 +786,24 @@ fn build_claude_args(
     // (the CLI option is single-valued; a second --settings replaces the first).
     let mut runtime_settings = serde_json::Map::new();
 
+    let denied_mcp_servers = append_mcp_config_args(&mut args, mcp_config, || {
+        crate::claude_cli::mcp::get_mcp_servers(working_dir.to_str())
+            .into_iter()
+            .map(|server| server.name)
+            .collect()
+    });
+    if !denied_mcp_servers.is_empty() {
+        runtime_settings.insert(
+            "deniedMcpServers".to_string(),
+            serde_json::Value::Array(
+                denied_mcp_servers
+                    .into_iter()
+                    .map(|name| serde_json::json!({ "serverName": name }))
+                    .collect(),
+            ),
+        );
+    }
+
     if let Some(effort) = effort_level {
         // --effort accepts low/medium/high/xhigh/max (settings effortLevel
         // silently drops max). Off / Adaptive omit it so the model decides.
@@ -853,8 +881,6 @@ fn build_claude_args(
     }
     args.push("--allowedTools".to_string());
     args.push("Bash(*claude-cli/claude*)".to_string());
-
-    append_mcp_config_args(&mut args, mcp_config);
 
     // Chrome browser integration (beta)
     if chrome_enabled {
@@ -1329,32 +1355,88 @@ fn build_claude_args(
     (args, env_vars)
 }
 
-fn append_mcp_config_args(args: &mut Vec<String>, mcp_config: Option<&str>) {
-    let Some(config) = mcp_config else {
-        return;
-    };
-    if config.is_empty() {
-        return;
-    }
+/// Claude tool-name prefix for an MCP server (`claude.ai Gmail` → `claude_ai_Gmail`).
+fn claude_mcp_tool_prefix(server_name: &str) -> String {
+    server_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
 
-    args.push("--mcp-config".to_string());
-    args.push(config.to_string());
-    args.push("--strict-mcp-config".to_string());
+/// Add MCP args for the enabled servers in `mcp_config`. Returns server names
+/// Claude must deny through `deniedMcpServers` settings.
+///
+/// Normally Jean passes the enabled servers with `--strict-mcp-config`, so
+/// Claude loads nothing else. That flag also drops claude.ai connectors and
+/// plugin servers, which Claude resolves itself. When one of them is enabled,
+/// Jean leaves out the flag and denies every other known server that is off.
+fn append_mcp_config_args(
+    args: &mut Vec<String>,
+    mcp_config: Option<&str>,
+    known_servers: impl FnOnce() -> Vec<String>,
+) -> Vec<String> {
+    let Some(config) = mcp_config.filter(|c| !c.is_empty()) else {
+        return Vec::new();
+    };
+    let mut parsed = serde_json::from_str::<serde_json::Value>(config).ok();
+    let servers = parsed
+        .as_mut()
+        .and_then(|p| p.get_mut("mcpServers"))
+        .and_then(|v| v.as_object_mut());
+    let marker = super::mcp_external::EXTERNAL_SERVER_MARKER;
+    let (enabled, external): (Vec<String>, Vec<String>) = match servers {
+        Some(servers) => {
+            let external: Vec<String> = servers
+                .iter()
+                .filter(|(_, v)| v.get(marker).and_then(|m| m.as_bool()) == Some(true))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for name in &external {
+                servers.remove(name);
+            }
+            let mut enabled: Vec<String> = servers.keys().cloned().collect();
+            enabled.extend(external.iter().cloned());
+            (enabled, external)
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+
+    let mut denied = Vec::new();
+    if external.is_empty() {
+        args.push("--mcp-config".to_string());
+        args.push(config.to_string());
+        args.push("--strict-mcp-config".to_string());
+    } else {
+        let has_config_servers = enabled.len() > external.len();
+        if let (true, Some(parsed)) = (has_config_servers, &parsed) {
+            args.push("--mcp-config".to_string());
+            args.push(parsed.to_string());
+        }
+        let enabled_set: std::collections::HashSet<&String> = enabled.iter().collect();
+        denied = known_servers()
+            .into_iter()
+            .filter(|name| !enabled_set.contains(name))
+            .collect();
+    }
 
     // Auto-allow all tools from configured MCP servers. Claude CLI has accepted
     // both the server-level form and the wildcard form across releases; include
     // both so non-interactive `--print` runs can actually execute MCP calls
     // instead of stopping after emitting a tool_use that Jean cannot approve.
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(config) {
-        if let Some(servers) = parsed.get("mcpServers").and_then(|v| v.as_object()) {
-            for server_name in servers.keys() {
-                args.push("--allowedTools".to_string());
-                args.push(format!("mcp__{server_name}"));
-                args.push("--allowedTools".to_string());
-                args.push(format!("mcp__{server_name}__*"));
-            }
-        }
+    for server_name in &enabled {
+        let prefix = claude_mcp_tool_prefix(server_name);
+        args.push("--allowedTools".to_string());
+        args.push(format!("mcp__{prefix}"));
+        args.push("--allowedTools".to_string());
+        args.push(format!("mcp__{prefix}__*"));
     }
+    denied
 }
 
 /// Jean MCP permission hook tool name, when the Jean MCP server is in `mcp_config`.
@@ -1438,6 +1520,7 @@ pub fn execute_claude_detached(
         chrome_enabled,
         custom_profile_name,
         include_recap,
+        working_dir,
     );
 
     // Log the full Claude CLI command for debugging
@@ -1773,6 +1856,23 @@ pub fn tail_claude_output(
                 flush_pending_chunks(app, session_id, worktree_id, &run_id, &mut chunk_coalescer);
             }
 
+            if let Some((tool_use_id, subagent_usage)) = claude_subagent_usage(&msg) {
+                if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == tool_use_id) {
+                    if tc.subagent_usage.as_ref() != Some(&subagent_usage) {
+                        tc.subagent_usage = Some(subagent_usage.clone());
+                        let event = SubagentUsageEvent {
+                            session_id: session_id.to_string(),
+                            worktree_id: worktree_id.to_string(),
+                            tool_use_id,
+                            usage: subagent_usage,
+                        };
+                        if let Err(e) = app.emit_all("chat:subagent_usage", &event) {
+                            log::error!("Failed to emit subagent_usage: {e}");
+                        }
+                    }
+                }
+            }
+
             if msg_type == "stream_event" {
                 if let Some(tool) = stream_event_tool_use(&msg) {
                     pending_stream_tool_inputs.remove(&tool.index);
@@ -1808,6 +1908,7 @@ pub fn tail_claude_output(
                             output: None,
                             parent_tool_use_id: current_parent_tool_use_id.clone(),
                             is_error: None,
+                            subagent_usage: None,
                         });
                         content_blocks.push(ContentBlock::ToolUse {
                             tool_call_id: id.clone(),
@@ -2043,6 +2144,7 @@ pub fn tail_claude_output(
                                             output: None,
                                             parent_tool_use_id: current_parent_tool_use_id.clone(),
                                             is_error: None,
+                                            subagent_usage: None,
                                         });
 
                                         content_blocks.push(ContentBlock::ToolUse {
@@ -3350,14 +3452,59 @@ mod tests {
         }"#;
         let mut args = Vec::new();
 
-        append_mcp_config_args(&mut args, Some(config));
+        let denied = append_mcp_config_args(&mut args, Some(config), || {
+            panic!("known servers are only needed for external servers")
+        });
 
+        assert!(denied.is_empty());
         assert!(args.contains(&"--mcp-config".to_string()));
         assert!(args.contains(&"--strict-mcp-config".to_string()));
         assert!(args.contains(&"mcp__jean-dev".to_string()));
         assert!(args.contains(&"mcp__jean-dev__*".to_string()));
         assert!(args.contains(&"mcp__github".to_string()));
         assert!(args.contains(&"mcp__github__*".to_string()));
+    }
+
+    #[test]
+    fn external_mcp_servers_drop_strict_mode_and_deny_disabled_servers() {
+        let config = r#"{
+            "mcpServers": {
+                "github": { "type": "stdio", "command": "github-mcp" },
+                "claude.ai Gmail": { "jeanExternal": true, "target": "https://x" }
+            }
+        }"#;
+        let mut args = Vec::new();
+
+        let denied = append_mcp_config_args(&mut args, Some(config), || {
+            vec![
+                "github".to_string(),
+                "notion".to_string(),
+                "claude.ai Gmail".to_string(),
+                "claude.ai Google Drive".to_string(),
+            ]
+        });
+
+        assert_eq!(denied, vec!["notion", "claude.ai Google Drive"]);
+        assert!(!args.contains(&"--strict-mcp-config".to_string()));
+        let config_idx = args.iter().position(|a| a == "--mcp-config").unwrap();
+        let passed: serde_json::Value = serde_json::from_str(&args[config_idx + 1]).unwrap();
+        assert!(passed["mcpServers"].get("github").is_some());
+        assert!(passed["mcpServers"].get("claude.ai Gmail").is_none());
+        assert!(args.contains(&"mcp__claude_ai_Gmail__*".to_string()));
+        assert!(args.contains(&"mcp__github__*".to_string()));
+    }
+
+    #[test]
+    fn only_external_mcp_servers_skip_mcp_config_flag() {
+        let config = r#"{"mcpServers":{"claude.ai Gmail":{"jeanExternal":true}}}"#;
+        let mut args = Vec::new();
+
+        let denied = append_mcp_config_args(&mut args, Some(config), Vec::new);
+
+        assert!(denied.is_empty());
+        assert!(!args.contains(&"--mcp-config".to_string()));
+        assert!(!args.contains(&"--strict-mcp-config".to_string()));
+        assert!(args.contains(&"mcp__claude_ai_Gmail".to_string()));
     }
 
     #[test]

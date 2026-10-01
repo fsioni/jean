@@ -62,6 +62,31 @@ function shapeClasses(shape: IndicatorShape): string {
   }
 }
 
+/** Small 3-bar activity waveform shown for running sessions/agents. */
+export function WorkingWaveform({
+  label,
+  className,
+}: {
+  label?: string
+  className?: string
+}) {
+  return (
+    <span
+      {...(label
+        ? { role: 'img', 'aria-label': label, title: label }
+        : { 'aria-hidden': true })}
+      className={cn(
+        'working-waveform shrink-0 text-primary forced-colors:text-[Highlight]',
+        className
+      )}
+    >
+      <span />
+      <span />
+      <span />
+    </span>
+  )
+}
+
 export function StatusIndicator({
   status,
   shape,
@@ -72,23 +97,11 @@ export function StatusIndicator({
   const shapeClass = shapeClasses(resolvedShape)
   const title = label
 
-  // Running state: CSS border spinner in primary color (black in light, yellow in dark)
+  // Running state: shared 3-bar waveform. It has a fixed size, so the
+  // dot size classes from `className` do not apply here. Static dots sit in
+  // a slot of the same size so layouts do not shift between states.
   if (status === 'running') {
-    return (
-      <span
-        role="img"
-        aria-label={label}
-        title={title}
-        className={cn(
-          'shrink-0 block animate-spin border-2 border-transparent motion-reduce:animate-none',
-          // Reduced motion: solid fill instead of spinner so status remains visible
-          'motion-reduce:border-0 motion-reduce:bg-current motion-reduce:text-primary',
-          'border-t-primary bg-primary/10 forced-colors:border-t-[Highlight]',
-          shapeClass,
-          className
-        )}
-      />
-    )
+    return <WorkingWaveform label={label} />
   }
 
   // Static states: filled/outline shapes with distinct colors + shapes
@@ -116,13 +129,17 @@ export function StatusIndicator({
       role="img"
       aria-label={label}
       title={title}
-      className={cn(
-        'shrink-0 block',
-        fillClass,
-        shapeClass,
-        colorClass,
-        className
-      )}
-    />
+      className="inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center"
+    >
+      <span
+        className={cn(
+          'shrink-0 block',
+          fillClass,
+          shapeClass,
+          colorClass,
+          className
+        )}
+      />
+    </span>
   )
 }

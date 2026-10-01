@@ -98,12 +98,9 @@ export function ProjectTreeItem({
   )
   const worktrees = loadedWorktrees ?? []
   const { data: appDataDir = '' } = useAppDataDir()
-  const hasWorktrees =
-    !isOffline && (worktrees.length > 0 || (project.worktree_count ?? 0) > 0)
-  const worktreeCount =
-    shouldLoadWorktrees && loadedWorktrees
-      ? loadedWorktrees.length
-      : (project.worktree_count ?? 0)
+  // Prefer loaded worktrees: project.worktree_count can be stale
+  const worktreeCount = loadedWorktrees?.length ?? project.worktree_count ?? 0
+  const hasWorktrees = !isOffline && worktreeCount > 0
   const projectMatchesSearch = matchesProjectSearch(project, searchQuery)
   const hasMatchingWorktree = worktrees.some(worktree =>
     matchesWorktreeSearch(worktree, searchQuery)

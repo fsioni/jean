@@ -128,6 +128,16 @@ export interface ToolCall {
   events?: ToolLiveEvent[]
   /** Current lifecycle status for long-running tools. */
   status?: 'armed' | 'running' | 'done' | 'timeout' | 'error'
+  /** Token/tool/time totals of a Claude Task/Agent subagent run */
+  subagent_usage?: SubagentUsage
+}
+
+/** Claude subagent totals (from task_progress events and the final result) */
+export interface SubagentUsage {
+  /** Context tokens of the subagent's latest API call */
+  total_tokens: number
+  tool_uses: number
+  duration_ms: number
 }
 
 export interface PlanStep {
@@ -204,6 +214,17 @@ export interface DeniedMessageContext {
   model: string
   /** Thinking level that was selected */
   thinking_level: string
+}
+
+/**
+ * A chat table pinned for quick access. `key` is the checklist table key
+ * ("{messageId}:{markdownOffset}"); `markdown` is the table source;
+ * `title` is the heading above the table in the message, when there is one.
+ */
+export interface PinnedTable {
+  key: string
+  markdown: string
+  title?: string
 }
 
 /**
@@ -319,6 +340,8 @@ export interface Session {
   enabled_mcp_servers?: string[]
   /** Per-table checklist state: tableKey -> checked row indices */
   table_checked_rows?: Record<string, number[]>
+  /** Tables pinned for quick access, in pin order */
+  pinned_tables?: PinnedTable[]
   /** Unix timestamp when session was last opened/viewed by the user */
   last_opened_at?: number
   /** Primary surface for this session. Terminal sessions render as full-screen CLI sessions. */
@@ -596,6 +619,14 @@ export interface ToolResultEvent {
  * Unlike tool_result (atomic), tool_event arrives incrementally while a
  * long-running tool is armed.
  */
+/** Event payload for chat:subagent_usage (Claude Task/Agent totals) */
+export interface SubagentUsageEvent {
+  session_id: string
+  worktree_id: string
+  tool_use_id: string
+  usage: SubagentUsage
+}
+
 export interface ToolEventEvent {
   session_id: string
   worktree_id: string
@@ -1265,17 +1296,34 @@ export function getTodoWriteTodos(toolCall: ToolCall): Todo[] {
 }
 
 /**
- * A Codex multi-agent entry extracted from collab_tool_call events
+ * A subagent entry shown in the Subagents panel above the chat input.
+ * Extracted from Codex collab_tool_call events or Claude Task/Agent tool calls.
  */
-export interface CodexAgent {
-  /** Tool call ID of the SpawnAgent collab_tool_call */
+export interface SubAgent {
+  /** Codex thread ID or Claude Task/Agent tool call ID */
   id: string
-  /** The prompt given to the agent (truncated for display) */
+  /** The prompt or description given to the agent (truncated for display) */
   prompt: string
   /** Agent lifecycle status */
   status: 'in_progress' | 'completed' | 'errored' | 'interrupted'
   /** Completion message from agents_states */
   message?: string
+  /** Bold label before the prompt (e.g. Claude subagent_type) */
+  label?: string
+  /** Number of tool calls the agent made (Claude only) */
+  toolCount?: number
+  /** Context tokens of the agent's latest API call (Claude only) */
+  tokens?: number
+  /** Run time reported by the CLI (Claude only) */
+  durationMs?: number
+  /** Full prompt, for the expanded detail view */
+  fullPrompt?: string
+  /** Final report the agent returned (Claude Task/Agent output) */
+  report?: string
+  /** Tool calls shown in the expanded detail view */
+  toolCalls?: ToolCall[]
+  /** All turn tool calls, to resolve nested Claude Task/Agent sub-tools */
+  allToolCalls?: ToolCall[]
 }
 
 /** Names of collab tool calls that should be shown in the AgentWidget, not the timeline */
@@ -1361,6 +1409,16 @@ export interface PendingTextFile {
   size: number
   /** Full content for preview */
   content: string
+  /**
+   * Set when this chip holds rows picked from a chat table. `rows` are body
+   * row indices in table order; `notes` maps a row index to the user's note
+   * for that row. In-memory only (not restored on restart).
+   */
+  tableRows?: {
+    tableKey: string
+    rows: number[]
+    notes?: Record<number, string>
+  }
 }
 
 /**
@@ -1618,6 +1676,7 @@ export interface McpServerInfo {
 /** Health status of an MCP server as reported by `claude mcp list` */
 export type McpHealthStatus =
   | 'connected'
+  | 'authenticated'
   | 'needsAuthentication'
   | 'couldNotConnect'
   | 'disabled'

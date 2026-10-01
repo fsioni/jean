@@ -760,6 +760,20 @@ describe('applySessionRenamedToCaches', () => {
 })
 
 describe('applyCacheInvalidationKeys', () => {
+  it('refreshes the multi-server sidebar project list on project changes', () => {
+    const queryClient = new QueryClient()
+    const multiServerKey = ['multi-server', 'projects', 'server-1:true']
+    queryClient.setQueryData(projectsQueryKeys.list(), [])
+    queryClient.setQueryData(multiServerKey, [])
+
+    applyCacheInvalidationKeys(queryClient, ['projects'])
+
+    expect(
+      queryClient.getQueryState(projectsQueryKeys.list())?.isInvalidated
+    ).toBe(true)
+    expect(queryClient.getQueryState(multiServerKey)?.isInvalidated).toBe(true)
+  })
+
   it('refreshes Recent when a first prompt is persisted', () => {
     const queryClient = new QueryClient()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')

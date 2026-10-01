@@ -57,7 +57,11 @@ import type {
   ThinkingLevel,
   WorktreeSessions,
 } from '@/types/chat'
-import { groupServersByBackend, mcpKey } from '@/services/mcp'
+import {
+  groupServersByBackend,
+  invalidateMcpServers,
+  mcpKey,
+} from '@/services/mcp'
 import type {
   LoadedIssueContext,
   LoadedPullRequestContext,
@@ -429,7 +433,11 @@ export function MobileSettingsMenu({
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setMenuOpen(open)
-      if (open) setResumeCommand(getActiveResumeCommand())
+      if (open) {
+        setResumeCommand(getActiveResumeCommand())
+        // Pick up MCP servers added or signed in to from a terminal in Jean.
+        invalidateMcpServers()
+      }
     },
     [getActiveResumeCommand]
   )

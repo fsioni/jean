@@ -67,7 +67,10 @@ export function TextFilePreview({
 
       // Delete the file from disk
       try {
-        await invoke('delete_pasted_text', { path: textFile.path })
+        await invoke('delete_pasted_text', {
+          path: textFile.path,
+          sessionId,
+        })
       } catch (error) {
         console.error('Failed to delete text file:', error)
         // Still remove from UI even if delete fails
@@ -76,7 +79,7 @@ export function TextFilePreview({
       // Remove from store
       onRemove(textFile.id)
     },
-    [disabled, onRemove]
+    [disabled, onRemove, sessionId]
   )
 
   const handleCopy = useCallback((content: string) => {
@@ -107,6 +110,7 @@ export function TextFilePreview({
         const newSize = await invoke<number>('update_pasted_text', {
           path: textFile.path,
           content: editContent,
+          sessionId,
         })
 
         const { updatePendingTextFile } = useChatStore.getState()

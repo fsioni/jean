@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
-import { Sentry, Wand2 } from '@/components/icons/reicon'
+import { Wand2 } from '@/components/icons/reicon'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -101,6 +101,8 @@ export function MobileToolbarMenu({
     'merge-pr': onMergePr,
     'release-notes': () => useUIStore.getState().setReleaseNotesModalOpen(true),
     'update-pr': () => useUIStore.getState().setUpdatePrModalOpen(true),
+    'pre-release-review': () =>
+      dispatchMagicCommand({ command: 'pre-release-review' }),
     'investigate-issue': () =>
       dispatchMagicCommand({
         command: 'investigate',
@@ -143,10 +145,7 @@ export function MobileToolbarMenu({
               {section.header}
             </div>
             {section.options.map(option => {
-              const Icon =
-                option.id === 'investigate-issue' && !hasIssueContexts
-                  ? Sentry
-                  : option.icon
+              const Icon = option.icon
               return (
                 <DropdownMenuItem
                   key={option.id}

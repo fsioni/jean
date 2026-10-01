@@ -1280,6 +1280,21 @@ describe('tool error indicator', () => {
 })
 
 describe('summarizeToolCall', () => {
+  it('labels Codex sub-agent activity with the agent path', () => {
+    expect(
+      summarizeToolCall({
+        id: 'sa1',
+        name: 'SpawnAgent',
+        input: {
+          type: 'sub_agent_activity',
+          kind: 'started',
+          prompt: '/root/demo_one',
+          receiver_thread_ids: ['t1'],
+        },
+      })
+    ).toEqual({ label: 'Spawn Agent', detail: '/root/demo_one' })
+  })
+
   it('uses the same friendly labels as the tool rows', () => {
     expect(
       summarizeToolCall({

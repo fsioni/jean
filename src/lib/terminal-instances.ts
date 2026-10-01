@@ -963,6 +963,13 @@ async function createTerminalForRenderer(
   const terminal = new XtermTerminal({
     ...terminalOptions,
     allowProposedApi: true,
+    // OSC 8 hyperlinks: xterm's default handler calls window.confirm(), which
+    // the Tauri dialog plugin overrides with a command that no longer exists.
+    linkHandler: {
+      activate: (_event, uri) => {
+        openExternal(uri)
+      },
+    },
   })
   terminal.attachCustomKeyEventHandler(event => {
     // Returning false keeps xterm from also sending its own carriage return.

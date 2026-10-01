@@ -210,6 +210,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   m: 'merge',
   f: 'resolve-conflicts',
   g: 'release-notes',
+  x: 'pre-release-review',
   i: 'investigate-issue',
   a: 'investigate-pr',
   y: 'investigate-advisory',

@@ -305,3 +305,34 @@ describe('UIStore', () => {
     expect(useUIStore.getState().updateReadyVersion).toBe('1.2.3')
   })
 })
+
+describe('MCP login context', () => {
+  beforeEach(() => useUIStore.getState().closeCliLoginModal())
+
+  it('clears the MCP target when the modal closes', () => {
+    useUIStore
+      .getState()
+      .openCliLoginModal('claude', '/cli', ['mcp', 'login'], 'login', {
+        serverName: 'orbit-dev',
+        worktreePath: '/repo',
+        serverId: 'remote',
+      })
+    expect(useUIStore.getState().cliLoginModalMcpContext?.serverId).toBe(
+      'remote'
+    )
+    useUIStore.getState().closeCliLoginModal()
+    expect(useUIStore.getState().cliLoginModalMcpContext).toBeNull()
+  })
+
+  it('never carries an MCP directory or owner into a normal CLI login', () => {
+    useUIStore
+      .getState()
+      .openCliLoginModal('claude', '/cli', ['mcp', 'login'], 'login', {
+        serverName: 'orbit-dev',
+        worktreePath: '/repo',
+        serverId: 'remote',
+      })
+    useUIStore.getState().openCliLoginModal('codex', '/cli', ['login'])
+    expect(useUIStore.getState().cliLoginModalMcpContext).toBeNull()
+  })
+})

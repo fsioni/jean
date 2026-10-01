@@ -152,6 +152,27 @@ function formatInputForExpanded(
   return toolCall.output?.trim() || 'No details available'
 }
 
+/** Readable details for Codex `sub_agent_activity` items (else undefined). */
+function formatSubAgentActivity(
+  input: Record<string, unknown>
+): string | undefined {
+  if (input.type !== 'sub_agent_activity') return undefined
+  const threadIds = Array.isArray(input.receiver_thread_ids)
+    ? (input.receiver_thread_ids as string[])
+    : []
+  const states = (input.agents_states ?? {}) as Record<
+    string,
+    { status?: string } | undefined
+  >
+  const lines = [`Agent: ${String(input.prompt ?? 'sub-agent')}`]
+  for (const id of threadIds) {
+    lines.push(`Thread: ${id}`)
+    const status = states[id]?.status
+    if (status) lines.push(`Status: ${status}`)
+  }
+  return lines.join('\n')
+}
+
 /** Best-effort one-line detail from common tool input fields. */
 function firstStringField(
   input: Record<string, unknown>,
@@ -764,66 +785,108 @@ export function TaskCallInline({
           )}
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="border-t border-border/50 px-3 py-2 space-y-2">
-            {/* Show prompt/instructions */}
-            {prompt && (
-              <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                {prompt}
-              </div>
-            )}
-            {/* Show sub-tools as compact list */}
-            {subToolCalls.length > 0 ? (
-              <div className="space-y-1">
-                {subToolCalls.map(subTool =>
-                  (subTool.name === 'Task' || subTool.name === 'Agent') &&
-                  (allToolCalls || nestedSubTools) ? (
-                    <TaskCallInline
-                      key={subTool.id}
-                      taskToolCall={subTool}
-                      subToolCalls={
-                        nestedSubTools?.[subTool.id] ??
-                        (allToolCalls ?? []).filter(
-                          t => t.parent_tool_use_id === subTool.id
-                        )
-                      }
-                      allToolCalls={allToolCalls}
-                      nestedSubTools={nestedSubTools}
-                      onFileClick={onFileClick}
-                      isStreaming={isStreaming}
-                      // A nested agent is still running while its parent is
-                      // and it has not returned its report yet.
-                      isIncomplete={
-                        Boolean(isIncomplete) && !subTool.output?.trim()
-                      }
-                    />
-                  ) : (
-                    <SubToolItem
-                      key={subTool.id}
-                      toolCall={subTool}
-                      onFileClick={onFileClick}
-                    />
-                  )
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground/60 italic">
-                No sub-tools recorded
-              </p>
-            )}
-            {/* Subagent final report returned to the parent agent */}
-            {report && (
-              <div className="space-y-1">
-                <div className="border-t border-border/30" />
-                <div className="text-xs text-muted-foreground/60">Report:</div>
-                <div className="max-h-64 overflow-y-auto text-xs text-foreground/80 bg-muted/50 rounded p-2">
-                  <Markdown variant="tool-call">{report}</Markdown>
-                </div>
-              </div>
-            )}
-          </div>
+          <TaskCallDetails
+            className="border-t border-border/50 px-3 py-2"
+            prompt={prompt}
+            report={report}
+            subToolCalls={subToolCalls}
+            allToolCalls={allToolCalls}
+            nestedSubTools={nestedSubTools}
+            onFileClick={onFileClick}
+            isStreaming={isStreaming}
+            isIncomplete={isIncomplete}
+          />
         </CollapsibleContent>
       </div>
     </Collapsible>
+  )
+}
+
+interface TaskCallDetailsProps {
+  /** Instructions given to the subagent */
+  prompt?: string
+  /** Final report the subagent returned */
+  report?: string
+  subToolCalls: ToolCall[]
+  allToolCalls?: ToolCall[]
+  nestedSubTools?: Record<string, ToolCall[]>
+  className?: string
+  onFileClick?: (filePath: string) => void
+  isStreaming?: boolean
+  isIncomplete?: boolean
+}
+
+/**
+ * Expanded subagent body: prompt, sub-tool calls, and final report.
+ * Shared by TaskCallInline and the Subagents panel above the input.
+ */
+export function TaskCallDetails({
+  prompt,
+  report,
+  subToolCalls,
+  allToolCalls,
+  nestedSubTools,
+  className,
+  onFileClick,
+  isStreaming,
+  isIncomplete,
+}: TaskCallDetailsProps) {
+  return (
+    <div className={cn('space-y-2', className)}>
+      {/* Show prompt/instructions */}
+      {prompt && (
+        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">
+          {prompt}
+        </div>
+      )}
+      {/* Show sub-tools as compact list */}
+      {subToolCalls.length > 0 ? (
+        <div className="space-y-1">
+          {subToolCalls.map(subTool =>
+            (subTool.name === 'Task' || subTool.name === 'Agent') &&
+            (allToolCalls || nestedSubTools) ? (
+              <TaskCallInline
+                key={subTool.id}
+                taskToolCall={subTool}
+                subToolCalls={
+                  nestedSubTools?.[subTool.id] ??
+                  (allToolCalls ?? []).filter(
+                    t => t.parent_tool_use_id === subTool.id
+                  )
+                }
+                allToolCalls={allToolCalls}
+                nestedSubTools={nestedSubTools}
+                onFileClick={onFileClick}
+                isStreaming={isStreaming}
+                // A nested agent is still running while its parent is
+                // and it has not returned its report yet.
+                isIncomplete={Boolean(isIncomplete) && !subTool.output?.trim()}
+              />
+            ) : (
+              <SubToolItem
+                key={subTool.id}
+                toolCall={subTool}
+                onFileClick={onFileClick}
+              />
+            )
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground/60 italic">
+          No sub-tools recorded
+        </p>
+      )}
+      {/* Subagent final report returned to the parent agent */}
+      {report && (
+        <div className="space-y-1">
+          <div className="border-t border-border/30" />
+          <div className="text-xs text-muted-foreground/60">Report:</div>
+          <div className="max-h-64 overflow-y-auto text-xs text-foreground/80 bg-muted/50 rounded p-2">
+            <Markdown variant="tool-call">{report}</Markdown>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1382,6 +1445,14 @@ function getToolSummaryName(toolCall: ToolCall): string {
       return 'Image View'
     case 'CodexContextCompaction':
       return 'Context Compaction'
+    case 'SpawnAgent':
+      return 'Spawn Agent'
+    case 'SendInput':
+      return 'Send Input'
+    case 'WaitForAgents':
+      return 'Waiting for Agents'
+    case 'CloseAgent':
+      return 'Close Agent'
     default: {
       const normalized = normalizeToolCallForDisplay(
         toolCall.name,
@@ -1456,6 +1527,7 @@ export function summarizeToolCall(toolCall: ToolCall): {
       'backend',
       'tool_name',
       'toolName',
+      'prompt',
     ])
   return { label, detail: detail ? truncateOneLine(detail, 80) : undefined }
 }
@@ -1728,17 +1800,22 @@ function getToolDisplay(toolCall: ToolCall): ToolDisplay {
         icon: <Users className="h-4 w-4 shrink-0" />,
         label: 'Spawn Agent',
         detail: truncatedPrompt ?? 'sub-agent',
-        expandedContent: prompt ?? JSON.stringify(input, null, 2),
+        expandedContent:
+          formatSubAgentActivity(input) ??
+          prompt ??
+          JSON.stringify(input, null, 2),
       }
     }
 
     case 'SendInput': {
-      const agentId = input.agent_id as string | undefined
+      // Codex sub_agent_activity puts the agent path in `prompt`
+      const agentId = (input.agent_id ?? input.prompt) as string | undefined
       return {
         icon: <Send className="h-4 w-4 shrink-0" />,
         label: 'Send Input',
         detail: agentId ? `to agent ${agentId}` : undefined,
-        expandedContent: JSON.stringify(input, null, 2),
+        expandedContent:
+          formatSubAgentActivity(input) ?? JSON.stringify(input, null, 2),
       }
     }
 
@@ -1756,12 +1833,13 @@ function getToolDisplay(toolCall: ToolCall): ToolDisplay {
     }
 
     case 'CloseAgent': {
-      const agentId = input.agent_id as string | undefined
+      const agentId = (input.agent_id ?? input.prompt) as string | undefined
       return {
         icon: <XCircle className="h-4 w-4 shrink-0" />,
         label: 'Close Agent',
         detail: agentId,
-        expandedContent: JSON.stringify(input, null, 2),
+        expandedContent:
+          formatSubAgentActivity(input) ?? JSON.stringify(input, null, 2),
       }
     }
 

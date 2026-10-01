@@ -304,8 +304,8 @@ export function FileContentModal({
     setIsEditing(!isEditing)
   }, [isEditing, hasChanges, content])
 
-  // Only the explicit X / DialogClose should dismiss — not outside click,
-  // ESC, or a parent sheet closing underneath on mobile.
+  // Only the explicit X / DialogClose or ESC should dismiss — not outside
+  // click or a parent sheet closing underneath on mobile.
   const handleOpenChange = useCallback(
     (open: boolean) => {
       if (!open) {
@@ -322,7 +322,11 @@ export function FileContentModal({
   return (
     <Dialog open={!!filePath} onOpenChange={handleOpenChange}>
       <DialogContent
-        preventClose
+        onInteractOutside={e => e.preventDefault()}
+        // Keep unsaved edits: ESC only closes when there is nothing to lose
+        onEscapeKeyDown={e => {
+          if (hasChanges) e.preventDefault()
+        }}
         // Sit above mobile sheets (z-80) so the viewer is interactive
         overlayClassName="z-[90]"
         className="!w-screen !h-dvh !max-w-screen !max-h-none !rounded-none p-0 sm:!w-[calc(100vw-4rem)] sm:!max-w-[calc(100vw-4rem)] sm:!h-auto sm:max-h-[85vh] sm:!rounded-lg sm:p-4 bg-background/95 z-[90]"

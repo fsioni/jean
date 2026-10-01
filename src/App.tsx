@@ -27,6 +27,7 @@ import { QuitConfirmationDialog } from '@/components/layout/QuitConfirmationDial
 import { setServerPlatform } from '@/lib/platform'
 import { projectsQueryKeys } from '@/services/projects'
 import { chatQueryKeys } from '@/services/chat'
+import { invalidateMcpServers } from '@/services/mcp'
 import { mergeWorktreesPreservingOptimistic } from '@/lib/worktree-list-cache'
 import type { Session, WorktreeSessions } from '@/types/chat'
 import type { Worktree } from '@/types/projects'
@@ -964,6 +965,14 @@ function App() {
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('focus', onFocus)
     }
+  }, [])
+
+  // MCP servers can change outside Jean (e.g. `claude mcp add` or `/mcp` sign-in
+  // in an external terminal). Re-read the config files when the window gets focus.
+  useEffect(() => {
+    const onFocus = () => invalidateMcpServers()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [])
 
   const [cliCheckReady, setCliCheckReady] = useState(false)

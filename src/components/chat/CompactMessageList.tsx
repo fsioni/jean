@@ -17,6 +17,10 @@ import {
 } from '@/components/icons/reicon'
 import { Markdown } from '@/components/ui/markdown'
 import {
+  REVEAL_CHAT_MESSAGE_EVENT,
+  type RevealChatMessageDetail,
+} from '@/lib/pinned-table-reveal'
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -389,6 +393,17 @@ function CompactActivityRow({
   editedFilesShownExternally,
 }: CompactActivityRowProps) {
   const [isOpen, setIsOpen] = useState(false)
+  // "Show in chat" on a pinned table opens the row that holds its message.
+  useEffect(() => {
+    const handleReveal = (event: Event) => {
+      const { messageId } = (event as CustomEvent<RevealChatMessageDetail>)
+        .detail
+      if (group.some(item => item.message.id === messageId)) setIsOpen(true)
+    }
+    window.addEventListener(REVEAL_CHAT_MESSAGE_EVENT, handleReveal)
+    return () =>
+      window.removeEventListener(REVEAL_CHAT_MESSAGE_EVENT, handleReveal)
+  }, [group])
   const summary = useMemo(() => summarizeGroup(group), [group])
   const stepCount = useMemo(() => countSteps(group), [group])
   const messageCount = group.length

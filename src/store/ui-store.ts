@@ -97,6 +97,13 @@ export type CliLoginModalType =
   | 'coderabbit'
   | null
 
+export interface McpLoginContext {
+  serverName: string
+  worktreePath: string
+  /** Owner of the backend CLI and terminal, not the viewing client. */
+  serverId?: string
+}
+
 export interface MinimizedCliUpdate {
   type: Exclude<CliLoginModalType, null>
   name: string
@@ -160,6 +167,7 @@ interface UIState {
   cliLoginModalCommand: string | null
   cliLoginModalCommandArgs: string[] | null
   cliLoginModalAction: 'login' | 'update' | 'install'
+  cliLoginModalMcpContext: McpLoginContext | null
   /** Active CLI update hidden from its modal while the process keeps running. */
   minimizedCliUpdate: MinimizedCliUpdate | null
   /** Worktree IDs that should auto-trigger investigate-issue when created */
@@ -183,12 +191,6 @@ interface UIState {
   pendingAutoOpenSessionIds: Record<string, string>
   /** Whether a session chat modal is open (for magic command keybinding checks) */
   sessionChatModalOpen: boolean
-  /** Whether the chat toolbar is mounted — used to hide the global FloatingDock
-   *  because its burger-menu counterpart now lives in the chat toolbar. */
-  chatToolbarMounted: boolean
-  /** Whether the full-width review results surface is mounted — used to hide the
-   *  global FloatingDock so it does not overlap the review Send buttons. */
-  reviewSurfaceMounted: boolean
   /** Which worktree the session chat modal is for (for magic command worktree resolution) */
   sessionChatModalWorktreeId: string | null
   /** Per-session primary surface shown inside the chat bounds */
@@ -293,7 +295,8 @@ interface UIState {
     type: Exclude<CliLoginModalType, null>,
     command: string,
     commandArgs?: string[],
-    action?: 'login' | 'update' | 'install'
+    action?: 'login' | 'update' | 'install',
+    mcpContext?: McpLoginContext
   ) => void
   closeCliLoginModal: () => void
   setMinimizedCliUpdate: (update: MinimizedCliUpdate | null) => void
@@ -340,8 +343,6 @@ interface UIState {
   ) => void
   openNewSessionModeModal: (target: NewSessionModeTarget) => void
   closeNewSessionModeModal: () => void
-  setChatToolbarMounted: (mounted: boolean) => void
-  setReviewSurfaceMounted: (mounted: boolean) => void
   setGitDiffModalOpen: (open: boolean) => void
   toggleGitDiffSelectedFile: (filePath: string) => void
   clearGitDiffSelectedFiles: () => void
@@ -433,6 +434,7 @@ export const useUIStore = create<UIState>()(
       cliLoginModalCommand: null,
       cliLoginModalCommandArgs: null,
       cliLoginModalAction: 'login',
+      cliLoginModalMcpContext: null,
       minimizedCliUpdate: null,
       autoInvestigateWorktreeIds: new Set(),
       autoInvestigatePRWorktreeIds: new Set(),
@@ -449,8 +451,6 @@ export const useUIStore = create<UIState>()(
       sessionPrimarySurface: {},
       sessionTerminalIds: {},
       newSessionModeTarget: null,
-      chatToolbarMounted: false,
-      reviewSurfaceMounted: false,
       gitDiffModalOpen: false,
       gitDiffSelectedFiles: new Set<string>(),
       planDialogOpen: false,
@@ -835,7 +835,7 @@ export const useUIStore = create<UIState>()(
           'closeCliUpdateModal'
         ),
 
-      openCliLoginModal: (type, command, commandArgs, action) =>
+      openCliLoginModal: (type, command, commandArgs, action, mcpContext) =>
         set(
           {
             cliLoginModalOpen: true,
@@ -843,6 +843,7 @@ export const useUIStore = create<UIState>()(
             cliLoginModalCommand: command,
             cliLoginModalCommandArgs: commandArgs ?? null,
             cliLoginModalAction: action ?? 'login',
+            cliLoginModalMcpContext: mcpContext ?? null,
             minimizedCliUpdate: null,
           },
           undefined,
@@ -857,6 +858,7 @@ export const useUIStore = create<UIState>()(
             cliLoginModalCommand: null,
             cliLoginModalCommandArgs: null,
             cliLoginModalAction: 'login',
+            cliLoginModalMcpContext: null,
             minimizedCliUpdate: null,
           },
           undefined,
@@ -1369,20 +1371,6 @@ export const useUIStore = create<UIState>()(
               : { newSessionModeTarget: null },
           undefined,
           'closeNewSessionModeModal'
-        ),
-
-      setChatToolbarMounted: (mounted: boolean) =>
-        set(state =>
-          state.chatToolbarMounted === mounted
-            ? state
-            : { chatToolbarMounted: mounted }
-        ),
-
-      setReviewSurfaceMounted: (mounted: boolean) =>
-        set(state =>
-          state.reviewSurfaceMounted === mounted
-            ? state
-            : { reviewSurfaceMounted: mounted }
         ),
 
       setGitDiffModalOpen: (open: boolean) =>

@@ -28,7 +28,13 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { invoke } from '@/lib/transport'
 import { hydrateRunningSnapshot } from '@/lib/hydrate-running-snapshot'
 import { generateId } from '@/lib/uuid'
-import { GitBranch, GitMerge, Layers, Loader2 } from '@/components/icons/reicon'
+import {
+  ArrowUp,
+  GitBranch,
+  GitMerge,
+  Layers,
+  Loader2,
+} from '@/components/icons/reicon'
 import {
   useSession,
   useSessions,
@@ -50,6 +56,7 @@ import {
   useRunScripts,
   usePackageScripts,
   type PackageScript,
+  invalidateProjectLists,
   projectsQueryKeys,
 } from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -70,6 +77,7 @@ import { parseServerResourceKey } from '@/lib/server-resource'
 import { SettingsTargetProvider } from '@/lib/settings-target'
 import {
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
+  DEFAULT_PRE_RELEASE_REVIEW_PROMPT,
   PREDEFINED_CLI_PROFILES,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
@@ -135,6 +143,13 @@ import { ReviewMethodModal } from './ReviewMethodModal'
 import { QueuedPromptsPanel } from './QueuedPromptsPanel'
 import { useQueuedPromptActions } from './hooks/useQueuedPromptActions'
 import { FloatingButtons } from './FloatingButtons'
+import { PinnedTablesButton } from './PinnedTablesButton'
+import {
+  capturePrependScrollAnchor,
+  restorePrependScrollAnchor,
+  type PrependScrollAnchor,
+} from './message-scroll-anchor'
+import { useShowTableInChat } from './hooks/useShowTableInChat'
 import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 import { resolveApprovalLabel } from './approval-label-utils'
 import { StreamingMessage } from './StreamingMessage'
@@ -253,9 +268,6 @@ const EMPTY_PENDING_IMAGES: PendingImage[] = []
 const EMPTY_PENDING_TEXT_FILES: PendingTextFile[] = []
 const EMPTY_PENDING_FILES: PendingFile[] = []
 
-// Process-wide count so remount races cannot leave reviewSurfaceMounted stuck true
-// (or false while another full-width review surface is still mounted).
-let reviewSurfaceMountCount = 0
 const EMPTY_PENDING_SKILLS: PendingSkill[] = []
 const EMPTY_QUEUED_MESSAGES: QueuedMessage[] = []
 const EMPTY_PERMISSION_DENIALS: PermissionDenial[] = []
@@ -543,21 +555,6 @@ function ChatWindowContent({
     isMobile,
     isDedicatedEmptyCodeReview,
   ])
-
-  // Full-width review replaces the chat toolbar, so FloatingDock would reappear
-  // over the Send Separately / Send to Chat footer. Hide it while this surface
-  // is active (same mount-count pattern as ChatToolbar → chatToolbarMounted).
-  useEffect(() => {
-    if (!showReviewFullWidth) return
-    reviewSurfaceMountCount += 1
-    useUIStore.getState().setReviewSurfaceMounted(true)
-    return () => {
-      reviewSurfaceMountCount = Math.max(0, reviewSurfaceMountCount - 1)
-      if (reviewSurfaceMountCount === 0) {
-        useUIStore.getState().setReviewSurfaceMounted(false)
-      }
-    }
-  }, [showReviewFullWidth])
 
   useEffect(() => {
     const panel = reviewPanelRef.current
@@ -1350,6 +1347,7 @@ function ChatWindowContent({
     scrollToFindings,
     handleScroll,
     handleScrollToBottomHandled,
+    stopFollowingTail,
   } = useScrollManagement({
     messages: session?.messages,
     virtualizedListRef,
@@ -1360,6 +1358,34 @@ function ChatWindowContent({
       !isLoading && !isSessionsLoading && !isSessionSwitching && !!session,
     isSending,
   })
+
+  // The composer floats over the messages so text stays visible beside it.
+  // Publish its height as a CSS var: messages pad by it so the last line can
+  // scroll above the composer, and floating buttons sit above it.
+  const composerOverlayObserverRef = useRef<ResizeObserver | null>(null)
+  const setComposerOverlayNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      composerOverlayObserverRef.current?.disconnect()
+      composerOverlayObserverRef.current = null
+      const container = node?.parentElement
+      if (!node || !container || typeof ResizeObserver === 'undefined') return
+      const observer = new ResizeObserver(() => {
+        const viewport = scrollViewportRef.current
+        const wasAtBottom =
+          !!viewport &&
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 2
+        container.style.setProperty(
+          '--chat-composer-height',
+          `${node.offsetHeight}px`
+        )
+        // Keep the tail visible when the composer grows (subagents, queue)
+        if (wasAtBottom && viewport) viewport.scrollTop = viewport.scrollHeight
+      })
+      observer.observe(node)
+      composerOverlayObserverRef.current = observer
+    },
+    [scrollViewportRef]
+  )
 
   // The new-session prompt owns file drops while its modal is open.
   const newWorktreeModalOpen = useUIStore(state => state.newWorktreeModalOpen)
@@ -1379,6 +1405,13 @@ function ChatWindowContent({
     return () => useUIStore.getState().setGitDiffModalOpen(false)
   }, [diffRequest])
 
+  // Subagents panel expanded state, remembered per session (collapsed by default)
+  const isAgentWidgetExpanded = useChatStore(state =>
+    activeSessionId
+      ? (state.expandedAgentWidgetSessions[activeSessionId] ?? false)
+      : false
+  )
+
   // Active todos and agents from streaming/persisted tool calls (with dismissal tracking)
   const {
     activeTodos,
@@ -1388,7 +1421,6 @@ function ChatWindowContent({
     setDismissedTodoMessageId,
     activeAgents,
     agentSourceMessageId,
-    agentIsFromStreaming,
     dismissedAgentMessageId,
     setDismissedAgentMessageId,
   } = useActiveTodosAndAgents({
@@ -1635,6 +1667,33 @@ function ChatWindowContent({
       queuedAt: Date.now(),
     })
   }, [getMcpConfig, sendMessageNow])
+
+  const handlePreReleaseReview = useCallback(() => {
+    sendMessageNow({
+      id: generateId(),
+      message:
+        preferences?.magic_prompts?.pre_release_review ??
+        DEFAULT_PRE_RELEASE_REVIEW_PROMPT,
+      pendingImages: [],
+      pendingFiles: [],
+      pendingSkills: [],
+      pendingTextFiles: [],
+      model: selectedModelRef.current,
+      provider: selectedProviderRef.current,
+      executionMode: executionModeRef.current,
+      thinkingLevel: selectedThinkingLevelRef.current,
+      effortLevel: useAdaptiveThinkingRef.current
+        ? selectedEffortLevelRef.current
+        : undefined,
+      mcpConfig: getMcpConfig(),
+      backend: selectedBackendRef.current,
+      queuedAt: Date.now(),
+    })
+  }, [
+    getMcpConfig,
+    preferences?.magic_prompts?.pre_release_review,
+    sendMessageNow,
+  ])
 
   // Claude's goal lives in the CLI session: queue `/goal clear` (a local CLI
   // command, no model turn) and cancel a running goal loop so the queue drains.
@@ -1909,7 +1968,7 @@ function ChatWindowContent({
         chatQueryKeys.session(forkedSession.id),
         forkedSession
       )
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
       queryClient.invalidateQueries({
         queryKey: projectsQueryKeys.worktrees(forkedWorktree.project_id),
       })
@@ -1963,6 +2022,7 @@ function ChatWindowContent({
     handleLinkedProjects,
     handleForkSession,
     handleCheckGitHubIssues,
+    handlePreReleaseReview,
     handleCommit,
     handleCommitAndPush: handleCommitAndPushWithPicker,
     handleCommentAndCloseIssue,
@@ -2320,13 +2380,14 @@ function ChatWindowContent({
     () => getCurrentPromptWindow(messages),
     [messages]
   )
-  const compactScopeKey = `${deferredSessionId ?? 'no-session'}:${
-    messages[compactHistoryWindow.startIndex]?.id ?? 'empty'
-  }`
-  const [expandedCompactScopeKey, setExpandedCompactScopeKey] = useState<
+  // Keep history expanded for the whole session, so a new prompt or a finished
+  // run does not collapse it again.
+  const [expandedCompactSessionId, setExpandedCompactSessionId] = useState<
     string | null
   >(null)
-  const isCompactHistoryExpanded = expandedCompactScopeKey === compactScopeKey
+  const isCompactHistoryExpanded =
+    !!deferredSessionId && expandedCompactSessionId === deferredSessionId
+  const compactExpandAnchorRef = useRef<PrependScrollAnchor | null>(null)
   const compactMessages = useMemo(
     () =>
       isCompactHistoryExpanded
@@ -2338,8 +2399,30 @@ function ChatWindowContent({
     ? lastPlanMessageIndex
     : remapIndexForWindow(lastPlanMessageIndex, compactHistoryWindow.startIndex)
   const handleShowHiddenCompactPrompts = useCallback(() => {
-    setExpandedCompactScopeKey(compactScopeKey)
-  }, [compactScopeKey])
+    const viewport = scrollViewportRef.current
+    compactExpandAnchorRef.current = viewport
+      ? capturePrependScrollAnchor(viewport)
+      : null
+    setExpandedCompactSessionId(deferredSessionId ?? null)
+  }, [scrollViewportRef, deferredSessionId])
+  // Older prompts are prepended above the view. Keep the visible message in
+  // place so the chat does not jump.
+  useLayoutEffect(() => {
+    const anchor = compactExpandAnchorRef.current
+    const viewport = scrollViewportRef.current
+    if (!isCompactHistoryExpanded || !anchor || !viewport) return
+    compactExpandAnchorRef.current = null
+    restorePrependScrollAnchor(viewport, anchor)
+  }, [isCompactHistoryExpanded, scrollViewportRef])
+  const handleShowTableInChat = useShowTableInChat({
+    sessionId: deferredSessionId,
+    isCompact: Boolean(preferences?.compact_chat_view_enabled),
+    compactStartIndex: compactHistoryWindow.startIndex,
+    isCompactHistoryExpanded,
+    onExpandCompactHistory: handleShowHiddenCompactPrompts,
+    listRef: virtualizedListRef,
+    stopFollowingTail,
+  })
 
   // Virtualizer for message list - always use virtualization for consistent performance
   // Even small conversations benefit from virtualization when messages have heavy content
@@ -2476,12 +2559,12 @@ function ChatWindowContent({
                   minSize={isMobile || isModal ? 0 : 30}
                   className="min-h-0"
                 >
-                  <div className="flex h-full min-h-0 flex-col">
+                  <div className="relative flex h-full min-h-0 flex-col">
                     {/* Messages area */}
                     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-                      {/* Top-right badges (session label) - absolute positioned to avoid covering content */}
-                      <div className="absolute top-2 right-4 z-20 flex items-center gap-2">
-                        {sessionLabel && (
+                      {/* Top-right session label - absolute positioned to avoid covering content */}
+                      {sessionLabel && (
+                        <div className="absolute top-2 right-4 z-20">
                           <span
                             className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
                             style={{
@@ -2491,8 +2574,8 @@ function ChatWindowContent({
                           >
                             {sessionLabel.name}
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
                       <ChatSearchBar scrollContainerRef={scrollViewportRef} />
                       {/* Bottom fade gradient so messages don't hard-cut at the input area */}
                       <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-8 bg-gradient-to-b from-transparent to-background" />
@@ -2502,7 +2585,7 @@ function ChatWindowContent({
                         viewportClassName="will-change-scroll"
                         onScroll={handleScroll}
                       >
-                        <div className="mx-auto max-w-7xl px-4 pt-4 pb-6 md:px-6 min-w-0 w-full">
+                        <div className="mx-auto max-w-7xl px-4 pt-4 pb-[calc(var(--chat-composer-height,0px)+1.5rem)] md:px-6 min-w-0 w-full">
                           <div
                             className="select-text space-y-4 font-mono text-sm min-w-0 break-words overflow-x-hidden"
                             // Suppress browser default menu on empty thread chrome
@@ -2962,14 +3045,6 @@ function ChatWindowContent({
                         showFindingsButton={!areFindingsVisible}
                         isAtBottom={isAtBottom || messages.length === 0}
                         isSending={isSending}
-                        hiddenPromptCount={
-                          preferences?.compact_chat_view_enabled &&
-                          !zenMode &&
-                          !isCompactHistoryExpanded
-                            ? compactHistoryWindow.hiddenPromptCount
-                            : 0
-                        }
-                        onShowHiddenPrompts={handleShowHiddenCompactPrompts}
                         approveShortcut={approveShortcut}
                         buildDefaultModelLabel={buildNewContextLabel}
                         yoloDefaultModelLabel={yoloNewContextLabel}
@@ -2994,24 +3069,84 @@ function ChatWindowContent({
                       />
                     </div>
 
-                    {/* Error banner - shows when request fails */}
-                    {currentError && (
-                      <ErrorBanner
-                        error={currentError}
-                        onDismiss={() =>
-                          activeSessionId && setError(activeSessionId, null)
-                        }
-                      />
-                    )}
-
-                    {/* Input container - full width, centered content */}
-                    <div className="bg-background">
+                    {/* Input container - floats over the messages so the sides stay see-through */}
+                    <div
+                      ref={setComposerOverlayNode}
+                      className="pointer-events-none absolute inset-x-0 bottom-0 z-20"
+                    >
+                      {/* Error banner - shows when request fails */}
+                      {currentError && (
+                        <div className="pointer-events-auto bg-background">
+                          <ErrorBanner
+                            error={currentError}
+                            onDismiss={() =>
+                              activeSessionId && setError(activeSessionId, null)
+                            }
+                          />
+                        </div>
+                      )}
                       <div className="mx-auto max-w-7xl">
                         <div
                           ref={setChatComposerNode}
                           data-chat-composer=""
-                          className="relative sm:mx-auto sm:mb-3 sm:max-w-3xl xl:max-w-4xl"
+                          className="pointer-events-auto relative sm:mx-auto sm:mb-3 sm:max-w-3xl xl:max-w-4xl"
                         >
+                          {/* Hidden history and pinned tables tabs - attached to the top edge of the composer */}
+                          <div className="absolute right-3 bottom-full flex items-end gap-1">
+                            {preferences?.compact_chat_view_enabled &&
+                              !zenMode &&
+                              !isCompactHistoryExpanded &&
+                              compactHistoryWindow.hiddenPromptCount > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={handleShowHiddenCompactPrompts}
+                                  aria-label={`Show ${compactHistoryWindow.hiddenPromptCount} earlier prompts`}
+                                  title="Show earlier prompts"
+                                  className="flex h-6 items-center gap-1 rounded-t-md border border-b-0 border-border bg-card px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                >
+                                  <ArrowUp className="h-3.5 w-3.5" />
+                                  <span>
+                                    {compactHistoryWindow.hiddenPromptCount}
+                                  </span>
+                                </button>
+                              )}
+                            <PinnedTablesButton
+                              sessionId={activeSessionId}
+                              onShowInChat={handleShowTableInChat}
+                            />
+                          </div>
+                          {/* Subagents panel - separate section above the chat input */}
+                          {!zenMode &&
+                            activeAgents.length > 0 &&
+                            (dismissedAgentMessageId === null ||
+                              activeAgents.some(
+                                agent => agent.status === 'in_progress'
+                              ) ||
+                              (agentSourceMessageId !== null &&
+                                agentSourceMessageId !==
+                                  dismissedAgentMessageId)) && (
+                              <AgentWidget
+                                key={activeSessionId ?? undefined}
+                                className="sm:mb-2"
+                                agents={activeAgents}
+                                onFileClick={setViewingFilePath}
+                                open={isAgentWidgetExpanded}
+                                onOpenChange={open =>
+                                  activeSessionId &&
+                                  useChatStore
+                                    .getState()
+                                    .setAgentWidgetExpanded(
+                                      activeSessionId,
+                                      open
+                                    )
+                                }
+                                onClose={() =>
+                                  setDismissedAgentMessageId(
+                                    agentSourceMessageId ?? '__streaming__'
+                                  )
+                                }
+                              />
+                            )}
                           {/* Queued prompts - rendered as an extension above the chat input */}
                           {activeSessionId &&
                             currentQueuedMessages.length > 0 && (
@@ -3103,32 +3238,6 @@ function ChatWindowContent({
                                     onClose={() =>
                                       setDismissedTodoMessageId(
                                         todoSourceMessageId ?? '__streaming__'
-                                      )
-                                    }
-                                  />
-                                </div>
-                              )}
-
-                            {/* Agent widget - inline fallback for narrow screens */}
-                            {!zenMode &&
-                              activeAgents.length > 0 &&
-                              (dismissedAgentMessageId === null ||
-                                (agentSourceMessageId !== null &&
-                                  agentSourceMessageId !==
-                                    dismissedAgentMessageId)) && (
-                                <div
-                                  className={
-                                    terminalPanelOpen
-                                      ? 'px-4 md:px-6 pt-2'
-                                      : 'px-4 md:px-6 pt-2 xl:hidden'
-                                  }
-                                >
-                                  <AgentWidget
-                                    agents={activeAgents}
-                                    isStreaming={agentIsFromStreaming}
-                                    onClose={() =>
-                                      setDismissedAgentMessageId(
-                                        agentSourceMessageId ?? '__streaming__'
                                       )
                                     }
                                   />
@@ -3389,11 +3498,10 @@ function ChatWindowContent({
                             </div>
                           </form>
 
-                          {/* Side panel widgets (Tasks + Agents) for wide screens */}
+                          {/* Side panel widget (Tasks) for wide screens */}
                           {!zenMode &&
                             !terminalPanelOpen &&
-                            (activeTodos.length > 0 ||
-                              activeAgents.length > 0) && (
+                            activeTodos.length > 0 && (
                               <div className="hidden xl:flex flex-col gap-2 absolute left-full bottom-0 ml-3 w-64 z-20">
                                 {activeTodos.length > 0 &&
                                   (dismissedTodoMessageId === null ||
@@ -3411,22 +3519,6 @@ function ChatWindowContent({
                                       onClose={() =>
                                         setDismissedTodoMessageId(
                                           todoSourceMessageId ?? '__streaming__'
-                                        )
-                                      }
-                                    />
-                                  )}
-                                {activeAgents.length > 0 &&
-                                  (dismissedAgentMessageId === null ||
-                                    (agentSourceMessageId !== null &&
-                                      agentSourceMessageId !==
-                                        dismissedAgentMessageId)) && (
-                                    <AgentWidget
-                                      agents={activeAgents}
-                                      isStreaming={agentIsFromStreaming}
-                                      onClose={() =>
-                                        setDismissedAgentMessageId(
-                                          agentSourceMessageId ??
-                                            '__streaming__'
                                         )
                                       }
                                     />

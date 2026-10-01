@@ -58,6 +58,8 @@ interface UseScrollManagementReturn {
   beginKeyboardScroll: () => void
   /** End a user-initiated keyboard scroll: unblocks handleScroll updates */
   endKeyboardScroll: () => void
+  /** Stop following the tail before a programmatic scroll away from bottom */
+  stopFollowingTail: () => void
 }
 
 const SCROLL_EPSILON_PX = 2
@@ -946,5 +948,6 @@ export function useScrollManagement({
     endKeyboardScroll,
     scrollToFindings,
     handleScroll,
+    stopFollowingTail,
   }
 }

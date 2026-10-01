@@ -10,13 +10,13 @@ import type { CliBackend } from '@/types/preferences'
 function authHint(backend?: CliBackend): string {
   switch (backend) {
     case 'codex':
-      return "Needs authentication — run 'codex mcp auth' to authenticate"
+      return 'Needs authentication — use Sign in in MCP settings'
     case 'opencode':
       return "Needs authentication — run 'opencode mcp auth' to authenticate"
     case 'cursor':
       return "Needs authentication — run 'cursor-agent mcp login <server>' to authenticate"
     default:
-      return "Needs authentication — run 'claude /mcp' to authenticate"
+      return 'Needs authentication — use Sign in in MCP settings'
   }
 }
 
@@ -45,6 +45,7 @@ export function McpStatusDot({
   if (!status) return null
 
   switch (status) {
+    case 'authenticated':
     case 'connected':
       return (
         <Tooltip>
@@ -53,7 +54,9 @@ export function McpStatusDot({
               <CheckCircle className="size-3 text-success" />
             </span>
           </TooltipTrigger>
-          <TooltipContent>Connected</TooltipContent>
+          <TooltipContent>
+            {status === 'authenticated' ? 'Signed in' : 'Connected'}
+          </TooltipContent>
         </Tooltip>
       )
     case 'needsAuthentication':

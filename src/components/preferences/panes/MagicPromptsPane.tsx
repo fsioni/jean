@@ -73,6 +73,7 @@ import {
   DEFAULT_INVESTIGATE_SENTRY_ISSUE_PROMPT,
   DEFAULT_RELEASE_NOTES_PROMPT,
   DEFAULT_REVIEW_COMMENTS_PROMPT,
+  DEFAULT_PRE_RELEASE_REVIEW_PROMPT,
   DEFAULT_SESSION_NAMING_PROMPT,
   DEFAULT_PARALLEL_EXECUTION_PROMPT,
   DEFAULT_GLOBAL_SYSTEM_PROMPT,
@@ -477,6 +478,14 @@ const PROMPT_SECTIONS: PromptSection[] = [
         ],
         defaultValue: DEFAULT_RELEASE_NOTES_PROMPT,
         defaultModel: 'sonnet',
+      },
+      {
+        key: 'pre_release_review',
+        label: 'Pre-release Review',
+        description:
+          'Prompt sent to the current session from Magic → Pre-release Review. Reviews all changes since the last production release. Uses the session’s current model and mode.',
+        variables: [],
+        defaultValue: DEFAULT_PRE_RELEASE_REVIEW_PROMPT,
       },
     ],
   },

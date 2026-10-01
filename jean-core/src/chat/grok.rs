@@ -944,6 +944,7 @@ fn upsert_tool_call(tool_calls: &mut Vec<ToolCall>, parsed: &ParsedToolCall) {
         output: None,
         parent_tool_use_id: None,
         is_error: None,
+        subagent_usage: None,
     });
 }
 
@@ -1555,6 +1556,7 @@ fn inject_synthetic_plan(response: &mut GrokResponse) -> Option<String> {
         output: None,
         parent_tool_use_id: None,
         is_error: None,
+        subagent_usage: None,
     });
     response.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: id.clone(),
@@ -5512,6 +5514,7 @@ Ship the feature end-to-end with tests and clear handoff notes for YOLO.
                 output: None,
                 parent_tool_use_id: None,
                 is_error: None,
+                subagent_usage: None,
             }],
             content_blocks: vec![
                 ContentBlock::Text {

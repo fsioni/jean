@@ -27,6 +27,8 @@ import {
   migrateLegacyMcpKeys,
 } from '@/services/mcp'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
+import { parseServerResourceKey } from '@/lib/server-resource'
+import { McpSignInButton } from '@/components/mcp/McpSignInButton'
 import type { McpHealthStatus } from '@/types/chat'
 import type { CliBackend } from '@/types/preferences'
 
@@ -46,7 +48,7 @@ const SettingsSection: React.FC<{
 function mcpAuthHint(backend: CliBackend): string {
   switch (backend) {
     case 'codex':
-      return "Run 'codex mcp auth' in your terminal to authenticate"
+      return 'Use Sign in to connect this server'
     case 'opencode':
       return "Run 'opencode mcp auth' in your terminal to authenticate"
     case 'cursor':
@@ -54,7 +56,7 @@ function mcpAuthHint(backend: CliBackend): string {
     case 'grok':
       return "Run 'grok mcp doctor <server>' or open /mcps in the Grok TUI to authenticate"
     default:
-      return "Run 'claude /mcp' in your terminal to authenticate"
+      return 'Use Sign in to connect this server'
   }
 }
 
@@ -73,22 +75,32 @@ function HealthIndicator({
   if (!status) return null
 
   switch (status) {
+    case 'authenticated':
     case 'connected':
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span>
+            <span
+              role="img"
+              aria-label={
+                status === 'authenticated' ? 'Signed in' : 'Connected'
+              }
+            >
               <CheckCircle className="size-3.5 text-success" />
             </span>
           </TooltipTrigger>
-          <TooltipContent>Server is connected and ready</TooltipContent>
+          <TooltipContent>
+            {status === 'authenticated'
+              ? 'Signed in. The connection is checked when a chat starts.'
+              : 'Server is connected and ready'}
+          </TooltipContent>
         </Tooltip>
       )
     case 'needsAuthentication':
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span>
+            <span role="img" aria-label="Needs authentication">
               <ShieldAlert className="size-3.5 text-warning" />
             </span>
           </TooltipTrigger>
@@ -99,7 +111,7 @@ function HealthIndicator({
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <span>
+            <span role="img" aria-label="Connection failed">
               <XCircle className="size-3.5 text-destructive" />
             </span>
           </TooltipTrigger>
@@ -122,16 +134,17 @@ export function McpServersPane({
 }) {
   const { data: projects = [] } = useProjects()
   const project = projects.find(p => p.id === projectId)
-  const { installedBackends } = useInstalledBackends()
+  const serverId = parseServerResourceKey(projectId)?.serverId ?? 'local'
+  const { installedBackends } = useInstalledBackends({ serverId })
 
   const { data: mcpServers = [], isLoading: mcpLoading } =
-    useAllBackendsMcpServers(projectPath, installedBackends)
+    useAllBackendsMcpServers(projectPath, installedBackends, serverId)
 
   const {
     statuses: healthStatuses,
     isFetching: isHealthChecking,
     refetchAll: checkHealth,
-  } = useAllBackendsMcpHealth(installedBackends, projectPath)
+  } = useAllBackendsMcpHealth(installedBackends, projectPath, serverId)
 
   const updateSettings = useUpdateProjectSettings()
 
@@ -251,7 +264,7 @@ export function McpServersPane({
                   <div
                     key={`${backend}-${server.name}`}
                     className={cn(
-                      'flex items-center gap-3 rounded-md border px-3 py-2',
+                      'flex flex-wrap items-center gap-3 rounded-md border px-3 py-2',
                       server.disabled && 'opacity-50'
                     )}
                   >
@@ -272,7 +285,7 @@ export function McpServersPane({
                     <Label
                       htmlFor={`proj-mcp-${backend}-${server.name}`}
                       className={cn(
-                        'flex-1 text-sm',
+                        'min-w-0 flex-1 break-words text-sm',
                         server.disabled ? 'cursor-default' : 'cursor-pointer'
                       )}
                     >
@@ -283,6 +296,16 @@ export function McpServersPane({
                       isChecking={isHealthChecking}
                       backend={backend}
                     />
+                    {!server.disabled &&
+                      healthStatuses[mcpKey(backend, server.name)] ===
+                        'needsAuthentication' && (
+                        <McpSignInButton
+                          backend={backend}
+                          serverName={server.name}
+                          worktreePath={projectPath}
+                          serverId={serverId}
+                        />
+                      )}
                     <span className="text-xs text-muted-foreground">
                       {server.disabled
                         ? 'disabled'

@@ -40,6 +40,7 @@ import type {
   ToolBlockEvent,
   ToolResultEvent,
   ToolEventEvent,
+  SubagentUsageEvent,
   DoneEvent,
   ErrorEvent,
   CancelledEvent,
@@ -770,6 +771,17 @@ export default function useStreamingEvents({
           payload,
           ts_ms,
         })
+      }
+    )
+
+    // Claude subagent (Task/Agent) token/tool/time totals
+    const unlistenSubagentUsage = listen<SubagentUsageEvent>(
+      'chat:subagent_usage',
+      event => {
+        const { session_id, tool_use_id, usage } = event.payload
+        useChatStore
+          .getState()
+          .setToolCallSubagentUsage(session_id, tool_use_id, usage)
       }
     )
 
@@ -2495,6 +2507,7 @@ export default function useStreamingEvents({
       unlistenSteered.then(f => f())
       unlistenToolResult.then(f => f())
       unlistenToolEvent.then(f => f())
+      unlistenSubagentUsage.then(f => f())
       unlistenPermissionDenied.then(f => f())
       unlistenCodexPermissionRequest.then(f => f())
       unlistenOpencodePermissionRequest.then(f => f())

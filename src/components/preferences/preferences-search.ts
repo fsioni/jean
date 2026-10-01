@@ -957,6 +957,12 @@ const magicPromptDefinitions: {
     keywords: ['release notes prompt', 'changelog prompt'],
   },
   {
+    key: 'pre_release_review',
+    title: 'Pre-release Review Prompt',
+    description: 'Review all changes since the last production release.',
+    keywords: ['pre-release review prompt', 'release review', 'regression'],
+  },
+  {
     key: 'context_summary',
     title: 'Context Summary Prompt',
     description: 'Summarize conversation context for reuse.',

@@ -10,7 +10,7 @@ import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
 
 const mocks = vi.hoisted(() => ({
-  worktrees: [] as Worktree[],
+  worktrees: [] as Worktree[] | undefined,
   worktreeQueryOptions: [] as { enabled?: boolean }[],
   updateSettingsMutate: vi.fn(),
 }))
@@ -183,7 +183,7 @@ describe('ProjectTreeItem', () => {
   })
 
   it('uses the project summary count without loading collapsed workspaces', () => {
-    mocks.worktrees = []
+    mocks.worktrees = undefined
     useProjectsStore.setState({
       selectedProjectId: null,
       selectedWorktreeId: null,
@@ -196,6 +196,21 @@ describe('ProjectTreeItem', () => {
     expect(
       screen.getByRole('status', { name: '3 workspaces' })
     ).toHaveTextContent('3')
+  })
+
+  it('prefers loaded worktrees over a stale project summary count', () => {
+    mocks.worktrees = []
+    useProjectsStore.setState({
+      selectedProjectId: null,
+      selectedWorktreeId: null,
+      expandedProjectIds: new Set(),
+    })
+
+    render(<ProjectTreeItem project={{ ...project, worktree_count: 2 }} />)
+
+    expect(
+      screen.queryByRole('status', { name: '2 workspaces' })
+    ).not.toBeInTheDocument()
   })
 
   it('hides the count when workspaces are shown', () => {

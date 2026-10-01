@@ -58,10 +58,8 @@ export function ProjectContextMenu({
   const cachedWorktrees = queryClient.getQueryData<Worktree[]>(
     projectsQueryKeys.worktrees(project.id)
   )
-  const worktreeCount = Math.max(
-    project.worktree_count ?? 0,
-    cachedWorktrees?.length ?? 0
-  )
+  // Prefer loaded worktrees: project.worktree_count can be stale
+  const worktreeCount = cachedWorktrees?.length ?? project.worktree_count ?? 0
   const hasBaseSession =
     project.has_base_session === true ||
     (cachedWorktrees?.some(worktree => worktree.session_type === 'base') ??

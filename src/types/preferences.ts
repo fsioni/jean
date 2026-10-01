@@ -86,6 +86,8 @@ export interface MagicPrompts {
   investigate_sentry_issue: string | null
   /** Prompt for addressing inline PR review comments */
   review_comments: string | null
+  /** Prompt for reviewing all changes since the last production release */
+  pre_release_review: string | null
 }
 
 /** Default prompt for investigating GitHub issues */
@@ -765,6 +767,99 @@ Address the following review comments from PR #{prNumber}
 
 </guidelines>`
 
+/** Default prompt for reviewing all changes since the last production release */
+export const DEFAULT_PRE_RELEASE_REVIEW_PROMPT = `# Pre-release review: all changes since the last production release
+
+## Context
+- Repository: the current worktree.
+- Last production release: find it yourself (see Phase 1).
+- Target: HEAD, unless I give another branch or commit.
+- Dev/test environment for live checks: call Jean MCP \`get_run_environments\` and use the
+  returned URL/port/command. If none is available, ask me or write "none".
+- Project rules: read the repo's AGENTS.md / CLAUDE.md / CONTRIBUTING.md first and follow them.
+
+## Phase 1 — Find the range
+1. If the release is not given, find it: the latest release tag (\`git tag --sort=-creatordate\`),
+   the release workflow, the version files, or the changelog. State which one you used and why.
+2. Show the size of the range: number of commits, changed files, and the main areas
+   (\`git log --oneline <release>..<target>\`, \`git diff --stat\`).
+
+## Phase 2 — Review in parallel (read only, change nothing)
+Split the diff into areas that fit this project (e.g. auth, API, data/migrations,
+deployments/jobs, storage/files, networking/proxy, UI, infra/CI, security, performance).
+Review each area in parallel with subagents, plus one agent for the full diff.
+Every agent must, for each finding:
+- give \`file:line\` in the target;
+- compare with the last release (\`git show <release>:<file>\`), and say whether it is a
+  **regression** (new in this range) or an **old bug** (also in the release); for a
+  regression, describe how it worked in the last release;
+- describe a concrete failure scenario (input/state → wrong result), who is affected,
+  and who can trigger it (for security: which role);
+- prefer real evidence (a failing test, a reproduction, a query) over guesses. If possible,
+  reproduce it live on a locally running dev instance (the dev environment above; start it
+  with the returned command if it is not running). Use only temporary data, and clean up
+  afterwards. Set Verified to **Y** for items it verified itself, and **N** for all other items.
+Look especially for: upgrade paths and data migrations of existing installs, backward
+compatibility (API, CLI, config, stored data), authorization and multi-tenant scoping,
+secrets in logs/UI/snapshots/disk, concurrency and races, failure handling (silent
+failures, lost notifications, partial state), shell/SQL/path injection, performance on
+large data, and CI/release workflows.
+
+## Phase 3 — Report
+Number every finding so it can be referenced later, and keep the numbers stable:
+- **H1, H2, …** High: fix before release (data loss, security, broken upgrade/core flows).
+- **M1, M2, …** Medium: should fix (regressions with a workaround, limited impact).
+- **L1, L2, …** Low: minor, hardening, or release-note items.
+- **N1, N2, …** New findings discovered later during fixes (never renumber old items).
+
+For each severity, output a table:
+
+| # | Verified | Where (file:line) | Problem and impact | Regression | Recommended fix |
+
+In the Regression column, write **No**, or **Yes** followed by how it worked in the
+last release (e.g. "Yes: the release kept existing values on upgrade").
+Use only these columns. Do not add size, effort, or timing columns.
+
+Then add:
+- **Intended changes** that need a **release note** (not bugs).
+- **Areas that looked correct** (so they are not reviewed again).
+- **Suggested order** of work, with a short reason.
+Change no files in this phase.
+
+## Phase 4 — Work through items (only on my request)
+I answer with item numbers and a decision, for example
+"H1 fix, M3 check only, L5 skip, L7 explain". Use these verbs:
+- **explain** — facts only: before vs now, impact, options with a recommendation. No change.
+- **check only** — verify (and reproduce if possible, preferably live on the local dev
+  instance), compare with the last release, recommend a fix. No code change.
+- **fix** — then follow this workflow:
+  1. First verify the item is real in the code. If it is not, report and stop.
+  2. TDD: write a failing test first (behavior, not markup), then the fix, then the
+     narrowest related tests. Prove that the new test fails on the old code.
+  3. Keep the fix minimal and in the project's style. No unrelated refactors.
+  4. Keep existing installs working: prefer a migration or flag that keeps existing data
+     and behavior, and applies new behavior only to new data, where that matters.
+  5. Live test on the dev environment when the change can be observed there: old code vs
+     new code, through the real UI/API/jobs (restart background workers if they cache
+     code). Use only temporary resources, and clean up everything afterwards.
+  6. Report: what changed (files), tests (failed before?), results, live test, open points.
+- **skip / leave out** — record the decision and do not touch the item again.
+
+Run independent items in parallel with subagents, grouped so that no two agents edit
+the same file.
+
+## Rules
+- Ask me when a decision is mine (product behavior, breaking changes, data changes).
+  Give a recommendation first. Do not ask about routine steps.
+- Never commit, push, or open PRs unless I ask. Other sessions may share the working tree:
+  no \`git stash\`, \`reset\`, or \`checkout\` of other files; stage only explicit files.
+- Say clearly what was tested live, what was tested only with automated tests, and what
+  was not tested. Report failing tests honestly, including those not caused by you.
+- Keep a running log in .ai/todo.md: each item number with its status
+  (open / explained / checked / fixed + tested / skipped by decision).
+- End each turn with a short recap: the answer or result, open decisions, and what is not
+  committed yet.`
+
 /** Default values for all magic prompts (null = use current app default) */
 export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   investigate_issue: null,
@@ -785,6 +880,7 @@ export const DEFAULT_MAGIC_PROMPTS: MagicPrompts = {
   investigate_linear_issue: null,
   investigate_sentry_issue: null,
   review_comments: null,
+  pre_release_review: null,
 }
 
 /**

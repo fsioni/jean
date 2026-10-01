@@ -264,6 +264,7 @@ fn merge_event(response: &mut AntigravityResponse, value: &Value) -> bool {
                         output,
                         parent_tool_use_id: None,
                         is_error: None,
+                        subagent_usage: None,
                     });
                 }
             }
@@ -377,6 +378,7 @@ fn inject_plan(response: &mut AntigravityResponse) -> Option<ToolCall> {
         output: None,
         parent_tool_use_id: None,
         is_error: None,
+        subagent_usage: None,
     };
     response.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: tool.id.clone(),
@@ -906,6 +908,7 @@ mod tests {
             output: None,
             parent_tool_use_id: None,
             is_error: None,
+            subagent_usage: None,
         });
         assert_eq!(
             finalize_dead_process_response(with_tool)

@@ -102,15 +102,14 @@ function setupHook({
     msgs: ChatMessage[]
     sending: boolean
   }) {
-    const { isAtBottom, scrollViewportRef, handleScroll } = useScrollManagement(
-      {
+    const { isAtBottom, scrollViewportRef, handleScroll, stopFollowingTail } =
+      useScrollManagement({
         messages: msgs,
         virtualizedListRef,
         activeSessionId: sessionId,
         contentReady: ready,
         isSending: sending,
-      }
-    )
+      })
 
     return (
       <div
@@ -124,6 +123,7 @@ function setupHook({
         onScroll={handleScroll}
       >
         <span data-testid="is-at-bottom">{String(isAtBottom)}</span>
+        <button data-testid="stop-follow" onClick={stopFollowingTail} />
         <div data-testid="content">
           <div data-plan-display data-testid="plan" />
         </div>
@@ -266,6 +266,17 @@ describe('useScrollManagement streaming auto-scroll', () => {
     await triggerResize()
 
     expect(viewport.scrollTop).toBe(1500)
+  })
+
+  it('does not snap back to the tail after a programmatic jump away', async () => {
+    isMobile = true
+    const { getByTestId, viewport } = setupHook()
+
+    fireEvent.click(getByTestId('stop-follow'))
+    viewport.scrollTop = 500
+    await triggerResize()
+
+    expect(viewport.scrollTop).toBe(500)
   })
 
   it('resumes streaming auto-scroll after the user returns to bottom', async () => {

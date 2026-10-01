@@ -695,7 +695,6 @@ export function DesktopToolbarControls({
             <DropdownMenuContent
               align="start"
               className="min-w-40"
-              onEscapeKeyDown={e => e.stopPropagation()}
               onCloseAutoFocus={focusChatInput}
             >
               {showClaudeProviders ? (
@@ -797,11 +796,7 @@ export function DesktopToolbarControls({
               {`Effort: ${displayedEffortLabel} (⌘⇧E)`}
             </TooltipContent>
           </Tooltip>
-          <DropdownMenuContent
-            align="start"
-            onEscapeKeyDown={e => e.stopPropagation()}
-            onCloseAutoFocus={focusChatInput}
-          >
+          <DropdownMenuContent align="start" onCloseAutoFocus={focusChatInput}>
             <DropdownMenuRadioGroup
               value={displayedEffortLevel}
               onValueChange={handleEffortLevelChange}
@@ -846,11 +841,7 @@ export function DesktopToolbarControls({
               {`Thinking: ${displayedThinkingLabel} (⌘⇧E)`}
             </TooltipContent>
           </Tooltip>
-          <DropdownMenuContent
-            align="start"
-            onEscapeKeyDown={e => e.stopPropagation()}
-            onCloseAutoFocus={focusChatInput}
-          >
+          <DropdownMenuContent align="start" onCloseAutoFocus={focusChatInput}>
             <DropdownMenuRadioGroup
               value={displayedThinkingLevel}
               onValueChange={handleThinkingLevelChange}

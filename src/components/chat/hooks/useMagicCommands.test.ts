@@ -12,6 +12,7 @@ function renderUseMagicCommands(
     handleLinkedProjects: vi.fn(),
     handleForkSession: vi.fn(),
     handleCheckGitHubIssues: vi.fn(),
+    handlePreReleaseReview: vi.fn(),
     handleCommit: vi.fn(),
     handleCommitAndPush: vi.fn(),
     handleCommentAndCloseIssue: vi.fn(),
@@ -60,6 +61,18 @@ describe('useMagicCommands review comments batch', () => {
     )
 
     expect(handlers.handleCheckGitHubIssues).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches the pre-release review magic command', () => {
+    const handlers = renderUseMagicCommands()
+
+    window.dispatchEvent(
+      new CustomEvent('magic-command', {
+        detail: { command: 'pre-release-review' },
+      })
+    )
+
+    expect(handlers.handlePreReleaseReview).toHaveBeenCalledTimes(1)
   })
 
   it('dispatches the comment and close issue command to the current chat', () => {

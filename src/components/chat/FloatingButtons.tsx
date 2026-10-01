@@ -2,7 +2,6 @@ import { memo, useCallback } from 'react'
 import {
   AlertCircle,
   ArrowDown,
-  ArrowUp,
   Check,
   ChevronDown,
 } from '@/components/icons/reicon'
@@ -32,10 +31,6 @@ interface FloatingButtonsProps {
   isAtBottom: boolean
   /** Whether a message is currently streaming — drives new-activity indicator on Bottom button */
   isSending?: boolean
-  /** Number of earlier prompts hidden by compact history */
-  hiddenPromptCount?: number
-  /** Callback to reveal earlier compact-history prompts */
-  onShowHiddenPrompts?: () => void
   /** Keyboard shortcut for approve */
   approveShortcut: string
   /** Callback for approve (build mode) */
@@ -69,8 +64,6 @@ export const FloatingButtons = memo(function FloatingButtons({
   showFindingsButton,
   isAtBottom,
   isSending,
-  hiddenPromptCount = 0,
-  onShowHiddenPrompts,
   approveShortcut,
   onApprove,
   onYoloApprove,
@@ -99,20 +92,8 @@ export const FloatingButtons = memo(function FloatingButtons({
 
   return (
     <>
-      {hiddenPromptCount > 0 && onShowHiddenPrompts && (
-        <button
-          type="button"
-          onClick={onShowHiddenPrompts}
-          aria-label={`Show ${hiddenPromptCount} earlier prompts`}
-          className="absolute left-2 top-2 z-20 flex h-6 items-center gap-1 rounded-full border border-border/70 bg-background/90 py-0 pl-1.5 pr-2.5 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-md transition-colors hover:bg-muted hover:text-foreground sm:left-3 sm:top-3 sm:h-7 sm:pl-2 sm:pr-3"
-        >
-          <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>{hiddenPromptCount}</span>
-        </button>
-      )}
-
       {/* Right side - Approve, Findings, Bottom buttons */}
-      <div className="absolute bottom-4 right-4 flex gap-2">
+      <div className="absolute bottom-[calc(var(--chat-composer-height,0px)+1rem)] right-4 flex gap-2">
         {/* Floating approval buttons with dropdowns - shown when main approve buttons are not visible */}
         {showApproveButton && (
           <div className="flex gap-2">

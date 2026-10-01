@@ -15,7 +15,7 @@ use super::storage::{
 };
 use super::types::{
     is_claude_compaction_summary_text, Backend, ChatMessage, ContentBlock, LoadedMessages,
-    MessageRole, RunEntry, RunStatus, SessionMetadata, ToolCall, UsageData,
+    MessageRole, RunEntry, RunStatus, SessionMetadata, SubagentUsage, ToolCall, UsageData,
 };
 
 // ============================================================================
@@ -741,6 +741,56 @@ pub(crate) fn tool_result_is_error(block: &serde_json::Value) -> Option<bool> {
     (block.get("is_error").and_then(|v| v.as_bool()) == Some(true)).then_some(true)
 }
 
+/// Claude subagent totals carried by one stream line, keyed by the parent
+/// Task/Agent tool use id. Live totals come from `system/task_progress` (and
+/// `task_notification` when it has `usage`); final totals from the
+/// `tool_use_result` on the Task/Agent tool_result line.
+/// Shared by live streaming and history rebuild.
+pub(crate) fn claude_subagent_usage(msg: &serde_json::Value) -> Option<(String, SubagentUsage)> {
+    let u64_field = |obj: &serde_json::Value, key: &str| obj.get(key).and_then(|v| v.as_u64());
+    match msg.get("type").and_then(|v| v.as_str())? {
+        "system" => {
+            let subtype = msg.get("subtype").and_then(|v| v.as_str())?;
+            if subtype != "task_progress" && subtype != "task_notification" {
+                return None;
+            }
+            let tool_use_id = msg.get("tool_use_id").and_then(|v| v.as_str())?;
+            let usage = msg.get("usage")?;
+            Some((
+                tool_use_id.to_string(),
+                SubagentUsage {
+                    total_tokens: u64_field(usage, "total_tokens")?,
+                    tool_uses: u64_field(usage, "tool_uses").unwrap_or(0),
+                    duration_ms: u64_field(usage, "duration_ms").unwrap_or(0),
+                },
+            ))
+        }
+        "user" => {
+            let result = msg
+                .get("tool_use_result")
+                .or_else(|| msg.get("toolUseResult"))?;
+            let total_tokens = u64_field(result, "totalTokens")?;
+            let tool_use_id = msg
+                .get("message")?
+                .get("content")?
+                .as_array()?
+                .iter()
+                .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))?
+                .get("tool_use_id")?
+                .as_str()?;
+            Some((
+                tool_use_id.to_string(),
+                SubagentUsage {
+                    total_tokens,
+                    tool_uses: u64_field(result, "totalToolUseCount").unwrap_or(0),
+                    duration_ms: u64_field(result, "totalDurationMs").unwrap_or(0),
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// Parse JSONL lines and build a ChatMessage
 /// This replicates the parsing logic from execute_claude_streaming
 pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMessage, String> {
@@ -858,6 +908,12 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
         }
 
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        if let Some((tool_use_id, subagent_usage)) = claude_subagent_usage(&msg) {
+            if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == tool_use_id) {
+                tc.subagent_usage = Some(subagent_usage);
+            }
+        }
 
         match msg_type {
             "steered_user_message" => {
@@ -1000,6 +1056,7 @@ pub fn parse_run_to_message(lines: &[String], run: &RunEntry) -> Result<ChatMess
                                         output: None,
                                         parent_tool_use_id: current_parent_tool_use_id.clone(),
                                         is_error: None,
+                                        subagent_usage: None,
                                     });
 
                                     content_blocks.push(ContentBlock::ToolUse { tool_call_id: id });
@@ -1373,6 +1430,7 @@ fn inject_synthetic_exit_plan(backend: &Backend, run_id: &str, assistant_msg: &m
         output: None,
         parent_tool_use_id: None,
         is_error: None,
+        subagent_usage: None,
     });
     assistant_msg.content_blocks.push(ContentBlock::ToolUse {
         tool_call_id: synthetic_id,
@@ -2157,6 +2215,7 @@ Move services between instances without downtime.
             output: None,
             parent_tool_use_id: None,
             is_error: None,
+            subagent_usage: None,
         });
 
         assert!(!should_inject_synthetic_exit_plan(
@@ -2347,6 +2406,64 @@ Move services between instances without downtime.
         assert_eq!(
             msg.tool_calls[0].output.as_deref(),
             Some("Findings: auth uses JWT middleware.\nEntry point is `src/auth.rs`.")
+        );
+    }
+
+    #[test]
+    fn parse_run_tracks_subagent_usage_from_progress_and_result() {
+        let run = sample_run();
+        let tool_id = "toolu_agent";
+        let task_use = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "Agent",
+                    "input": { "description": "Research", "prompt": "Look it up" }
+                }]
+            }
+        })
+        .to_string();
+        let progress = serde_json::json!({
+            "type": "system",
+            "subtype": "task_progress",
+            "tool_use_id": tool_id,
+            "usage": { "total_tokens": 29316, "tool_uses": 1, "duration_ms": 4832 }
+        })
+        .to_string();
+        let result = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [{ "type": "tool_result", "tool_use_id": tool_id, "content": "done" }]
+            },
+            "tool_use_result": {
+                "status": "completed",
+                "totalTokens": 48804,
+                "totalToolUseCount": 8,
+                "totalDurationMs": 61421
+            }
+        })
+        .to_string();
+
+        let live = parse_run_to_message(&[task_use.clone(), progress.clone()], &run).unwrap();
+        assert_eq!(
+            live.tool_calls[0].subagent_usage,
+            Some(SubagentUsage {
+                total_tokens: 29316,
+                tool_uses: 1,
+                duration_ms: 4832
+            })
+        );
+
+        let done = parse_run_to_message(&[task_use, progress, result], &run).unwrap();
+        assert_eq!(
+            done.tool_calls[0].subagent_usage,
+            Some(SubagentUsage {
+                total_tokens: 48804,
+                tool_uses: 8,
+                duration_ms: 61421
+            })
         );
     }
 

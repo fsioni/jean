@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { WebAccessPane } from './WebAccessPane'
+import { copyToClipboard } from '@/lib/clipboard'
 import { defaultPreferences } from '@/types/preferences'
 
 const invokeMock = vi.fn()
@@ -79,5 +80,36 @@ describe('WebAccessPane', () => {
       expect(control).toBeEnabled()
     }
     expect(screen.getByDisplayValue('127.0.0.1')).toBeEnabled()
+  })
+
+  it('URL-encodes legacy padded tokens in copied URLs', async () => {
+    const token = 'ab+c/d=='
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'load_preferences')
+        return Promise.resolve(defaultPreferences)
+      if (command === 'get_http_server_status') {
+        return Promise.resolve({
+          running: true,
+          port: 3456,
+          url: 'http://0.0.0.0:3456',
+          token,
+          bind_host: '0.0.0.0',
+          localhost_only: false,
+        })
+      }
+      if (command === 'list_http_bind_host_options') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    render(<WebAccessPane />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Running')).toBeInTheDocument()
+    })
+    // Buttons: token show, token copy, localhost open, localhost copy
+    fireEvent.click(screen.getAllByRole('button')[3] as HTMLElement)
+
+    await waitFor(() => expect(copyToClipboard).toHaveBeenCalled())
+    const copied = vi.mocked(copyToClipboard).mock.calls[0]?.[0] as string
+    expect(new URL(copied).searchParams.get('token')).toBe(token)
   })
 })

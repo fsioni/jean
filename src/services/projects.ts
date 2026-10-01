@@ -64,6 +64,7 @@ import {
 import {
   toRoutedProjects,
   useMultiServerProjects,
+  type MultiServerProject,
 } from './multi-server-projects'
 import { projectServerId } from '@/components/projects/server-filter'
 import { removeWorktreeFromRecentCaches } from '@/lib/recent-worktree-cache'
@@ -128,6 +129,17 @@ export const projectsQueryKeys = {
     [...projectsQueryKeys.all, 'bootstrap', projectId] as const,
   autoFixStatus: (projectId: string) =>
     [...projectsQueryKeys.all, 'auto-fix-status', projectId] as const,
+}
+
+/**
+ * Refresh every project list the sidebar reads: the local list and, in the
+ * native app, the multi-server list (which otherwise only polls every 60s).
+ */
+export function invalidateProjectLists(
+  queryClient: ReturnType<typeof useQueryClient>
+) {
+  queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+  queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
 }
 
 export interface RecentWorktreesData {
@@ -610,8 +622,7 @@ export function useAddProject() {
       return project
     },
     onSuccess: (project, { parentId }) => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
       toast.success(`Added project: ${project.name}`)
 
       // Auto-expand the new project and parent folder if applicable
@@ -674,8 +685,7 @@ export function useInitProject() {
       return project
     },
     onSuccess: (project, { parentId }) => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
       toast.success(`Created project: ${project.name}`)
 
       // Auto-expand the new project and parent folder if applicable
@@ -771,8 +781,7 @@ export function useCloneProject() {
       return project
     },
     onSuccess: (project, { parentId }) => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
       toast.success(`Cloned project: ${project.name}`)
 
       // Auto-expand the new project and parent folder if applicable
@@ -820,7 +829,15 @@ export function useRemoveProject() {
       logger.info('Project removed successfully')
     },
     onSuccess: (_data, projectId) => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      // Drop the row now; the refetch below confirms it
+      queryClient.setQueryData<Project[]>(projectsQueryKeys.list(), old =>
+        old?.filter(p => p.id !== projectId)
+      )
+      queryClient.setQueriesData<MultiServerProject[]>(
+        { queryKey: ['multi-server', 'projects'] },
+        old => old?.filter(p => p.key !== projectId)
+      )
+      invalidateProjectLists(queryClient)
 
       // Clear selection if the removed project was selected
       const { selectedProjectId, selectProject } = useProjectsStore.getState()
@@ -1241,6 +1258,8 @@ function handleWorktreeReady(
     [...projectsQueryKeys.all, 'worktree', worktree.id],
     readyWorktree
   )
+  // Project list carries worktree_count; keep sidebar counts in sync
+  invalidateProjectLists(queryClient)
 
   // Skip auto-navigation for MCP/background-created worktrees. Only consume the
   // CMD+Click background counter for interactive worktree creations so unrelated
@@ -1638,6 +1657,7 @@ export function useWorktreeEvents() {
         )
         removeWorktreeFromRecentCaches(queryClient, id)
         queryClient.invalidateQueries({ queryKey: ['recent-worktrees'] })
+        invalidateProjectLists(queryClient)
 
         // Clear chat/selection if this worktree was active
         // (handles cases where worktree:deleting wasn't emitted, e.g. close_base_session)
@@ -1688,6 +1708,7 @@ export function useWorktreeEvents() {
           queryKey: projectsQueryKeys.worktrees(project_id),
         })
         queryClient.invalidateQueries({ queryKey: ['recent-worktrees'] })
+        invalidateProjectLists(queryClient)
 
         toast.error('Failed to delete worktree', {
           id: `teardown-${id}`,
@@ -1725,6 +1746,7 @@ export function useWorktreeEvents() {
             return old.filter(w => w.id !== id)
           }
         )
+        invalidateProjectLists(queryClient)
 
         // Clear chat if this worktree was active
         const { activeWorktreeId, clearActiveWorktree } =
@@ -1788,6 +1810,7 @@ export function useWorktreeEvents() {
         queryClient.invalidateQueries({
           queryKey: projectsQueryKeys.worktrees(project_id),
         })
+        invalidateProjectLists(queryClient)
       })
     )
 
@@ -1996,6 +2019,7 @@ export function useDeleteWorktree() {
         }
       )
       removeWorktreeFromRecentCaches(queryClient, worktreeId)
+      invalidateProjectLists(queryClient)
 
       // Drop the worktree's sessions from the finished-session bell, which
       // reads from ['all-sessions'].
@@ -3242,8 +3266,7 @@ export function useUpdateProjectSettings() {
       return project
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
     },
     onError: error => {
       const message =
@@ -3382,7 +3405,7 @@ export function useReorderProjects() {
       toast.error('Failed to reorder projects', { description: message })
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
     },
   })
 }
@@ -3574,7 +3597,7 @@ export function useRenameFolder() {
       return folder
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
     },
     onError: error => {
       const message =
@@ -3606,7 +3629,7 @@ export function useDeleteFolder() {
       logger.info('Folder deleted successfully', { folderId })
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
       toast.success('Folder deleted')
     },
     onError: error => {
@@ -3652,8 +3675,7 @@ export function useMoveItem() {
       return item
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
     },
     onError: error => {
       const message =
@@ -3736,8 +3758,7 @@ export function useReorderItems() {
       toast.error('Failed to reorder items', { description: message })
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
-      queryClient.invalidateQueries({ queryKey: ['multi-server', 'projects'] })
+      invalidateProjectLists(queryClient)
     },
   })
 }
@@ -3789,7 +3810,7 @@ export function useSetProjectAvatar() {
       return project
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
     },
     onError: error => {
       // "No file selected" is not an error, user just cancelled
@@ -3828,7 +3849,7 @@ export function useRemoveProjectAvatar() {
       return project
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      invalidateProjectLists(queryClient)
     },
     onError: error => {
       const message =

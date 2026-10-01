@@ -37,7 +37,7 @@ describe('RecentWorktreesList structure', () => {
     expect(source).toContain('flex w-full flex-col gap-y-1')
     expect(source).toContain('min-w-0 flex-1 truncate text-[13px]')
     expect(source).not.toContain('min-w-14')
-    expect(source).toContain('recent-working-waveform text-primary')
+    expect(source).toContain('<WorkingWaveform />')
     expect(source).toContain(
       'className="flex shrink-0 items-center justify-end gap-2 text-[10px] tabular-nums"'
     )
@@ -90,13 +90,10 @@ describe('RecentWorktreesList structure', () => {
     expect(source).toContain('getRecentSessionStatus(row.session')
     expect(source).toContain("const isWorking = status.tone === 'working'")
     expect(source).toContain('{isWorking ? (')
-    expect(source).toContain('recent-working-waveform')
-    expect(source).toContain('aria-hidden="true"')
     expect(source).not.toContain('vibing')
     expect(source).not.toContain('planning')
     expect(source).not.toContain('executingModes[row.session.id]')
     expect(source).not.toContain('executionModes[row.session.id]')
-    expect(source).toContain('recent-working-waveform text-primary')
     expect(source).not.toContain('border-l-destructive')
     expect(source).not.toContain('border-l-yellow-500')
     expect(source).not.toContain('border-l-green-500')
@@ -121,7 +118,7 @@ describe('RecentWorktreesList structure', () => {
   })
 
   it('pins sessions above recent rows and keeps the pin visible on small screens', () => {
-    expect(source).toContain('<PinTack')
+    expect(source).toContain('<Thumbtack')
     expect(source).toContain("weight={isPinned ? 'Filled' : 'Outline'}")
     expect(source).toContain('void setRecentSessionPinned(')
     expect(source).toContain('pinned.has(row.session.id)')

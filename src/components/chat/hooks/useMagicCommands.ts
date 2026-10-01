@@ -23,6 +23,7 @@ interface MagicCommandHandlers {
   handleLinkedProjects: () => void
   handleForkSession: () => void
   handleCheckGitHubIssues: () => void
+  handlePreReleaseReview: () => void
   handleCommit: () => void
   handleCommitAndPush: () => void
   handleCommentAndCloseIssue: () => void
@@ -67,6 +68,7 @@ export function useMagicCommands({
   handleLinkedProjects,
   handleForkSession,
   handleCheckGitHubIssues,
+  handlePreReleaseReview,
   handleCommit,
   handleCommitAndPush,
   handleCommentAndCloseIssue,
@@ -91,6 +93,7 @@ export function useMagicCommands({
     handleLinkedProjects,
     handleForkSession,
     handleCheckGitHubIssues,
+    handlePreReleaseReview,
     handleCommit,
     handleCommitAndPush,
     handleCommentAndCloseIssue,
@@ -116,6 +119,7 @@ export function useMagicCommands({
       handleLinkedProjects,
       handleForkSession,
       handleCheckGitHubIssues,
+      handlePreReleaseReview,
       handleCommit,
       handleCommitAndPush,
       handleCommentAndCloseIssue,
@@ -170,6 +174,9 @@ export function useMagicCommands({
           break
         case 'check-github-issues':
           handlers.handleCheckGitHubIssues()
+          break
+        case 'pre-release-review':
+          handlers.handlePreReleaseReview()
           break
         case 'commit':
           handlers.handleCommit()

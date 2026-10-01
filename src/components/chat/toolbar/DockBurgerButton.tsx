@@ -96,12 +96,7 @@ export function DockBurgerButton({ className }: DockBurgerButtonProps = {}) {
         </TooltipTrigger>
         <TooltipContent>Menu ({menuShortcut})</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent
-        side="top"
-        align="start"
-        className="min-w-[240px]"
-        onEscapeKeyDown={e => e.stopPropagation()}
-      >
+      <DropdownMenuContent side="top" align="start" className="min-w-[240px]">
         <DropdownMenuItem
           onClick={() =>
             useProjectsStore.getState().setAddProjectDialogOpen(true)

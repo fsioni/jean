@@ -12,6 +12,7 @@ import {
   GitMerge,
   GitPullRequest,
   GitPullRequestArrow,
+  ListChecks,
   Link2,
   MessageSquare,
   RefreshCw,
@@ -44,6 +45,7 @@ export type MagicOption =
   | 'merge'
   | 'resolve-conflicts'
   | 'release-notes'
+  | 'pre-release-review'
   | 'investigate-issue'
   | 'investigate-pr'
   | 'investigate-advisory'
@@ -213,6 +215,12 @@ export function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           label: 'Generate Release Notes',
           icon: FileText,
           key: 'G',
+        },
+        {
+          id: 'pre-release-review',
+          label: 'Pre-release Review',
+          icon: ListChecks,
+          key: 'X',
         },
         {
           id: 'update-pr',

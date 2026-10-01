@@ -1173,7 +1173,7 @@ async fn try_static_filesystem_response(
         Ok(path) => path,
         Err(_) => return None,
     };
-    if !canonical_path.starts_with(canonical_base) {
+    if !canonical_path.starts_with(&canonical_base) {
         return Some((StatusCode::FORBIDDEN, "Access denied").into_response());
     }
 
@@ -1183,12 +1183,15 @@ async fn try_static_filesystem_response(
     };
 
     let canonical_index = index_path.canonicalize().unwrap_or(index_path);
-    let is_index = canonical_path == canonical_index;
-    let cache_control = if is_index || canonical_path.ends_with("jean-build.json") {
-        "no-store"
+    let relative_path = if canonical_path == canonical_index {
+        "index.html".to_string()
     } else {
-        "public, max-age=31536000, immutable"
+        canonical_path
+            .strip_prefix(&canonical_base)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default()
     };
+    let cache_control = static_cache_control(&relative_path);
 
     Some(
         Response::builder()
@@ -1201,6 +1204,19 @@ async fn try_static_filesystem_response(
             .unwrap()
             .into_response(),
     )
+}
+
+/// Only Vite's content-hashed files under `assets/` are safe to cache forever.
+/// Unhashed public files (icons, logo, wasm) keep the same URL across releases,
+/// so they must revalidate or clients (e.g. iOS home screen icons) keep stale copies.
+fn static_cache_control(relative_path: &str) -> &'static str {
+    if relative_path == "index.html" || relative_path == "jean-build.json" {
+        "no-store"
+    } else if relative_path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
 }
 
 fn embedded_asset_path_for_request(raw_path: &str) -> &str {
@@ -1223,12 +1239,7 @@ fn embedded_static_response(raw_path: &str) -> Response {
             .into_response();
     };
 
-    let is_index = asset_path == "index.html";
-    let cache_control = if is_index || asset_path == "jean-build.json" {
-        "no-store"
-    } else {
-        "public, max-age=31536000, immutable"
-    };
+    let cache_control = static_cache_control(asset_path);
 
     Response::builder()
         .header(
@@ -1464,7 +1475,8 @@ mod tests {
         attachment_disposition, bind_host_option_label, bind_host_option_rank,
         display_host_for_bind_ip, display_ip_for_bind_ip_with_candidates,
         embedded_asset_path_for_request, format_http_url, is_tailscale_ipv4, parse_bind_ip,
-        path_is_in_known_roots, token_from_query_or_bearer, validate_bind_host,
+        path_is_in_known_roots, static_cache_control, token_from_query_or_bearer,
+        validate_bind_host,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -1606,6 +1618,18 @@ mod tests {
             "http://100.64.0.1:3456"
         );
         assert_eq!(format_http_url("::1", 3456), "http://[::1]:3456");
+    }
+
+    #[test]
+    fn static_cache_control_only_makes_hashed_assets_immutable() {
+        assert_eq!(static_cache_control("index.html"), "no-store");
+        assert_eq!(static_cache_control("jean-build.json"), "no-store");
+        assert_eq!(
+            static_cache_control("assets/index-abc123.js"),
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(static_cache_control("apple-touch-icon.png"), "no-cache");
+        assert_eq!(static_cache_control("logo.png"), "no-cache");
     }
 
     #[test]

@@ -1520,6 +1520,8 @@ pub struct MagicPrompts {
     pub investigate_sentry_issue: Option<String>,
     #[serde(default)]
     pub review_comments: Option<String>,
+    #[serde(default)]
+    pub pre_release_review: Option<String>,
 }
 
 pub(crate) fn default_investigate_issue_prompt() -> String {

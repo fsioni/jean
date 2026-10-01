@@ -43,7 +43,6 @@ export type KeybindingAction =
   | 'scroll_chat_down_small'
   | 'open_github_dashboard'
   | 'open_quick_menu'
-  | 'open_usage_dropdown'
   | 'search_chat'
   | 'toggle_zen_mode'
   | 'clear_session_context'
@@ -106,7 +105,6 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
   scroll_chat_down_small: 'arrowdown',
   open_github_dashboard: 'mod+shift+d',
   open_quick_menu: 'mod+period',
-  open_usage_dropdown: 'mod+u',
   search_chat: 'mod+f',
   toggle_zen_mode: 'mod+shift+z',
   clear_session_context: 'mod+shift+k',
@@ -409,13 +407,6 @@ export const KEYBINDING_DEFINITIONS: KeybindingDefinition[] = [
     label: 'Quick menu',
     description: 'Open the floating quick menu',
     default_shortcut: 'mod+period',
-    category: 'navigation',
-  },
-  {
-    action: 'open_usage_dropdown',
-    label: 'Usage dropdown',
-    description: 'Open the floating usage dropdown',
-    default_shortcut: 'mod+u',
     category: 'navigation',
   },
   {

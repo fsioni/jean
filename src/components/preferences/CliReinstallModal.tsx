@@ -450,7 +450,9 @@ function CliReinstallModalUI({
     <Dialog open={open && !minimized} onOpenChange={onOpenChange}>
       <DialogContent
         className="sm:max-w-[450px]"
-        preventClose
+        // ESC closes like the X button; never while an install is running
+        preventClose={step === 'installing'}
+        onInteractOutside={e => e.preventDefault()}
         showCloseButton={step !== 'installing'}
       >
         {step === 'installing' && (

@@ -215,7 +215,7 @@ export const WebAccessPane: React.FC = () => {
     async (url: string) => {
       const fullUrl =
         tokenRequired && serverStatus?.token
-          ? `${url}?token=${serverStatus.token}`
+          ? `${url}?token=${encodeURIComponent(serverStatus.token)}`
           : url
       try {
         await copyToClipboard(fullUrl)
@@ -567,7 +567,7 @@ export const WebAccessPane: React.FC = () => {
                             const base = `http://localhost:${serverStatus.port}`
                             openExternal(
                               tokenRequired && serverStatus.token
-                                ? `${base}?token=${serverStatus.token}`
+                                ? `${base}?token=${encodeURIComponent(serverStatus.token)}`
                                 : base
                             )
                           }}
@@ -613,7 +613,7 @@ export const WebAccessPane: React.FC = () => {
                             const base = boundUrl
                             openExternal(
                               tokenRequired && serverStatus.token
-                                ? `${base}?token=${serverStatus.token}`
+                                ? `${base}?token=${encodeURIComponent(serverStatus.token)}`
                                 : base
                             )
                           }}

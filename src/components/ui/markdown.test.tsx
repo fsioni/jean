@@ -1,10 +1,147 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@/test/test-utils'
-import { Markdown } from './markdown'
+import { Markdown, headingBefore } from './markdown'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 
+const { mockSetRow } = vi.hoisted(() => ({ mockSetRow: vi.fn() }))
+vi.mock('@/lib/table-rows-prompt', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  setTableRowInPrompt: mockSetRow,
+}))
+
 describe('Markdown', () => {
+  it('pins a table with its exact markdown source and shares state by key', () => {
+    useChatStore.setState({ pinnedTables: {} })
+    const table = '| Name | Value |\n| --- | --- |\n| **a** | `1` |'
+    const content = `Intro text\n\n${table}\n\nOutro`
+
+    const { unmount } = render(
+      <Markdown messageId="msg-1" sessionId="session-1">
+        {content}
+      </Markdown>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Pin table' }))
+
+    const pins = useChatStore.getState().pinnedTables['session-1']
+    expect(pins).toEqual([
+      { key: `msg-1:${content.indexOf(table)}`, markdown: table },
+    ])
+    unmount()
+
+    // Rendered alone (pinned view), the fixed key keeps it pinned.
+    render(
+      <Markdown sessionId="session-1" tableKey={pins?.[0]?.key}>
+        {table}
+      </Markdown>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin table' }))
+    expect(useChatStore.getState().pinnedTables['session-1']).toBeUndefined()
+  })
+
+  it('adds a row to the prompt on row click, but not on link clicks', () => {
+    mockSetRow.mockReset()
+    const table =
+      '| Name | Link |\n| --- | --- |\n| a | [docs](https://x.dev) |'
+    render(
+      <Markdown sessionId="s1" tableKey="t1">
+        {table}
+      </Markdown>
+    )
+    expect(screen.getByText('Click a row to add it to the prompt')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('link', { name: 'docs' }))
+    expect(mockSetRow).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('a'))
+    expect(mockSetRow).toHaveBeenCalledWith(
+      's1',
+      't1',
+      0,
+      expect.any(Array),
+      ''
+    )
+    expect(screen.getByLabelText(/row 1/i)).toBeTruthy()
+  })
+
+  it('checks the checklist row when the row is added to the prompt', () => {
+    mockSetRow.mockReset()
+    useChatStore.setState({ tableCheckedRows: {} })
+    useChatStore.getState().enableTableChecklist('s2', 't2')
+    render(
+      <Markdown sessionId="s2" tableKey="t2">
+        {'| Name |\n| --- |\n| a |\n| b |'}
+      </Markdown>
+    )
+
+    fireEvent.click(screen.getByText('b'))
+    expect(
+      useChatStore.getState().tableCheckedRows.s2?.t2 ?? new Set()
+    ).toEqual(new Set([1]))
+  })
+
+  it('supports keyboard row navigation, add with note, and removal', () => {
+    mockSetRow.mockReset()
+    const table = '| Name |\n| --- |\n| a |\n| b |'
+    const { rerender } = render(
+      <Markdown sessionId="s2" tableKey="t2">
+        {table}
+      </Markdown>
+    )
+    const rowA = screen.getByText('a').closest('tr') as HTMLElement
+    const rowB = screen.getByText('b').closest('tr') as HTMLElement
+
+    rowA.focus()
+    fireEvent.keyDown(rowA, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(rowB)
+    fireEvent.keyDown(rowB, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(rowA)
+
+    // Enter opens the note form without adding the row yet.
+    fireEvent.keyDown(rowA, { key: 'Enter' })
+    expect(mockSetRow).not.toHaveBeenCalled()
+    const note = screen.getByLabelText(/Add row 1 to the prompt/)
+    fireEvent.change(note, { target: { value: 'first' } })
+    fireEvent.keyDown(note, { key: 'Enter' })
+    expect(mockSetRow).toHaveBeenCalledWith(
+      's2',
+      't2',
+      0,
+      expect.any(Array),
+      'first'
+    )
+
+    // Delete does nothing for a row not in the prompt.
+    mockSetRow.mockReset()
+    fireEvent.keyDown(rowB, { key: 'Delete' })
+    expect(mockSetRow).not.toHaveBeenCalled()
+
+    // Backspace removes a row that is in the prompt.
+    useChatStore.setState({
+      pendingTextFiles: {
+        s2: [
+          {
+            id: 'tf',
+            tableRows: { tableKey: 't2', rows: [0], notes: { 0: 'first' } },
+          },
+        ],
+      },
+    } as never)
+    rerender(
+      <Markdown sessionId="s2" tableKey="t2">
+        {table}
+      </Markdown>
+    )
+    fireEvent.keyDown(rowA, { key: 'Backspace' })
+    expect(mockSetRow).toHaveBeenCalledWith(
+      's2',
+      't2',
+      0,
+      expect.any(Array),
+      null
+    )
+  })
+
   it('opens relative file links in the active worktree viewer', () => {
     useChatStore.setState({ activeWorktreePath: '/repo/worktree' })
     useUIStore.getState().setViewingFilePath(null)
@@ -252,5 +389,27 @@ describe('Markdown', () => {
     )
     expect(container.textContent).toContain("I'll add SQLite")
     expect(container.textContent).not.toContain("I'lladd")
+  })
+})
+
+describe('headingBefore', () => {
+  it('returns the nearest heading above the table', () => {
+    const source =
+      '## Report\n\n### Storage, databases, DNS, proxy\n\nSome text.\n\n| a |\n| - |'
+    expect(headingBefore(source, source.indexOf('| a |'))).toBe(
+      'Storage, databases, DNS, proxy'
+    )
+  })
+
+  it('accepts a bold-only line as a heading', () => {
+    const source = '**High (fix before release):**\n\n| a |\n| - |'
+    expect(headingBefore(source, source.indexOf('| a |'))).toBe(
+      'High (fix before release)'
+    )
+  })
+
+  it('returns null when there is no heading', () => {
+    const source = 'Plain **bold** text.\n\n| a |\n| - |'
+    expect(headingBefore(source, source.indexOf('| a |'))).toBeNull()
   })
 })

@@ -37,6 +37,7 @@ describe('ChatStore', () => {
       reviewSidebarVisible: false,
       fixedReviewFindings: {},
       tableCheckedRows: {},
+      pinnedTables: {},
       worktreePaths: {},
       sendingSessionIds: {},
       namingSessionIds: {},
@@ -998,6 +999,24 @@ describe('ChatStore', () => {
 
       setQuestionsSkipped('session-1', false)
       expect(areQuestionsSkipped('session-1')).toBe(false)
+    })
+
+    it('tracks subagents panel expansion per session', () => {
+      useChatStore.setState({ expandedAgentWidgetSessions: {} })
+      const { setAgentWidgetExpanded } = useChatStore.getState()
+
+      setAgentWidgetExpanded('session-1', true)
+      expect(useChatStore.getState().expandedAgentWidgetSessions).toEqual({
+        'session-1': true,
+      })
+
+      // No-op update keeps the same reference
+      const before = useChatStore.getState().expandedAgentWidgetSessions
+      setAgentWidgetExpanded('session-1', true)
+      expect(useChatStore.getState().expandedAgentWidgetSessions).toBe(before)
+
+      setAgentWidgetExpanded('session-1', false)
+      expect(useChatStore.getState().expandedAgentWidgetSessions).toEqual({})
     })
   })
 
@@ -2042,6 +2061,61 @@ describe('ChatStore', () => {
       expect(
         useChatStore.getState().pendingFiles['session-1']?.map(file => file.id)
       ).toEqual(['file-current', 'file-linked'])
+    })
+  })
+
+  describe('pinned tables', () => {
+    const tableA = { key: 'msg-1:10', markdown: '| a |\n| - |\n| 1 |' }
+    const tableB = { key: 'msg-2:0', markdown: '| b |\n| - |\n| 2 |' }
+
+    it('pins tables in order and unpins by key', () => {
+      const { togglePinnedTable } = useChatStore.getState()
+      togglePinnedTable('session-1', tableA)
+      togglePinnedTable('session-1', tableB)
+      expect(useChatStore.getState().pinnedTables['session-1']).toEqual([
+        tableA,
+        tableB,
+      ])
+
+      togglePinnedTable('session-1', { ...tableA, markdown: 'changed' })
+      expect(useChatStore.getState().pinnedTables['session-1']).toEqual([
+        tableB,
+      ])
+    })
+
+    it('removes the session entry when the last pin is removed', () => {
+      const { togglePinnedTable } = useChatStore.getState()
+      togglePinnedTable('session-1', tableA)
+      togglePinnedTable('session-1', tableA)
+      expect('session-1' in useChatStore.getState().pinnedTables).toBe(false)
+    })
+
+    it('renames pin and checklist keys', () => {
+      const store = useChatStore.getState()
+      store.togglePinnedTable('session-1', tableA)
+      store.togglePinnedTable('session-1', tableB)
+      store.enableTableChecklist('session-1', tableA.key)
+      store.toggleTableRowChecked('session-1', tableA.key, 2)
+
+      store.renameTableKeys('session-1', key =>
+        key.replace('msg-1:', 'saved-1:')
+      )
+
+      const state = useChatStore.getState()
+      expect(state.pinnedTables['session-1']?.map(p => p.key)).toEqual([
+        'saved-1:10',
+        'msg-2:0',
+      ])
+      expect(state.tableCheckedRows['session-1']).toEqual({
+        'saved-1:10': new Set([2]),
+      })
+    })
+
+    it('keeps state when no key changes', () => {
+      useChatStore.getState().togglePinnedTable('session-1', tableA)
+      const before = useChatStore.getState()
+      before.renameTableKeys('session-1', key => key)
+      expect(useChatStore.getState().pinnedTables).toBe(before.pinnedTables)
     })
   })
 })

@@ -10,6 +10,7 @@ import { isPanelTerminal, useTerminalStore } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { projectsQueryKeys } from '@/services/projects'
 import { chatQueryKeys } from '@/services/chat'
+import { MCP_SERVERS_KEY } from '@/services/mcp'
 import { claudeCliQueryKeys } from '@/services/claude-cli'
 import type {
   AllSessionsResponse,
@@ -206,9 +207,17 @@ export function applyCacheInvalidationKeys(
           queryKey: ['recent-worktrees'],
         })
         break
+      case 'mcp-servers':
+        // claude.ai connectors / plugin servers found by `claude mcp list`.
+        queryClient.invalidateQueries({ queryKey: [MCP_SERVERS_KEY] })
+        break
       case 'projects':
         queryClient.invalidateQueries({
           queryKey: projectsQueryKeys.all,
+        })
+        // Native sidebar also reads the multi-server project list.
+        queryClient.invalidateQueries({
+          queryKey: ['multi-server', 'projects'],
         })
         break
       case 'preferences':
@@ -829,9 +838,6 @@ function executeKeybindingAction(
       break
     case 'open_quick_menu':
       window.dispatchEvent(new CustomEvent('toggle-quick-menu'))
-      break
-    case 'open_usage_dropdown':
-      window.dispatchEvent(new CustomEvent('toggle-usage-menu'))
       break
     case 'toggle_session_label': {
       logger.debug('Keybinding: toggle_session_label')

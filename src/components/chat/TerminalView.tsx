@@ -432,7 +432,6 @@ export function TerminalView({
       }}
     >
       <AlertDialogContent
-        onEscapeKeyDown={e => e.stopPropagation()}
         onKeyDown={e => {
           if (e.key === 'Enter') {
             e.preventDefault()

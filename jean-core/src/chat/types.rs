@@ -386,6 +386,19 @@ pub struct ToolCall {
     /// `Some(true)` when the tool result was flagged `is_error` (failed tool)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    /// Token/tool/time totals of a Claude Task/Agent subagent run
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_usage: Option<SubagentUsage>,
+}
+
+/// Running totals for a Claude subagent (from `task_progress` events and the
+/// final `tool_use_result`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentUsage {
+    /// Context tokens of the subagent's latest API call
+    pub total_tokens: u64,
+    pub tool_uses: u64,
+    pub duration_ms: u64,
 }
 
 /// A permission denial when a tool requires approval
@@ -596,6 +609,17 @@ pub struct CodexDynamicToolCallRequestEvent {
     pub session_id: String,
     pub worktree_id: String,
     pub request: CodexDynamicToolCallRequest,
+}
+
+/// A chat table pinned for quick access. `key` matches the checklist table
+/// key ("{messageId}:{markdownOffset}"); `markdown` is the table source;
+/// `title` is the heading above the table in the message, when there is one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PinnedTable {
+    pub key: String,
+    pub markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// Context for a denied message that can be re-sent after permission approval
@@ -925,6 +949,9 @@ pub struct Session {
     /// Key = "{messageId}:{markdownOffset}". Presence = checklist mode on.
     #[serde(default)]
     pub table_checked_rows: HashMap<String, Vec<u32>>,
+    /// Tables pinned by the user for quick access, in pin order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_tables: Vec<PinnedTable>,
     // ========================================================================
     // Run recovery state (for showing correct status on app restart)
     // ========================================================================
@@ -1063,6 +1090,7 @@ impl Session {
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
             table_checked_rows: HashMap::new(),
+            pinned_tables: vec![],
             last_run_status: None,
             last_run_execution_mode: None,
             last_run_started_at: None,
@@ -1412,6 +1440,7 @@ impl SessionMetadata {
             pending_plan_message_id: self.pending_plan_message_id.clone(),
             enabled_mcp_servers: self.enabled_mcp_servers.clone(),
             table_checked_rows: self.table_checked_rows.clone(),
+            pinned_tables: self.pinned_tables.clone(),
             // Populate from last run for status recovery on app restart
             last_run_status: last_run.map(|r| r.status.clone()),
             last_run_execution_mode: last_run.and_then(|r| r.execution_mode.clone()),
@@ -1476,6 +1505,7 @@ impl SessionMetadata {
         self.pending_plan_message_id = session.pending_plan_message_id.clone();
         self.enabled_mcp_servers = session.enabled_mcp_servers.clone();
         self.table_checked_rows = session.table_checked_rows.clone();
+        self.pinned_tables = session.pinned_tables.clone();
         self.label = session.label.clone();
         self.scheduled_wakeup = session.scheduled_wakeup.clone();
         // NOTE: Do NOT overwrite queued_messages here. Queue state is managed
@@ -1906,6 +1936,9 @@ pub struct SessionMetadata {
     /// Per-table checklist state: tableKey -> checked row indices.
     #[serde(default)]
     pub table_checked_rows: HashMap<String, Vec<u32>>,
+    /// Tables pinned by the user for quick access, in pin order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_tables: Vec<PinnedTable>,
     /// User-assigned label with color (e.g. "Needs testing")
     #[serde(
         default,
@@ -2062,6 +2095,7 @@ impl SessionMetadata {
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
             table_checked_rows: HashMap::new(),
+            pinned_tables: vec![],
             label: None,
             queued_messages: vec![],
             last_opened_at: None,
@@ -2400,6 +2434,7 @@ mod tests {
             output: Some("file contents".to_string()),
             parent_tool_use_id: None,
             is_error: None,
+            subagent_usage: None,
         };
 
         let json = serde_json::to_string(&tool_call).unwrap();
@@ -2418,6 +2453,7 @@ mod tests {
             output: None,
             parent_tool_use_id: Some("call-123".to_string()),
             is_error: None,
+            subagent_usage: None,
         };
 
         let json = serde_json::to_string(&tool_call).unwrap();

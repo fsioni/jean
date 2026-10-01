@@ -4,6 +4,7 @@ import {
   isAskUserQuestion,
   type ToolCall,
   type ToolLiveEvent,
+  type SubagentUsage,
   type QuestionAnswer,
   type SetupScriptResult,
   type ThinkingLevel,
@@ -25,6 +26,7 @@ import {
   type ExecutionMode,
   type LabelData,
   type ScheduledWakeup,
+  type PinnedTable,
   EXECUTION_MODE_CYCLE,
   isPlanToolCall,
 } from '@/types/chat'
@@ -105,6 +107,9 @@ interface ChatUIState {
   // Per-table checklist state: sessionId → (tableKey → Set of checked row indices)
   // Presence of tableKey = checklist mode enabled for that table
   tableCheckedRows: Record<string, Record<string, Set<number>>>
+
+  // Pinned tables per session, in pin order (persisted)
+  pinnedTables: Record<string, PinnedTable[]>
 
   // Mapping of worktree IDs to paths (for looking up paths by ID)
   worktreePaths: Record<string, string>
@@ -287,6 +292,9 @@ interface ChatUIState {
   // Sessions where user skipped questions (auto-skip all subsequent questions)
   skippedQuestionSessions: Record<string, boolean>
 
+  // Sessions where the user expanded the Subagents panel (collapsed by default)
+  expandedAgentWidgetSessions: Record<string, boolean>
+
   // Worktree loading operations (commit, pr, review, merge, pull)
   worktreeLoadingOperations: Record<string, string | null>
 
@@ -339,6 +347,9 @@ interface ChatUIState {
     tableKey: string,
     rowIndex: number
   ) => void
+  togglePinnedTable: (sessionId: string, table: PinnedTable) => void
+  /** Rename table keys of pins and checklists, e.g. when a message id changes */
+  renameTableKeys: (sessionId: string, rename: (key: string) => string) => void
   // Actions - ScheduleWakeup indicator state (keyed by tool_call_id)
   setScheduledWakeup: (
     toolCallId: string,
@@ -437,6 +448,12 @@ interface ChatUIState {
     toolUseId: string,
     event: ToolLiveEvent
   ) => void
+  /** Set a Claude subagent's token/tool/time totals on its Task/Agent call. */
+  setToolCallSubagentUsage: (
+    sessionId: string,
+    toolUseId: string,
+    usage: SubagentUsage
+  ) => void
   /** Set a tool call's lifecycle status (armed/running/done/timeout/error). */
   setToolCallStatus: (
     sessionId: string,
@@ -525,6 +542,7 @@ interface ChatUIState {
   // Actions - Question skipping (session-based, auto-skips all subsequent questions)
   setQuestionsSkipped: (sessionId: string, skipped: boolean) => void
   areQuestionsSkipped: (sessionId: string) => boolean
+  setAgentWidgetExpanded: (sessionId: string, expanded: boolean) => void
 
   // Actions - Error handling (session-based)
   setError: (sessionId: string, error: string | null) => void
@@ -581,7 +599,8 @@ interface ChatUIState {
     sessionId: string,
     textFileId: string,
     content: string,
-    size: number
+    size: number,
+    tableRows?: PendingTextFile['tableRows']
   ) => void
   removePendingTextFile: (sessionId: string, textFileId: string) => void
   clearPendingTextFiles: (sessionId: string) => void
@@ -751,6 +770,7 @@ const SESSION_SCOPED_RECORD_KEYS = [
   'fixedReviewFindings',
   'fixedFindings',
   'tableCheckedRows',
+  'pinnedTables',
   'sendingSessionIds',
   'sendStartedAt',
   'completedDurations',
@@ -799,6 +819,7 @@ const SESSION_SCOPED_RECORD_KEYS = [
   'pendingPlanMessageIds',
   'savingContext',
   'skippedQuestionSessions',
+  'expandedAgentWidgetSessions',
   'sessionLabels',
   'codexGoals',
 ] as const
@@ -905,6 +926,7 @@ export const useChatStore = create<ChatUIState>()(
       reviewSidebarVisible: false,
       fixedReviewFindings: {},
       tableCheckedRows: {},
+      pinnedTables: {},
       worktreePaths: {},
       sendingSessionIds: {},
       namingSessionIds: {},
@@ -964,6 +986,7 @@ export const useChatStore = create<ChatUIState>()(
       pendingPlanMessageIds: {},
       savingContext: {},
       skippedQuestionSessions: {},
+      expandedAgentWidgetSessions: {},
       worktreeLoadingOperations: {},
       sessionLabels: {},
       codexGoals: {},
@@ -1154,6 +1177,55 @@ export const useChatStore = create<ChatUIState>()(
           },
           undefined,
           'toggleTableRowChecked'
+        ),
+
+      togglePinnedTable: (sessionId, table) =>
+        set(
+          state => {
+            const pins = state.pinnedTables[sessionId] ?? []
+            const next = pins.some(p => p.key === table.key)
+              ? pins.filter(p => p.key !== table.key)
+              : [...pins, table]
+            if (next.length === 0) {
+              const { [sessionId]: _removed, ...rest } = state.pinnedTables
+              return { pinnedTables: rest }
+            }
+            return {
+              pinnedTables: { ...state.pinnedTables, [sessionId]: next },
+            }
+          },
+          undefined,
+          'togglePinnedTable'
+        ),
+
+      renameTableKeys: (sessionId, rename) =>
+        set(
+          state => {
+            const pins = state.pinnedTables[sessionId]
+            const checked = state.tableCheckedRows[sessionId]
+            const pinsChanged = pins?.some(p => rename(p.key) !== p.key)
+            const checkedChanged =
+              checked && Object.keys(checked).some(k => rename(k) !== k)
+            if (!pinsChanged && !checkedChanged) return state
+            const next: Partial<ChatUIState> = {}
+            if (pins && pinsChanged) {
+              next.pinnedTables = {
+                ...state.pinnedTables,
+                [sessionId]: pins.map(p => ({ ...p, key: rename(p.key) })),
+              }
+            }
+            if (checked && checkedChanged) {
+              next.tableCheckedRows = {
+                ...state.tableCheckedRows,
+                [sessionId]: Object.fromEntries(
+                  Object.entries(checked).map(([k, rows]) => [rename(k), rows])
+                ),
+              }
+            }
+            return next
+          },
+          undefined,
+          'renameTableKeys'
         ),
 
       // ScheduleWakeup indicator state
@@ -1862,6 +1934,33 @@ export const useChatStore = create<ChatUIState>()(
           },
           undefined,
           'appendToolEvent'
+        ),
+
+      setToolCallSubagentUsage: (sessionId, toolUseId, usage) =>
+        set(
+          state => {
+            const toolCalls = state.activeToolCalls[sessionId] ?? []
+            const existing = toolCalls.find(tc => tc.id === toolUseId)
+            const prev = existing?.subagent_usage
+            if (
+              !existing ||
+              (prev?.total_tokens === usage.total_tokens &&
+                prev.tool_uses === usage.tool_uses &&
+                prev.duration_ms === usage.duration_ms)
+            ) {
+              return state
+            }
+            return {
+              activeToolCalls: {
+                ...state.activeToolCalls,
+                [sessionId]: toolCalls.map(tc =>
+                  tc.id === toolUseId ? { ...tc, subagent_usage: usage } : tc
+                ),
+              },
+            }
+          },
+          undefined,
+          'setToolCallSubagentUsage'
         ),
 
       setToolCallStatus: (sessionId, toolUseId, status) =>
@@ -2684,6 +2783,29 @@ export const useChatStore = create<ChatUIState>()(
       areQuestionsSkipped: sessionId =>
         get().skippedQuestionSessions[sessionId] ?? false,
 
+      // Subagents panel expanded state (session-based, collapsed by default)
+      setAgentWidgetExpanded: (sessionId, expanded) =>
+        set(
+          state => {
+            if (!!state.expandedAgentWidgetSessions[sessionId] === expanded) {
+              return state
+            }
+            if (expanded) {
+              return {
+                expandedAgentWidgetSessions: {
+                  ...state.expandedAgentWidgetSessions,
+                  [sessionId]: true,
+                },
+              }
+            }
+            const { [sessionId]: _, ...rest } =
+              state.expandedAgentWidgetSessions
+            return { expandedAgentWidgetSessions: rest }
+          },
+          undefined,
+          'setAgentWidgetExpanded'
+        ),
+
       // Error handling (session-based)
       setError: (sessionId, error) =>
         set(
@@ -3070,13 +3192,21 @@ export const useChatStore = create<ChatUIState>()(
           'addPendingTextFile'
         ),
 
-      updatePendingTextFile: (sessionId, textFileId, content, size) =>
+      updatePendingTextFile: (
+        sessionId,
+        textFileId,
+        content,
+        size,
+        tableRows
+      ) =>
         set(
           state => ({
             pendingTextFiles: {
               ...state.pendingTextFiles,
               [sessionId]: (state.pendingTextFiles[sessionId] ?? []).map(tf =>
-                tf.id === textFileId ? { ...tf, content, size } : tf
+                tf.id === textFileId
+                  ? { ...tf, content, size, ...(tableRows && { tableRows }) }
+                  : tf
               ),
             },
           }),

@@ -441,7 +441,7 @@ export const CompactStreamingTicker = memo(function CompactStreamingTicker(
                 </span>
               )}
               {showLoadingIndicator && (
-                <Loader2 className="h-3 w-3 animate-spin opacity-50" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
               )}
               <ChevronRight
                 className={

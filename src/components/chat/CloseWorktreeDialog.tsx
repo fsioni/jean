@@ -66,7 +66,6 @@ function CloseWorktreeDialogContent({
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
-        onEscapeKeyDown={e => e.stopPropagation()}
         onKeyDown={e => {
           if (e.key === 'Enter') {
             e.preventDefault()

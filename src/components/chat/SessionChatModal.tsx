@@ -802,7 +802,7 @@ export function SessionChatModal({
       })
   }, [isOpen, worktreeId, worktreePath])
 
-  // Keep Code Review first, then show the most recently updated sessions.
+  // Keep Code Review first, then running sessions, then most recently updated.
   const sortedCards = useMemo(() => {
     return sortSessionCardsForTabs(cards)
   }, [cards])

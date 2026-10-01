@@ -520,7 +520,6 @@ export function UnreadBell({ title, hideTitle }: UnreadBellProps) {
         className="w-[min(440px,calc(100vw-2rem))] p-0"
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        onEscapeKeyDown={e => e.stopPropagation()}
         onOpenAutoFocus={e => {
           e.preventDefault()
           contentRef.current?.focus()
