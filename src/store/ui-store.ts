@@ -360,10 +360,8 @@ interface UIState {
   dismissCliUpdateNotice: (type: PendingCliUpdate['type']) => void
   chatSearchOpen: boolean
   setChatSearchOpen: (open: boolean) => void
-  githubDashboardOpen: boolean
   deploymentOpen: boolean
   setDeploymentOpen: (open: boolean) => void
-  setGitHubDashboardOpen: (open: boolean) => void
   /**
    * Zen mode: full-screen the active session chat.
    * Hides session tabs, modal action chrome, and sidebars.
@@ -465,7 +463,6 @@ export const useUIStore = create<UIState>()(
       pendingServerUpdate: null,
       availableCliUpdates: [],
       chatSearchOpen: false,
-      githubDashboardOpen: false,
       deploymentOpen: false,
       zenMode: false,
       toggleZenMode: () => {
@@ -1539,16 +1536,6 @@ export const useUIStore = create<UIState>()(
           },
           undefined,
           'setChatSearchOpen'
-        ),
-
-      setGitHubDashboardOpen: (open: boolean) =>
-        set(
-          state =>
-            state.githubDashboardOpen === open
-              ? state
-              : { githubDashboardOpen: open },
-          undefined,
-          'setGitHubDashboardOpen'
         ),
 
       setAiPipelineModalOpen: (open: boolean, projectId?: string | null) =>

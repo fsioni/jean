@@ -64,7 +64,6 @@ interface UseMessageSendingParams {
     | {
         custom_cli_profiles?: { name: string }[]
         custom_codex_providers?: { name: string }[]
-        parallel_execution_prompt_enabled?: boolean
         magic_prompts?: { parallel_execution?: string | null }
         chrome_enabled?: boolean
         ai_language?: string
@@ -235,10 +234,8 @@ export function useMessageSending({
           mcpConfig: queuedMsg.mcpConfig,
           customProfileName: resolved.customProfileName,
           parallelExecutionPrompt:
-            preferences?.parallel_execution_prompt_enabled
-              ? (preferences.magic_prompts?.parallel_execution ??
-                DEFAULT_PARALLEL_EXECUTION_PROMPT)
-              : undefined,
+            preferences?.magic_prompts?.parallel_execution ??
+            DEFAULT_PARALLEL_EXECUTION_PROMPT,
           chromeEnabled: preferences?.chrome_enabled ?? false,
           aiLanguage: preferences?.ai_language,
           allowedTools,
@@ -257,7 +254,6 @@ export function useMessageSending({
       activeWorktreePath,
       sendMessage,
       queryClient,
-      preferences?.parallel_execution_prompt_enabled,
       preferences?.chrome_enabled,
       preferences?.ai_language,
       preferences?.magic_prompts?.parallel_execution,

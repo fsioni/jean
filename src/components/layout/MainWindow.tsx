@@ -157,11 +157,6 @@ const ResolveConflictsDialog = lazy(() =>
     default: mod.ResolveConflictsDialog,
   }))
 )
-const GitHubDashboardModal = lazy(() =>
-  import('@/components/github-dashboard').then(mod => ({
-    default: mod.GitHubDashboardModal,
-  }))
-)
 const NewSessionModeModal = lazy(() =>
   import('@/components/chat/NewSessionModeModal').then(mod => ({
     default: mod.NewSessionModeModal,
@@ -272,7 +267,6 @@ export function MainWindow() {
   const cliUpdateModalOpen = useUIStore(state => state.cliUpdateModalOpen)
   const cliLoginModalOpen = useUIStore(state => state.cliLoginModalOpen)
   const updateModalVersion = useUIStore(state => state.updateModalVersion)
-  const githubDashboardOpen = useUIStore(state => state.githubDashboardOpen)
   const newSessionModeTarget = useUIStore(state => state.newSessionModeTarget)
   const sessionChatModalOpen = useUIStore(state => state.sessionChatModalOpen)
   const modalSidebarSwipe = useUIStore(state => state.leftSidebarSwipe)
@@ -530,7 +524,6 @@ export function MainWindow() {
   const shouldRenderCloneProjectModal = useRetainedMount(cloneModalOpen)
   const shouldRenderArchivedModal = useRetainedMount(archivedModalOpen)
   const shouldRenderCloseWorktreeDialog = useRetainedMount(closeConfirmOpen)
-  const shouldRenderGitHubDashboardModal = useRetainedMount(githubDashboardOpen)
   const shouldRenderNewSessionModeModal = useRetainedMount(
     newSessionModeTarget !== null
   )
@@ -853,11 +846,6 @@ export function MainWindow() {
             branchName={closeConfirmBranch}
             mode={closeConfirmMode}
           />
-        </Suspense>
-      )}
-      {shouldRenderGitHubDashboardModal && (
-        <Suspense fallback={null}>
-          <GitHubDashboardModal />
         </Suspense>
       )}
       <BranchConflictDialog />

@@ -38,9 +38,6 @@ interface ProjectsUIState {
   sidebarActiveTab: SidebarTab
   pinnedRecentSessionIds: string[]
 
-  // Favorited projects shown first in the GitHub Dashboard filter and sections
-  githubDashboardFavoriteProjectIds: string[]
-
   // Add project dialog state
   addProjectDialogOpen: boolean
   addProjectParentFolderId: string | null
@@ -125,8 +122,6 @@ interface ProjectsUIState {
   setProjectCanvasActiveFilter: (projectId: string, filter: string) => void
   setSidebarServerFilter: (serverId: string | null) => void
   setPinnedRecentSessionIds: (sessionIds: string[]) => void
-  setGitHubDashboardFavoriteProjectIds: (projectIds: string[]) => void
-  toggleGitHubDashboardFavoriteProject: (projectId: string) => void
 }
 
 export const useProjectsStore = create<ProjectsUIState>()(
@@ -145,7 +140,6 @@ export const useProjectsStore = create<ProjectsUIState>()(
       sidebarServerFilter: null,
       sidebarActiveTab: 'projects',
       pinnedRecentSessionIds: [],
-      githubDashboardFavoriteProjectIds: [],
       addProjectDialogOpen: false,
       addProjectParentFolderId: null,
       projectSettingsDialogOpen: false,
@@ -421,36 +415,6 @@ export const useProjectsStore = create<ProjectsUIState>()(
               : { pinnedRecentSessionIds: sessionIds },
           undefined,
           'setPinnedRecentSessionIds'
-        ),
-
-      setGitHubDashboardFavoriteProjectIds: projectIds =>
-        set(
-          state =>
-            state.githubDashboardFavoriteProjectIds === projectIds
-              ? state
-              : { githubDashboardFavoriteProjectIds: projectIds },
-          undefined,
-          'setGitHubDashboardFavoriteProjectIds'
-        ),
-
-      toggleGitHubDashboardFavoriteProject: projectId =>
-        set(
-          state => {
-            const current = state.githubDashboardFavoriteProjectIds
-            if (current.includes(projectId)) {
-              return {
-                githubDashboardFavoriteProjectIds: current.filter(
-                  id => id !== projectId
-                ),
-              }
-            }
-
-            return {
-              githubDashboardFavoriteProjectIds: [...current, projectId],
-            }
-          },
-          undefined,
-          'toggleGitHubDashboardFavoriteProject'
         ),
 
       // Folder expansion actions

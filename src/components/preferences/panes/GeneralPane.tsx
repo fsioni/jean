@@ -1,3 +1,5 @@
+import { useInstalledBackends } from '@/hooks/useInstalledBackends'
+import { useSettingsTargetServerId } from '@/lib/settings-target'
 import React, {
   useState,
   useCallback,
@@ -22,7 +24,6 @@ import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { BackendLabel } from '@/components/ui/backend-label'
-import { Input } from '@/components/ui/input'
 import {
   Command,
   CommandEmpty,
@@ -111,7 +112,6 @@ import {
   useAvailableKimiModels,
   kimiCliQueryKeys,
 } from '@/services/kimi-cli'
-import { useAntigravityCliStatus } from '@/services/antigravity-cli'
 import type { ClaudeAuthStatus } from '@/types/claude-cli'
 import type { GhAuthStatus } from '@/types/gh-cli'
 import type { CodexAuthStatus } from '@/types/codex-cli'
@@ -161,8 +161,6 @@ import {
   backendOptions,
   getTerminalOptions,
   getEditorOptions,
-  gitPollIntervalOptions,
-  remotePollIntervalOptions,
   archiveRetentionOptions,
   removalBehaviorOptions,
   notificationSoundOptions,
@@ -209,7 +207,12 @@ import {
   fetchRemoteServerInfo,
   formatJeanVersionLabel,
 } from '@/lib/remote-version'
-import type { ThinkingLevel, EffortLevel } from '@/types/chat'
+import {
+  getSupportedPermissionModes,
+  type ThinkingLevel,
+  type EffortLevel,
+  type ExecutionMode,
+} from '@/types/chat'
 import {
   hasBackend,
   isNativeApp,
@@ -219,13 +222,9 @@ import { isWindows, openExternal } from '@/lib/platform'
 import { isNewerVersion } from '@/lib/version-utils'
 import { cn } from '@/lib/utils'
 import { copyToClipboard } from '@/lib/clipboard'
-import {
-  setGitPollInterval,
-  setRemotePollInterval,
-} from '@/services/git-status'
 import { getPathUpdateAction } from '@/lib/cli-update'
-import { BackendPaneHeader, SettingsSection } from '../SettingsSection'
-import { BackendCliSourceCards } from '../BackendCliSourceCards'
+import { SettingsSection } from '../SettingsSection'
+import { BackendCliSourceSelect } from '../BackendCliSourceSelect'
 import { AiLanguageField } from './AiLanguageField'
 import {
   resolveDefaultModelForBackend,
@@ -269,42 +268,16 @@ type PreferencesPaneScope =
   | 'github'
   | 'coderabbit'
 
-const backendPaneMeta = {
-  claude: {
-    description:
-      'Configure the Claude CLI, default model, and native Claude session behavior.',
-  },
-  codex: {
-    description:
-      'Configure the Codex CLI, default model, reasoning, and native Codex session behavior.',
-  },
-  opencode: {
-    description:
-      'Configure the OpenCode CLI, default model, and native OpenCode session behavior.',
-  },
-  cursor: {
-    description:
-      'Configure the Cursor CLI, default model, and native Cursor session behavior.',
-  },
-  pi: {
-    description:
-      'Configure the PI CLI, active provider model, and native PI session behavior.',
-  },
-  commandcode: {
-    description:
-      'Configure the Command Code CLI and default model for native sessions.',
-  },
-  grok: {
-    description:
-      'Configure the Grok CLI, default model, effort level, and native ACP session behavior.',
-  },
-  kimi: {
-    description:
-      'Configure the Kimi Code CLI, default model, and native ACP session behavior.',
-  },
-} satisfies Partial<
-  Record<PreferencesPaneScope, { description: React.ReactNode }>
->
+const backendPaneScopes: readonly PreferencesPaneScope[] = [
+  'claude',
+  'codex',
+  'opencode',
+  'cursor',
+  'pi',
+  'commandcode',
+  'grok',
+  'kimi',
+]
 
 function formatOpenCodeModelLabelForSettings(value: string) {
   const formatted = formatOpencodeModelLabel(value)
@@ -317,6 +290,11 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   scope = 'general',
 }) => {
   const isGeneralScope = scope === 'general'
+  const serverId = useSettingsTargetServerId()
+  const { installedBackends } = useInstalledBackends({
+    enabled: isGeneralScope,
+    serverId,
+  })
   const queryClient = useQueryClient()
   const activeRemoteConnection = getActiveRemoteConnection()
   const { data: remoteServerInfo, isLoading: isRemoteServerInfoLoading } =
@@ -340,9 +318,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const codexReasoning = getCatalogModelReasoning(
     modelCatalog,
     'codex',
-    preferences?.selected_codex_model ?? 'gpt-5.6-sol'
+    preferences?.selected_codex_model ?? 'gpt-6.1-sol'
   )
-  const selectedCodexModel = preferences?.selected_codex_model ?? 'gpt-5.6-sol'
+  const selectedCodexModel = preferences?.selected_codex_model ?? 'gpt-6.1-sol'
   const selectedCodexReasoningOptions = withAdaptiveEffortOption(
     codexReasoning?.type === 'effort'
       ? codexReasoning.levels
@@ -451,7 +429,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     useCommandCodeCliStatus()
   const { data: grokStatus, isLoading: isGrokLoading } = useGrokCliStatus()
   const { data: kimiStatus, isLoading: isKimiLoading } = useKimiCliStatus()
-  const { data: antigravityStatus } = useAntigravityCliStatus()
   const isGhPathSource = preferences?.gh_cli_source === 'path'
   const { data: ghVersions, isLoading: isGhVersionsLoading } =
     useAvailableGhVersions({ enabled: isGhPathSource && !!ghStatus?.installed })
@@ -1033,79 +1010,14 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   // at send time / backend settings — hiding unauthenticated backends made Claude
   // (and others) disappear from Defaults when auth probes were false-negative.
   const stored = preferences?.default_backend ?? 'claude'
-  const claudeInstalled = !!cliStatus?.installed
-  const codexInstalled = !!codexStatus?.installed
-  const opencodeInstalled = !!opencodeStatus?.installed
-  const cursorInstalled = !!cursorStatus?.installed
-  const piInstalled = !!piStatus?.installed
-  const commandcodeInstalled = !!commandcodeStatus?.installed
-  const grokInstalled = !!grokStatus?.installed
-  const kimiInstalled = !!kimiStatus?.installed
-  const antigravityInstalled = !!antigravityStatus?.installed
   const installedBackendOptions = useMemo(
     () =>
-      backendOptions.filter(option =>
-        option.value === 'claude'
-          ? claudeInstalled
-          : option.value === 'codex'
-            ? codexInstalled
-            : option.value === 'opencode'
-              ? opencodeInstalled
-              : option.value === 'cursor'
-                ? cursorInstalled
-                : option.value === 'pi'
-                  ? piInstalled
-                  : option.value === 'commandcode'
-                    ? commandcodeInstalled
-                    : option.value === 'grok'
-                      ? grokInstalled
-                      : option.value === 'kimi'
-                        ? kimiInstalled
-                        : option.value === 'antigravity'
-                          ? antigravityInstalled
-                          : false
-      ),
-    [
-      claudeInstalled,
-      codexInstalled,
-      opencodeInstalled,
-      cursorInstalled,
-      piInstalled,
-      commandcodeInstalled,
-      grokInstalled,
-      kimiInstalled,
-      antigravityInstalled,
-    ]
+      backendOptions.filter(option => installedBackends.includes(option.value)),
+    [installedBackends]
   )
-
-  const effectiveBackend = useMemo(() => {
-    const installed: Record<string, boolean | undefined> = {
-      claude: claudeInstalled,
-      codex: codexInstalled,
-      opencode: opencodeInstalled,
-      cursor: cursorInstalled,
-      pi: piInstalled,
-      commandcode: commandcodeInstalled,
-      grok: grokInstalled,
-      kimi: kimiInstalled,
-      antigravity: antigravityInstalled,
-    }
-    if (installed[stored]) return stored
-    const first = installedBackendOptions[0]
-    return first?.value ?? stored
-  }, [
-    stored,
-    claudeInstalled,
-    codexInstalled,
-    opencodeInstalled,
-    cursorInstalled,
-    piInstalled,
-    commandcodeInstalled,
-    grokInstalled,
-    kimiInstalled,
-    antigravityInstalled,
-    installedBackendOptions,
-  ])
+  const effectiveBackend = installedBackends.includes(stored)
+    ? stored
+    : (installedBackendOptions[0]?.value ?? stored)
 
   const handleCodexModelChange = (value: CodexModel) => {
     if (preferences) {
@@ -1183,7 +1095,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   }
 
   const selectedOpenCodeModel =
-    preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol'
+    preferences?.selected_opencode_model ?? 'opencode/gpt-6.1-sol'
   const openCodeModelOptions = (
     availableOpencodeModels?.length
       ? availableOpencodeModels
@@ -1355,14 +1267,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     ? 'Auth check timed out. Try again or run `kimi login` manually.'
     : kimiAuth?.error
 
-  const handleCodexMultiAgentToggle = (enabled: boolean) => {
-    if (preferences) {
-      patchPreferences.mutate({
-        codex_multi_agent_enabled: enabled,
-      })
-    }
-  }
-
   const handleCodexAutoSteerToggle = (enabled: boolean) => {
     if (preferences) {
       patchPreferences.mutate({
@@ -1403,15 +1307,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
   }
 
-  const handleCodexMaxThreadsChange = (value: string) => {
-    if (preferences) {
-      const num = Math.max(1, Math.min(8, parseInt(value, 10) || 3))
-      patchPreferences.mutate({
-        codex_max_agent_threads: num,
-      })
-    }
-  }
-
   const handleTerminalChange = (value: TerminalApp) => {
     if (preferences) {
       patchPreferences.mutate({ terminal: value })
@@ -1445,24 +1340,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   const handleAutoSessionNamingChange = (checked: boolean) => {
     if (preferences) {
       patchPreferences.mutate({ auto_session_naming: checked })
-    }
-  }
-
-  const handleGitPollIntervalChange = (value: string) => {
-    const seconds = parseInt(value, 10)
-    if (preferences && !isNaN(seconds)) {
-      patchPreferences.mutate({ git_poll_interval: seconds })
-      // Also update the backend immediately
-      setGitPollInterval(seconds)
-    }
-  }
-
-  const handleRemotePollIntervalChange = (value: string) => {
-    const seconds = parseInt(value, 10)
-    if (preferences && !isNaN(seconds)) {
-      patchPreferences.mutate({ remote_poll_interval: seconds })
-      // Also update the backend immediately
-      setRemotePollInterval(seconds)
     }
   }
 
@@ -1849,16 +1726,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
   }, [])
 
   return (
-    <div className="space-y-6">
-      {scope in backendPaneMeta && (
-        <BackendPaneHeader
-          backend={scope as CliBackend}
-          description={
-            backendPaneMeta[scope as keyof typeof backendPaneMeta].description
-          }
-        />
-      )}
-
+    <div
+      className={cn('space-y-6', backendPaneScopes.includes(scope) && 'w-full')}
+    >
       {hasBackend() && scope === 'claude' && (
         <SettingsSection
           title="CLI source"
@@ -1891,14 +1761,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           }
         >
           <div className="space-y-4">
-            <InlineField
-              label={cliStatus?.installed ? 'Version' : 'Status'}
-              description={
-                cliStatus?.installed
-                  ? 'Enables Claude AI sessions'
-                  : 'Optional — enables Claude AI sessions'
-              }
-            >
+            <InlineField label={cliStatus?.installed ? 'Version' : 'Status'}>
               {isCliLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : cliStatus?.installed ? (
@@ -1982,16 +1845,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Tooltip>
               }
             >
-              <div className="w-full space-y-3">
-                <BackendCliSourceCards
-                  value={preferences?.claude_cli_source ?? 'jean'}
-                  onValueChange={handleClaudeSourceChange}
-                  backendName="Claude CLI"
-                  path={pathDetection?.path}
-                  pathVersion={pathDetection?.version}
-                  pathFound={!!pathDetection?.found}
-                />
-                {preferences?.claude_cli_source === 'jean' &&
+              <BackendCliSourceSelect
+                value={preferences?.claude_cli_source ?? 'jean'}
+                onValueChange={handleClaudeSourceChange}
+                backendName="Claude CLI"
+                path={pathDetection?.path}
+                pathVersion={pathDetection?.version}
+                pathFound={!!pathDetection?.found}
+                action={
+                  preferences?.claude_cli_source === 'jean' &&
                   cliStatus?.installed && (
                     <Button
                       variant="destructive"
@@ -2000,13 +1862,13 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     >
                       Uninstall
                     </Button>
-                  )}
-              </div>
+                  )
+                }
+              />
             </InlineField>
             {!cliStatus?.installed && !pathDetection?.found && (
               <p className="text-xs text-muted-foreground px-1">
-                Install with Jean, or install <code>claude</code> yourself in
-                your environment — we&apos;ll detect it on your PATH.
+                Install with Jean or add <code>claude</code> to your PATH.
               </p>
             )}
           </div>
@@ -2044,14 +1906,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           }
         >
           <div className="space-y-4">
-            <InlineField
-              label={ghStatus?.installed ? 'Version' : 'Status'}
-              description={
-                ghStatus?.installed
-                  ? 'Enables GitHub integration'
-                  : 'Optional — enables GitHub integration'
-              }
-            >
+            <InlineField label={ghStatus?.installed ? 'Version' : 'Status'}>
               {isGhLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : ghStatus?.installed ? (
@@ -2143,7 +1998,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="jean">Jean (managed)</SelectItem>
+                  <SelectItem value="jean">Jean managed</SelectItem>
                   <SelectItem value="path" disabled={!ghPathDetection?.found}>
                     System PATH
                     {!ghPathDetection?.found && ' (not found)'}
@@ -2202,11 +2057,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           <div className="space-y-4">
             <InlineField
               label={coderabbitStatus?.installed ? 'Version' : 'Status'}
-              description={
-                coderabbitStatus?.installed
-                  ? 'Enables secondary CodeRabbit code reviews'
-                  : 'Optional — enables secondary CodeRabbit code reviews'
-              }
             >
               {isCodeRabbitLoading || installCodeRabbitCli.isPending ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -2302,7 +2152,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="jean">Jean (managed)</SelectItem>
+                      <SelectItem value="jean">Jean managed</SelectItem>
                       <SelectItem
                         value="path"
                         disabled={!coderabbitPathDetection?.found}
@@ -2362,14 +2212,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           }
         >
           <div className="space-y-4">
-            <InlineField
-              label={codexStatus?.installed ? 'Version' : 'Status'}
-              description={
-                codexStatus?.installed
-                  ? 'Enables Codex AI sessions'
-                  : 'Optional — enables Codex AI sessions'
-              }
-            >
+            <InlineField label={codexStatus?.installed ? 'Version' : 'Status'}>
               {isCodexLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : codexStatus?.installed ? (
@@ -2455,16 +2298,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Tooltip>
               }
             >
-              <div className="w-full space-y-3">
-                <BackendCliSourceCards
-                  value={preferences?.codex_cli_source ?? 'jean'}
-                  onValueChange={handleCodexSourceChange}
-                  backendName="Codex CLI"
-                  path={codexPathDetection?.path}
-                  pathVersion={codexPathDetection?.version}
-                  pathFound={!!codexPathDetection?.found}
-                />
-                {preferences?.codex_cli_source === 'jean' &&
+              <BackendCliSourceSelect
+                value={preferences?.codex_cli_source ?? 'jean'}
+                onValueChange={handleCodexSourceChange}
+                backendName="Codex CLI"
+                path={codexPathDetection?.path}
+                pathVersion={codexPathDetection?.version}
+                pathFound={!!codexPathDetection?.found}
+                action={
+                  preferences?.codex_cli_source === 'jean' &&
                   codexStatus?.installed && (
                     <Button
                       variant="destructive"
@@ -2473,13 +2315,13 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     >
                       Uninstall
                     </Button>
-                  )}
-              </div>
+                  )
+                }
+              />
             </InlineField>
             {!codexStatus?.installed && !codexPathDetection?.found && (
               <p className="text-xs text-muted-foreground px-1">
-                Install with Jean, or install <code>codex</code> yourself in
-                your environment — we&apos;ll detect it on your PATH.
+                Install with Jean or add <code>codex</code> to your PATH.
               </p>
             )}
             {codexStatus?.installed && codexStatus.sandbox_ready === false && (
@@ -2526,11 +2368,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           <div className="space-y-4">
             <InlineField
               label={opencodeStatus?.installed ? 'Version' : 'Status'}
-              description={
-                opencodeStatus?.installed
-                  ? 'Enables OpenCode AI sessions'
-                  : 'Optional — enables OpenCode AI sessions'
-              }
             >
               {isOpenCodeLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -2615,16 +2452,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Tooltip>
               }
             >
-              <div className="w-full space-y-3">
-                <BackendCliSourceCards
-                  value={preferences?.opencode_cli_source ?? 'jean'}
-                  onValueChange={handleOpencodeSourceChange}
-                  backendName="OpenCode CLI"
-                  path={opencodePathDetection?.path}
-                  pathVersion={opencodePathDetection?.version}
-                  pathFound={!!opencodePathDetection?.found}
-                />
-                {preferences?.opencode_cli_source === 'jean' &&
+              <BackendCliSourceSelect
+                value={preferences?.opencode_cli_source ?? 'jean'}
+                onValueChange={handleOpencodeSourceChange}
+                backendName="OpenCode CLI"
+                path={opencodePathDetection?.path}
+                pathVersion={opencodePathDetection?.version}
+                pathFound={!!opencodePathDetection?.found}
+                action={
+                  preferences?.opencode_cli_source === 'jean' &&
                   opencodeStatus?.installed && (
                     <Button
                       variant="destructive"
@@ -2633,13 +2469,13 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     >
                       Uninstall
                     </Button>
-                  )}
-              </div>
+                  )
+                }
+              />
             </InlineField>
             {!opencodeStatus?.installed && !opencodePathDetection?.found && (
               <p className="text-xs text-muted-foreground px-1">
-                Install with Jean, or install <code>opencode</code> yourself in
-                your environment — we&apos;ll detect it on your PATH.
+                Install with Jean or add <code>opencode</code> to your PATH.
               </p>
             )}
           </div>
@@ -2678,14 +2514,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           }
         >
           <div className="space-y-4">
-            <InlineField
-              label={cursorStatus?.installed ? 'Version' : 'Status'}
-              description={
-                cursorStatus?.installed
-                  ? 'Enables Cursor AI sessions'
-                  : 'Optional — enables Cursor AI sessions'
-              }
-            >
+            <InlineField label={cursorStatus?.installed ? 'Version' : 'Status'}>
               {isCursorLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : cursorStatus?.installed ? (
@@ -2755,8 +2584,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
             {!cursorStatus?.installed && !cursorPathDetection?.found && (
               <p className="text-xs text-muted-foreground px-1">
-                Install with Jean, or install <code>cursor-agent</code> yourself
-                in your environment — we&apos;ll detect it on your PATH.
+                Install with Jean or add <code>cursor-agent</code> to your PATH.
               </p>
             )}
           </div>
@@ -2795,14 +2623,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           }
         >
           <div className="space-y-4">
-            <InlineField
-              label={piStatus?.installed ? 'Version' : 'Status'}
-              description={
-                piStatus?.installed
-                  ? 'Enables PI AI sessions through the PI CLI.'
-                  : 'PI can be Jean-managed or discovered from your system PATH.'
-              }
-            >
+            <InlineField label={piStatus?.installed ? 'Version' : 'Status'}>
               {isPiLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : piStatus?.installed ? (
@@ -2849,16 +2670,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Tooltip>
               }
             >
-              <div className="w-full space-y-3">
-                <BackendCliSourceCards
-                  value={preferences?.pi_cli_source ?? 'jean'}
-                  onValueChange={handlePiSourceChange}
-                  backendName="PI CLI"
-                  path={piPathDetection?.path}
-                  pathVersion={piPathDetection?.version}
-                  pathFound={!!piPathDetection?.found}
-                />
-                {preferences?.pi_cli_source === 'jean' &&
+              <BackendCliSourceSelect
+                value={preferences?.pi_cli_source ?? 'jean'}
+                onValueChange={handlePiSourceChange}
+                backendName="PI CLI"
+                path={piPathDetection?.path}
+                pathVersion={piPathDetection?.version}
+                pathFound={!!piPathDetection?.found}
+                action={
+                  preferences?.pi_cli_source === 'jean' &&
                   piStatus?.installed && (
                     <Button
                       variant="destructive"
@@ -2867,8 +2687,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     >
                       Uninstall
                     </Button>
-                  )}
-              </div>
+                  )
+                }
+              />
             </InlineField>
             {piStatus?.installed && !piAuth?.authenticated && piAuthMessage && (
               <div className="text-xs text-muted-foreground">
@@ -2913,11 +2734,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           <div className="space-y-4">
             <InlineField
               label={commandcodeStatus?.installed ? 'Version' : 'Status'}
-              description={
-                commandcodeStatus?.installed
-                  ? 'Enables Command Code AI sessions through the cmd CLI.'
-                  : 'Command Code is discovered from your system PATH.'
-              }
             >
               {isCommandCodeLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -2969,16 +2785,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 </Tooltip>
               }
             >
-              <div className="w-full space-y-3">
-                <BackendCliSourceCards
-                  value={preferences?.commandcode_cli_source ?? 'jean'}
-                  onValueChange={handleCommandCodeSourceChange}
-                  backendName="Command Code CLI"
-                  path={commandcodePathDetection?.path}
-                  pathVersion={commandcodePathDetection?.version}
-                  pathFound={!!commandcodePathDetection?.found}
-                />
-                {preferences?.commandcode_cli_source === 'jean' &&
+              <BackendCliSourceSelect
+                value={preferences?.commandcode_cli_source ?? 'jean'}
+                onValueChange={handleCommandCodeSourceChange}
+                backendName="Command Code CLI"
+                path={commandcodePathDetection?.path}
+                pathVersion={commandcodePathDetection?.version}
+                pathFound={!!commandcodePathDetection?.found}
+                action={
+                  preferences?.commandcode_cli_source === 'jean' &&
                   commandcodeStatus?.installed && (
                     <Button
                       variant="destructive"
@@ -2987,8 +2802,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     >
                       Uninstall
                     </Button>
-                  )}
-              </div>
+                  )
+                }
+              />
             </InlineField>
             {commandcodeStatus?.installed &&
               !commandcodeAuth?.authenticated &&
@@ -3019,8 +2835,8 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               label="Model"
               description={
                 defaultClaudeProvider
-                  ? `Claude model for AI assistance (routed via ${defaultClaudeProvider}). Change the default provider under Settings → Providers.`
-                  : 'Claude model for AI assistance. Custom CLI providers are configured under Settings → Providers.'
+                  ? `Routed via ${defaultClaudeProvider}`
+                  : undefined
               }
             >
               <Select
@@ -3041,10 +2857,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
 
             {claudeReasoning?.type === 'thinking' && (
-              <InlineField
-                label="Thinking"
-                description="Thinking level for the selected Claude model"
-              >
+              <InlineField label="Thinking">
                 <Select
                   value={preferences?.thinking_level ?? claudeReasoning.default}
                   onValueChange={value =>
@@ -3066,10 +2879,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             )}
 
             {claudeReasoning?.type === 'effort' && (
-              <InlineField
-                label="Effort"
-                description="Effort level for the selected Claude model"
-              >
+              <InlineField label="Effort">
                 <Select
                   value={
                     preferences?.default_effort_level ?? claudeReasoning.default
@@ -3094,7 +2904,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
             <InlineField
               label="Chrome browser integration"
-              description="Enable browser automation via Chrome extension"
+              description="Browser automation through the Chrome extension"
             >
               <Switch
                 checked={preferences?.chrome_enabled ?? true}
@@ -3118,12 +2928,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           variant="card"
         >
           <div className="space-y-4">
-            <InlineField
-              label="Model"
-              description="Codex model for AI assistance"
-            >
+            <InlineField label="Model">
               <Select
-                value={preferences?.selected_codex_model ?? 'gpt-5.6-sol'}
+                value={preferences?.selected_codex_model ?? 'gpt-6.1-sol'}
                 onValueChange={handleCodexModelChange}
               >
                 <SelectTrigger className="w-full sm:w-80">
@@ -3139,10 +2946,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               </Select>
             </InlineField>
 
-            <InlineField
-              label="Reasoning effort"
-              description="Codex reasoning effort"
-            >
+            <InlineField label="Reasoning effort">
               <Select
                 value={preferences?.default_codex_reasoning_effort ?? 'high'}
                 onValueChange={handleCodexReasoningChange}
@@ -3162,7 +2966,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
             <InlineField
               label="Model verbosity"
-              description="How much intermediate text Codex writes during chat (low is terse; high is more detailed)"
+              description="How much text Codex writes while it works"
             >
               <Select
                 value={preferences?.default_codex_model_verbosity ?? 'medium'}
@@ -3183,7 +2987,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
             <InlineField
               label="Goal execution mode"
-              description="Mode used when starting a Codex or Claude /goal"
+              description="Mode for Codex and Claude /goal runs"
             >
               <Select
                 value={preferences?.codex_goal_execution_mode ?? 'build'}
@@ -3193,47 +2997,23 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="build">Build</SelectItem>
-                  <SelectItem value="yolo">Yolo</SelectItem>
+                  <SelectItem value="build">
+                    Auto-accept edits / legacy Build
+                  </SelectItem>
+                  <SelectItem value="yolo">Full access</SelectItem>
                 </SelectContent>
               </Select>
             </InlineField>
 
             <InlineField
               label="Steer running turn"
-              description="Prompts sent while Codex is working are injected into the current turn instead of queued"
+              description="Inject new prompts into the running turn instead of queueing"
             >
               <Switch
                 checked={preferences?.codex_auto_steer_enabled ?? false}
                 onCheckedChange={handleCodexAutoSteerToggle}
               />
             </InlineField>
-
-            <InlineField
-              label="Multi-Agent"
-              description="Allow Codex to spawn parallel subagents (experimental)"
-            >
-              <Switch
-                checked={preferences?.codex_multi_agent_enabled ?? false}
-                onCheckedChange={handleCodexMultiAgentToggle}
-              />
-            </InlineField>
-
-            {preferences?.codex_multi_agent_enabled && (
-              <InlineField
-                label="Max agent threads"
-                description="Maximum concurrent subagents (1–8)"
-              >
-                <Input
-                  type="number"
-                  min={1}
-                  max={8}
-                  className="w-20"
-                  value={preferences?.codex_max_agent_threads ?? 3}
-                  onChange={e => handleCodexMaxThreadsChange(e.target.value)}
-                />
-              </InlineField>
-            )}
           </div>
         </SettingsSection>
       )}
@@ -3245,10 +3025,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           variant="card"
         >
           <div className="space-y-4">
-            <InlineField
-              label="Model"
-              description="OpenCode model for AI assistance"
-            >
+            <InlineField label="Model">
               <Popover
                 open={openCodeModelPopoverOpen}
                 onOpenChange={setOpenCodeModelPopoverOpen}
@@ -3308,7 +3085,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
             <InlineField
               label="Steer running turn"
-              description="Text-only prompts sent while OpenCode is working are injected into the current turn instead of queued (attachments always queue)"
+              description="Inject new prompts into the running turn instead of queueing"
             >
               <Switch
                 checked={preferences?.opencode_auto_steer_enabled ?? false}
@@ -3326,10 +3103,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           variant="card"
         >
           <div className="space-y-4">
-            <InlineField
-              label="Model"
-              description="Cursor model for AI assistance"
-            >
+            <InlineField label="Model">
               <Popover
                 open={cursorModelPopoverOpen}
                 onOpenChange={setCursorModelPopoverOpen}
@@ -3401,11 +3175,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             <InlineField
               label="Model"
               description={
-                <>
-                  Models come from the currently active PI provider via{' '}
-                  <code>pi --list-models</code>. Use the Login/Relogin button
-                  above to change provider.
-                </>
+                <>From the active PI provider. Use Relogin to change it.</>
               }
             >
               <Popover
@@ -3467,7 +3237,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
             <InlineField
               label="Steer running turn"
-              description="Text-only prompts sent while PI is working are injected into the current turn instead of queued (attachments always queue)"
+              description="Inject new prompts into the running turn instead of queueing"
             >
               <Switch
                 checked={preferences?.pi_auto_steer_enabled ?? false}
@@ -3485,10 +3255,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
           variant="card"
         >
           <div className="space-y-4">
-            <InlineField
-              label="Model"
-              description="Command Code CLI model selection"
-            >
+            <InlineField label="Model">
               <Select
                 value={selectedCommandCodeModel}
                 onValueChange={handleCommandCodeModelChange}
@@ -3542,14 +3309,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             }
           >
             <div className="space-y-4">
-              <InlineField
-                label={grokStatus?.installed ? 'Version' : 'Status'}
-                description={
-                  grokStatus?.installed
-                    ? 'Enables Grok AI sessions through the Grok CLI.'
-                    : 'Grok can be Jean-managed or discovered from your system PATH.'
-                }
-              >
+              <InlineField label={grokStatus?.installed ? 'Version' : 'Status'}>
                 {isGrokLoading ? (
                   <Loader2 className="size-4 animate-spin text-muted-foreground" />
                 ) : grokStatus?.installed ? (
@@ -3596,16 +3356,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   </Tooltip>
                 }
               >
-                <div className="w-full space-y-3">
-                  <BackendCliSourceCards
-                    value={preferences?.grok_cli_source ?? 'jean'}
-                    onValueChange={handleGrokSourceChange}
-                    backendName="Grok CLI"
-                    path={grokPathDetection?.path}
-                    pathVersion={grokPathDetection?.version}
-                    pathFound={!!grokPathDetection?.found}
-                  />
-                  {preferences?.grok_cli_source === 'jean' &&
+                <BackendCliSourceSelect
+                  value={preferences?.grok_cli_source ?? 'jean'}
+                  onValueChange={handleGrokSourceChange}
+                  backendName="Grok CLI"
+                  path={grokPathDetection?.path}
+                  pathVersion={grokPathDetection?.version}
+                  pathFound={!!grokPathDetection?.found}
+                  action={
+                    preferences?.grok_cli_source === 'jean' &&
                     grokStatus?.installed && (
                       <Button
                         variant="destructive"
@@ -3614,8 +3373,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                       >
                         Uninstall
                       </Button>
-                    )}
-                </div>
+                    )
+                  }
+                />
               </InlineField>
             </div>
           </SettingsSection>
@@ -3626,10 +3386,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             variant="card"
           >
             <div className="space-y-4">
-              <InlineField
-                label="Model"
-                description="Grok model for AI assistance"
-              >
+              <InlineField label="Model">
                 <Select
                   value={selectedGrokModel}
                   onValueChange={value =>
@@ -3648,10 +3405,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   </SelectContent>
                 </Select>
               </InlineField>
-              <InlineField
-                label="Reasoning effort"
-                description="Default Grok reasoning effort for new sessions"
-              >
+              <InlineField label="Reasoning effort">
                 <Select
                   value={preferences?.default_grok_reasoning_effort ?? 'high'}
                   onValueChange={handleGrokReasoningChange}
@@ -3670,7 +3424,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               </InlineField>
               <InlineField
                 label="Steer running turn"
-                description="Text-only prompts sent while Grok is working are injected into the current turn instead of queued (attachments always queue)"
+                description="Inject new prompts into the running turn instead of queueing"
               >
                 <Switch
                   checked={preferences?.grok_auto_steer_enabled ?? false}
@@ -3715,14 +3469,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             }
           >
             <div className="space-y-4">
-              <InlineField
-                label={kimiStatus?.installed ? 'Version' : 'Status'}
-                description={
-                  kimiStatus?.installed
-                    ? 'Enables Kimi Code AI sessions through the Kimi Code CLI.'
-                    : 'Kimi Code can be Jean-managed or discovered from your system PATH.'
-                }
-              >
+              <InlineField label={kimiStatus?.installed ? 'Version' : 'Status'}>
                 {isKimiLoading ? (
                   <Loader2 className="size-4 animate-spin text-muted-foreground" />
                 ) : kimiStatus?.installed ? (
@@ -3778,16 +3525,15 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   </Tooltip>
                 }
               >
-                <div className="w-full space-y-3">
-                  <BackendCliSourceCards
-                    value={preferences?.kimi_cli_source ?? 'jean'}
-                    onValueChange={handleKimiSourceChange}
-                    backendName="Kimi Code CLI"
-                    path={kimiPathDetection?.path}
-                    pathVersion={kimiPathDetection?.version}
-                    pathFound={!!kimiPathDetection?.found}
-                  />
-                  {preferences?.kimi_cli_source === 'jean' &&
+                <BackendCliSourceSelect
+                  value={preferences?.kimi_cli_source ?? 'jean'}
+                  onValueChange={handleKimiSourceChange}
+                  backendName="Kimi Code CLI"
+                  path={kimiPathDetection?.path}
+                  pathVersion={kimiPathDetection?.version}
+                  pathFound={!!kimiPathDetection?.found}
+                  action={
+                    preferences?.kimi_cli_source === 'jean' &&
                     kimiStatus?.installed && (
                       <Button
                         variant="destructive"
@@ -3796,8 +3542,9 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                       >
                         Uninstall
                       </Button>
-                    )}
-                </div>
+                    )
+                  }
+                />
               </InlineField>
             </div>
           </SettingsSection>
@@ -3808,10 +3555,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             variant="card"
           >
             <div className="space-y-4">
-              <InlineField
-                label="Model"
-                description="Kimi Code model for AI assistance"
-              >
+              <InlineField label="Model">
                 <Select
                   value={selectedKimiModel}
                   onValueChange={value =>
@@ -3832,7 +3576,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
               </InlineField>
               <InlineField
                 label="Steer running turn"
-                description="Text-only prompts sent while Kimi Code is working are injected into the current turn instead of queued (attachments always queue)"
+                description="Inject new prompts into the running turn instead of queueing"
               >
                 <Switch
                   checked={preferences?.kimi_auto_steer_enabled ?? false}
@@ -3875,12 +3619,12 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
 
             <InlineField
-              label="Default mode"
-              description="Permission mode for new sessions"
+              label="Default permissions"
+              description="Permission policy for new sessions on the default backend."
             >
               <Select
-                value={preferences?.default_execution_mode ?? 'plan'}
-                onValueChange={(value: 'plan' | 'build' | 'yolo') => {
+                value={preferences?.default_execution_mode ?? 'yolo'}
+                onValueChange={(value: ExecutionMode) => {
                   patchPreferences.mutate({ default_execution_mode: value })
                 }}
               >
@@ -3888,25 +3632,31 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="plan">Plan</SelectItem>
-                  <SelectItem value="build">Build</SelectItem>
-                  <SelectItem value="yolo">Yolo</SelectItem>
+                  {preferences?.default_execution_mode === 'plan' && (
+                    <SelectItem value="plan">Plan (legacy workflow)</SelectItem>
+                  )}
+                  {preferences?.default_execution_mode === 'build' &&
+                    !getSupportedPermissionModes(
+                      preferences?.default_backend ?? 'claude'
+                    ).includes('build') && (
+                      <SelectItem value="build">Legacy Build</SelectItem>
+                    )}
+                  {getSupportedPermissionModes(
+                    preferences?.default_backend ?? 'claude'
+                  ).map(mode => (
+                    <SelectItem key={mode} value={mode}>
+                      {
+                        {
+                          supervised: 'Supervised',
+                          build: 'Auto-accept edits',
+                          auto: 'Auto',
+                          yolo: 'Full access',
+                        }[mode]
+                      }
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </InlineField>
-
-            <InlineField
-              label="Compact chat view"
-              description="Compact answers into one section for a cleaner chat, showing only the last prompt and answer by default."
-            >
-              <Switch
-                checked={preferences?.compact_chat_view_enabled ?? false}
-                onCheckedChange={checked => {
-                  patchPreferences.mutate({
-                    compact_chat_view_enabled: checked,
-                  })
-                }}
-              />
             </InlineField>
 
             <InlineField
@@ -3936,24 +3686,8 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
 
             <InlineField
-              label="Parallel execution prompting"
-              description="Add system prompt encouraging sub-agent parallelization for faster task execution"
-            >
-              <Switch
-                checked={
-                  preferences?.parallel_execution_prompt_enabled ?? false
-                }
-                onCheckedChange={checked => {
-                  patchPreferences.mutate({
-                    parallel_execution_prompt_enabled: checked,
-                  })
-                }}
-              />
-            </InlineField>
-
-            <InlineField
-              label="Build execution"
-              description="Backend, model, thinking, and effort override when approving plans"
+              label="Plan approval"
+              description="Backend, model, thinking, and effort overrides when approving a plan with the selected permissions"
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
@@ -4199,8 +3933,8 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             </InlineField>
 
             <InlineField
-              label="Yolo execution"
-              description="Backend, model, thinking, and effort override when yolo-approving plans"
+              label="Full-access plan approval"
+              description="Backend, model, thinking, and effort overrides when approving a plan with Full access"
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
@@ -4447,22 +4181,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
             <AiLanguageField preferences={preferences} />
 
-            <InlineField
-              label="Allow web tools in plan mode"
-              description="WebFetch/WebSearch for Claude, --search for Codex"
-            >
-              <Switch
-                checked={preferences?.allow_web_tools_in_plan_mode ?? true}
-                onCheckedChange={checked => {
-                  if (preferences) {
-                    patchPreferences.mutate({
-                      allow_web_tools_in_plan_mode: checked,
-                    })
-                  }
-                }}
-              />
-            </InlineField>
-
             {isNativeApp() && (
               <InlineField
                 label="Editor"
@@ -4546,60 +4264,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                 <SelectContent>
                   {newSessionKindOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </InlineField>
-
-            <InlineField
-              label="Git poll interval"
-              description="Check for branch updates when focused"
-            >
-              <Select
-                value={String(preferences?.git_poll_interval ?? 60)}
-                onValueChange={handleGitPollIntervalChange}
-              >
-                <SelectTrigger className="w-full sm:w-80">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {gitPollIntervalOptions.map(option => (
-                    <SelectItem key={option.value} value={String(option.value)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </InlineField>
-
-            <InlineField
-              label="Combined git sync button"
-              description="Replace separate Pull and Push badges with one Sync button that does both"
-            >
-              <Switch
-                checked={preferences?.git_sync_button ?? true}
-                onCheckedChange={checked => {
-                  patchPreferences.mutate({ git_sync_button: checked })
-                }}
-              />
-            </InlineField>
-
-            <InlineField
-              label="Remote poll interval"
-              description="Check for PR status updates"
-            >
-              <Select
-                value={String(preferences?.remote_poll_interval ?? 60)}
-                onValueChange={handleRemotePollIntervalChange}
-              >
-                <SelectTrigger className="w-full sm:w-80">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {remotePollIntervalOptions.map(option => (
-                    <SelectItem key={option.value} value={String(option.value)}>
                       {option.label}
                     </SelectItem>
                   ))}
@@ -4808,38 +4472,6 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                   }}
                 />
               </InlineField>
-
-              <InlineField
-                label="Restore last session on project switch"
-                description="Automatically reopen the last worktree and session when switching projects"
-              >
-                <Switch
-                  checked={preferences?.restore_last_session ?? true}
-                  onCheckedChange={checked => {
-                    if (preferences) {
-                      patchPreferences.mutate({
-                        restore_last_session: checked,
-                      })
-                    }
-                  }}
-                />
-              </InlineField>
-
-              <InlineField
-                label="Expand tool calls by default"
-                description="Automatically expand tool call details in chat instead of showing a collapsed summary"
-              >
-                <Switch
-                  checked={preferences?.expand_tool_calls_by_default ?? false}
-                  onCheckedChange={checked => {
-                    if (preferences) {
-                      patchPreferences.mutate({
-                        expand_tool_calls_by_default: checked,
-                      })
-                    }
-                  }}
-                />
-              </InlineField>
             </div>
           </SettingsSection>
 
@@ -4866,7 +4498,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
               <InlineField
                 label="Close original session on clear context"
-                description="Automatically close the original session when using Clear Context and yolo"
+                description="Automatically close the original session when using Clear context with Full access"
               >
                 <Switch
                   checked={preferences?.close_original_on_clear_context ?? true}

@@ -400,7 +400,7 @@ export function ProjectsSidebar() {
             )
           }
           data-testid="sidebar-app-version"
-          className="px-1.5 text-[0.625rem] text-foreground/40 transition-colors hover:text-foreground/60"
+          className="flex h-8 items-center px-1.5 text-[0.625rem] leading-none text-foreground/40 transition-colors hover:text-foreground/60"
         >
           v{appVersion}
         </button>

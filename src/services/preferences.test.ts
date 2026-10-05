@@ -114,10 +114,6 @@ const createServerWrapper = (queryClient: QueryClient, serverId: string) => {
 }
 
 describe('model option helpers', () => {
-  it('enables the combined git sync button by default', () => {
-    expect(defaultPreferences.git_sync_button).toBe(true)
-  })
-
   it('enables compact chat view by default', () => {
     expect(defaultPreferences.compact_chat_view_enabled).toBe(true)
   })
@@ -196,6 +192,8 @@ describe('model option helpers', () => {
       'gpt-5.6-luna',
     ])
     expect(values).not.toContain('gpt-5.6')
+    expect(normalizeCodexModel('')).toBe('gpt-6.1-sol')
+    expect(normalizeCodexModel('not-a-model')).toBe('gpt-6.1-sol')
     expect(normalizeCodexModel('gpt-6.1-sol')).toBe('gpt-6.1-sol')
     expect(normalizeCodexModel('gpt-6.1-sol-fast')).toBe('gpt-6.1-sol-fast')
     expect(normalizeCodexModel('gpt-6-astra')).toBe('gpt-6-astra')
@@ -226,13 +224,13 @@ describe('model option helpers', () => {
     expect(normalizeCodexModel('gpt-5.5-fast')).toBe('gpt-5.5-fast')
   })
 
-  it('uses GPT 5.6 Sol for Codex magic presets', () => {
+  it('uses GPT 6.1 Sol for Codex magic presets', () => {
     expect(new Set(Object.values(CODEX_DEFAULT_MAGIC_PROMPT_MODELS))).toEqual(
-      new Set(['gpt-5.6-sol'])
+      new Set(['gpt-6.1-sol'])
     )
     expect(
       new Set(Object.values(CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS))
-    ).toEqual(new Set(['gpt-5.6-sol-fast']))
+    ).toEqual(new Set(['gpt-6.1-sol-fast']))
   })
 
   it('provides standard and fast GPT 5.6 magic presets for every variant', () => {
@@ -476,13 +474,10 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -492,7 +487,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -539,13 +533,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -634,8 +625,6 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: {
           toggle_left_sidebar: 'mod+1', // Old default
           restore_last_archived: 'mod+alt+shift+t', // Broken modifier order
@@ -643,7 +632,6 @@ describe('preferences service', () => {
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -653,7 +641,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -700,13 +687,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -777,13 +761,10 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -793,7 +774,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -841,13 +821,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -910,13 +887,10 @@ describe('preferences service', () => {
         chat_font_size: 14,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 30,
-        remote_poll_interval: 120,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 7,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -926,7 +900,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -973,13 +946,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -1044,13 +1014,10 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -1060,7 +1027,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -1107,13 +1073,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -1220,13 +1183,10 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -1236,7 +1196,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -1283,13 +1242,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,
@@ -1352,13 +1308,10 @@ describe('preferences service', () => {
         chat_font_size: FONT_SIZE_DEFAULT,
         ui_font: 'geist',
         chat_font: 'geist',
-        git_poll_interval: 60,
-        remote_poll_interval: 60,
         keybindings: DEFAULT_KEYBINDINGS,
         archive_retention_days: 30,
         syntax_theme_dark: 'vitesse-black',
         syntax_theme_light: 'github-light',
-        parallel_execution_prompt_enabled: true,
         compact_chat_view_enabled: false,
         magic_prompts: DEFAULT_MAGIC_PROMPTS,
         magic_prompt_models: DEFAULT_MAGIC_PROMPT_MODELS,
@@ -1368,7 +1321,6 @@ describe('preferences service', () => {
         magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
         file_edit_mode: 'external',
         ai_language: '',
-        allow_web_tools_in_plan_mode: true,
         waiting_sound: 'none',
         review_sound: 'none',
         web_access_sounds_enabled: true,
@@ -1415,13 +1367,10 @@ describe('preferences service', () => {
         default_codex_model_verbosity: 'medium',
         default_grok_reasoning_effort: 'high',
         codex_goal_execution_mode: 'build',
-        codex_multi_agent_enabled: false,
-        codex_max_agent_threads: 3,
         codex_auto_steer_enabled: true,
         opencode_auto_steer_enabled: true,
         pi_auto_steer_enabled: true,
         grok_auto_steer_enabled: true,
-        restore_last_session: true,
         close_original_on_clear_context: true,
         build_model: null,
         yolo_model: null,

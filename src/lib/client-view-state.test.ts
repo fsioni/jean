@@ -28,7 +28,6 @@ describe('client view state', () => {
       expanded_worktree_ids: ['server-a:worktree-1'],
       project_access_timestamps: { 'server-a:project-1': 123 },
       dashboard_worktree_collapse_overrides: { 'server-a:worktree-1': true },
-      github_dashboard_favorite_project_ids: ['server-a:project-1'],
       project_canvas_settings: {
         'server-a:project-1': {
           worktree_sort_mode: 'manual' as const,

@@ -247,7 +247,18 @@ export function NewSessionModeModal() {
                 ? (preferences?.default_grok_reasoning_effort ?? 'high')
                 : (preferences?.default_effort_level ?? 'high')
           const defaultExecutionMode =
-            preferences?.default_execution_mode ?? 'plan'
+            session.selected_execution_mode ??
+            preferences?.default_execution_mode ??
+            'yolo'
+          useChatStore
+            .getState()
+            .setPermissionMode(
+              session.id,
+              session.selected_permission_mode ??
+                (defaultExecutionMode === 'plan'
+                  ? 'yolo'
+                  : defaultExecutionMode)
+            )
           useChatStore
             .getState()
             .setExecutionMode(session.id, defaultExecutionMode)
@@ -652,8 +663,8 @@ function NativeBackendChoice({
             type="button"
             disabled={disabled}
             onClick={onYoloClick}
-            title={`Start ${title} in yolo mode`}
-            aria-label={`Start ${title} in yolo mode`}
+            title={`Start ${title} with Full access`}
+            aria-label={`Start ${title} with Full access`}
             className={cn(
               'inline-flex h-8 items-center gap-1.5 rounded-md border border-border/70 bg-background px-2 text-xs font-medium text-muted-foreground transition-colors',
               'hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

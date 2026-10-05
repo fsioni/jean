@@ -35,8 +35,6 @@ export function captureClientViewState(): ClientViewState {
     project_access_timestamps: projects.projectAccessTimestamps,
     dashboard_worktree_collapse_overrides:
       projects.dashboardWorktreeCollapseOverrides,
-    github_dashboard_favorite_project_ids:
-      projects.githubDashboardFavoriteProjectIds,
     sidebar_server_filter: projects.sidebarServerFilter,
     sidebar_active_tab: projects.sidebarActiveTab,
     pinned_recent_session_ids: projects.pinnedRecentSessionIds,
@@ -90,8 +88,6 @@ export function applyClientViewState(state: ClientViewState): void {
     projectAccessTimestamps: state.project_access_timestamps,
     dashboardWorktreeCollapseOverrides:
       state.dashboard_worktree_collapse_overrides,
-    githubDashboardFavoriteProjectIds:
-      state.github_dashboard_favorite_project_ids,
     sidebarServerFilter: state.sidebar_server_filter,
     sidebarActiveTab: state.sidebar_active_tab,
     pinnedRecentSessionIds: currentProjects.pinnedRecentSessionIds,
@@ -153,8 +149,6 @@ export function scopeClientViewStateResources(
     dashboard_worktree_collapse_overrides: scopeKeys(
       state.dashboard_worktree_collapse_overrides
     ),
-    github_dashboard_favorite_project_ids:
-      state.github_dashboard_favorite_project_ids.map(scope),
     terminal_visible_by_worktree: scopeKeys(state.terminal_visible_by_worktree),
     terminal_panel_open: scopeKeys(state.terminal_panel_open),
     modal_terminal_open: scopeKeys(state.modal_terminal_open),

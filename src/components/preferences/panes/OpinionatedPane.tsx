@@ -250,8 +250,8 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
   }, [plugin.id, plugin.name, checkStatus])
 
   return (
-    <div className="rounded-lg border">
-      <div className="flex flex-col gap-2 px-3 py-2 hover:bg-muted/40 rounded-lg sm:flex-row sm:items-center">
+    <div>
+      <div className="flex flex-col gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 sm:flex-row sm:items-center">
         <button
           type="button"
           onClick={() => setExpanded(e => !e)}
@@ -363,8 +363,8 @@ function PluginCard({ plugin }: { plugin: PluginDefinition }) {
         </span>
       </div>
       {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t">
-          <div className="pt-3 space-y-1">
+        <div className="pl-7 pr-2 pb-3 space-y-3">
+          <div className="pt-1 space-y-1">
             <div className="text-[11px] text-muted-foreground">
               Applies to:{' '}
               <span className="text-foreground/70">
@@ -452,7 +452,7 @@ export const OpinionatedPane: React.FC = () => {
         description="Curated tools that enhance your development workflow across Jean AI backends."
         anchorId="pref-opinionated-section-recommended-plugins"
       >
-        <div className="space-y-3">
+        <div className="space-y-1">
           {PLUGINS.map(plugin => (
             <PluginCard key={plugin.id} plugin={plugin} />
           ))}

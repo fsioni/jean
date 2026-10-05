@@ -39,7 +39,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, edgePrimary, raised } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { ModalCloseButton } from '@/components/ui/modal-close-button'
 import {
@@ -1261,7 +1261,11 @@ export function GitDiffModal({
                         type="button"
                         disabled={isCommitting}
                         onClick={handleCommitFromDiff}
-                        className="flex h-7 flex-1 items-center justify-center gap-1.5 px-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-md text-xs font-medium transition-colors sm:flex-none sm:shrink-0 sm:px-3"
+                        className={cn(
+                          'flex h-7 flex-1 items-center justify-center gap-1.5 px-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 rounded-md text-xs font-medium sm:flex-none sm:shrink-0 sm:px-3',
+                          raised,
+                          edgePrimary
+                        )}
                       >
                         {isCommitting ? (
                           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />

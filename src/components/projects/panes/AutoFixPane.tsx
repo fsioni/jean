@@ -594,7 +594,7 @@ function AutoFixStatusSection({ projectId }: { projectId: string }) {
             <StatusRow label="Starting issues">
               {status.startingIssues.length}
             </StatusRow>
-            <StatusRow label="Plans waiting for auto-yolo">
+            <StatusRow label="Plans waiting for automatic approval">
               {status.pendingYoloSessions}
             </StatusRow>
           </dl>
@@ -752,7 +752,6 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
               {MR_ROBOT_SETTINGS_BADGE}
             </Badge>
           </div>
-          <Separator className="mt-2" />
         </div>
 
         <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/20 p-4">
@@ -982,14 +981,14 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h4 className="text-sm font-medium text-foreground">
-                  Yolo execution
+                  Full-access execution
                 </h4>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Automatically approve ready plans and start execution.
                 </p>
               </div>
               <Checkbox
-                aria-label="Also yolo approved plans"
+                aria-label="Automatically approve plans with Full access"
                 checked={settings.auto_yolo_enabled ?? false}
                 onCheckedChange={checked =>
                   handleAutoYoloEnabledChange(checked === true)
@@ -1005,7 +1004,7 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
                     description="Claude custom CLI profile (Settings → Providers)."
                   >
                     <AutoFixProviderSelect
-                      label="yolo"
+                      label="Full access"
                       provider={settings.yolo_provider}
                       profiles={customCliProfiles}
                       disabled={
@@ -1034,7 +1033,7 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
               )}
             <Field label="Backend + model">
               <AutoFixBackendModelPicker
-                label="yolo"
+                label="Full access"
                 backend={settings.yolo_backend}
                 model={settings.yolo_model}
                 provider={settings.yolo_provider}

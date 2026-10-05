@@ -36,6 +36,8 @@ import {
 } from '@/lib/backend-persist-guard'
 import type {
   ChunkEvent,
+  ExecutionMode,
+  PermissionMode,
   ToolUseEvent,
   ToolBlockEvent,
   ToolResultEvent,
@@ -2444,7 +2446,10 @@ export default function useStreamingEvents({
           )
           break
         case 'executionMode':
-          store.setExecutionMode(session_id, value as 'plan' | 'build' | 'yolo')
+          store.setExecutionMode(session_id, value as ExecutionMode)
+          break
+        case 'permissionMode':
+          store.setPermissionMode(session_id, value as PermissionMode)
           break
         case 'provider':
           store.setSelectedProvider(

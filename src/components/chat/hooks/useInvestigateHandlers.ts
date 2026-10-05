@@ -550,10 +550,8 @@ export function useInvestigateHandlers({
           ),
           customProfileName: resolvedInvestigateProfile,
           parallelExecutionPrompt:
-            preferences?.parallel_execution_prompt_enabled
-              ? (preferences.magic_prompts?.parallel_execution ??
-                DEFAULT_PARALLEL_EXECUTION_PROMPT)
-              : undefined,
+            preferences?.magic_prompts?.parallel_execution ??
+            DEFAULT_PARALLEL_EXECUTION_PROMPT,
           chromeEnabled: preferences?.chrome_enabled ?? false,
           aiLanguage: preferences?.ai_language,
           backend: investigateBackend,
@@ -574,7 +572,6 @@ export function useInvestigateHandlers({
       preferences?.magic_prompts?.investigate_linear_issue,
       preferences?.magic_prompts?.investigate_sentry_issue,
       preferences?.default_provider,
-      preferences?.parallel_execution_prompt_enabled,
       preferences?.magic_prompts?.parallel_execution,
       preferences?.magic_prompt_models,
       preferences?.magic_prompt_providers,
@@ -827,10 +824,8 @@ export function useInvestigateHandlers({
             ),
             customProfileName: resolvedInvestigateProfile,
             parallelExecutionPrompt:
-              preferences?.parallel_execution_prompt_enabled
-                ? (preferences.magic_prompts?.parallel_execution ??
-                  DEFAULT_PARALLEL_EXECUTION_PROMPT)
-                : undefined,
+              preferences?.magic_prompts?.parallel_execution ??
+              DEFAULT_PARALLEL_EXECUTION_PROMPT,
             chromeEnabled: preferences?.chrome_enabled ?? false,
             aiLanguage: preferences?.ai_language,
             backend: investigateBackend,
@@ -887,7 +882,6 @@ export function useInvestigateHandlers({
       preferences?.magic_prompts?.investigate_workflow_run,
       preferences?.magic_prompt_models?.investigate_workflow_run_model,
       preferences?.default_provider,
-      preferences?.parallel_execution_prompt_enabled,
       preferences?.magic_prompts?.parallel_execution,
       preferences?.magic_prompt_providers,
       preferences?.magic_prompt_backends,
@@ -1043,10 +1037,8 @@ export function useInvestigateHandlers({
             ),
             customProfileName: resolvedProfile,
             parallelExecutionPrompt:
-              preferences?.parallel_execution_prompt_enabled
-                ? (preferences.magic_prompts?.parallel_execution ??
-                  DEFAULT_PARALLEL_EXECUTION_PROMPT)
-                : undefined,
+              preferences?.magic_prompts?.parallel_execution ??
+              DEFAULT_PARALLEL_EXECUTION_PROMPT,
             chromeEnabled: preferences?.chrome_enabled ?? false,
             aiLanguage: preferences?.ai_language,
             backend: reviewCommentsBackend,
@@ -1104,7 +1096,6 @@ export function useInvestigateHandlers({
       createSession,
       queryClient,
       preferences?.default_provider,
-      preferences?.parallel_execution_prompt_enabled,
       preferences?.magic_prompts?.parallel_execution,
       preferences?.magic_prompt_models?.review_comments_model,
       preferences?.magic_prompt_providers,

@@ -1,10 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { Markdown, headingBefore } from './markdown'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 
-const { mockSetRow } = vi.hoisted(() => ({ mockSetRow: vi.fn() }))
+const { mockSetRow, mockReadImage } = vi.hoisted(() => ({
+  mockSetRow: vi.fn(),
+  mockReadImage: vi.fn(),
+}))
+vi.mock('@/lib/transport', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  invokeForOptionalServer: mockReadImage,
+}))
+vi.mock('@/lib/remote-connections', () => ({
+  getActiveRemoteConnection: () => null,
+  getRemoteConnections: () => [
+    { id: 'remote-1', url: 'https://jean.example', token: 'image-token' },
+  ],
+}))
 vi.mock('@/lib/table-rows-prompt', async importOriginal => ({
   ...(await importOriginal<object>()),
   setTableRowInPrompt: mockSetRow,
@@ -333,6 +346,88 @@ describe('Markdown', () => {
     expect(image?.getAttribute('src')).toBe(
       '/api/files/linear-context-images/ENG-123/image.png'
     )
+  })
+
+  it('routes app-data images through the session owner, not the local transport', () => {
+    const path = '/root/.local/share/com.jean.desktop/pasted-images/shot.png'
+    const { container, rerender } = render(
+      <Markdown sessionId="remote-1:session-1">{`![Shot](${path})`}</Markdown>
+    )
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(
+      `https://jean.example/api/files/${encodeURIComponent(path)}?token=image-token`
+    )
+
+    rerender(
+      <Markdown sessionId="local:session-1">{`![Shot](${path})`}</Markdown>
+    )
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(
+      '/api/files/pasted-images/shot.png'
+    )
+  })
+
+  it.each([undefined, 'local:session-1', 'remote-1:session-1'])(
+    'loads screenshots outside app data from their owner (%s)',
+    async sessionId => {
+      mockReadImage.mockReset()
+      mockReadImage.mockResolvedValue({
+        mimeType: 'image/png',
+        data: 'c2hvdA==',
+      })
+      const { container } = render(
+        <Markdown sessionId={sessionId}>
+          {'![Shot](/tmp/browser-shot.png)'}
+        </Markdown>
+      )
+      await waitFor(() => {
+        expect(container.querySelector('img')?.getAttribute('src')).toBe(
+          'data:image/png;base64,c2hvdA=='
+        )
+      })
+      expect(mockReadImage).toHaveBeenCalledWith(
+        sessionId?.split(':')[0],
+        'read_file_base64',
+        { path: '/tmp/browser-shot.png' }
+      )
+    }
+  )
+
+  it('does not display the previous server image after switching sessions', async () => {
+    mockReadImage.mockReset()
+    let completeFirst!: (result: { mimeType: string; data: string }) => void
+    mockReadImage
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            completeFirst = resolve
+          })
+      )
+      .mockResolvedValueOnce({ mimeType: 'image/png', data: 'bmV3' })
+    const content = '![Shot](/tmp/browser-shot.png)'
+    const { container, rerender } = render(
+      <Markdown sessionId="remote-1:session-1">{content}</Markdown>
+    )
+    rerender(<Markdown sessionId="remote-2:session-2">{content}</Markdown>)
+    await waitFor(() => {
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        'data:image/png;base64,bmV3'
+      )
+    })
+    completeFirst({ mimeType: 'image/png', data: 'b2xk' })
+    await waitFor(() => {
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        'data:image/png;base64,bmV3'
+      )
+    })
+  })
+
+  it('keeps HTTPS images unchanged without reading them as files', () => {
+    mockReadImage.mockReset()
+    const url = 'https://example.com/screenshot.png'
+    const { container } = render(
+      <Markdown sessionId="remote-1:session-1">{`![Shot](${url})`}</Markdown>
+    )
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(url)
+    expect(mockReadImage).not.toHaveBeenCalled()
   })
 
   it('preserves spaces from Grok-style word-boundary stream deltas', () => {

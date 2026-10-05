@@ -88,7 +88,6 @@ function issueToItem(issue: GitHubIssue): ContextMentionItem {
     label: `#${issue.number}`,
     title: issue.title,
     subtitle: `${issue.state} issue by ${issue.author.login}`,
-    badge: issue.state,
     icon: Bug,
     issue,
   }
@@ -101,7 +100,7 @@ function prToItem(pr: GitHubPullRequest): ContextMentionItem {
     label: `PR #${pr.number}`,
     title: pr.title,
     subtitle: `${pr.state} ${pr.baseRefName} ← ${pr.headRefName}`,
-    badge: pr.isDraft ? 'draft' : pr.state,
+    badge: pr.isDraft ? 'draft' : undefined,
     icon: GitPullRequest,
     pr,
   }

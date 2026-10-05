@@ -206,10 +206,6 @@ pub struct AppPreferences {
     pub chat_font: String, // Font family for chat: jetbrains-mono, fira-code, source-code-pro, inter, geist, roboto, lato
     #[serde(default = "default_font_weight")]
     pub font_weight: String, // Overall font weight: light, normal, medium
-    #[serde(default = "default_git_poll_interval")]
-    pub git_poll_interval: u64, // Git status polling interval in seconds (10-600)
-    #[serde(default = "default_remote_poll_interval")]
-    pub remote_poll_interval: u64, // Remote API polling interval in seconds (30-600)
     #[serde(default = "default_keybindings")]
     pub keybindings: std::collections::HashMap<String, String>, // User-configurable keyboard shortcuts
     #[serde(default = "default_archive_retention_days")]
@@ -218,8 +214,6 @@ pub struct AppPreferences {
     pub syntax_theme_dark: String, // Syntax highlighting theme for dark mode
     #[serde(default = "default_syntax_theme_light")]
     pub syntax_theme_light: String, // Syntax highlighting theme for light mode
-    #[serde(default = "default_parallel_execution_prompt_enabled")]
-    pub parallel_execution_prompt_enabled: bool, // Add system prompt to encourage parallel sub-agent execution
     #[serde(default = "default_compact_chat_view_enabled")]
     pub compact_chat_view_enabled: bool, // Collapse intermediate tool calls into single ticker line
     #[serde(default = "default_auto_recaps_enabled")]
@@ -246,8 +240,6 @@ pub struct AppPreferences {
     pub file_edit_mode: String, // How to edit files: inline (Pierre) or external (VS Code, etc.)
     #[serde(default)]
     pub ai_language: String, // Preferred language for AI responses (empty = default)
-    #[serde(default = "default_allow_web_tools_in_plan_mode")]
-    pub allow_web_tools_in_plan_mode: bool, // Allow WebFetch/WebSearch in plan mode without prompts
     #[serde(default = "default_waiting_sound")]
     pub waiting_sound: String, // Sound when session is waiting for input: none, workwork
     #[serde(default = "default_review_sound")]
@@ -276,9 +268,6 @@ pub struct AppPreferences {
     pub auto_save_context: bool, // Auto-save context after each session completion
     #[serde(default = "default_auto_pull_base_branch")]
     pub auto_pull_base_branch: bool, // Auto-pull base branch before creating a new worktree
-    /// When true, show a single Sync button instead of separate Pull and Push badges
-    #[serde(default = "default_git_sync_button")]
-    pub git_sync_button: bool,
     #[serde(default = "default_auto_archive_on_pr_merged")]
     pub auto_archive_on_pr_merged: bool, // Auto-archive worktrees when their PR is merged
     #[serde(default)]
@@ -326,7 +315,7 @@ pub struct AppPreferences {
     #[serde(default = "default_confirm_session_close")]
     pub confirm_session_close: bool, // Show confirmation dialog before closing sessions/worktrees
     #[serde(default = "default_execution_mode")]
-    pub default_execution_mode: String, // Default execution mode: "plan", "build", or "yolo"
+    pub default_execution_mode: String, // Default workflow/permission policy for new sessions
     #[serde(default = "default_backend")]
     pub default_backend: String, // Default CLI backend: "claude", "codex", "opencode", "cursor", "pi", or "commandcode"
     #[serde(default = "default_new_session_kind")]
@@ -355,8 +344,6 @@ pub struct AppPreferences {
     pub default_grok_reasoning_effort: String, // Grok reasoning effort: low, medium, high, xhigh, max
     #[serde(default = "default_codex_goal_execution_mode")]
     pub codex_goal_execution_mode: String, // Codex /goal execution mode: build or yolo
-    #[serde(default = "default_codex_multi_agent_enabled")]
-    pub codex_multi_agent_enabled: bool, // Enable multi-agent collaboration (experimental)
     #[serde(default = "default_codex_auto_steer")]
     pub codex_auto_steer_enabled: bool, // Steer prompts into a running Codex turn instead of queueing (default: false)
     #[serde(default = "default_opencode_auto_steer")]
@@ -369,10 +356,6 @@ pub struct AppPreferences {
     pub kimi_auto_steer_enabled: bool,
     #[serde(default, alias = "gemini_auto_steer_enabled")]
     pub antigravity_auto_steer_enabled: bool,
-    #[serde(default = "default_codex_max_agent_threads")]
-    pub codex_max_agent_threads: u32, // Max concurrent agent threads (1-8)
-    #[serde(default = "default_restore_last_session")]
-    pub restore_last_session: bool, // Restore last session when switching projects (default: true)
     #[serde(default)]
     pub close_original_on_clear_context: bool, // Close original session when using Clear Context and yolo (default: true)
     #[serde(default)]
@@ -459,10 +442,6 @@ fn default_jean_mcp_rate_limit() -> u32 {
 
 fn default_true() -> Option<bool> {
     None
-}
-
-fn default_restore_last_session() -> bool {
-    true
 }
 
 fn default_codex_auto_steer() -> bool {
@@ -631,18 +610,6 @@ fn default_open_in() -> String {
     "editor".to_string()
 }
 
-fn default_git_poll_interval() -> u64 {
-    60 // 1 minute default
-}
-
-fn default_git_sync_button() -> bool {
-    true
-}
-
-fn default_remote_poll_interval() -> u64 {
-    60 // 1 minute default for remote API calls (PR status, etc.)
-}
-
 fn default_keybindings() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     map.insert("focus_chat_input".to_string(), "mod+l".to_string());
@@ -669,10 +636,6 @@ fn default_syntax_theme_light() -> String {
 
 fn default_file_edit_mode() -> String {
     "inline".to_string() // Default to Jean's Pierre inline editor
-}
-
-fn default_parallel_execution_prompt_enabled() -> bool {
-    true // Enabled by default
 }
 
 fn default_compact_chat_view_enabled() -> bool {
@@ -704,7 +667,7 @@ fn default_confirm_session_close() -> bool {
 }
 
 fn default_execution_mode() -> String {
-    "plan".to_string()
+    "yolo".to_string()
 }
 
 fn default_backend() -> String {
@@ -795,11 +758,11 @@ fn maybe_auto_select_system_cli_preferences(
 }
 
 fn default_codex_model() -> String {
-    "gpt-5.6-sol".to_string()
+    "gpt-6.1-sol".to_string()
 }
 
 fn default_opencode_model() -> String {
-    "opencode/gpt-5.6-sol".to_string()
+    "opencode/gpt-6.1-sol".to_string()
 }
 
 fn default_cursor_model() -> String {
@@ -846,24 +809,12 @@ fn default_codex_goal_execution_mode() -> String {
     "build".to_string()
 }
 
-fn default_codex_multi_agent_enabled() -> bool {
-    true
-}
-
-fn default_codex_max_agent_threads() -> u32 {
-    3
-}
-
 fn default_zoom_level() -> u32 {
     100 // 100% = sharpest default (esp. external 1× displays)
 }
 
 fn default_sync_zoom_levels() -> bool {
     true
-}
-
-fn default_allow_web_tools_in_plan_mode() -> bool {
-    true // Enabled by default
 }
 
 fn default_waiting_sound() -> String {
@@ -990,28 +941,6 @@ mod tests {
             .contains("Do not add feature-specific, bug-fix-specific, or small/local lessons"));
         assert!(prompt.contains("Remove narrow or specific entries when you detect them"));
         assert!(!prompt.contains("After ANY correction from the user"));
-    }
-
-    #[test]
-    fn codex_multi_agent_defaults_on_with_parallel_prompting() {
-        let prefs = AppPreferences::default();
-
-        assert!(prefs.parallel_execution_prompt_enabled);
-        assert!(prefs.codex_multi_agent_enabled);
-    }
-
-    #[test]
-    fn parallel_prompting_preserves_explicitly_disabled_codex_multi_agent() {
-        let prefs = AppPreferences {
-            parallel_execution_prompt_enabled: true,
-            codex_multi_agent_enabled: false,
-            ..Default::default()
-        };
-        let serialized = serde_json::to_value(prefs).unwrap();
-
-        let loaded: AppPreferences = serde_json::from_value(serialized).unwrap();
-
-        assert!(!loaded.codex_multi_agent_enabled);
     }
 
     #[test]
@@ -1200,20 +1129,6 @@ mod tests {
         let prefs: AppPreferences = serde_json::from_value(prefs_json).unwrap();
 
         assert!(prefs.web_access_sounds_enabled);
-    }
-
-    #[test]
-    fn app_preferences_default_git_sync_button_enabled_for_new_and_missing_prefs() {
-        assert!(AppPreferences::default().git_sync_button);
-
-        let mut prefs_json = serde_json::to_value(AppPreferences::default()).unwrap();
-        prefs_json
-            .as_object_mut()
-            .unwrap()
-            .remove("git_sync_button");
-
-        let prefs: AppPreferences = serde_json::from_value(prefs_json).unwrap();
-        assert!(prefs.git_sync_button);
     }
 
     #[test]
@@ -1537,7 +1452,10 @@ Investigate the loaded GitHub {issueWord} ({issueRefs})
 1. Validate the issue before deeper investigation:
    - Read the issue context file(s), including its current status, description, and comments
    - Confirm that the issue is still valid, relevant, and not already resolved or superseded
-   - Decide whether it makes sense to work on it now; if not, stop and explain why
+   - Take the request with a grain of salt: do not assume it must be fixed or added just because it was reported
+   - Check whether it is actually needed: is the bug real and reproducible, or is it user error, a misconfiguration, or expected behavior? Does the feature fit the project's scope, or does existing functionality already cover it?
+   - Weigh the value against the cost: how many users it affects, added complexity, maintenance burden, and regression risk
+   - Decide whether it makes sense to work on it now and is worth fixing or adding at all; if not, stop and explain why, and recommend a response (for example: close, ask for more information, or won't fix)
 2. Analyze the problem:
    - What is the expected vs actual behavior?
    - Are there error messages, stack traces, or reproduction steps?
@@ -1568,6 +1486,7 @@ Investigate the loaded GitHub {issueWord} ({issueRefs})
 - Ask clarifying questions if requirements are unclear
 - If multiple solutions exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -1586,7 +1505,10 @@ Investigate the loaded GitHub {prWord} ({prRefs})
 1. Validate the PR before deeper investigation:
    - Read the PR context file(s), including its current status, description, reviews, and comments
    - Confirm that the PR is still valid, relevant, and not already merged, closed, or superseded
-   - Decide whether it makes sense to work on it now; if not, stop and explain why
+   - Take the PR with a grain of salt: do not assume it should be merged just because it was opened
+   - Check whether it is actually needed: does it solve a real problem, fit the project's scope, and not duplicate existing functionality?
+   - Weigh the value against the cost: added complexity, maintenance burden, regression risk, and the size of the change compared to its benefit
+   - Decide whether it makes sense to work on it now and is worth merging at all; if not, stop and explain why, and recommend a response (for example: close, request changes, or ask for more context)
 2. Understand the changes:
    - What is the PR trying to accomplish?
    - What branches are involved (head → base)?
@@ -1626,6 +1548,7 @@ Investigate the loaded GitHub {prWord} ({prRefs})
 - Flag any security concerns prominently, even minor ones
 - If multiple approaches exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -1862,6 +1785,7 @@ Investigate the failed GitHub Actions workflow run for "{workflowName}" on branc
 - If the error is in code, reference specific file paths and line numbers
 - If it's a flaky test, suggest how to make it more reliable
 - If progress is blocked by infrastructure, permissions, or a non-actionable external failure, stop and report the blocker clearly
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -1921,6 +1845,7 @@ Investigate the loaded Dependabot {alertWord} ({alertRefs})
 - Don't just recommend "upgrade" — assess compatibility impact
 - Reference specific file paths where the affected package is used
 - If multiple alerts are loaded, address each one separately
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -1969,6 +1894,7 @@ Investigate the loaded security {advisoryWord} ({advisoryRefs})
 - Check for the same vulnerability pattern across the entire codebase, not just the reported location
 - Reference specific file paths and line numbers
 - If multiple advisories are loaded, address each one separately
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -2023,6 +1949,7 @@ Investigate the loaded Linear {linearWord} ({linearRefs})
 - Ask clarifying questions if requirements are unclear
 - If multiple solutions exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -2067,6 +1994,7 @@ Investigate the loaded Sentry {sentryWord} ({sentryRefs})
 - Be thorough but focused - investigate deeply without getting sidetracked
 - If multiple solutions exist, explain the trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>"#
         .to_string()
@@ -2184,9 +2112,9 @@ fn default_global_system_prompt() -> String {
 ### 1. Planning Guidance
 - For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
+- Use plan mode for verification steps when the current execution mode is plan; in build/full access, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
-- Keep plans concise but complete enough for zero-context handoff (YOLO/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.
+- Keep plans concise but complete enough for zero-context handoff (Full access/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex `<proposed_plan>` / collaboration Plan mode, Cursor/OpenCode equivalent), not plain text only.
 - For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/`--print` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
 - For Codex specifically, when the current execution mode is plan: do not write plan files or code; when the plan is ready wrap it in `<proposed_plan>...</proposed_plan>` so Jean can show the approval UI. Do not use the `update_plan` checklist tool in plan mode.
@@ -2251,6 +2179,7 @@ fn default_global_system_prompt() -> String {
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.
 - **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, Sentry issues, or other external resources, include clickable links when available so users can open them directly.
+- **Tables for Findings**: When you report found issues, gaps, risks, or recommended fixes, present them in a Markdown table (for example: | # | Finding | Location | Impact | Recommended fix |) instead of long prose lists.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
@@ -2763,13 +2692,10 @@ impl Default for AppPreferences {
             ui_font: default_ui_font(),
             chat_font: default_chat_font(),
             font_weight: default_font_weight(),
-            git_poll_interval: default_git_poll_interval(),
-            remote_poll_interval: default_remote_poll_interval(),
             keybindings: default_keybindings(),
             archive_retention_days: default_archive_retention_days(),
             syntax_theme_dark: default_syntax_theme_dark(),
             syntax_theme_light: default_syntax_theme_light(),
-            parallel_execution_prompt_enabled: default_parallel_execution_prompt_enabled(),
             compact_chat_view_enabled: default_compact_chat_view_enabled(),
             auto_recaps_enabled: default_auto_recaps_enabled(),
             keep_ai_servers_warm: default_keep_ai_servers_warm(),
@@ -2783,7 +2709,6 @@ impl Default for AppPreferences {
             magic_models_auto_initialized: false,
             file_edit_mode: default_file_edit_mode(),
             ai_language: String::new(),
-            allow_web_tools_in_plan_mode: default_allow_web_tools_in_plan_mode(),
             waiting_sound: default_waiting_sound(),
             review_sound: default_review_sound(),
             web_access_sounds_enabled: default_web_access_sounds_enabled(),
@@ -2798,7 +2723,6 @@ impl Default for AppPreferences {
             removal_behavior: default_removal_behavior(),
             auto_save_context: default_auto_save_context(),
             auto_pull_base_branch: default_auto_pull_base_branch(),
-            git_sync_button: default_git_sync_button(),
             auto_archive_on_pr_merged: default_auto_archive_on_pr_merged(),
             debug_mode_enabled: false,
             default_effort_level: default_effort_level(),
@@ -2838,15 +2762,12 @@ impl Default for AppPreferences {
             default_codex_model_verbosity: default_codex_model_verbosity(),
             default_grok_reasoning_effort: default_grok_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
-            codex_multi_agent_enabled: default_codex_multi_agent_enabled(),
             codex_auto_steer_enabled: default_codex_auto_steer(),
             opencode_auto_steer_enabled: default_opencode_auto_steer(),
             pi_auto_steer_enabled: default_pi_auto_steer(),
             grok_auto_steer_enabled: default_grok_auto_steer(),
             kimi_auto_steer_enabled: false,
             antigravity_auto_steer_enabled: false,
-            codex_max_agent_threads: default_codex_max_agent_threads(),
-            restore_last_session: true,
             close_original_on_clear_context: true,
             build_model: None,
             yolo_model: None,
@@ -3079,10 +3000,6 @@ pub struct UIState {
     #[serde(default)]
     pub pinned_recent_session_ids: Vec<String>,
 
-    /// Favorited projects shown first in the GitHub Dashboard
-    #[serde(default)]
-    pub github_dashboard_favorite_project_ids: Vec<String>,
-
     /// Last opened worktree+session per project: projectId → { worktree_id, session_id }
     #[serde(default)]
     pub last_opened_per_project: std::collections::HashMap<String, LastOpenedEntry>,
@@ -3228,7 +3145,6 @@ impl Default for UIState {
             dashboard_worktree_collapse_overrides: std::collections::HashMap::new(),
             project_canvas_settings: std::collections::HashMap::new(),
             pinned_recent_session_ids: Vec::new(),
-            github_dashboard_favorite_project_ids: Vec::new(),
             last_opened_per_project: std::collections::HashMap::new(),
             seen_failed_workflow_run_ids: Vec::new(),
             version: default_ui_state_version(),
@@ -5038,15 +4954,6 @@ pub fn expose_managed_cli_in_wsl(distro: &str, tool: &str, managed_binary: &str)
     if let Err(error) = platform::ensure_managed_cli_link_in_wsl(distro, tool, managed_binary) {
         log::warn!("Failed to expose Jean-managed {tool} CLI in WSL: {error}");
     }
-}
-
-pub async fn set_project_avatar_from_path(
-    context: RuntimeContext,
-    project_id: String,
-    source_path: PathBuf,
-) -> Result<Value, String> {
-    let project = projects::set_project_avatar_from_path(context, project_id, source_path).await?;
-    serde_json::to_value(project).map_err(|error| error.to_string())
 }
 
 pub fn get_project_worktrees_folder(

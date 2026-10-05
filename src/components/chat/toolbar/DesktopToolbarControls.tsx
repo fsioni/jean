@@ -80,6 +80,7 @@ import type { ModelReasoningCapability } from '@/services/model-catalog'
 const EMPTY_CODEX_PROVIDERS: CodexProviderProfile[] = []
 
 interface DesktopToolbarControlsProps {
+  activeSessionId?: string | null
   hasPendingQuestions: boolean
   selectedBackend: CliBackend
   selectedModel: string
@@ -148,6 +149,7 @@ interface DesktopToolbarControlsProps {
 }
 
 export function DesktopToolbarControls({
+  activeSessionId,
   hasPendingQuestions,
   selectedBackend,
   selectedModel,
@@ -864,6 +866,8 @@ export function DesktopToolbarControls({
       <div className="hidden @xl:block h-4 w-px bg-border/50" />
 
       <ExecutionModeDropdown
+        backend={selectedBackend}
+        sessionId={activeSessionId}
         executionMode={executionMode}
         availableModes={availableExecutionModes}
         disabled={false}

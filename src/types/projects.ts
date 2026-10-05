@@ -54,6 +54,24 @@ export interface AutoFixStatus {
   failedIssues: AutoFixFailedIssue[]
   startingIssues: number[]
   pendingYoloSessions: number
+  scanning?: boolean
+  /** Active hours use the owning server's clock, not the browser clock. */
+  activeNow?: boolean
+  lastScanSummary?: string | null
+  activity?: AutoFixActivity[]
+}
+
+export interface AutoFixActivity {
+  at: number
+  message: string
+  issueNumber: number | null
+}
+
+export interface AutoFixIssuePreview {
+  issueNumber: number
+  labels: string[]
+  reason: string
+  selected: boolean
 }
 
 /**

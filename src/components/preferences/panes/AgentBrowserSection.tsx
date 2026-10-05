@@ -109,7 +109,7 @@ export const AgentBrowserSection: React.FC = () => {
         Managed Chromium access for agents. Installed automatically.
       </p>
 
-      <div className="space-y-3 rounded-md border px-4 py-3">
+      <div className="space-y-2">
         {isLoading || isFetching ? (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
@@ -142,6 +142,8 @@ export const AgentBrowserSection: React.FC = () => {
           <Button
             type="button"
             size="sm"
+            variant="outline"
+            className="h-7"
             onClick={() => void handleInstallBinary()}
             disabled={binaryInstallState === 'installing'}
           >

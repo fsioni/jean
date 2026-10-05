@@ -449,7 +449,6 @@ pub fn run() {
             desktop_commands::open_worktree_in_editor,
             desktop_commands::open_project_on_github,
             desktop_commands::open_branch_on_github,
-            desktop_commands::set_project_avatar,
             desktop_commands::save_file_as,
             desktop_commands::start_http_server,
             desktop_commands::stop_http_server,

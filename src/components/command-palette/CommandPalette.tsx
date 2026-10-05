@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useUIStore } from '@/store/ui-store'
 import { useCommandContext } from '@/hooks/use-command-context'
 import { usePreferences } from '@/services/preferences'
@@ -182,19 +182,6 @@ export function CommandPalette() {
     },
     [setCommandPaletteOpen]
   )
-
-  // Keyboard shortcut handler
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        setCommandPaletteOpen(!commandPaletteOpen)
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [commandPaletteOpen, setCommandPaletteOpen])
 
   return (
     <CommandDialog

@@ -19,14 +19,13 @@ vi.mock('@/hooks/use-mobile', () => ({
   useIsMobile: () => platform.mobile,
 }))
 
-const items: ContextMentionItem[] = [
+const items: [ContextMentionItem, ContextMentionItem] = [
   {
     id: 'issue:123',
     type: 'issue',
     label: '#123',
     title: 'Fix login bug',
     subtitle: 'open issue by alice',
-    badge: 'open',
     icon: Bug,
   },
   {
@@ -35,7 +34,6 @@ const items: ContextMentionItem[] = [
     label: 'PR #45',
     title: 'Add context mentions',
     subtitle: 'open main ← feature',
-    badge: 'open',
     icon: GitPullRequest,
   },
 ]
@@ -193,7 +191,7 @@ describe('ContextMentionPopover', () => {
     expect(onSelectContext).toHaveBeenCalledWith(items[0], true)
   })
 
-  it('shows keyboard hints on native desktop', () => {
+  it('shows keyboard hints in tooltips on native desktop', async () => {
     platform.native = true
     render(
       <ContextMentionPopover
@@ -207,7 +205,13 @@ describe('ContextMentionPopover', () => {
       />
     )
 
-    expect(screen.getByText('Shift+Enter')).toBeInTheDocument()
+    expect(screen.queryByText('Shift+Enter')).not.toBeInTheDocument()
+    fireEvent.focus(
+      screen.getByRole('button', {
+        name: `Add ${items[0].label} and start investigating`,
+      })
+    )
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Shift+Enter')
   })
 
   it('hides keyboard hints on mobile and web access', () => {
@@ -227,6 +231,12 @@ describe('ContextMentionPopover', () => {
     expect(
       screen.getByRole('button', { name: 'Refresh context links' })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: `Add ${items[0].label} and start investigating`,
+      })
+    ).not.toHaveTextContent('Investigate')
+    expect(screen.queryByText('Attach')).not.toBeInTheDocument()
 
     platform.native = false
     platform.mobile = false

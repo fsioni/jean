@@ -1,14 +1,8 @@
 import { useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import { StatusIndicator } from '@/components/ui/status-indicator'
 import type { IndicatorStatus } from '@/components/ui/status-indicator'
-import {
-  ArrowDown,
-  ArrowDownUp,
-  ArrowUp,
-  ChevronDown,
-} from '@/components/icons/reicon'
+import { ArrowDownUp, ChevronDown } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
-import { dismissibleToast } from '@/lib/dismissible-toast'
 import { isBaseSession, type Worktree } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useChatStore } from '@/store/chat-store'
@@ -35,14 +29,7 @@ import {
   statusConfig,
 } from '@/components/chat/session-card-utils'
 import { useCanvasStoreState } from '@/components/chat/hooks/useCanvasStoreState'
-import {
-  useGitStatus,
-  gitPush,
-  fetchWorktreesStatus,
-  triggerImmediateGitPoll,
-  performGitPull,
-  performGitSync,
-} from '@/services/git-status'
+import { useGitStatus, performGitSync } from '@/services/git-status'
 import {
   Tooltip,
   TooltipTrigger,
@@ -351,6 +338,7 @@ export function WorktreeItem({
   // Responsive padding based on sidebar width
   const sidebarWidth = useSidebarWidth()
   const isNarrowSidebar = sidebarWidth < 200
+  const showStatusBadges = sidebarWidth >= 320
 
   // Inline editing state
   const [isEditing, setIsEditing] = useState(false)
@@ -522,82 +510,6 @@ export function WorktreeItem({
     handleSubmit()
   }, [handleSubmit])
 
-  const handlePull = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation()
-      await performGitPull({
-        worktreeId: worktree.id,
-        worktreePath: worktree.path,
-        baseBranch: worktree.base_branch ?? defaultBranch,
-        projectId,
-        remote: worktree.base_remote,
-        onMergeConflict: () => {
-          selectWorktree(worktree.id)
-          setTimeout(() => {
-            window.dispatchEvent(
-              new CustomEvent('magic-command', {
-                detail: { command: 'resolve-conflicts' },
-              })
-            )
-          }, 100)
-        },
-      })
-    },
-    [
-      worktree.id,
-      worktree.path,
-      worktree.base_branch,
-      worktree.base_remote,
-      defaultBranch,
-      projectId,
-      selectWorktree,
-    ]
-  )
-
-  const handlePush = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
-
-      const runPush = async (remote?: string) => {
-        const opToast = dismissibleToast.loading('Pushing changes...')
-        try {
-          const result = await gitPush(
-            worktree.path,
-            worktree.pr_number,
-            remote,
-            worktree.id
-          )
-          triggerImmediateGitPoll()
-          fetchWorktreesStatus(projectId)
-          if (result.permissionDenied) {
-            opToast.error('Push failed', {
-              duration: Infinity,
-              description:
-                result.output.trim() || 'The remote rejected the push.',
-            })
-          } else if (result.fellBack) {
-            opToast.warning(
-              'Could not push to PR branch, pushed to new branch instead'
-            )
-          } else {
-            opToast.success('Changes pushed')
-          }
-        } catch (error) {
-          opToast.error(`Push failed: ${error}`)
-        }
-      }
-
-      if (pushNeedsRemotePicker(worktree.pr_number)) {
-        pickRemoteOrRun(runPush)
-      } else {
-        runPush()
-      }
-    },
-    [pickRemoteOrRun, worktree.path, worktree.pr_number, projectId]
-  )
-
-  const gitSyncButton = preferences?.git_sync_button ?? true
-
   const handleSync = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -731,7 +643,7 @@ export function WorktreeItem({
             )}
 
             {/* Sync / Pull / Push badges */}
-            {gitSyncButton && (behindCount > 0 || pushCount > 0) ? (
+            {showStatusBadges && (behindCount > 0 || pushCount > 0) && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -766,44 +678,6 @@ export function WorktreeItem({
                   })()}
                 </TooltipContent>
               </Tooltip>
-            ) : (
-              <>
-                {behindCount > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={handlePull}
-                        className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
-                      >
-                        <span className="flex items-center gap-0.5">
-                          <ArrowDown className="h-3 w-3" />
-                          {behindCount}
-                        </span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{`Pull ${behindCount} commit${behindCount > 1 ? 's' : ''} from remote`}</TooltipContent>
-                  </Tooltip>
-                )}
-
-                {pushCount > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={handlePush}
-                        className="shrink-0 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20"
-                      >
-                        <span className="flex items-center gap-0.5">
-                          <ArrowUp className="h-3 w-3" />
-                          {pushCount}
-                        </span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{`Push ${pushCount} commit${pushCount > 1 ? 's' : ''} to remote`}</TooltipContent>
-                  </Tooltip>
-                )}
-              </>
             )}
 
             {/* Uncommitted changes */}

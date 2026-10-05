@@ -215,7 +215,6 @@ const DESKTOP_ONLY_COMMANDS = new Set([
   'open_project_on_github',
   'open_branch_on_github',
   'open_log_directory',
-  'set_project_avatar',
   'save_file_as',
   'start_http_server',
   'stop_http_server',

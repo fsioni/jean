@@ -250,10 +250,10 @@ function getDefaultModelForBackend(
   preferences: AppPreferences | undefined
 ): string {
   if (backend === 'codex') {
-    return preferences?.selected_codex_model ?? 'gpt-5.6-sol'
+    return preferences?.selected_codex_model ?? 'gpt-6.1-sol'
   }
   if (backend === 'opencode') {
-    return preferences?.selected_opencode_model ?? 'opencode/gpt-5.6-sol'
+    return preferences?.selected_opencode_model ?? 'opencode/gpt-6.1-sol'
   }
   if (backend === 'cursor') {
     return preferences?.selected_cursor_model ?? 'cursor/auto'
@@ -855,7 +855,7 @@ export function useMessageHandlers({
         ? `I've updated the plan. Please review and execute:\n\n<updated-plan>\n${updatedPlan}\n</updated-plan>`
         : isCodexYolo
           ? 'Execute the plan you created. Implement all changes described.'
-          : 'Plan approved (yolo mode). Begin implementing all changes immediately without asking for confirmation. Do not re-explain the plan — start writing code.'
+          : 'Plan approved (Full access mode). Begin implementing all changes immediately without asking for confirmation. Do not re-explain the plan — start writing code.'
       // Resolve yolo overrides (skip if backend override doesn't match session)
       const sessionBackendYolo = selectedBackendRef.current
       const yoloBackendOverride = yoloBackendRef.current
@@ -1118,7 +1118,7 @@ export function useMessageHandlers({
     // Send approval message to Claude so it continues with execution
     const yoloApprovalMsg = isCodexYolo
       ? 'Execute the plan you created. Implement all changes described.'
-      : 'Plan approved (yolo mode). Begin implementing all changes immediately without asking for confirmation. Do not re-explain the plan — start writing code.'
+      : 'Plan approved (Full access mode). Begin implementing all changes immediately without asking for confirmation. Do not re-explain the plan — start writing code.'
     setLastSentMessage(sessionId, yoloApprovalMsg)
     setError(sessionId, null)
     addSendingSession(sessionId)
@@ -1264,7 +1264,7 @@ export function useMessageHandlers({
         ? yoloThinkingLevelRef
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
-      const modeLabel = isYolo ? 'Yolo' : 'Build'
+      const modeLabel = isYolo ? 'Full access' : 'Build'
 
       const currentSessionBackend = queryClient.getQueryData<Session>(
         chatQueryKeys.session(sessionId)
@@ -1511,7 +1511,7 @@ export function useMessageHandlers({
         ? yoloThinkingLevelRef
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
-      const modeLabel = isYolo ? 'Yolo' : 'Build'
+      const modeLabel = isYolo ? 'Full access' : 'Build'
 
       const currentSessionBackend = queryClient.getQueryData<Session>(
         chatQueryKeys.session(sessionId)
@@ -1863,7 +1863,7 @@ export function useMessageHandlers({
         ? yoloThinkingLevelRef
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
-      const modeLabel = isYolo ? 'Yolo' : 'Build'
+      const modeLabel = isYolo ? 'Full access' : 'Build'
 
       const currentSessionBackend = queryClient.getQueryData<Session>(
         chatQueryKeys.session(sessionId)
@@ -2176,7 +2176,7 @@ export function useMessageHandlers({
         ? yoloThinkingLevelRef
         : buildThinkingLevelRef
       const modeEffortRef = isYolo ? yoloEffortLevelRef : buildEffortLevelRef
-      const modeLabel = isYolo ? 'Yolo' : 'Build'
+      const modeLabel = isYolo ? 'Full access' : 'Build'
 
       const currentSessionBackend = queryClient.getQueryData<Session>(
         chatQueryKeys.session(sessionId)

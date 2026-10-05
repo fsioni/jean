@@ -18,10 +18,12 @@ import { useLocalDashboardEnabled } from '@/lib/remote-connections'
 import { listen, type UnlistenFn } from '@/lib/transport'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
+import { fileToBase64 } from '@/lib/file-base64'
 import { disposeAllWorktreeTerminals } from '@/lib/terminal-instances'
 import { toastActionLabel } from '@/lib/toast-action-label'
 import type {
   AutoFixStatus,
+  AutoFixIssuePreview,
   Project,
   Worktree,
   DetectPrResponse,
@@ -106,13 +108,16 @@ function clearLocalWorktreeState(
         queryKey: ['chat', 'session', sessionId],
       })
     }
-    queryClient.setQueryData<AllSessionsResponse>(['all-sessions'], old => {
-      if (!old) return old
-      const entries = old.entries.filter(
-        entry => entry.worktree_id !== worktreeId
-      )
-      return entries.length === old.entries.length ? old : { ...old, entries }
-    })
+    queryClient.setQueriesData<AllSessionsResponse>(
+      { queryKey: ['all-sessions'] },
+      old => {
+        if (!old) return old
+        const entries = old.entries.filter(
+          entry => entry.worktree_id !== worktreeId
+        )
+        return entries.length === old.entries.length ? old : { ...old, entries }
+      }
+    )
     queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
     queryClient.invalidateQueries({ queryKey: ['unread-session-count'] })
   }
@@ -196,6 +201,7 @@ export async function fetchRecentWorktrees(
   }
   const items = successful
     .flatMap(result => result.response.items)
+    .filter(item => item.worktree.origin !== 'auto_fix')
     .sort(
       (a, b) =>
         b.lastActivityAt - a.lastActivityAt ||
@@ -1643,7 +1649,7 @@ export function useWorktreeEvents() {
     // Listen for successful deletion
     unlistenPromises.push(
       listen<WorktreeDeletedEvent>('worktree:deleted', event => {
-        const { id, project_id, teardown_output } = event.payload
+        const { id, project_id } = event.payload
         logger.info('Worktree deleted (background complete)', { id })
         clearLocalWorktreeState(id, queryClient)
 
@@ -1671,28 +1677,6 @@ export function useWorktreeEvents() {
         if (selectedWorktreeId === id) {
           selectWorktree(null)
         }
-
-        // Show teardown output if a teardown script ran
-        if (teardown_output) {
-          // Stable id: the same event can arrive over several server
-          // connections; reuse one toast instead of stacking duplicates.
-          toast.success('Teardown completed', {
-            id: `teardown-${id}`,
-            description:
-              teardown_output.length > 200
-                ? teardown_output.slice(0, 200) + '…'
-                : teardown_output,
-            action: {
-              label: toastActionLabel('View Output'),
-              onClick: () =>
-                window.dispatchEvent(
-                  new CustomEvent('show-teardown-output', {
-                    detail: { output: teardown_output, success: true },
-                  })
-                ),
-            },
-          })
-        }
       })
     )
 
@@ -1719,7 +1703,13 @@ export function useWorktreeEvents() {
             onClick: () =>
               window.dispatchEvent(
                 new CustomEvent('show-teardown-output', {
-                  detail: { output: error, success: false },
+                  detail: {
+                    output: error,
+                    success: false,
+                    ...(error.startsWith('Teardown script failed:')
+                      ? { worktreeId: id, projectId: project_id }
+                      : {}),
+                  },
                 })
               ),
           },
@@ -1994,16 +1984,21 @@ export function useDeleteWorktree() {
     mutationFn: async ({
       worktreeId,
       projectId,
+      skipTeardown,
     }: {
       worktreeId: string
       projectId: string
+      skipTeardown?: boolean
     }): Promise<{ worktreeId: string; projectId: string }> => {
       if (!isTauri()) {
         throw new Error('Not in Tauri context')
       }
 
       logger.debug('Deleting worktree (background)', { worktreeId })
-      await invoke('delete_worktree', { worktreeId })
+      await invoke('delete_worktree', {
+        worktreeId,
+        ...(skipTeardown ? { skipTeardown: true } : {}),
+      })
       logger.info('Worktree deletion started (background)')
       return { worktreeId, projectId }
     },
@@ -3309,6 +3304,54 @@ export function useAutoFixStatus(projectId: string, enabled: boolean) {
   })
 }
 
+/** Preview uses the scheduler's own selection rules and does not start work. */
+export function useAutoFixPreview(projectId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['auto-fix-preview', projectId],
+    queryFn: async (): Promise<AutoFixIssuePreview[]> => {
+      const { serverId, resourceId } = resolveProjectServer(projectId)
+      return invokeForServer<AutoFixIssuePreview[]>(
+        serverId,
+        'preview_auto_fix_issues',
+        {
+          projectId: resourceId,
+        }
+      )
+    },
+    enabled: enabled && Boolean(projectId),
+    staleTime: 0,
+    retry: false,
+  })
+}
+
+export function useRequestAutoFixScan() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (projectId: string) => {
+      const id = toast.loading('Requesting a scan...')
+      try {
+        const { serverId, resourceId } = resolveProjectServer(projectId)
+        await invokeForServer<null>(serverId, 'request_auto_fix_scan', {
+          projectId: resourceId,
+        })
+        toast.success('Scan requested', {
+          id,
+          description:
+            'Starts on the next scheduler tick. Safety limits still apply.',
+        })
+      } catch (error) {
+        toast.error('Cannot start scan', { id, description: String(error) })
+        throw error
+      }
+    },
+    onSuccess: (_data, projectId) => {
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.autoFixStatus(projectId),
+      })
+    },
+  })
+}
+
 /** Clear Mr. Robot failed issues (so they are retried) and the last error. */
 export function useClearAutoFixFailures() {
   const queryClient = useQueryClient()
@@ -3793,19 +3836,26 @@ export function useAppDataDir() {
 
 /**
  * Hook to set a custom avatar for a project
- * Opens a file dialog and copies the selected image to the avatars directory
+ * Uploads the image picked on the client, so it works for local, remote, and
+ * web access projects.
  */
 export function useSetProjectAvatar() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (projectId: string): Promise<Project> => {
-      if (!isTauri()) {
-        throw new Error('Not in Tauri context')
-      }
-
+    mutationFn: async ({
+      projectId,
+      file,
+    }: {
+      projectId: string
+      file: File
+    }): Promise<Project> => {
       logger.debug('Setting project avatar', { projectId })
-      const project = await invoke<Project>('set_project_avatar', { projectId })
+      const project = await invoke<Project>('set_project_avatar', {
+        projectId,
+        data: await fileToBase64(file),
+        mimeType: file.type,
+      })
       logger.info('Project avatar set', { project })
       return project
     },
@@ -3813,17 +3863,14 @@ export function useSetProjectAvatar() {
       invalidateProjectLists(queryClient)
     },
     onError: error => {
-      // "No file selected" is not an error, user just cancelled
       const message =
         typeof error === 'string'
           ? error
           : error instanceof Error
             ? error.message
             : 'Unknown error occurred'
-      if (message !== 'No file selected') {
-        logger.error('Failed to set project avatar', { error })
-        toast.error('Failed to set avatar', { description: message })
-      }
+      logger.error('Failed to set project avatar', { error })
+      toast.error('Failed to set avatar', { description: message })
     },
   })
 }

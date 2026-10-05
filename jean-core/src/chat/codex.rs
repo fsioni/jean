@@ -750,6 +750,9 @@ pub fn apply_codex_provider_to_config(
     );
 }
 
+/// Max concurrent Codex subagent threads.
+const CODEX_MAX_AGENT_THREADS: u32 = 3;
+
 /// Build JSON-RPC params for `thread/start`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_thread_start_params(
@@ -758,8 +761,6 @@ pub fn build_thread_start_params(
     execution_mode: Option<&str>,
     search_enabled: bool,
     base_instructions_content: Option<&str>,
-    multi_agent_enabled: bool,
-    max_agent_threads: Option<u32>,
     model_verbosity: Option<&str>,
     codex_provider: Option<&crate::CodexProviderProfile>,
 ) -> serde_json::Value {
@@ -783,6 +784,8 @@ pub fn build_thread_start_params(
         }
     }
 
+    params["approvalsReviewer"] = serde_json::json!("user");
+
     // Permission mode mapping.
     //
     // Plan mode must never ask the user for permissions. It is read-only, so
@@ -795,7 +798,7 @@ pub fn build_thread_start_params(
     // whether MCP servers are configured — but setting mcp_elicitations=false
     // is a no-op when no MCP servers exist, so it's safe to use in build mode.
     match execution_mode.unwrap_or("plan") {
-        "build" => {
+        "build" | "auto" => {
             params["approvalPolicy"] = serde_json::json!({
                 "granular": {
                     "mcp_elicitations": false,
@@ -805,6 +808,19 @@ pub fn build_thread_start_params(
                 }
             });
             params["sandbox"] = serde_json::json!("workspace-write");
+            params["approvalsReviewer"] = serde_json::json!(if execution_mode == Some("auto") {
+                "auto_review"
+            } else {
+                "user"
+            });
+            if execution_mode == Some("auto") {
+                params["approvalPolicy"] = serde_json::json!("on-request");
+            }
+        }
+        "supervised" => {
+            params["approvalPolicy"] = serde_json::json!("untrusted");
+            params["approvalsReviewer"] = serde_json::json!("user");
+            params["sandbox"] = serde_json::json!("read-only");
         }
         "yolo" => {
             params["approvalPolicy"] = serde_json::json!("never");
@@ -838,17 +854,15 @@ pub fn build_thread_start_params(
         serde_json::json!(if search_enabled { "live" } else { "disabled" }),
     );
 
-    // Multi-agent
-    if multi_agent_enabled {
-        let mut features = serde_json::Map::new();
-        features.insert("multi_agent".to_string(), serde_json::json!(true));
-        config.insert("features".to_string(), serde_json::Value::Object(features));
-        if let Some(threads) = max_agent_threads {
-            let mut agents = serde_json::Map::new();
-            agents.insert("max_threads".to_string(), serde_json::json!(threads));
-            config.insert("agents".to_string(), serde_json::Value::Object(agents));
-        }
-    }
+    // Multi-agent (always on, so Codex can run subagents in parallel)
+    config.insert(
+        "features".to_string(),
+        serde_json::json!({ "multi_agent": true }),
+    );
+    config.insert(
+        "agents".to_string(),
+        serde_json::json!({ "max_threads": CODEX_MAX_AGENT_THREADS }),
+    );
 
     if let Some(provider) = codex_provider {
         apply_codex_provider_to_config(&mut config, provider);
@@ -928,6 +942,11 @@ pub fn build_turn_start_params(
     // accidentally re-sandbox yolo turns and break tools such as Playwright on
     // macOS (issue #328 / PR #362).
     let mode = execution_mode.unwrap_or("plan");
+    params["approvalsReviewer"] = serde_json::json!(if mode == "auto" {
+        "auto_review"
+    } else {
+        "user"
+    });
     match mode {
         "yolo" => {
             params["approvalPolicy"] = serde_json::json!("never");
@@ -935,7 +954,7 @@ pub fn build_turn_start_params(
                 "type": "dangerFullAccess",
             });
         }
-        "build" => {
+        "build" | "auto" => {
             params["approvalPolicy"] = serde_json::json!({
                 "granular": {
                     "mcp_elicitations": false,
@@ -944,6 +963,9 @@ pub fn build_turn_start_params(
                     "request_permissions": true,
                 }
             });
+            if mode == "auto" {
+                params["approvalPolicy"] = serde_json::json!("on-request");
+            }
             let mut writable_roots = vec![serde_json::json!(working_dir.to_string_lossy())];
             for dir in add_dirs {
                 writable_roots.push(serde_json::json!(dir));
@@ -958,6 +980,11 @@ pub fn build_turn_start_params(
                 "excludeTmpdirEnvVar": false,
                 "excludeSlashTmp": false,
             });
+        }
+        "supervised" => {
+            params["approvalPolicy"] = serde_json::json!("untrusted");
+            params["sandboxPolicy"] =
+                serde_json::json!({ "type": "readOnly", "networkAccess": true });
         }
         // "plan" or default: read-only, never ask for approvals
         _ => {
@@ -1043,8 +1070,6 @@ pub fn execute_codex_via_server(
     add_dirs: &[String],
     prompt: &str,
     base_instructions_content: Option<&str>,
-    multi_agent_enabled: bool,
-    max_agent_threads: Option<u32>,
     codex_provider: Option<&crate::CodexProviderProfile>,
 ) -> Result<CodexResponse, String> {
     use super::codex_server;
@@ -1086,8 +1111,6 @@ pub fn execute_codex_via_server(
                 execution_mode,
                 search_enabled,
                 base_instructions_content,
-                multi_agent_enabled,
-                max_agent_threads,
                 Some(model_verbosity),
                 codex_provider,
             );
@@ -1098,6 +1121,7 @@ pub fn execute_codex_via_server(
                 "model",
                 "cwd",
                 "approvalPolicy",
+                "approvalsReviewer",
                 "sandbox",
                 "config",
                 "serviceTier",
@@ -1117,8 +1141,6 @@ pub fn execute_codex_via_server(
                         execution_mode,
                         search_enabled,
                         base_instructions_content,
-                        multi_agent_enabled,
-                        max_agent_threads,
                         Some(model_verbosity),
                         codex_provider,
                     )
@@ -1131,8 +1153,6 @@ pub fn execute_codex_via_server(
                 execution_mode,
                 search_enabled,
                 base_instructions_content,
-                multi_agent_enabled,
-                max_agent_threads,
                 Some(model_verbosity),
                 codex_provider,
             )
@@ -1826,8 +1846,6 @@ fn start_new_thread(
     execution_mode: Option<&str>,
     search_enabled: bool,
     base_instructions_content: Option<&str>,
-    multi_agent_enabled: bool,
-    max_agent_threads: Option<u32>,
     model_verbosity: Option<&str>,
     codex_provider: Option<&crate::CodexProviderProfile>,
 ) -> Result<String, String> {
@@ -1839,8 +1857,6 @@ fn start_new_thread(
         execution_mode,
         search_enabled,
         base_instructions_content,
-        multi_agent_enabled,
-        max_agent_threads,
         model_verbosity,
         codex_provider,
     );
@@ -5460,6 +5476,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn permission_policies_apply_to_threads_and_every_turn() {
+        for (mode, approval, sandbox, reviewer) in [
+            ("supervised", "untrusted", "readOnly", "user"),
+            ("auto", "on-request", "workspaceWrite", "auto_review"),
+            ("yolo", "never", "dangerFullAccess", "user"),
+            ("plan", "never", "readOnly", "user"),
+        ] {
+            let thread = build_thread_start_params(
+                std::path::Path::new("/tmp/worktree"),
+                Some("gpt-5.4"),
+                Some(mode),
+                false,
+                None,
+                None,
+                None,
+            );
+            let turn = build_turn_start_params(
+                "thread-1",
+                "hello",
+                std::path::Path::new("/tmp/worktree"),
+                Some(mode),
+                None,
+                &[],
+                &[],
+                Some("gpt-5.4"),
+            );
+            assert_eq!(thread["approvalPolicy"], approval);
+            assert_eq!(thread["approvalsReviewer"], reviewer);
+            assert_eq!(turn["approvalPolicy"], approval);
+            assert_eq!(turn["approvalsReviewer"], reviewer);
+            assert_eq!(turn["sandboxPolicy"]["type"], sandbox);
+            assert_eq!(
+                turn["collaborationMode"]["mode"],
+                if mode == "plan" { "plan" } else { "default" }
+            );
+        }
+    }
+
+    #[test]
     fn reloads_mcp_servers_with_app_server_protocol_before_thread_start() {
         let result = reload_mcp_servers_before_thread_start(|method, params| {
             assert_eq!(method, "config/mcpServer/reload");
@@ -5837,8 +5892,6 @@ mod tests {
             Some("plan"),
             false,
             None,
-            false,
-            None,
             None,
             None,
         );
@@ -5847,13 +5900,32 @@ mod tests {
     }
 
     #[test]
+    fn thread_params_always_enable_multi_agent() {
+        let params = build_thread_start_params(
+            std::path::Path::new("/tmp"),
+            None,
+            Some("plan"),
+            false,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            params["config"]["features"]["multi_agent"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            params["config"]["agents"]["max_threads"],
+            CODEX_MAX_AGENT_THREADS
+        );
+    }
+
+    #[test]
     fn gpt_5_5_fast_enables_fast_service_tier() {
         let params = build_thread_start_params(
             std::path::Path::new("/tmp"),
             Some("gpt-5.5-fast"),
             Some("plan"),
-            false,
-            None,
             false,
             None,
             None,
@@ -5957,8 +6029,6 @@ mod tests {
             Some("build"),
             false,
             None,
-            false,
-            None,
             None,
             None,
         );
@@ -5972,8 +6042,6 @@ mod tests {
             std::path::Path::new("/tmp"),
             Some("gpt-5.6-sol"),
             Some("build"),
-            false,
-            None,
             false,
             None,
             Some("high"),
@@ -6020,8 +6088,6 @@ mod tests {
             Some("plan"),
             false,
             None,
-            false,
-            None,
             None,
             None,
         );
@@ -6035,8 +6101,6 @@ mod tests {
             std::path::Path::new("/tmp"),
             Some("gpt-5.4"),
             Some("build"),
-            false,
-            None,
             false,
             None,
             None,
@@ -6055,8 +6119,6 @@ mod tests {
             std::path::Path::new("/tmp"),
             Some("gpt-5.4"),
             Some("plan"),
-            false,
-            None,
             false,
             None,
             None,
@@ -6126,8 +6188,6 @@ mod tests {
             Some("yolo"),
             false,
             None,
-            false,
-            None,
             None,
             None,
         );
@@ -6147,8 +6207,6 @@ mod tests {
             std::path::Path::new("/tmp"),
             Some("gpt-5.4"),
             Some("plan"),
-            false,
-            None,
             false,
             None,
             None,

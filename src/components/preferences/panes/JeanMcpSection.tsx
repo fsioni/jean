@@ -206,7 +206,7 @@ export const JeanMcpSection: React.FC<JeanMcpSectionProps> = ({
   return (
     <>
       <SettingsSection title="Jean MCP Server" anchorId="pref-mcp-section-jean">
-        <div className="flex flex-col gap-2 rounded-md border px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium">
             <CheckCircle className="size-4 text-success" />
             Required · Automatic
@@ -256,8 +256,8 @@ export const JeanMcpSection: React.FC<JeanMcpSectionProps> = ({
           </Button>
         </div>
 
-        <details className="rounded-md border px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium">
+        <details>
+          <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
             Advanced limits
           </summary>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">

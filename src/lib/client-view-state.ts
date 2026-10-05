@@ -17,7 +17,6 @@ export interface ClientViewState {
   expanded_worktree_ids: string[]
   project_access_timestamps: Record<string, number>
   dashboard_worktree_collapse_overrides: Record<string, boolean>
-  github_dashboard_favorite_project_ids: string[]
   sidebar_server_filter: string | null
   sidebar_active_tab: 'projects' | 'recent'
   pinned_recent_session_ids: string[]
@@ -54,7 +53,6 @@ export const defaultClientViewState: ClientViewState = {
   expanded_worktree_ids: [],
   project_access_timestamps: {},
   dashboard_worktree_collapse_overrides: {},
-  github_dashboard_favorite_project_ids: [],
   sidebar_server_filter: null,
   sidebar_active_tab: 'projects',
   pinned_recent_session_ids: [],
@@ -182,10 +180,6 @@ function parseClientViewState(value: unknown): ClientViewState {
   assign(
     'dashboard_worktree_collapse_overrides',
     recordOf(value.dashboard_worktree_collapse_overrides, isBoolean)
-  )
-  assign(
-    'github_dashboard_favorite_project_ids',
-    stringArray(value.github_dashboard_favorite_project_ids)
   )
   if (
     value.sidebar_server_filter === null ||

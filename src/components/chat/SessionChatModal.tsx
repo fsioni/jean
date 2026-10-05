@@ -27,7 +27,6 @@ import {
 } from '@/components/icons/reicon'
 import { ModalCloseButton } from '@/components/ui/modal-close-button'
 import { cn } from '@/lib/utils'
-import { dismissibleToast } from '@/lib/dismissible-toast'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -40,7 +39,10 @@ import { GitStatusBadges } from '@/components/ui/git-status-badges'
 import { WorktreeCiStatus } from '@/components/jenkins/WorktreeCiStatus'
 import { ClickUpStatusLink } from '@/components/clickup/ClickUpStatusLink'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
-import { CloseWorktreeDialog } from './CloseWorktreeDialog'
+import {
+  CloseWorktreeDialog,
+  type CloseConfirmMode,
+} from './CloseWorktreeDialog'
 import { useChatStore } from '@/store/chat-store'
 import { useTerminalStore } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
@@ -61,14 +63,7 @@ import { parseServerResourceKey } from '@/lib/server-resource'
 import { LOCAL_SERVER_ID } from '@/types/server-resource'
 import { usePackageScripts, type PackageScript } from '@/services/projects'
 import { useGitHubPRs } from '@/services/github'
-import {
-  useGitStatus,
-  gitPush,
-  fetchWorktreesStatus,
-  triggerImmediateGitPoll,
-  performGitPull,
-  performGitSync,
-} from '@/services/git-status'
+import { useGitStatus, performGitSync } from '@/services/git-status'
 import { isBaseSession, type Project, type Worktree } from '@/types/projects'
 import type { Session } from '@/types/chat'
 import { isNativeApp } from '@/lib/environment'
@@ -88,10 +83,8 @@ import {
   getResumeCommand,
   isActionableWaitingStatus,
   statusConfig,
-  type ManualSessionStatus,
   type SessionCardData,
 } from './session-card-utils'
-import { SessionStatusMenu } from './SessionStatusMenu'
 import {
   resolveModalSessionId,
   sessionsForTabBar,
@@ -579,9 +572,8 @@ export function SessionChatModal({
 
   // CMD+W: close the active session tab, or close modal if last tab
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
-  const [closeConfirmMode, setCloseConfirmMode] = useState<
-    'worktree' | 'session'
-  >('session')
+  const [closeConfirmMode, setCloseConfirmMode] =
+    useState<CloseConfirmMode>('session')
   const pendingCloseAction = useRef<(() => void) | null>(null)
 
   const executeCloseAction = useCallback(() => {
@@ -590,8 +582,10 @@ export function SessionChatModal({
     setCloseConfirmOpen(false)
   }, [])
 
+  // Close (delete or archive per removal behavior) or explicitly archive a
+  // session tab, asking for confirmation first.
   const removeSessionTab = useCallback(
-    (session: Session) => {
+    (session: Session, archive = false) => {
       const activeSessions = tabSessions.filter(s => !s.archived_at)
       const sessionIsEmpty = !session.message_count
       // Confirm any non-empty session when preference is on (default). Only
@@ -604,13 +598,17 @@ export function SessionChatModal({
         if (activeSessions.length > 1) {
           selectVisualNeighbor(session.id)
         }
+        if (archive) {
+          handleArchiveSession(session.id)
+          return
+        }
         // The mutation selects the backend-created empty session after success
         // when this was the last session.
         handleDeleteSession(session.id)
       }
 
       if (needsConfirm) {
-        setCloseConfirmMode('session')
+        setCloseConfirmMode(archive ? 'session-archive' : 'session')
         pendingCloseAction.current = action
         setCloseConfirmOpen(true)
       } else {
@@ -619,6 +617,7 @@ export function SessionChatModal({
     },
     [
       tabSessions,
+      handleArchiveSession,
       handleDeleteSession,
       preferences?.confirm_session_close,
       selectVisualNeighbor,
@@ -887,74 +886,10 @@ export function SessionChatModal({
       window.removeEventListener('switch-session', handleSwitchSession)
   }, [isOpen, sortedSessions, currentSessionId, worktreeId])
 
-  const handlePull = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation()
-      await performGitPull({
-        worktreeId,
-        worktreePath,
-        baseBranch: worktree?.base_branch ?? defaultBranch,
-        projectId: project?.id,
-        remote: worktree?.base_remote,
-      })
-    },
-    [
-      worktreeId,
-      worktreePath,
-      worktree?.base_branch,
-      worktree?.base_remote,
-      defaultBranch,
-      project?.id,
-    ]
-  )
-
   const pickRemoteOrRun = useRemotePicker(worktreePath)
-
-  const handlePush = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
-
-      const runPush = async (remote?: string) => {
-        const opToast = dismissibleToast.loading('Pushing changes...')
-        try {
-          const result = await gitPush(
-            worktreePath,
-            worktree?.pr_number,
-            remote,
-            worktree?.id
-          )
-          triggerImmediateGitPoll()
-          if (project) fetchWorktreesStatus(project.id)
-          if (result.permissionDenied) {
-            opToast.error('Push failed', {
-              duration: Infinity,
-              description:
-                result.output.trim() || 'The remote rejected the push.',
-            })
-          } else if (result.fellBack) {
-            opToast.warning(
-              'Could not push to PR branch, pushed to new branch instead'
-            )
-          } else {
-            opToast.success('Changes pushed')
-          }
-        } catch (error) {
-          opToast.error(`Push failed: ${error}`)
-        }
-      }
-
-      if (pushNeedsRemotePicker(worktree?.pr_number)) {
-        pickRemoteOrRun(runPush)
-      } else {
-        runPush()
-      }
-    },
-    [pickRemoteOrRun, worktree, worktreePath, project]
-  )
 
   // Display preference of this client, not of the worktree's server
   const { data: localPreferences } = usePreferences(LOCAL_SERVER_ID)
-  const gitSyncButton = localPreferences?.git_sync_button ?? true
 
   const handleSync = useCallback(
     (e: React.MouseEvent) => {
@@ -1165,9 +1100,6 @@ export function SessionChatModal({
                       diffRemoved={uncommittedRemoved}
                       branchDiffAdded={isBase ? 0 : branchDiffAdded}
                       branchDiffRemoved={isBase ? 0 : branchDiffRemoved}
-                      syncMode={gitSyncButton}
-                      onPull={handlePull}
-                      onPush={handlePush}
                       onSync={handleSync}
                       onDiffClick={handleUncommittedDiffClick}
                       onBranchDiffClick={handleBranchDiffClick}
@@ -1413,17 +1345,6 @@ export function SessionChatModal({
                           </div>
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-64">
-                          <SessionStatusMenu
-                            statusOverride={card.statusOverride}
-                            automaticStatus={card.automaticStatus}
-                            onSetStatusOverride={(
-                              next: ManualSessionStatus | null
-                            ) => {
-                              useChatStore
-                                .getState()
-                                .setSessionStatusOverride(session.id, next)
-                            }}
-                          />
                           <ContextMenuItem
                             onSelect={() =>
                               handleStartRename(session.id, session.name)
@@ -1483,13 +1404,6 @@ export function SessionChatModal({
                               Reconnect
                             </ContextMenuItem>
                           )}
-                          <ContextMenuSeparator />
-                          <ContextMenuItem
-                            onSelect={() => handleArchiveSession(session.id)}
-                          >
-                            <Archive className="mr-2 h-4 w-4" />
-                            Archive Session
-                          </ContextMenuItem>
                           <ContextMenuItem
                             onSelect={() => {
                               void copyToClipboard(session.id)
@@ -1504,8 +1418,14 @@ export function SessionChatModal({
                           </ContextMenuItem>
                           <ContextMenuSeparator />
                           <ContextMenuItem
+                            onSelect={() => removeSessionTab(session, true)}
+                          >
+                            <Archive className="mr-2 h-4 w-4" />
+                            Archive Session
+                          </ContextMenuItem>
+                          <ContextMenuItem
                             variant="destructive"
-                            onSelect={() => handleDeleteSession(session.id)}
+                            onSelect={() => removeSessionTab(session)}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete Session

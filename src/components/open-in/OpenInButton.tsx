@@ -7,7 +7,8 @@ import {
   ChevronDown,
   Settings,
 } from '@/components/icons/reicon'
-import { Button } from '@/components/ui/button'
+import { Button, edgePrimary, raised } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -119,7 +120,13 @@ export function OpenInButton({
 
   return (
     <div
-      className={`hidden h-7 items-center rounded-md border border-primary bg-primary sm:inline-flex dark:border-border/50 dark:bg-muted/50 ${className ?? ''}`}
+      className={cn(
+        'hidden h-7 items-center rounded-md border border-primary bg-primary sm:inline-flex dark:border-border/50 dark:bg-muted/50',
+        raised,
+        edgePrimary,
+        'dark:[--btn-edge:color-mix(in_oklab,var(--foreground)_12%,transparent)]',
+        className
+      )}
     >
       <Tooltip>
         <TooltipTrigger asChild>

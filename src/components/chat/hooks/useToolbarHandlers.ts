@@ -96,7 +96,7 @@ export function useToolbarHandlers({
           : undefined) ??
         session?.selected_execution_mode ??
         preferences?.default_execution_mode ??
-        'plan'
+        'yolo'
       const nextExecutionMode = normalizeExecutionModeForBackend(
         backend,
         currentMode
@@ -258,11 +258,7 @@ export function useToolbarHandlers({
           chatQueryKeys.session(activeSessionId),
           (old: Session | null | undefined) =>
             old
-              ? applySessionSettingToSession(
-                  old,
-                  'provider',
-                  provider ?? ''
-                )
+              ? applySessionSettingToSession(old, 'provider', provider ?? '')
               : old
         )
         setSessionProvider.mutate({
@@ -390,6 +386,8 @@ export function useToolbarHandlers({
             worktreePath,
             sessionId,
             selectedExecutionMode: normalizedMode,
+            selectedPermissionMode:
+              useChatStore.getState().permissionModes[sessionId],
           }).catch(() => undefined)
         }
 

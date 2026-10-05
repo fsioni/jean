@@ -1,3 +1,4 @@
+import { AcpPermissionsRequest } from './AcpPermissionsRequest'
 import {
   useCallback,
   useDeferredValue,
@@ -29,6 +30,7 @@ import { invoke } from '@/lib/transport'
 import { hydrateRunningSnapshot } from '@/lib/hydrate-running-snapshot'
 import { generateId } from '@/lib/uuid'
 import {
+  ArrowDown,
   ArrowUp,
   GitBranch,
   GitMerge,
@@ -143,6 +145,7 @@ import { ReviewMethodModal } from './ReviewMethodModal'
 import { QueuedPromptsPanel } from './QueuedPromptsPanel'
 import { useQueuedPromptActions } from './hooks/useQueuedPromptActions'
 import { FloatingButtons } from './FloatingButtons'
+import { GoalBadge } from './GoalBadge'
 import { PinnedTablesButton } from './PinnedTablesButton'
 import {
   capturePrependScrollAnchor,
@@ -1048,9 +1051,9 @@ function ChatWindowContent({
   // ChatInput notifies on mount, session change, and empty/non-empty boundary changes
   const [hasInputValue, setHasInputValue] = useState(false)
   const [steerModifierActive, setSteerModifierActive] = useState(false)
-  // Per-session execution mode (defaults to preference or 'plan' for new sessions)
+  // Per-session execution mode (defaults to preference or Full access for new sessions)
   // Uses deferredSessionId for display consistency with other content
-  const defaultExecutionMode = preferences?.default_execution_mode ?? 'plan'
+  const defaultExecutionMode = preferences?.default_execution_mode ?? 'yolo'
   const executionMode = useChatStore(state =>
     deferredSessionId
       ? (state.executionModes[deferredSessionId] ??
@@ -1586,10 +1589,8 @@ function ChatWindowContent({
             backend
           ),
           parallelExecutionPrompt:
-            preferences?.parallel_execution_prompt_enabled
-              ? (preferences.magic_prompts?.parallel_execution ??
-                DEFAULT_PARALLEL_EXECUTION_PROMPT)
-              : undefined,
+            preferences?.magic_prompts?.parallel_execution ??
+            DEFAULT_PARALLEL_EXECUTION_PROMPT,
           chromeEnabled: preferences?.chrome_enabled ?? false,
           aiLanguage: preferences?.ai_language,
         })
@@ -1721,7 +1722,7 @@ function ChatWindowContent({
     if (wasSending) await handleCancel()
   }, [activeSessionId, getMcpConfig, handleCancel, sendMessageNow])
 
-  // Shared by the goal badge on the /goal message: clear Jean's goal mirror,
+  // Used by the composer goal tab: clear Jean's goal mirror,
   // then (Claude only) clear the goal kept in the CLI session.
   const handleClearGoal = useCallback(async () => {
     if (!activeSessionId || !activeWorktreeId || !activeWorktreePath) return
@@ -2726,7 +2727,6 @@ function ChatWindowContent({
                                     areQuestionsSkipped={areQuestionsSkipped}
                                     isFindingFixed={isFindingFixed}
                                     onCopyToInput={handleCopyToInput}
-                                    onClearGoal={handleClearGoal}
                                     shouldScrollToBottom={isAtBottom}
                                     onScrollToBottomHandled={
                                       handleScrollToBottomHandled
@@ -2807,7 +2807,6 @@ function ChatWindowContent({
                                     areQuestionsSkipped={areQuestionsSkipped}
                                     isFindingFixed={isFindingFixed}
                                     onCopyToInput={handleCopyToInput}
-                                    onClearGoal={handleClearGoal}
                                     shouldScrollToBottom={isAtBottom}
                                     onScrollToBottomHandled={
                                       handleScrollToBottomHandled
@@ -2954,6 +2953,14 @@ function ChatWindowContent({
                               />
                             )}
 
+                            {activeSessionId &&
+                              (selectedBackend === 'grok' ||
+                                selectedBackend === 'kimi') && (
+                                <AcpPermissionsRequest
+                                  sessionId={activeSessionId}
+                                />
+                              )}
+
                             {activeOpencodePermissionRequest && (
                               <OpenCodePermissionsRequest
                                 request={activeOpencodePermissionRequest}
@@ -3044,7 +3051,6 @@ function ChatWindowContent({
                         showApproveButton={hasPendingPlanApproval}
                         showFindingsButton={!areFindingsVisible}
                         isAtBottom={isAtBottom || messages.length === 0}
-                        isSending={isSending}
                         approveShortcut={approveShortcut}
                         buildDefaultModelLabel={buildNewContextLabel}
                         yoloDefaultModelLabel={yoloNewContextLabel}
@@ -3091,8 +3097,14 @@ function ChatWindowContent({
                           data-chat-composer=""
                           className="pointer-events-auto relative sm:mx-auto sm:mb-3 sm:max-w-3xl xl:max-w-4xl"
                         >
-                          {/* Hidden history and pinned tables tabs - attached to the top edge of the composer */}
+                          {/* Goal, hidden history, pinned tables, and scroll-to-bottom tabs - attached to the top edge of the composer */}
                           <div className="absolute right-3 bottom-full flex items-end gap-1">
+                            {!zenMode && (
+                              <GoalBadge
+                                sessionId={activeSessionId}
+                                onClearGoal={handleClearGoal}
+                              />
+                            )}
                             {preferences?.compact_chat_view_enabled &&
                               !zenMode &&
                               !isCompactHistoryExpanded &&
@@ -3114,6 +3126,27 @@ function ChatWindowContent({
                               sessionId={activeSessionId}
                               onShowInChat={handleShowTableInChat}
                             />
+                            {!isAtBottom && messages.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => scrollToBottom(true)}
+                                aria-label="Scroll to bottom"
+                                title="Scroll to bottom"
+                                className="relative flex h-6 items-center gap-1 rounded-t-md border border-b-0 border-border bg-card px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              >
+                                <ArrowDown className="h-3.5 w-3.5" />
+                                <span>Bottom</span>
+                                {isSending && (
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute -top-0.5 -right-0.5 flex h-2 w-2"
+                                  >
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                                  </span>
+                                )}
+                              </button>
+                            )}
                           </div>
                           {/* Subagents panel - separate section above the chat input */}
                           {!zenMode &&

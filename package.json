@@ -1,7 +1,7 @@
 {
   "name": "jean",
   "private": true,
-  "version": "1.0.8",
+  "version": "1.0.9",
   "type": "module",
   "author": "Andras Bacsai",
   "copyright": "Copyright © 2025 Andras Bacsai. All rights reserved.",
@@ -36,6 +36,7 @@
     "install:local:foreground": "bun scripts/install-local-macos.mjs --foreground",
     "test:install-local": "node --test scripts/install-local-macos.test.mjs",
     "install:local:server": "bun scripts/install-local-server.mjs",
+    "install:local:dev": "JEAN_SERVER_INSTALL_PATH=/usr/local/bin/jean-server-dev JEAN_SERVER_SERVICE=jean-dev.service bun scripts/install-local-server.mjs",
     "install:local:server:foreground": "bun scripts/install-local-server.mjs --foreground",
     "test:install-local-server": "node --test scripts/install-local-server.test.mjs",
     "test:install-jean-server": "node --test scripts/install-jean-server.test.mjs",

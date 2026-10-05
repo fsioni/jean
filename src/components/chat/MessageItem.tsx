@@ -68,8 +68,6 @@ import {
 import { MessageSettingsBadges } from '@/components/chat/MessageSettingsBadges'
 import type { ApprovalModelOverride } from './ApprovalModelSubmenu'
 import { useUIStore } from '@/store/ui-store'
-import { GoalBadge } from './GoalBadge'
-import { getGoalObjective } from './goal-utils'
 
 interface MessageItemProps {
   /** The message to render */
@@ -159,8 +157,6 @@ interface MessageItemProps {
   isFindingFixed: (sessionId: string, key: string) => boolean
   /** Callback to copy a user message back to the input field */
   onCopyToInput?: (message: ChatMessage) => void
-  /** Clear the session's active goal (goal badge on the /goal message) */
-  onClearGoal?: () => Promise<void>
   /** Hide approve buttons (e.g. for Codex which has no native approval flow) */
   hideApproveButtons?: boolean
   /** Hide the built-in cancelled marker when a parent compact row renders it externally */
@@ -207,7 +203,6 @@ export const MessageItem = memo(function MessageItem({
   areQuestionsSkipped,
   isFindingFixed,
   onCopyToInput,
-  onClearGoal,
   hideApproveButtons,
   hideCancelledIndicator,
   hideEditedFiles = false,
@@ -233,10 +228,6 @@ export const MessageItem = memo(function MessageItem({
     message.role === 'user' ? extractSkillPaths(message.content) : []
   const displayContent =
     message.role === 'user' ? stripAllMarkers(message.content) : message.content
-  const goalObjective =
-    message.role === 'user' && onClearGoal
-      ? getGoalObjective(displayContent)
-      : null
   const assistantResponse =
     message.role === 'assistant'
       ? message.content.trim() ||
@@ -939,15 +930,8 @@ export const MessageItem = memo(function MessageItem({
             )}
           </div>
           {/* Actions under the prompt (restore only after finished turns with file edits) */}
-          {!zenMode && (showTurnRestore || onCopyToInput || goalObjective) && (
+          {!zenMode && (showTurnRestore || onCopyToInput) && (
             <div className="flex shrink-0 items-center gap-1 pr-0.5">
-              {goalObjective && onClearGoal && (
-                <GoalBadge
-                  sessionId={sessionId}
-                  objective={goalObjective}
-                  onClearGoal={onClearGoal}
-                />
-              )}
               {showTurnRestore && (
                 <CheckpointTurnRestoreButton
                   userMessageId={message.id}

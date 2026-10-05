@@ -24,9 +24,9 @@ Always use ASD-STE100 Simplified Technical English when you talk to me.\n\
 ### 1. Planning Guidance\n\
 - For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.\n\
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing\n\
-- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.\n\
+- Use plan mode for verification steps when the current execution mode is plan; in build/full access, verify directly after implementing.\n\
 - Write detailed specs upfront to reduce ambiguity\n\
-- Keep plans concise but complete enough for zero-context handoff (YOLO/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.\n\
+- Keep plans concise but complete enough for zero-context handoff (Full access/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.\n\
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex `<proposed_plan>` / collaboration Plan mode, Cursor/OpenCode equivalent), not plain text only.\n\
 - For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/`--print` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.\n\
 - For Codex specifically, when the current execution mode is plan: do not write plan files or code; when the plan is ready wrap it in `<proposed_plan>...</proposed_plan>` so Jean can show the approval UI. Do not use the `update_plan` checklist tool in plan mode.\n\
@@ -91,6 +91,7 @@ Always use ASD-STE100 Simplified Technical English when you talk to me.\n\
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.\n\
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.\n\
 - **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, or other external resources, include clickable links when available so users can open them directly.\n\
+- **Tables for Findings**: When you report found issues, gaps, risks, or recommended fixes, present them in a Markdown table (for example: | # | Finding | Location | Impact | Recommended fix |) instead of long prose lists.\n\
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.\n\
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.\n\
 \n\
@@ -114,7 +115,7 @@ Always use ASD-STE100 Simplified Technical English when you talk to me.\n\
 
 fn execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'static str> {
     match execution_mode.unwrap_or("plan") {
-        "build" => Some(
+        "build" | "auto" | "supervised" => Some(
             "You are in BUILD MODE. Start implementing immediately. \
              Do NOT enter plan mode and do NOT use ExitPlanMode unless the user explicitly asks \
              for a new plan. If a required decision is missing, use AskUserQuestion instead of \
@@ -122,7 +123,7 @@ fn execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'static s
              numbered list of options and have the user reply with a number.",
         ),
         "yolo" => Some(
-            "You are in YOLO EXECUTION MODE. Start implementing immediately. \
+            "You are in FULL ACCESS MODE. Start implementing immediately. \
              Do NOT enter plan mode and do NOT use ExitPlanMode unless the user explicitly asks \
              for a new plan. Do not ask for confirmation before routine implementation steps. \
              If a required decision is missing, use AskUserQuestion instead of ExitPlanMode; \
@@ -431,7 +432,9 @@ fn split_fast_model(model: &str) -> (&str, bool) {
 
 fn claude_permission_mode(execution_mode: Option<&str>) -> &'static str {
     match execution_mode.unwrap_or("plan") {
+        "supervised" => "default",
         "build" => "acceptEdits",
+        "auto" => "auto",
         "yolo" => "bypassPermissions",
         _ => "plan",
     }
@@ -773,7 +776,10 @@ fn build_claude_args(
 
     // In build/yolo, remove ExitPlanMode entirely so Claude can't loop back
     // into plan-approval after the user already approved one.
-    if matches!(execution_mode.unwrap_or("plan"), "build" | "yolo") {
+    if matches!(
+        execution_mode.unwrap_or("plan"),
+        "build" | "yolo" | "auto" | "supervised"
+    ) {
         args.push("--disallowedTools".to_string());
         args.push("ExitPlanMode".to_string());
     }
@@ -3224,6 +3230,8 @@ mod tests {
     #[test]
     fn permission_modes_by_execution_mode() {
         assert_eq!(claude_permission_mode(Some("yolo")), "bypassPermissions");
+        assert_eq!(claude_permission_mode(Some("supervised")), "default");
+        assert_eq!(claude_permission_mode(Some("auto")), "auto");
         assert_eq!(claude_permission_mode(Some("build")), "acceptEdits");
         assert_eq!(claude_permission_mode(Some("plan")), "plan");
         assert_eq!(claude_permission_mode(None), "plan");

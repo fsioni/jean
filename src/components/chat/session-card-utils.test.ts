@@ -247,6 +247,25 @@ describe('computeSessionCardData', () => {
     }
   }
 
+  it.each(['supervised', 'auto'] as const)(
+    'shows %s turns as running Build work',
+    mode => {
+      const session = createBaseSession({ selected_execution_mode: mode })
+      const state = createBaseStoreState({
+        sendingSessionIds: { 'session-1': true },
+        executionModes: { 'session-1': mode },
+      })
+      expect(computeSessionCardData(session, state).status).toBe('vibing')
+      const restored = createBaseSession({
+        last_run_status: 'running',
+        last_run_execution_mode: mode,
+      })
+      expect(
+        computeSessionCardData(restored, createBaseStoreState()).status
+      ).toBe('vibing')
+    }
+  )
+
   it('reuses a card when unrelated session state changes', () => {
     const session = createBaseSession()
     const cache = createSessionCardDataCache()

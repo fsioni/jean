@@ -73,16 +73,11 @@ fn build_system_prompt_parts(
         .unwrap_or_else(crate::default_global_system_prompt);
     parts.push(global_prompt);
 
-    if prefs
+    let parallel_prompt = prefs
         .as_ref()
-        .is_some_and(|prefs| prefs.parallel_execution_prompt_enabled)
-    {
-        let parallel_prompt = prefs
-            .as_ref()
-            .and_then(|prefs| trimmed_non_empty(prefs.magic_prompts.parallel_execution.as_deref()))
-            .unwrap_or_else(crate::default_parallel_execution_prompt);
-        parts.push(parallel_prompt);
-    }
+        .and_then(|prefs| trimmed_non_empty(prefs.magic_prompts.parallel_execution.as_deref()))
+        .unwrap_or_else(crate::default_parallel_execution_prompt);
+    parts.push(parallel_prompt);
 
     if let Ok(data) = load_projects_data(app) {
         if let Some(worktree) = data.find_worktree(worktree_id) {

@@ -10,6 +10,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Loader2, Plus, RefreshCw, Sparkles } from '@/components/icons/reicon'
 import { Kbd } from '@/components/ui/kbd'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isNativeApp } from '@/lib/environment'
 import {
@@ -77,6 +82,10 @@ export function ContextMentionPopover({
   const queryClient = useQueryClient()
   const isMobile = useIsMobile()
   const showKeyboardHints = isNativeApp() && !isMobile
+  const actionButtonClass = cn(
+    'flex min-h-8 items-center gap-1 rounded hover:bg-muted',
+    isMobile ? 'min-w-8 justify-center' : 'px-1.5'
+  )
   const [includeClosed, setIncludeClosed] = useState(false)
   const [menuSearch, setMenuSearch] = useState('')
   const [issueLimit, setIssueLimit] = useState(8)
@@ -320,36 +329,50 @@ export function ContextMentionPopover({
                         )}
                         {(item.type === 'issue' || item.type === 'pr') && (
                           <span className="flex shrink-0 items-center gap-1">
-                            <button
-                              type="button"
-                              aria-label={`Add ${item.label} to session context`}
-                              title={`Add ${item.label} to session context`}
-                              className="flex min-h-8 items-center gap-1 rounded px-1.5 hover:bg-muted"
-                              onClick={event => {
-                                event.stopPropagation()
-                                handleSelect(item)
-                              }}
-                            >
-                              <Plus className="size-3.5" />
-                              {showKeyboardHints && isSelected && (
-                                <Kbd>Enter</Kbd>
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Add ${item.label} and start investigating`}
-                              title={`Add ${item.label} and start investigating`}
-                              className="flex min-h-8 items-center gap-1 rounded px-1.5 hover:bg-muted"
-                              onClick={event => {
-                                event.stopPropagation()
-                                handleSelect(item, true)
-                              }}
-                            >
-                              <Sparkles className="size-3.5" />
-                              {showKeyboardHints && isSelected && (
-                                <Kbd>Shift+Enter</Kbd>
-                              )}
-                            </button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  aria-label={`Add ${item.label} to session context`}
+                                  className={actionButtonClass}
+                                  onClick={event => {
+                                    event.stopPropagation()
+                                    handleSelect(item)
+                                  }}
+                                >
+                                  <Plus className="size-3.5" />
+                                  {!isMobile && <span>Attach</span>}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent className="flex items-center gap-2">
+                                Add {item.label} to session context
+                                {showKeyboardHints && isSelected && (
+                                  <Kbd>Enter</Kbd>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  aria-label={`Add ${item.label} and start investigating`}
+                                  className={actionButtonClass}
+                                  onClick={event => {
+                                    event.stopPropagation()
+                                    handleSelect(item, true)
+                                  }}
+                                >
+                                  <Sparkles className="size-3.5" />
+                                  {!isMobile && <span>Investigate</span>}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent className="flex items-center gap-2">
+                                Add {item.label} and start investigating
+                                {showKeyboardHints && isSelected && (
+                                  <Kbd>Shift+Enter</Kbd>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
                           </span>
                         )}
                       </CommandItem>

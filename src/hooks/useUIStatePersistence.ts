@@ -946,17 +946,6 @@ export function useUIStatePersistence() {
       .getState()
       .setPinnedRecentSessionIds(uiState.pinned_recent_session_ids ?? [])
 
-    const githubDashboardFavoriteProjectIds =
-      uiState.github_dashboard_favorite_project_ids ?? []
-    if (githubDashboardFavoriteProjectIds.length > 0) {
-      logger.debug('Restoring GitHub dashboard favorite projects', {
-        count: githubDashboardFavoriteProjectIds.length,
-      })
-      useProjectsStore
-        .getState()
-        .setGitHubDashboardFavoriteProjectIds(githubDashboardFavoriteProjectIds)
-    }
-
     const seenFailedWorkflowRunIds = uiState.seen_failed_workflow_run_ids ?? []
     if (seenFailedWorkflowRunIds.length > 0) {
       logger.debug('Restoring seen failed workflow run IDs', {

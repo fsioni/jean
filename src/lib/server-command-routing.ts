@@ -287,7 +287,11 @@ export function decorateServerResult<T>(
   if (command === 'list_archived_sessions' && Array.isArray(value)) {
     return value.map(item => decorateSession(serverId, item)) as T
   }
-  if (command === 'list_all_sessions' && value && typeof value === 'object') {
+  if (
+    (command === 'list_all_sessions' || command === 'list_unread_sessions') &&
+    value &&
+    typeof value === 'object'
+  ) {
     const response = value as Record<string, unknown>
     return {
       ...response,

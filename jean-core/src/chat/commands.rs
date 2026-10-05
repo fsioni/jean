@@ -55,6 +55,7 @@ const CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT: &str = "\
 
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.
 - **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, or other external resources, include clickable links when available so users can open them directly.
+- **Tables for Findings**: When you report found issues, gaps, risks, or recommended fixes, present them in a Markdown table (for example: | # | Finding | Location | Impact | Recommended fix |) instead of long prose lists.
 - After each finished task, please write a few bullet points on how to test the changes.
 - When multiple independent operations are needed, batch them into parallel tool calls. Launch independent Task subagents simultaneously rather than sequentially.
 - When specifying subagent_type for Task tool calls, always use the fully qualified name exactly as listed in the system prompt (e.g., \"code-simplifier:code-simplifier\", not just \"code-simplifier\"). If the agent type contains a colon, include the full namespace:name string.
@@ -82,7 +83,7 @@ const CODEX_DEFAULT_PLAN_MODE_PROMPT: &str = "\
 - If questions block the plan, prefer Codex `request_user_input`; after the user answers, emit a revised complete `<proposed_plan>` block with the **full revised plan**, not only short step titles.
 - Do not call implementation tools or make file changes until the user approves the plan.
 
-### Plan quality (required for YOLO/Build handoff)
+### Plan quality (required for Full access/Build handoff)
 
 Jean may hand this plan to a zero-context agent in a new worktree. Status lines like \"Plan created and ready for approval.\" are not a plan.
 
@@ -157,7 +158,7 @@ fn clear_stale_pending_cancel_before_send(session_id: &str) {
 
 fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'static str> {
     match execution_mode.unwrap_or("plan") {
-        "build" => Some(
+        "build" | "supervised" | "auto" => Some(
             "You are in BUILD MODE. Start implementing immediately. \
              This current BUILD MODE instruction supersedes any earlier plan-mode \
              instructions remembered from conversation history; treat the approved plan \
@@ -167,8 +168,8 @@ fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'st
              request_user_input instead of switching back to plan mode.",
         ),
         "yolo" => Some(
-            "You are in YOLO EXECUTION MODE. Start implementing immediately. \
-             This current YOLO EXECUTION MODE instruction supersedes any earlier plan-mode \
+            "You are in FULL ACCESS MODE. Start implementing immediately. \
+             This current FULL ACCESS MODE instruction supersedes any earlier plan-mode \
              instructions remembered from conversation history; treat the approved plan \
              as authorization to implement now. \
              Do NOT emit <proposed_plan> blocks or wait for plan approval unless the user \
@@ -182,7 +183,7 @@ fn codex_execution_mode_instruction(execution_mode: Option<&str>) -> Option<&'st
 
 fn codex_default_global_system_prompt(execution_mode: Option<&str>) -> String {
     match execution_mode.unwrap_or("plan") {
-        "build" | "yolo" => CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT.to_string(),
+        "build" | "yolo" | "supervised" | "auto" => CODEX_DEFAULT_NOT_PLAN_MODE_PROMPT.to_string(),
         _ => CODEX_DEFAULT_PLAN_MODE_PROMPT.to_string(),
     }
 }
@@ -436,13 +437,38 @@ fn resolve_send_model(
         .or_else(|| normalize_optional_string(backend_default_model))
 }
 
-/// Resolve execution mode for a send: explicit override → session selection.
+fn validate_execution_policy(mode: &str, backend: &Backend) -> Result<(), String> {
+    let supported = match mode {
+        "plan" | "yolo" => true,
+        "build" => *backend != Backend::Cursor,
+        "supervised" => matches!(
+            backend,
+            Backend::Claude | Backend::Codex | Backend::Opencode | Backend::Grok | Backend::Kimi
+        ),
+        "auto" => matches!(
+            backend,
+            Backend::Claude | Backend::Codex | Backend::Grok | Backend::Kimi
+        ),
+        _ => false,
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(format!("Permission policy '{mode}' is not supported by this backend. Select Plan or a supported permission policy."))
+    }
+}
+
+/// Resolve execution mode for a send: explicit override → session selection →
+/// preferences default. The UI toolbar shows the preferences default for
+/// sessions without a selection (e.g. created via MCP), so the run must match.
 fn resolve_send_execution_mode(
     explicit_mode: Option<String>,
     session_selected_mode: Option<String>,
+    default_mode: Option<String>,
 ) -> Option<String> {
     normalize_optional_string(explicit_mode)
         .or_else(|| normalize_optional_string(session_selected_mode))
+        .or_else(|| normalize_optional_string(default_mode))
 }
 
 fn build_kimi_system_prompt(
@@ -636,6 +662,7 @@ pub async fn list_sessions_summary(
                 "selectedModel": session.selected_model,
                 "selectedProvider": session.selected_provider,
                 "selectedExecutionMode": session.selected_execution_mode,
+                "selectedPermissionMode": session.selected_permission_mode,
                 "createdAt": session.created_at,
                 "updatedAt": session.updated_at,
                 "lastMessageAt": session.last_message_at,
@@ -685,6 +712,7 @@ pub async fn get_session_status(
         "selectedModel": metadata.selected_model,
         "selectedProvider": metadata.selected_provider,
         "selectedExecutionMode": metadata.selected_execution_mode,
+        "selectedPermissionMode": metadata.selected_permission_mode,
         "waitingForInput": metadata.waiting_for_input,
         "waitingForInputType": metadata.waiting_for_input_type,
         "latestRun": latest_run.map(|run| serde_json::json!({
@@ -762,68 +790,124 @@ pub async fn get_unread_session_count(app: AppHandle) -> Result<usize, String> {
             .into_iter()
             .filter(|worktree| worktree.archived_at.is_none())
         {
-            let index = load_index(&app, &worktree.id)?;
-            let mut legacy_summaries = HashMap::new();
-
-            for entry in &index.sessions {
-                if entry.archived_at.is_some() {
-                    continue;
-                }
-
-                let summary = if let Some(summary) = &entry.unread_summary {
-                    summary.clone()
-                } else {
-                    // Older indexes do not contain summaries. Read each legacy
-                    // metadata file once, then persist the compact result so
-                    // future count checks stay index-only.
-                    match load_metadata(&app, &entry.id) {
-                        Ok(Some(metadata)) => {
-                            let summary = metadata.to_unread_summary();
-                            legacy_summaries.insert(entry.id.clone(), summary.clone());
-                            summary
-                        }
-                        Ok(None) => {
-                            let summary = SessionUnreadSummary::default();
-                            legacy_summaries.insert(entry.id.clone(), summary.clone());
-                            summary
-                        }
-                        Err(error) => {
-                            log::warn!(
-                                "Failed to load legacy unread metadata for session {}: {error}",
-                                entry.id
-                            );
-                            continue;
-                        }
-                    }
-                };
-
-                if summary.is_unread() {
-                    unread_count += 1;
-                }
-            }
-
-            if !legacy_summaries.is_empty() {
-                let migration_result = with_index_mut(&app, &worktree.id, |index| {
-                    for (session_id, summary) in &legacy_summaries {
-                        if let Some(entry) = index.find_session_mut(session_id) {
-                            if entry.unread_summary.is_none() {
-                                entry.unread_summary = Some(summary.clone());
-                            }
-                        }
-                    }
-                    Ok(())
-                });
-                if let Err(error) = migration_result {
-                    log::warn!(
-                        "Failed to persist unread index migration for worktree {}: {error}",
-                        worktree.id
-                    );
-                }
-            }
+            unread_count += unread_session_ids_for_worktree(&app, &worktree.id)?.len();
         }
     }
 
     Ok(unread_count)
+}
+
+/// List only unread sessions across all projects, grouped like `list_all_sessions`.
+///
+/// The finished-session popover needs session objects, but only for unread
+/// sessions. Filtering on the index summaries first avoids reading the
+/// metadata file of every session in every worktree.
+pub async fn list_unread_sessions(app: AppHandle) -> Result<AllSessionsResponse, String> {
+    log::trace!("Listing unread sessions across all worktrees");
+
+    let projects_data = load_projects_data(&app)?;
+    let mut entries = Vec::new();
+
+    for project in &projects_data.projects {
+        for worktree in projects_data
+            .worktrees_for_project(&project.id)
+            .into_iter()
+            .filter(|worktree| worktree.archived_at.is_none())
+        {
+            let sessions: Vec<Session> = unread_session_ids_for_worktree(&app, &worktree.id)?
+                .iter()
+                .filter_map(|session_id| match load_metadata(&app, session_id) {
+                    Ok(Some(metadata)) => Some(metadata.to_session()),
+                    Ok(None) => None,
+                    Err(error) => {
+                        log::warn!("Failed to load unread session {session_id}: {error}");
+                        None
+                    }
+                })
+                .filter(is_unread_session)
+                .collect();
+
+            if !sessions.is_empty() {
+                entries.push(AllSessionsEntry {
+                    project_id: project.id.clone(),
+                    project_name: project.name.clone(),
+                    worktree_id: worktree.id.clone(),
+                    worktree_name: worktree.name.clone(),
+                    worktree_path: worktree.path.clone(),
+                    sessions,
+                });
+            }
+        }
+    }
+
+    Ok(AllSessionsResponse { entries })
+}
+
+/// Return the ids of unread sessions in one worktree, using index summaries.
+fn unread_session_ids_for_worktree(
+    app: &AppHandle,
+    worktree_id: &str,
+) -> Result<Vec<String>, String> {
+    let index = load_index(app, worktree_id)?;
+    let mut legacy_summaries = HashMap::new();
+    let mut unread_ids = Vec::new();
+
+    for entry in &index.sessions {
+        if entry.archived_at.is_some() {
+            continue;
+        }
+
+        let summary = if let Some(summary) = &entry.unread_summary {
+            summary.clone()
+        } else {
+            // Older indexes do not contain summaries. Read each legacy
+            // metadata file once, then persist the compact result so
+            // future unread checks stay index-only.
+            match load_metadata(app, &entry.id) {
+                Ok(Some(metadata)) => {
+                    let summary = metadata.to_unread_summary();
+                    legacy_summaries.insert(entry.id.clone(), summary.clone());
+                    summary
+                }
+                Ok(None) => {
+                    let summary = SessionUnreadSummary::default();
+                    legacy_summaries.insert(entry.id.clone(), summary.clone());
+                    summary
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Failed to load legacy unread metadata for session {}: {error}",
+                        entry.id
+                    );
+                    continue;
+                }
+            }
+        };
+
+        if summary.is_unread() {
+            unread_ids.push(entry.id.clone());
+        }
+    }
+
+    if !legacy_summaries.is_empty() {
+        let migration_result = with_index_mut(app, worktree_id, |index| {
+            for (session_id, summary) in &legacy_summaries {
+                if let Some(entry) = index.find_session_mut(session_id) {
+                    if entry.unread_summary.is_none() {
+                        entry.unread_summary = Some(summary.clone());
+                    }
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = migration_result {
+            log::warn!(
+                "Failed to persist unread index migration for worktree {worktree_id}: {error}"
+            );
+        }
+    }
+
+    Ok(unread_ids)
 }
 
 fn is_unread_session(session: &Session) -> bool {
@@ -1015,6 +1099,19 @@ pub async fn create_session(
             sessions.sessions.len() as u32,
             backend_enum.clone(),
         );
+        let default_policy = preferences
+            .as_ref()
+            .map(|prefs| prefs.default_execution_mode.clone())
+            .unwrap_or_else(|| "yolo".to_string());
+        let policy = if validate_execution_policy(&default_policy, &backend_enum).is_ok() {
+            default_policy
+        } else {
+            "plan".to_string()
+        };
+        session.set_execution_policy(Some(policy));
+        if session.selected_permission_mode.is_none() {
+            session.selected_permission_mode = Some("yolo".to_string());
+        }
         session.primary_surface = primary_surface.clone();
         session.terminal_command = terminal_command.clone();
         session.terminal_command_args = terminal_command_args.clone().unwrap_or_default();
@@ -1241,18 +1338,12 @@ async fn queued_message_to_send_request(
         })
     });
     let parallel_execution_prompt = json_string(queued, "parallelExecutionPrompt").or_else(|| {
-        prefs.as_ref().and_then(|p| {
-            if p.parallel_execution_prompt_enabled {
-                Some(
-                    p.magic_prompts
-                        .parallel_execution
-                        .clone()
-                        .unwrap_or_else(|| DEFAULT_PARALLEL_EXECUTION_PROMPT.to_string()),
-                )
-            } else {
-                None
-            }
-        })
+        Some(
+            prefs
+                .as_ref()
+                .and_then(|p| p.magic_prompts.parallel_execution.clone())
+                .unwrap_or_else(|| DEFAULT_PARALLEL_EXECUTION_PROMPT.to_string()),
+        )
     });
     let ai_language = json_string(queued, "aiLanguage").or_else(|| {
         prefs
@@ -1685,11 +1776,21 @@ pub async fn update_session_state(
     selected_execution_mode: Option<Option<String>>,
     table_checked_rows: Option<std::collections::HashMap<String, Vec<u32>>>,
     pinned_tables: Option<Vec<super::types::PinnedTable>>,
+    selected_permission_mode: Option<String>,
 ) -> Result<(), String> {
     log::trace!("Updating session state for: {session_id}");
+    if let Some(mode) = selected_permission_mode.as_deref() {
+        if !matches!(mode, "supervised" | "build" | "auto" | "yolo") {
+            return Err(format!("Unsupported permission policy: {mode}"));
+        }
+    }
+    let permission_setting = selected_permission_mode.clone();
 
     with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
         if let Some(session) = sessions.find_session_mut(&session_id) {
+            if let Some(Some(mode)) = selected_execution_mode.as_ref() {
+                validate_execution_policy(mode, &session.backend)?;
+            }
             if let Some(v) = answered_questions {
                 session.answered_questions = v;
             }
@@ -1788,7 +1889,10 @@ pub async fn update_session_state(
                     &session_id,
                     v.as_deref() == Some("yolo"),
                 );
-                session.selected_execution_mode = v;
+                session.set_execution_policy(v);
+            }
+            if let Some(mode) = selected_permission_mode {
+                session.selected_permission_mode = Some(mode);
             }
             if let Some(v) = table_checked_rows {
                 session.table_checked_rows = v;
@@ -1802,6 +1906,11 @@ pub async fn update_session_state(
             Ok(())
         }
     })?;
+
+    if let Some(mode) = permission_setting {
+        broadcast_session_setting(app.clone(), session_id, "permissionMode".to_string(), mode)
+            .await?;
+    }
 
     // Notify all clients (native + web access) to refetch session data.
     // This is the single cache invalidation point for session state mutations —
@@ -3006,9 +3115,13 @@ pub async fn send_chat_message(
     // the session's persisted choices so `set_session_model` / toolbar selection
     // are respected when `model` / `executionMode` are not passed on the send.
     // Explicit non-empty values remain one-shot overrides.
+    let prefs = crate::load_preferences(app.clone()).await.ok();
     let mut model = resolve_send_model(model, session_selected_model, None);
-    let execution_mode =
-        resolve_send_execution_mode(execution_mode, session_selected_execution_mode);
+    let execution_mode = resolve_send_execution_mode(
+        execution_mode,
+        session_selected_execution_mode,
+        prefs.as_ref().map(|p| p.default_execution_mode.clone()),
+    );
     let thinking_level = thinking_level.or(session_selected_thinking_level);
     let effort_level = effort_level.or(session_selected_effort_level);
     // selected_provider may be a sentinel (__anthropic__/__default__) rather than
@@ -3038,12 +3151,16 @@ pub async fn send_chat_message(
         effective_backend
     };
 
+    if let Some(mode) = execution_mode.as_deref() {
+        validate_execution_policy(mode, &effective_backend)?;
+    }
+
     // Final model fallback: preferences default for the resolved backend.
     // Covers sessions created before selected_model was persisted, or when
     // create_session could not load preferences.
     if model.is_none() {
-        if let Ok(prefs) = crate::load_preferences(app.clone()).await {
-            model = default_model_for_backend(&effective_backend, &prefs);
+        if let Some(prefs) = prefs.as_ref() {
+            model = default_model_for_backend(&effective_backend, prefs);
         }
     }
     log::info!(
@@ -3318,9 +3435,12 @@ pub async fn send_chat_message(
 
     // Recent sessions are built from run metadata. Invalidate only after the
     // run is durable so a new session's first prompt cannot race the refetch.
+    // The new running run also clears the session's finished/unread state
+    // (e.g. a queued prompt starting right after the previous run finished),
+    // so refresh the finished-sessions bell too.
     if let Err(e) = app.emit_all(
         "cache:invalidate",
-        &serde_json::json!({ "keys": ["recent-worktrees"] }),
+        &serde_json::json!({ "keys": ["recent-worktrees", "unread-sessions"] }),
     ) {
         log::error!("Failed to emit cache:invalidate for recent sessions: {e}");
     }
@@ -3393,42 +3513,27 @@ pub async fn send_chat_message(
     // Use passed parameter for Chrome browser integration (default false - beta)
     let chrome = chrome_enabled.unwrap_or(false);
 
-    // Inject web tools in plan mode if preference is enabled
+    // Always allow web tools in plan mode
     // Claude: add WebFetch/WebSearch to allowed tools
     // Codex: set search_enabled flag for --search
     let mut final_allowed_tools = allowed_tools.unwrap_or_default();
     let mut codex_search_enabled = false;
-    let mut codex_multi_agent_enabled = false;
-    let mut codex_max_agent_threads: Option<u32> = None;
     if execution_mode.as_deref() == Some("plan") {
-        if let Ok(prefs) = crate::load_preferences(app.clone()).await {
-            if prefs.allow_web_tools_in_plan_mode {
-                match effective_backend {
-                    Backend::Claude => {
-                        final_allowed_tools.push("WebFetch".to_string());
-                        final_allowed_tools.push("WebSearch".to_string());
-                    }
-                    Backend::Codex => {
-                        codex_search_enabled = true;
-                    }
-                    Backend::Opencode => {}
-                    Backend::Cursor => {}
-                    Backend::Pi => {}
-                    Backend::Commandcode => {}
-                    Backend::Grok => {}
-                    Backend::Kimi => {}
-                    Backend::Antigravity => {}
-                }
+        match effective_backend {
+            Backend::Claude => {
+                final_allowed_tools.push("WebFetch".to_string());
+                final_allowed_tools.push("WebSearch".to_string());
             }
-        }
-    }
-    // Read Codex multi-agent preferences
-    if effective_backend == Backend::Codex {
-        if let Ok(prefs) = crate::load_preferences(app.clone()).await {
-            codex_multi_agent_enabled = prefs.codex_multi_agent_enabled;
-            if codex_multi_agent_enabled {
-                codex_max_agent_threads = Some(prefs.codex_max_agent_threads.clamp(1, 8));
+            Backend::Codex => {
+                codex_search_enabled = true;
             }
+            Backend::Opencode => {}
+            Backend::Cursor => {}
+            Backend::Pi => {}
+            Backend::Commandcode => {}
+            Backend::Grok => {}
+            Backend::Kimi => {}
+            Backend::Antigravity => {}
         }
     }
     let allowed_tools_for_cli = if final_allowed_tools.is_empty() {
@@ -3511,8 +3616,6 @@ pub async fn send_chat_message(
     let thread_backend = effective_backend.clone();
     let thread_include_recap = include_recap.unwrap_or(true);
     let thread_codex_search = codex_search_enabled;
-    let thread_codex_multi_agent = codex_multi_agent_enabled;
-    let thread_codex_max_threads = codex_max_agent_threads;
 
     // For OpenCode sessions: create a cancel flag so we can signal the blocking HTTP thread.
     // Register it before spawning so cancel_process can find it immediately.
@@ -4138,8 +4241,6 @@ pub async fn send_chat_message(
                     &codex_add_dirs,
                     &thread_message,
                     codex_base_instructions_content.as_deref(),
-                    thread_codex_multi_agent,
-                    thread_codex_max_threads,
                     thread_codex_provider.as_ref(),
                 ) {
                     Ok(response) => Ok((
@@ -5851,13 +5952,17 @@ pub async fn set_session_execution_mode(
     session_id: String,
     execution_mode: String,
 ) -> Result<(), String> {
-    if !matches!(execution_mode.as_str(), "plan" | "build" | "yolo") {
+    if !matches!(
+        execution_mode.as_str(),
+        "plan" | "build" | "yolo" | "supervised" | "auto"
+    ) {
         return Err(format!("Unsupported execution mode: {execution_mode}"));
     }
 
     with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
         if let Some(session) = sessions.find_session_mut(&session_id) {
-            session.selected_execution_mode = Some(execution_mode);
+            validate_execution_policy(&execution_mode, &session.backend)?;
+            session.set_execution_policy(Some(execution_mode));
             Ok(())
         } else {
             Err(format!("Session not found: {session_id}"))
@@ -10452,6 +10557,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn permission_policy_capabilities_never_escalate_unknown_modes() {
+        for backend in [
+            Backend::Claude,
+            Backend::Codex,
+            Backend::Opencode,
+            Backend::Cursor,
+            Backend::Pi,
+            Backend::Commandcode,
+            Backend::Grok,
+            Backend::Kimi,
+            Backend::Antigravity,
+        ] {
+            assert!(validate_execution_policy("plan", &backend).is_ok());
+            assert!(validate_execution_policy("yolo", &backend).is_ok());
+            assert!(validate_execution_policy("unknown", &backend).is_err());
+            assert_eq!(
+                validate_execution_policy("auto", &backend).is_ok(),
+                matches!(
+                    backend,
+                    Backend::Claude | Backend::Codex | Backend::Grok | Backend::Kimi
+                )
+            );
+            assert_eq!(
+                validate_execution_policy("supervised", &backend).is_ok(),
+                matches!(
+                    backend,
+                    Backend::Claude
+                        | Backend::Codex
+                        | Backend::Opencode
+                        | Backend::Grok
+                        | Backend::Kimi
+                )
+            );
+        }
+        assert!(validate_execution_policy("build", &Backend::Cursor).is_err());
+    }
+
+    #[test]
     fn resumed_grok_host_error_uses_chat_error_event() {
         let (event_name, event) =
             resumed_tail_error_event("session-1", "worktree-1", "rate limit reached");
@@ -11122,16 +11265,25 @@ mod tests {
     #[test]
     fn resolve_send_execution_mode_falls_back_to_session() {
         assert_eq!(
-            resolve_send_execution_mode(Some("yolo".to_string()), Some("plan".to_string())),
+            resolve_send_execution_mode(Some("yolo".to_string()), Some("plan".to_string()), None),
             Some("yolo".to_string())
         );
         assert_eq!(
-            resolve_send_execution_mode(None, Some("build".to_string())),
+            resolve_send_execution_mode(None, Some("build".to_string()), None),
             Some("build".to_string())
         );
         assert_eq!(
-            resolve_send_execution_mode(Some("".to_string()), Some("plan".to_string())),
+            resolve_send_execution_mode(Some("".to_string()), Some("plan".to_string()), None),
             Some("plan".to_string())
+        );
+        // Session without a selection (e.g. created via MCP) uses the default.
+        assert_eq!(
+            resolve_send_execution_mode(None, None, Some("yolo".to_string())),
+            Some("yolo".to_string())
+        );
+        assert_eq!(
+            resolve_send_execution_mode(None, Some("build".to_string()), Some("yolo".to_string())),
+            Some("build".to_string())
         );
     }
 
@@ -11235,7 +11387,7 @@ mod tests {
             .rfind("STALE_PLAN_MARKER")
             .expect("stale plan rule is present in custom prompt");
         let mode_override = combined
-            .rfind("YOLO EXECUTION MODE")
+            .rfind("FULL ACCESS MODE")
             .expect("yolo override is present");
 
         assert!(
@@ -11259,7 +11411,7 @@ mod tests {
         assert!(build.contains("approved plan"));
 
         let yolo = codex_execution_mode_instruction(Some("yolo")).unwrap();
-        assert!(yolo.contains("YOLO EXECUTION MODE"));
+        assert!(yolo.contains("FULL ACCESS MODE"));
         assert!(yolo.contains("Start implementing immediately"));
         assert!(yolo.contains("Do NOT emit <proposed_plan>"));
         assert!(yolo.contains("Do not ask for confirmation"));

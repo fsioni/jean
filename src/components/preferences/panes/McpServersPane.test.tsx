@@ -212,9 +212,7 @@ describe('McpServersPane Jean MCP install', () => {
     mocks.jeanMcpEnabled = false
     renderPane()
 
-    expect(
-      await screen.findByText(/required · automatic/i)
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/required · automatic/i)).toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(mocks.patchPreferencesMutate).not.toHaveBeenCalledWith(
       expect.objectContaining({ jean_mcp_enabled: false })

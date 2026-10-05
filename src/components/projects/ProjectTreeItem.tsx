@@ -1,10 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  ArrowDown,
-  ArrowDownUp,
-  ArrowUp,
-  ChevronDown,
-} from '@/components/icons/reicon'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDownUp, ChevronDown } from '@/components/icons/reicon'
 import {
   convertFileSrc,
   convertProjectFileSrc,
@@ -12,7 +7,6 @@ import {
   convertServerProjectFileSrc,
 } from '@/lib/transport'
 import { cn } from '@/lib/utils'
-import { dismissibleToast } from '@/lib/dismissible-toast'
 import type { Project } from '@/types/projects'
 import { isBaseSession } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
@@ -29,12 +23,8 @@ import {
 import {
   useFetchWorktreesStatus,
   useGitStatus,
-  gitPush,
-  fetchWorktreesStatus,
-  performGitPull,
   performGitSync,
 } from '@/services/git-status'
-import { usePreferences } from '@/services/preferences'
 import { NewIssuesBadge } from '@/components/shared/NewIssuesBadge'
 import { OpenPRsBadge } from '@/components/shared/OpenPRsBadge'
 import { FailedRunsBadge } from '@/components/shared/FailedRunsBadge'
@@ -76,8 +66,6 @@ export function ProjectTreeItem({
   const isMobile = useIsMobile()
   const sidebarWidth = useSidebarWidth()
   const isOffline = project.offline === true
-  const { data: preferences } = usePreferences()
-  const gitSyncButton = preferences?.git_sync_button ?? true
   const {
     expandedProjectIds,
     selectedProjectId,
@@ -96,10 +84,18 @@ export function ProjectTreeItem({
       enabled: shouldLoadWorktrees,
     }
   )
-  const worktrees = loadedWorktrees ?? []
+  const worktrees = useMemo(
+    () =>
+      (loadedWorktrees ?? []).filter(
+        worktree => worktree.origin !== 'auto_fix'
+      ),
+    [loadedWorktrees]
+  )
   const { data: appDataDir = '' } = useAppDataDir()
   // Prefer loaded worktrees: project.worktree_count can be stale
-  const worktreeCount = loadedWorktrees?.length ?? project.worktree_count ?? 0
+  const worktreeCount = loadedWorktrees
+    ? worktrees.length
+    : (project.worktree_count ?? 0)
   const hasWorktrees = !isOffline && worktreeCount > 0
   const projectMatchesSearch = matchesProjectSearch(project, searchQuery)
   const hasMatchingWorktree = worktrees.some(worktree =>
@@ -255,50 +251,7 @@ export function ProjectTreeItem({
     [project.id, toggleProjectExpanded]
   )
 
-  const handleBasePull = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation()
-      await performGitPull({
-        worktreeId: '',
-        worktreePath: project.path,
-        baseBranch: project.default_branch,
-        projectId: project.id,
-      })
-    },
-    [project.id, project.path, project.default_branch]
-  )
-
   const pickRemoteOrRun = useRemotePicker(project.path)
-
-  const handleBasePush = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
-      pickRemoteOrRun(async remote => {
-        const opToast = dismissibleToast.loading('Pushing changes...')
-        try {
-          const result = await gitPush(
-            project.path,
-            undefined,
-            remote,
-            project.id
-          )
-          fetchWorktreesStatus(project.id)
-          if (result.permissionDenied) {
-            opToast.error('Push failed', {
-              duration: Infinity,
-              description:
-                result.output.trim() || 'The remote rejected the push.',
-            })
-          } else {
-            opToast.success('Changes pushed')
-          }
-        } catch (error) {
-          opToast.error(`Push failed: ${error}`)
-        }
-      })
-    },
-    [pickRemoteOrRun, project.id, project.path]
-  )
 
   const handleBaseSync = useCallback(
     (e: React.MouseEvent) => {
@@ -417,80 +370,42 @@ export function ProjectTreeItem({
 
           {/* Base branch pull/push indicators (when no base session) */}
           {!isOffline &&
-          gitSyncButton &&
-          (baseBranchBehindCount > 0 || baseBranchAheadCount > 0) ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleBaseSync}
-                  className="shrink-0 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 transition-colors hover:bg-violet-500/20"
-                >
-                  <span className="flex items-center gap-0.5">
-                    <ArrowDownUp className="h-3 w-3" />
-                    {baseBranchBehindCount > 0 && baseBranchAheadCount > 0
-                      ? `${baseBranchBehindCount}/${baseBranchAheadCount}`
-                      : baseBranchBehindCount > 0
-                        ? baseBranchBehindCount
-                        : baseBranchAheadCount}
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {(() => {
-                  const parts: string[] = []
-                  if (baseBranchBehindCount > 0) {
-                    parts.push(
-                      `pull ${baseBranchBehindCount} commit${baseBranchBehindCount > 1 ? 's' : ''}`
-                    )
-                  }
-                  if (baseBranchAheadCount > 0) {
-                    parts.push(
-                      `push ${baseBranchAheadCount} commit${baseBranchAheadCount > 1 ? 's' : ''}`
-                    )
-                  }
-                  return `Sync ${project.default_branch}: ${parts.join(', ')}`
-                })()}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <>
-              {baseBranchBehindCount > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={handleBasePull}
-                      className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
-                    >
-                      <span className="flex items-center gap-0.5">
-                        <ArrowDown className="h-3 w-3" />
-                        {baseBranchBehindCount}
-                      </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{`Pull ${baseBranchBehindCount} commit${baseBranchBehindCount > 1 ? 's' : ''} on ${project.default_branch}`}</TooltipContent>
-                </Tooltip>
-              )}
-              {baseBranchAheadCount > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={handleBasePush}
-                      className="shrink-0 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20"
-                    >
-                      <span className="flex items-center gap-0.5">
-                        <ArrowUp className="h-3 w-3" />
-                        {baseBranchAheadCount}
-                      </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{`Push ${baseBranchAheadCount} commit${baseBranchAheadCount > 1 ? 's' : ''} on ${project.default_branch}`}</TooltipContent>
-                </Tooltip>
-              )}
-            </>
-          )}
+            (baseBranchBehindCount > 0 || baseBranchAheadCount > 0) && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleBaseSync}
+                    className="shrink-0 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 transition-colors hover:bg-violet-500/20"
+                  >
+                    <span className="flex items-center gap-0.5">
+                      <ArrowDownUp className="h-3 w-3" />
+                      {baseBranchBehindCount > 0 && baseBranchAheadCount > 0
+                        ? `${baseBranchBehindCount}/${baseBranchAheadCount}`
+                        : baseBranchBehindCount > 0
+                          ? baseBranchBehindCount
+                          : baseBranchAheadCount}
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {(() => {
+                    const parts: string[] = []
+                    if (baseBranchBehindCount > 0) {
+                      parts.push(
+                        `pull ${baseBranchBehindCount} commit${baseBranchBehindCount > 1 ? 's' : ''}`
+                      )
+                    }
+                    if (baseBranchAheadCount > 0) {
+                      parts.push(
+                        `push ${baseBranchAheadCount} commit${baseBranchAheadCount > 1 ? 's' : ''}`
+                      )
+                    }
+                    return `Sync ${project.default_branch}: ${parts.join(', ')}`
+                  })()}
+                </TooltipContent>
+              </Tooltip>
+            )}
 
           {!isOffline && showStatusBadges && (
             <div className="flex items-center gap-1">

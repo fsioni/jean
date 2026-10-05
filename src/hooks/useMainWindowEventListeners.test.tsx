@@ -280,7 +280,6 @@ describe('useMainWindowEventListeners terminal shortcuts', () => {
       updatePrModalOpen: false,
       planDialogOpen: false,
       gitDiffModalOpen: false,
-      githubDashboardOpen: false,
       sessionPrimarySurface: {},
       sessionTerminalIds: {},
       newSessionModeTarget: null,
@@ -601,6 +600,7 @@ describe('dialog overlay keybinding passthrough', () => {
     useUIStore.setState({
       gitDiffModalOpen: false,
       openInModalOpen: false,
+      commandPaletteOpen: false,
     })
   })
 
@@ -633,6 +633,24 @@ describe('dialog overlay keybinding passthrough', () => {
         useUIStore.getState()
       )
     ).toBe(false)
+  })
+
+  it('lets the command palette shortcut close the open palette only', () => {
+    expect(
+      shouldAllowKeybindingThroughOpenOverlay(
+        'open_command_palette',
+        useUIStore.getState()
+      )
+    ).toBe(false)
+
+    useUIStore.setState({ commandPaletteOpen: true })
+
+    expect(
+      shouldAllowKeybindingThroughOpenOverlay(
+        'open_command_palette',
+        useUIStore.getState()
+      )
+    ).toBe(true)
   })
 
   it('does not allow Open In through other dialogs', () => {
@@ -786,6 +804,19 @@ describe('applyCacheInvalidationKeys', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes the finished-sessions bell when a new run starts', () => {
+    const queryClient = new QueryClient()
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    applyCacheInvalidationKeys(queryClient, ['unread-sessions'])
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['unread-session-count'],
+    })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['all-sessions'] })
+    expect(invalidateSpy).toHaveBeenCalledTimes(2)
+  })
+
   it('refreshes Claude usage when a run reports rate-limit usage', () => {
     const queryClient = new QueryClient()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
@@ -847,5 +878,16 @@ describe('applyCacheInvalidationKeys', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ['all-sessions'],
     })
+  })
+})
+
+describe('removed keybindings', () => {
+  it('ignores obsolete shortcuts saved in preferences', () => {
+    expect(
+      findKeybindingAction('mod+shift+d', {
+        ...DEFAULT_KEYBINDINGS,
+        open_github_dashboard: 'mod+shift+d',
+      })
+    ).toBeNull()
   })
 })

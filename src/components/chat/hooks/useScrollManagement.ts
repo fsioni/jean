@@ -586,7 +586,7 @@ export function useScrollManagement({
     if (!wasSendingRef.current && isSending) {
       const viewport = scrollViewportRef.current
       // Only follow if user was already at bottom. Otherwise leave them where they are —
-      // FloatingButtons' "Bottom" button is the manual escape hatch.
+      // The composer's "Bottom" tab is the manual escape hatch.
       if (
         viewport &&
         isFollowingTailRef.current &&

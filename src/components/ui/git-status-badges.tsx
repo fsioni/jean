@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowDownUp } from '@/components/icons/reicon'
+import { ArrowDownUp } from '@/components/icons/reicon'
 import {
   Tooltip,
   TooltipTrigger,
@@ -12,10 +12,6 @@ interface GitStatusBadgesProps {
   diffRemoved: number
   branchDiffAdded?: number
   branchDiffRemoved?: number
-  /** When true, combine pull/push into a single Sync button */
-  syncMode?: boolean
-  onPull?: (e: React.MouseEvent) => void
-  onPush?: (e: React.MouseEvent) => void
   onSync?: (e: React.MouseEvent) => void
   onDiffClick?: (e: React.MouseEvent) => void
   onBranchDiffClick?: (e: React.MouseEvent) => void
@@ -28,9 +24,6 @@ export function GitStatusBadges({
   diffRemoved,
   branchDiffAdded = 0,
   branchDiffRemoved = 0,
-  syncMode = false,
-  onPull,
-  onPush,
   onSync,
   onDiffClick,
   onBranchDiffClick,
@@ -86,7 +79,7 @@ export function GitStatusBadges({
           <TooltipContent>{`+${branchDiffAdded}/-${branchDiffRemoved} lines vs base — click to view diff`}</TooltipContent>
         </Tooltip>
       )}
-      {syncMode && hasRemoteDivergence ? (
+      {hasRemoteDivergence && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -104,39 +97,6 @@ export function GitStatusBadges({
           </TooltipTrigger>
           <TooltipContent>{syncTooltip}</TooltipContent>
         </Tooltip>
-      ) : (
-        <>
-          {behindCount > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onPull}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
-                >
-                  <ArrowDown className="h-3 w-3" />
-                  {behindCount}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{`Pull ${behindCount} commit${behindCount > 1 ? 's' : ''} from remote`}</TooltipContent>
-            </Tooltip>
-          )}
-          {unpushedCount > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onPush}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/20"
-                >
-                  <ArrowUp className="h-3 w-3" />
-                  {unpushedCount}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{`Push ${unpushedCount} commit${unpushedCount > 1 ? 's' : ''} to remote`}</TooltipContent>
-            </Tooltip>
-          )}
-        </>
       )}
     </span>
   )

@@ -214,7 +214,46 @@ pub fn get_stable_launcher_command() -> String {
     if launcher_path_is_unstable(&exe) {
         return "jean".to_string();
     }
-    exe.to_string_lossy().to_string()
+    stable_launcher_path(&exe).to_string_lossy().to_string()
+}
+
+fn stable_launcher_path(exe: &Path) -> PathBuf {
+    // Linux appends this suffix when an installer replaces a running binary.
+    // Child processes must launch the replacement, not the unlinked inode.
+    #[cfg(target_os = "linux")]
+    if let Some(path) = exe
+        .to_str()
+        .and_then(|path| path.strip_suffix(" (deleted)"))
+    {
+        let replacement = Path::new(path);
+        if replacement.is_file() {
+            return replacement.to_path_buf();
+        }
+    }
+    exe.to_path_buf()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod stable_launcher_tests {
+    use super::*;
+
+    #[test]
+    fn uses_installed_replacement_of_deleted_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let replacement = temp.path().join("jean-server");
+        std::fs::write(&replacement, b"replacement").unwrap();
+        let deleted = PathBuf::from(format!("{} (deleted)", replacement.display()));
+        assert_eq!(stable_launcher_path(&deleted), replacement);
+    }
+
+    #[test]
+    fn preserves_path_without_an_installed_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let deleted = temp.path().join("jean-server (deleted)");
+        assert_eq!(stable_launcher_path(&deleted), deleted);
+        let normal = temp.path().join("jean-server");
+        assert_eq!(stable_launcher_path(&normal), normal);
+    }
 }
 
 fn launcher_path_is_unstable(path: &Path) -> bool {

@@ -62,22 +62,34 @@ export type Backend =
   | 'kimi'
   | 'antigravity'
 
-/**
- * Execution mode for Claude CLI permission handling
- * - plan: Read-only mode, Claude can't make changes (--permission-mode plan)
- * - build: Auto-approve file edits only (--permission-mode acceptEdits)
- * - yolo: Auto-approve ALL tools without prompting (--permission-mode bypassPermissions)
- */
-export type ExecutionMode = 'plan' | 'build' | 'yolo'
+/** Wire-compatible execution policies. Plan remains a read-only workflow. */
+export type ExecutionMode = 'plan' | 'build' | 'yolo' | 'supervised' | 'auto'
+export type PermissionMode = Exclude<ExecutionMode, 'plan'>
 
-/** Cycle order for execution modes (used by Shift+Tab cycling) */
-export const EXECUTION_MODE_CYCLE: ExecutionMode[] = ['plan', 'build', 'yolo']
+export function getSupportedPermissionModes(
+  backend: Backend | undefined
+): PermissionMode[] {
+  if (backend === 'codex' || backend === 'kimi' || backend === 'grok')
+    return ['supervised', 'build', 'auto', 'yolo']
+  if (backend === 'claude' || backend === undefined)
+    return ['supervised', 'build', 'auto', 'yolo']
+  if (backend === 'opencode') return ['supervised', 'build', 'yolo']
+  return ['yolo']
+}
 
 export function getSupportedExecutionModes(
   backend: Backend | undefined
 ): ExecutionMode[] {
-  if (backend === 'cursor') return ['plan', 'yolo']
-  return EXECUTION_MODE_CYCLE
+  // Retain legacy Build for existing sessions, except Cursor, which never supported it.
+  return backend === 'cursor'
+    ? ['plan', 'yolo']
+    : [
+        ...new Set<ExecutionMode>([
+          'plan',
+          'build',
+          ...getSupportedPermissionModes(backend),
+        ]),
+      ]
 }
 
 export function isExecutionModeSupported(
@@ -92,7 +104,14 @@ export function normalizeExecutionModeForBackend(
   mode: ExecutionMode
 ): ExecutionMode {
   if (isExecutionModeSupported(backend, mode)) return mode
-  return backend === 'cursor' ? 'yolo' : 'plan'
+  // Never turn an unsupported restricted policy into unrestricted execution.
+  return 'plan'
+}
+
+export function permissionModeForExecution(
+  mode: ExecutionMode
+): PermissionMode {
+  return mode === 'plan' ? 'yolo' : mode
 }
 
 /**
@@ -281,8 +300,10 @@ export interface Session {
   selected_effort_level?: EffortLevel
   /** Selected provider (custom CLI profile name) for this session */
   selected_provider?: string
-  /** Selected execution mode for this session (plan/build/yolo) */
+  /** Selected workflow/permission policy for this session */
   selected_execution_mode?: ExecutionMode
+  /** Build permission choice, retained while planning. */
+  selected_permission_mode?: PermissionMode
   /** Whether session naming has been attempted for this session */
   session_naming_completed?: boolean
   /** Unix timestamp when session was archived (undefined = not archived) */

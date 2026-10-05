@@ -110,7 +110,6 @@ describe('ProjectTreeItem', () => {
       expandedFolderIds: new Set(),
       projectAccessTimestamps: {},
       projectCanvasSettings: {},
-      githubDashboardFavoriteProjectIds: [],
       addProjectDialogOpen: false,
       addProjectParentFolderId: null,
       projectSettingsDialogOpen: false,

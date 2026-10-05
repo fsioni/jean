@@ -52,6 +52,7 @@ describe('ChatStore', () => {
       streamingThinkingContent: {},
       inputDrafts: {},
       executionModes: {},
+      permissionModes: {},
       thinkingLevels: {},
       selectedModels: {},
       scheduledWakeups: {},
@@ -908,19 +909,35 @@ describe('ChatStore', () => {
   })
 
   describe('execution mode', () => {
-    it('cycles execution mode', () => {
-      const { cycleExecutionMode, getExecutionMode } = useChatStore.getState()
+    it('starts with Full access and toggles workflow without changing permissions', () => {
+      const store = useChatStore.getState()
+      expect(store.getExecutionMode('session-1')).toBe('yolo')
+      store.cycleExecutionMode('session-1')
+      expect(store.getExecutionMode('session-1')).toBe('plan')
+      store.cycleExecutionMode('session-1')
+      expect(store.getExecutionMode('session-1')).toBe('yolo')
+    })
 
-      expect(getExecutionMode('session-1')).toBe('plan')
+    it.each(['supervised', 'build', 'auto', 'yolo'] as const)(
+      'retains %s permissions through Plan',
+      mode => {
+        const store = useChatStore.getState()
+        store.setExecutionMode('session-1', mode)
+        store.cycleExecutionMode('session-1')
+        expect(useChatStore.getState().permissionModes['session-1']).toBe(mode)
+        expect(store.getExecutionMode('session-1')).toBe('plan')
+        store.cycleExecutionMode('session-1')
+        expect(store.getExecutionMode('session-1')).toBe(mode)
+      }
+    )
 
-      cycleExecutionMode('session-1')
-      expect(getExecutionMode('session-1')).toBe('build')
-
-      cycleExecutionMode('session-1')
-      expect(getExecutionMode('session-1')).toBe('yolo')
-
-      cycleExecutionMode('session-1')
-      expect(getExecutionMode('session-1')).toBe('plan')
+    it('can change Build permissions without leaving Plan', () => {
+      const store = useChatStore.getState()
+      store.setExecutionMode('session-1', 'plan')
+      store.setPermissionMode('session-1', 'supervised')
+      expect(store.getExecutionMode('session-1')).toBe('plan')
+      store.cycleExecutionMode('session-1')
+      expect(store.getExecutionMode('session-1')).toBe('supervised')
     })
 
     it('sets execution mode directly', () => {
@@ -1382,6 +1399,7 @@ describe('ChatStore', () => {
         'streamingThinkingContent',
         'inputDrafts',
         'executionModes',
+        'permissionModes',
         'thinkingLevels',
         'effortLevels',
         'selectedBackends',

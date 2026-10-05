@@ -70,7 +70,7 @@ export interface MagicPrompts {
   release_notes: string | null
   /** Prompt for generating session names from the first message */
   session_naming: string | null
-  /** System prompt for parallel execution (appended to every chat session when enabled) */
+  /** System prompt for parallel execution (appended to every chat session) */
   parallel_execution: string | null
   /** Global system prompt appended to every chat session (like ~/.claude/CLAUDE.md) */
   global_system_prompt: string | null
@@ -103,7 +103,10 @@ Investigate the loaded GitHub {issueWord} ({issueRefs})
 1. Validate the issue before deeper investigation:
    - Read the issue context file(s), including its current status, description, and comments
    - Confirm that the issue is still valid, relevant, and not already resolved or superseded
-   - Decide whether it makes sense to work on it now; if not, stop and explain why
+   - Take the request with a grain of salt: do not assume it must be fixed or added just because it was reported
+   - Check whether it is actually needed: is the bug real and reproducible, or is it user error, a misconfiguration, or expected behavior? Does the feature fit the project's scope, or does existing functionality already cover it?
+   - Weigh the value against the cost: how many users it affects, added complexity, maintenance burden, and regression risk
+   - Decide whether it makes sense to work on it now and is worth fixing or adding at all; if not, stop and explain why, and recommend a response (for example: close, ask for more information, or won't fix)
 2. Analyze the problem:
    - What is the expected vs actual behavior?
    - Are there error messages, stack traces, or reproduction steps?
@@ -134,6 +137,7 @@ Investigate the loaded GitHub {issueWord} ({issueRefs})
 - Ask clarifying questions if requirements are unclear
 - If multiple solutions exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -150,7 +154,10 @@ Investigate the loaded GitHub {prWord} ({prRefs})
 1. Validate the PR before deeper investigation:
    - Read the PR context file(s), including its current status, description, reviews, and comments
    - Confirm that the PR is still valid, relevant, and not already merged, closed, or superseded
-   - Decide whether it makes sense to work on it now; if not, stop and explain why
+   - Take the PR with a grain of salt: do not assume it should be merged just because it was opened
+   - Check whether it is actually needed: does it solve a real problem, fit the project's scope, and not duplicate existing functionality?
+   - Weigh the value against the cost: added complexity, maintenance burden, regression risk, and the size of the change compared to its benefit
+   - Decide whether it makes sense to work on it now and is worth merging at all; if not, stop and explain why, and recommend a response (for example: close, request changes, or ask for more context)
 2. Understand the changes:
    - What is the PR trying to accomplish?
    - What branches are involved (head → base)?
@@ -190,6 +197,7 @@ Investigate the loaded GitHub {prWord} ({prRefs})
 - Flag any security concerns prominently, even minor ones
 - If multiple approaches exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -379,6 +387,7 @@ Investigate the failed GitHub Actions workflow run for "{workflowName}" on branc
 - If the error is in code, reference specific file paths and line numbers
 - If it's a flaky test, suggest how to make it more reliable
 - If progress is blocked by infrastructure, permissions, or a non-actionable external failure, stop and report the blocker clearly
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -420,6 +429,7 @@ Investigate the loaded Dependabot {alertWord} ({alertRefs})
 - Don't just recommend "upgrade" — assess compatibility impact
 - Reference specific file paths where the affected package is used
 - If multiple alerts are loaded, address each one separately
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -466,6 +476,7 @@ Investigate the loaded security {advisoryWord} ({advisoryRefs})
 - Check for the same vulnerability pattern across the entire codebase, not just the reported location
 - Reference specific file paths and line numbers
 - If multiple advisories are loaded, address each one separately
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -518,6 +529,7 @@ Investigate the loaded Linear {linearWord} ({linearRefs})
 - Ask clarifying questions if requirements are unclear
 - If multiple solutions exist, explain trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -560,6 +572,7 @@ Investigate the loaded Sentry {sentryWord} ({sentryRefs})
 - Be thorough but focused - investigate deeply without getting sidetracked
 - If multiple solutions exist, explain the trade-offs
 - Reference specific file paths and line numbers
+- Present found issues, gaps, risks, and recommended fixes in Markdown tables (for example: | # | Finding | Location | Impact | Recommended fix |), not long prose lists
 
 </guidelines>`
 
@@ -629,9 +642,9 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `Always use ASD-STE100 Simplified Te
 ### 1. Planning Guidance
 - For non-trivial tasks (3+ steps or architectural decisions), prefer planning before implementation when the current execution mode has not already authorized execution.
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps when the current execution mode is plan; in build/yolo, verify directly after implementing.
+- Use plan mode for verification steps when the current execution mode is plan; in build/full access, verify directly after implementing.
 - Write detailed specs upfront to reduce ambiguity
-- Keep plans concise but complete enough for zero-context handoff (YOLO/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.
+- Keep plans concise but complete enough for zero-context handoff (Full access/Build in a new worktree must not require re-scanning the repo). Prefer short wording over thin checklists.
 - When the current execution mode is plan, use the backend's native plan tool/UI call when available (Claude ExitPlanMode, Codex \`<proposed_plan>\` / collaboration Plan mode, Cursor/OpenCode equivalent), not plain text only.
 - For unresolved questions while planning, prefer the backend-native interactive question UI instead of plain text when available: Claude AskUserQuestion, Codex request_user_input, OpenCode question. If no such interactive question tool is present in your current tool set (headless/\`--print\` runs may omit Claude AskUserQuestion), do NOT skip the question and do NOT dead-end on a tool search — instead ask inline as a short numbered list of options (1, 2, 3...) and tell the user to reply with a number.
 - For Codex specifically, when the current execution mode is plan: do not write plan files or code; when the plan is ready wrap it in \`<proposed_plan>...</proposed_plan>\` so Jean can show the approval UI. Do not use the \`update_plan\` checklist tool in plan mode.
@@ -696,6 +709,7 @@ export const DEFAULT_GLOBAL_SYSTEM_PROMPT = `Always use ASD-STE100 Simplified Te
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **VERY IMPORTANT: Keep Code Simple**: Do not over-engineer. Always implement the simplest maintainable solution. Avoid extra abstractions, frameworks, configuration, or future-proofing unless clearly required.
 - **Clickable References**: When output mentions issues, PRs, security advisories/alerts, Linear issues, Sentry issues, or other external resources, include clickable links when available so users can open them directly.
+- **Tables for Findings**: When you report found issues, gaps, risks, or recommended fixes, present them in a Markdown table (for example: | # | Finding | Location | Impact | Recommended fix |) instead of long prose lists.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
@@ -789,7 +803,6 @@ Split the diff into areas that fit this project (e.g. auth, API, data/migrations
 deployments/jobs, storage/files, networking/proxy, UI, infra/CI, security, performance).
 Review each area in parallel with subagents, plus one agent for the full diff.
 Every agent must, for each finding:
-- give \`file:line\` in the target;
 - compare with the last release (\`git show <release>:<file>\`), and say whether it is a
   **regression** (new in this range) or an **old bug** (also in the release); for a
   regression, describe how it worked in the last release;
@@ -814,11 +827,11 @@ Number every finding so it can be referenced later, and keep the numbers stable:
 
 For each severity, output a table:
 
-| # | Verified | Where (file:line) | Problem and impact | Regression | Recommended fix |
+| # | Verified | Problem and impact | Regression | Recommended fix |
 
 In the Regression column, write **No**, or **Yes** followed by how it worked in the
 last release (e.g. "Yes: the release kept existing values on upgrade").
-Use only these columns. Do not add size, effort, or timing columns.
+Use only these columns. Do not add file, size, effort, or timing columns.
 
 Then add:
 - **Intended changes** that need a **release note** (not bugs).
@@ -967,13 +980,13 @@ function makeMagicPromptModelsPreset(
   }
 }
 
-/** Codex preset: use GPT-5.6 Sol for all magic prompts */
+/** Codex preset: use GPT-6.1 Sol for all magic prompts */
 export const CODEX_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
-  makeMagicPromptModelsPreset('gpt-5.6-sol')
+  makeMagicPromptModelsPreset('gpt-6.1-sol')
 
-/** Codex fast preset: use GPT-5.6 Sol Fast for all magic prompts */
+/** Codex fast preset: use GPT-6.1 Sol Fast for all magic prompts */
 export const CODEX_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
-  makeMagicPromptModelsPreset('gpt-5.6-sol-fast')
+  makeMagicPromptModelsPreset('gpt-6.1-sol-fast')
 
 /** GPT-5.6 Codex presets for all magic prompts */
 export const CODEX_56_SOL_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
@@ -991,7 +1004,7 @@ export const CODEX_56_TERRA_FAST_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels 
 
 /** OpenCode preset for all magic prompts */
 export const OPENCODE_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
-  makeMagicPromptModelsPreset('opencode/gpt-5.6-sol')
+  makeMagicPromptModelsPreset('opencode/gpt-6.1-sol')
 
 /** PI preset for all magic prompts */
 export const PI_DEFAULT_MAGIC_PROMPT_MODELS: MagicPromptModels =
@@ -1283,13 +1296,10 @@ export interface AppPreferences {
   chat_font: ChatFont // Font family for chat text
   /** Overall text weight ladder: light | normal | medium (default normal) */
   font_weight?: FontWeight
-  git_poll_interval: number // Git status polling interval in seconds (10-600)
-  remote_poll_interval: number // Remote API polling interval in seconds (30-600)
   keybindings: KeybindingsMap // User-configurable keyboard shortcuts
   archive_retention_days: number // Days to keep archived items (0 = never delete)
   syntax_theme_dark: SyntaxTheme // Syntax highlighting theme for dark mode
   syntax_theme_light: SyntaxTheme // Syntax highlighting theme for light mode
-  parallel_execution_prompt_enabled: boolean // Add system prompt to encourage parallel sub-agent execution
   compact_chat_view_enabled: boolean // Collapse intermediate tool calls/replies into a single ticker line, only showing the latest activity
   auto_recaps_enabled?: boolean // Ask agents to end multi-step/tool turns with a recap
   keep_ai_servers_warm?: boolean // Keep Codex/OpenCode servers alive briefly between requests
@@ -1302,7 +1312,6 @@ export interface AppPreferences {
   magic_prompt_modes: MagicPromptModes // Per-prompt execution modes for magic prompts that send chat turns
   file_edit_mode: FileEditMode // How to edit files: inline (Pierre) or external (VS Code, etc.)
   ai_language: string // Preferred language for AI responses (empty = default)
-  allow_web_tools_in_plan_mode: boolean // Allow WebFetch/WebSearch in plan mode without prompts
   waiting_sound: NotificationSound // Sound when session is waiting for input
   review_sound: NotificationSound // Sound when session finishes reviewing
   web_access_sounds_enabled: boolean // Play notification sounds in browser/web access views
@@ -1317,8 +1326,6 @@ export interface AppPreferences {
   removal_behavior: RemovalBehavior // What happens when closing sessions/worktrees: 'archive' or 'delete'
   auto_save_context: boolean // Auto-save context after each session completion
   auto_pull_base_branch: boolean // Auto-pull base branch before creating a new worktree
-  /** When true, show a single Sync button instead of separate Pull and Push badges (default false) */
-  git_sync_button?: boolean
   auto_archive_on_pr_merged: boolean // Auto-archive worktrees when their PR is merged
   debug_mode_enabled: boolean // Show debug panel in chat sessions
   default_enabled_mcp_servers: string[] // MCP server names enabled by default (empty = none)
@@ -1350,7 +1357,7 @@ export interface AppPreferences {
   fast_mode_models: string[] // Model keys ("backend:baseModel") with fast tier last enabled
 
   confirm_session_close: boolean // Show confirmation dialog before closing sessions/worktrees
-  default_execution_mode: ExecutionMode // Default execution mode for new sessions: 'plan', 'build', or 'yolo'
+  default_execution_mode: ExecutionMode // Default workflow/permission policy for new sessions
   default_backend: CliBackend // Default CLI backend for new sessions
   default_new_session_kind: NewSessionKind // Default action for CMD+T: 'chat', 'terminal', or a CLI backend
   selected_codex_model: CodexModel // Default Codex model
@@ -1365,15 +1372,12 @@ export interface AppPreferences {
   default_codex_model_verbosity: CodexModelVerbosity // Default model verbosity for Codex chat: 'low' | 'medium' | 'high'
   default_grok_reasoning_effort: GrokReasoningEffort // Default reasoning effort for Grok: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   codex_goal_execution_mode: CodexGoalExecutionMode // Execution mode used when starting a Codex /goal
-  codex_multi_agent_enabled: boolean // Enable Codex multi-agent collaboration (experimental)
-  codex_max_agent_threads: number // Max concurrent agent threads (1-8) when multi-agent is enabled
   codex_auto_steer_enabled: boolean // Steer prompts into a running Codex turn instead of queueing (default: false)
   opencode_auto_steer_enabled: boolean // Steer prompts into a running OpenCode turn instead of queueing (default: false)
   pi_auto_steer_enabled: boolean // Steer prompts into a running PI turn instead of queueing (default: false)
   grok_auto_steer_enabled: boolean // Steer prompts into a running Grok turn instead of queueing (default: false)
   kimi_auto_steer_enabled?: boolean // Reserved for Kimi Code steering support
   antigravity_auto_steer_enabled?: boolean // Reserved until Antigravity headless mode supports steering
-  restore_last_session: boolean // Restore last session when switching projects (default: true)
   close_original_on_clear_context: boolean // Close original session when using Clear Context and yolo (default: true)
   build_model: string | null // Model override for plan approval (build mode), null = use session model
   yolo_model: string | null // Model override for yolo plan approval, null = use session model
@@ -1952,7 +1956,7 @@ export function normalizeCodexModel(model: string): CodexModel {
     ]
   }
 
-  return isCodexModel(model) ? model : 'gpt-5.6-sol'
+  return isCodexModel(model) ? model : 'gpt-6.1-sol'
 }
 
 export type CodexReasoningEffort = string
@@ -2336,25 +2340,6 @@ export const terminalFontOptions: { value: TerminalFont; label: string }[] = [
   { value: 'system', label: 'System Monospace' },
 ]
 
-// Git poll interval options (seconds) - for local git commands
-export const gitPollIntervalOptions: { value: number; label: string }[] = [
-  { value: 10, label: '10 seconds' },
-  { value: 30, label: '30 seconds' },
-  { value: 60, label: '1 minute' },
-  { value: 120, label: '2 minutes' },
-  { value: 300, label: '5 minutes' },
-  { value: 600, label: '10 minutes' },
-]
-
-// Remote poll interval options (seconds) - for API calls like PR status
-export const remotePollIntervalOptions: { value: number; label: string }[] = [
-  { value: 30, label: '30 seconds' },
-  { value: 60, label: '1 minute' },
-  { value: 120, label: '2 minutes' },
-  { value: 300, label: '5 minutes' },
-  { value: 600, label: '10 minutes' },
-]
-
 // Removal behavior options - what happens when closing sessions/worktrees
 export type RemovalBehavior = 'archive' | 'delete'
 
@@ -2468,13 +2453,10 @@ export const defaultPreferences: AppPreferences = {
   ui_font: 'geist',
   chat_font: 'geist',
   font_weight: FONT_WEIGHT_DEFAULT,
-  git_poll_interval: 60,
-  remote_poll_interval: 60,
   keybindings: DEFAULT_KEYBINDINGS,
   archive_retention_days: 7,
   syntax_theme_dark: 'vitesse-black',
   syntax_theme_light: 'github-light',
-  parallel_execution_prompt_enabled: true, // Default: enabled
   compact_chat_view_enabled: true, // Default: enabled
   auto_recaps_enabled: true, // Default: enabled
   keep_ai_servers_warm: true, // Default: enabled for faster follow-up requests
@@ -2487,7 +2469,6 @@ export const defaultPreferences: AppPreferences = {
   magic_prompt_modes: DEFAULT_MAGIC_PROMPT_MODES,
   file_edit_mode: 'inline',
   ai_language: '', // Default: empty (Claude's default behavior)
-  allow_web_tools_in_plan_mode: true, // Default: enabled
   waiting_sound: 'none',
   review_sound: 'none',
   web_access_sounds_enabled: true,
@@ -2502,7 +2483,6 @@ export const defaultPreferences: AppPreferences = {
   removal_behavior: 'delete', // Default: delete (permanent)
   auto_save_context: false, // Default: disabled
   auto_pull_base_branch: true, // Default: enabled
-  git_sync_button: true, // Default: combined pull/push sync button
   auto_archive_on_pr_merged: true, // Default: enabled
   debug_mode_enabled: false, // Default: disabled
   default_enabled_mcp_servers: [], // Default: no MCP servers enabled
@@ -2525,11 +2505,11 @@ export const defaultPreferences: AppPreferences = {
   favorite_base_branches: [],
   fast_mode_models: [],
   confirm_session_close: true, // Default: enabled (show confirmation)
-  default_execution_mode: 'plan', // Default: plan mode
+  default_execution_mode: 'yolo', // Default: Full access
   default_backend: 'claude', // Default: Claude
   default_new_session_kind: 'chat', // Default: Jean Chat for CMD+T
-  selected_codex_model: 'gpt-5.6-sol', // Default: latest Codex model
-  selected_opencode_model: 'opencode/gpt-5.6-sol', // Default OpenCode model
+  selected_codex_model: 'gpt-6.1-sol', // Default: latest Codex model
+  selected_opencode_model: 'opencode/gpt-6.1-sol', // Default OpenCode model
   selected_cursor_model: 'cursor/auto', // Default Cursor model
   selected_pi_model: 'pi/sonnet', // Default PI model
   selected_commandcode_model: 'commandcode/default', // Default Command Code model
@@ -2540,15 +2520,12 @@ export const defaultPreferences: AppPreferences = {
   default_codex_model_verbosity: 'medium', // Default: medium verbosity (not low — Jean #535)
   default_grok_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
-  codex_multi_agent_enabled: true, // Default: enabled to match parallel execution prompting
-  codex_max_agent_threads: 3, // Default: 3 threads
   codex_auto_steer_enabled: false, // Default: queue while Codex is running
   opencode_auto_steer_enabled: false, // Default: queue while OpenCode is running
   pi_auto_steer_enabled: false, // Default: queue while PI is running
   grok_auto_steer_enabled: false, // Default: queue while Grok is running
   kimi_auto_steer_enabled: false,
   antigravity_auto_steer_enabled: false,
-  restore_last_session: true, // Default: enabled
   close_original_on_clear_context: true, // Default: enabled
   build_model: null, // Default: use session model
   yolo_model: null, // Default: use session model

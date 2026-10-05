@@ -67,7 +67,8 @@ pub struct KimiExecutionOptions<'a> {
 
 fn kimi_mode(mode: Option<&str>) -> &'static str {
     match mode.unwrap_or("plan") {
-        "build" => "auto",
+        "auto" => "auto",
+        "build" | "supervised" => "default",
         "yolo" => "yolo",
         _ => "plan",
     }
@@ -197,31 +198,8 @@ fn handle_reverse_request(
         return Ok(false);
     }
 
-    let allow = !matches!(execution_mode, None | Some("plan"));
-    let options = value
-        .get("params")
-        .and_then(|params| params.get("options"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let preferred = if allow {
-        ["allow_once", "allow_always"]
-    } else {
-        ["reject_once", "reject_always"]
-    };
-    let selected = preferred.iter().find_map(|kind| {
-        options.iter().find_map(|option| {
-            (option.get("kind").and_then(Value::as_str) == Some(*kind))
-                .then(|| option.get("optionId").and_then(Value::as_str))
-                .flatten()
-        })
-    });
-    let result = match selected {
-        Some(option_id) => serde_json::json!({
-            "outcome": {"outcome": "selected", "optionId": option_id}
-        }),
-        None => serde_json::json!({"outcome": {"outcome": "cancelled"}}),
-    };
+    let params = value.get("params").unwrap_or(&Value::Null);
+    let result = super::acp_permissions::decide(execution_mode, params)?;
     send_response(stdin, id, result)?;
     Ok(true)
 }
@@ -743,6 +721,12 @@ pub fn run_kimi_acp_host_from_args() -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let abort = Arc::new(AtomicBool::new(false));
     let (prompt_tx, prompt_rx) = mpsc::channel();
+    let approval_output = output.clone();
+    let _approval_scope = super::acp_permissions::scope(
+        super::types::Backend::Kimi,
+        Arc::new(move |value| write_host_line(&approval_output, value)),
+        abort.clone(),
+    );
     let listener_stop = stop.clone();
     let listener_abort = abort.clone();
     std::thread::spawn(move || {
@@ -759,6 +743,15 @@ pub fn run_kimi_acp_host_from_args() -> Result<(), String> {
                 continue;
             };
             match value.get("type").and_then(Value::as_str) {
+                Some("permission_reply") => {
+                    if let (Some(id), Some(option)) =
+                        (value["request_id"].as_str(), value["option_id"].as_str())
+                    {
+                        if let Err(error) = super::acp_permissions::reply(id, option) {
+                            eprintln!("[kimi-acp] approval reply failed: {error}");
+                        }
+                    }
+                }
                 Some("prompt") => {
                     if let Some(message) = value.get("message").and_then(Value::as_str) {
                         let _ = prompt_tx.send(message.to_string());
@@ -919,6 +912,15 @@ pub fn tail_kimi_output(
             let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
                 continue;
             };
+            if super::acp_permissions::handle_log_event(
+                app,
+                session_id,
+                worktree_id,
+                &super::pi::run_id_from_output_file(output_file),
+                &value,
+            )? {
+                continue;
+            }
             completed |= merge_kimi_host_line(&mut response, &value)?;
             if let Some(item) = parse_stream_item(&value) {
                 apply_kimi_stream_item(&mut response, &item);
@@ -1206,6 +1208,13 @@ fn execute_kimi_attached(
         });
     }
 
+    let _approval_scope = super::acp_permissions::attached_scope(
+        options.app,
+        options.jean_session_id,
+        options.worktree_id,
+        options.output_file,
+        super::types::Backend::Kimi,
+    );
     let result = execute_kimi_child(&mut child, options);
     let cancelled = !super::registry::is_process_running(options.jean_session_id);
     super::registry::unregister_process(options.jean_session_id);
@@ -1504,7 +1513,9 @@ mod tests {
     #[test]
     fn maps_jean_execution_modes_to_kimi_acp_modes() {
         assert_eq!(kimi_mode(Some("plan")), "plan");
-        assert_eq!(kimi_mode(Some("build")), "auto");
+        assert_eq!(kimi_mode(Some("build")), "default");
+        assert_eq!(kimi_mode(Some("supervised")), "default");
+        assert_eq!(kimi_mode(Some("auto")), "auto");
         assert_eq!(kimi_mode(Some("yolo")), "yolo");
         assert_eq!(kimi_mode(None), "plan");
     }

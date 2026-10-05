@@ -409,7 +409,7 @@ describe('NewSessionModeModal', () => {
       screen.queryByText('Open native Claude in a terminal session')
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Start Claude in yolo mode' })
+      screen.queryByRole('button', { name: 'Start Claude with Full access' })
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude' }))
@@ -565,7 +565,7 @@ describe('NewSessionModeModal', () => {
     render(<NewSessionModeModal />)
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Start Claude in yolo mode' })
+      screen.getByRole('button', { name: 'Start Claude with Full access' })
     )
 
     expect(screen.getByText('Claude sessions')).toBeInTheDocument()
@@ -649,7 +649,7 @@ describe('NewSessionModeModal', () => {
     render(<NewSessionModeModal />)
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Start Codex in yolo mode' })
+      screen.getByRole('button', { name: 'Start Codex with Full access' })
     )
 
     expect(screen.getByText('Codex sessions')).toBeInTheDocument()

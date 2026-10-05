@@ -29,7 +29,7 @@ vi.mock('@/services/chat', () => ({
   chatQueryKeys: {
     unreadSessionCount: () => ['unread-session-count'],
   },
-  useAllSessions: () => ({
+  useUnreadSessions: () => ({
     data: allSessions,
     isLoading: allSessionsLoading,
     isFetching: allSessionsFetching,

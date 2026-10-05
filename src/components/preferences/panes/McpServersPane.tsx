@@ -256,7 +256,7 @@ export const McpServersPane: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {backendsWithServers.map(backend => (
-              <div key={backend} className="space-y-2">
+              <div key={backend} className="space-y-0.5">
                 {showSectionHeaders && (
                   <div className="flex items-center gap-2 pt-1">
                     <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -269,7 +269,7 @@ export const McpServersPane: React.FC = () => {
                   <div
                     key={`${backend}-${server.name}`}
                     className={cn(
-                      'flex flex-wrap items-center gap-3 rounded-md border px-3 py-2',
+                      'flex flex-wrap items-center gap-3 py-1',
                       server.disabled && 'opacity-50'
                     )}
                   >

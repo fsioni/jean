@@ -363,24 +363,6 @@ pub async fn open_branch_on_github(
     open_url(url)
 }
 
-#[tauri::command]
-pub async fn set_project_avatar(
-    app: AppHandle,
-    runtime: State<'_, CoreRuntime>,
-    project_id: String,
-) -> Result<Value, String> {
-    let source_path = app
-        .dialog()
-        .file()
-        .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"])
-        .set_title("Select Project Avatar")
-        .blocking_pick_file()
-        .ok_or_else(|| "No file selected".to_string())?
-        .into_path()
-        .map_err(|error| error.to_string())?;
-    jean_core::set_project_avatar_from_path(runtime.0.clone(), project_id, source_path).await
-}
-
 /// Ask for a destination with the native save dialog and copy a local file there.
 /// Returns `false` when the user cancels the dialog.
 #[tauri::command]

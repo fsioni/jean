@@ -19,7 +19,6 @@ describe('client view state store bridge', () => {
       dashboardWorktreeCollapseOverrides: {},
       projectCanvasSettings: {},
       projectCanvasActiveFilters: {},
-      githubDashboardFavoriteProjectIds: [],
       sidebarServerFilter: null,
       sidebarActiveTab: 'projects',
       pinnedRecentSessionIds: [],

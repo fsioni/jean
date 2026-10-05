@@ -1,6 +1,7 @@
 import {
   memo,
   useState,
+  useEffect,
   useCallback,
   useRef,
   useMemo,
@@ -35,7 +36,8 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat-store'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { convertFileSrc } from '@/lib/transport'
+import { convertServerFileSrc, invokeForOptionalServer } from '@/lib/transport'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import { tableToMarkdown, setTableRowInPrompt } from '@/lib/table-rows-prompt'
 
 interface MarkdownProps {
@@ -173,10 +175,61 @@ function tableToTsv(data: string[][]): string {
   return data.map(row => row.join('\t')).join('\n')
 }
 
-function markdownImageSrc(src: string | undefined): string | undefined {
-  if (!src) return src
-  if (/^(https?:|data:|blob:|asset:|\/api\/|#)/i.test(src)) return src
-  return convertFileSrc(src)
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const { sessionId } = useContext(MarkdownTableContext)
+  const serverId = sessionId
+    ? parseServerResourceKey(sessionId)?.serverId
+    : undefined
+  const isUrl = !src || /^(https?:|data:|blob:|asset:|\/api\/|#)/i.test(src)
+  const isAppData = Boolean(src && /com\.jean\.desktop[/\\]/.test(src))
+  const [loadedImage, setLoadedImage] = useState<{
+    path: string
+    serverId?: string
+    url: string
+  } | null>(null)
+
+  // Screenshots can live outside app data and project roots (for example /tmp).
+  // Use the same owner-routed file reader as the file viewer for those paths.
+  useEffect(() => {
+    if (!src || isUrl || isAppData) return
+    let cancelled = false
+    void invokeForOptionalServer<{ mimeType: string; data: string }>(
+      serverId,
+      'read_file_base64',
+      { path: src }
+    )
+      .then(result => {
+        if (!cancelled) {
+          setLoadedImage({
+            path: src,
+            serverId,
+            url: `data:${result.mimeType};base64,${result.data}`,
+          })
+        }
+      })
+      .catch(error => {
+        if (!cancelled) console.error('Failed to load markdown image:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [src, serverId, isUrl, isAppData])
+
+  const imageSrc = isUrl
+    ? src
+    : isAppData && src
+      ? convertServerFileSrc(serverId, src)
+      : loadedImage?.path === src && loadedImage?.serverId === serverId
+        ? loadedImage.url
+        : undefined
+
+  return (
+    <img
+      src={imageSrc}
+      alt={alt || ''}
+      className="max-w-full h-auto rounded-md my-4"
+    />
+  )
 }
 
 /**
@@ -744,13 +797,7 @@ const components: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
 
   // Images
-  img: ({ src, alt }) => (
-    <img
-      src={markdownImageSrc(src)}
-      alt={alt || ''}
-      className="max-w-full h-auto rounded-md my-4"
-    />
-  ),
+  img: MarkdownImage,
 
   // Links
   a: ({ href, children }) => (

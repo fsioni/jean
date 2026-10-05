@@ -11,12 +11,15 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useUIStore } from '@/store/ui-store'
 
+// 'session' follows the removal behavior preference; 'session-archive' always archives.
+export type CloseConfirmMode = 'worktree' | 'session' | 'session-archive'
+
 interface CloseWorktreeDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
   branchName?: string
-  mode?: 'worktree' | 'session'
+  mode?: CloseConfirmMode
 }
 
 export function CloseWorktreeDialog({
@@ -47,8 +50,10 @@ function CloseWorktreeDialogContent({
   mode = 'worktree',
 }: CloseWorktreeDialogProps) {
   const { data: preferences } = usePreferences()
-  const isDelete = (preferences?.removal_behavior ?? 'delete') === 'delete'
-  const isSession = mode === 'session'
+  const isArchiveOnly = mode === 'session-archive'
+  const isDelete =
+    !isArchiveOnly && (preferences?.removal_behavior ?? 'delete') === 'delete'
+  const isSession = mode !== 'worktree'
   const title = isSession
     ? isDelete
       ? 'Delete session?'
@@ -109,7 +114,11 @@ function CloseWorktreeDialogContent({
                 : undefined
             }
           >
-            {isDelete ? 'Delete' : 'Archive & Close'}
+            {isDelete
+              ? 'Delete'
+              : isArchiveOnly
+                ? 'Archive'
+                : 'Archive & Close'}
             <kbd className="ml-1.5 text-xs opacity-70">↵</kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
