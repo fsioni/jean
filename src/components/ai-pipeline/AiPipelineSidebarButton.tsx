@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { Bot } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
   Tooltip,
   TooltipContent,
@@ -18,13 +19,17 @@ import {
  * wherever it is opened from. Hidden until ClickUp is configured.
  */
 export function AiPipelineSidebarButton({ isNarrow }: { isNarrow: boolean }) {
+  const isMobile = useIsMobile()
   const open = useUIStore(state => state.aiPipelineModalOpen)
   const hasAccess = useHasAiPipelineAccess()
   const { projectId } = useAiPipelineProjectId()
 
   const handleClick = useCallback(() => {
-    useUIStore.getState().setAiPipelineModalOpen(true, projectId ?? undefined)
-  }, [projectId])
+    const { setLeftSidebarVisible, setAiPipelineModalOpen } =
+      useUIStore.getState()
+    if (isMobile) setLeftSidebarVisible(false)
+    setAiPipelineModalOpen(true, projectId ?? undefined)
+  }, [isMobile, projectId])
 
   if (!hasAccess) return null
 

@@ -75,7 +75,8 @@ export function AiPipelinePrModal() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         showCloseButton={false}
-        className="flex h-[80vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-2xl"
+        overlayClassName="z-[90]"
+        className="z-[90] flex h-[80vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-2xl"
       >
         <DialogHeader>
           <div className="flex items-center gap-2">
