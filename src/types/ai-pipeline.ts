@@ -88,3 +88,81 @@ export interface FinishResult {
   clickup: StepResult
   merge: StepResult
 }
+
+/** Private persisted validation state; backend serialization is snake_case. */
+export type ValidationStep =
+  | 'review'
+  | 'correction'
+  | 'git_sync'
+  | 'ci'
+  | 'preview'
+  | 'acceptance'
+  | 'complete'
+export type ValidationStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting'
+  | 'blocked'
+  | 'failed'
+  | 'ready'
+export interface ValidationRequirement {
+  id: string
+  label: string
+  mandatory: boolean
+  status: 'passed' | 'failed' | 'unverified' | 'not_applicable'
+  evidence_ids: string[]
+  justification?: string | null
+}
+export interface ValidationEvidence {
+  id: string
+  label: string
+  kind: string
+  value: string
+  commit: string
+  stale: boolean
+}
+export interface ValidationExecution {
+  schema_version: number
+  id: string
+  project_id: string
+  worktree_id: string
+  repository_path: string
+  task_id: string
+  pr_number: number | null
+  revision: number
+  step: ValidationStep
+  status: ValidationStatus
+  created_at: string
+  updated_at: string
+  head_commit: string | null
+  deployed_commit: string | null
+  correction_cycles: number
+  no_progress_cycles: number
+  requirements: ValidationRequirement[]
+  evidence: ValidationEvidence[]
+  acceptance_evidence_ids?: string[]
+  defects: {
+    id: string
+    description: string
+    mandatory: boolean
+    resolved: boolean
+    evidence_ids: string[]
+  }[]
+  transitions: {
+    revision: number
+    step: ValidationStep
+    status: ValidationStatus
+    message: string
+    timestamp: string
+  }[]
+  blocker: string | null
+  paused: boolean
+  superseded_by?: string | null
+  effects: {
+    id: string
+    kind: string
+    intended_commit: string
+    confirmed: boolean
+  }[]
+  limitations: string[]
+}

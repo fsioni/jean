@@ -32,6 +32,7 @@ import { formatAge, taskMatchesQuery } from '@/lib/ai-pipeline-format'
 import {
   useAiPipelineTasks,
   useResumeAiPipelineTask,
+  useStartAiPipelineValidation,
 } from '@/services/ai-pipeline'
 import type { AiPipelineTask, ResumeResult } from '@/types/ai-pipeline'
 
@@ -87,11 +88,19 @@ function rowState(task: AiPipelineTask): RowState {
       className: 'text-muted-foreground',
     }
   }
+  if (task.pr.ci === 'SUCCESS') {
+    return {
+      icon: CheckCircle2,
+      label: 'CI OK',
+      hint: 'CI verte — la recette et la décision de merge restent à vérifier',
+      className: 'text-green-600 dark:text-green-400',
+    }
+  }
   return {
-    icon: CheckCircle2,
-    label: 'CI OK',
-    hint: 'PR prête : CI verte, pas de conflit',
-    className: 'text-green-600 dark:text-green-400',
+    icon: CircleDashed,
+    label: 'CI inconnue',
+    hint: 'Aucun résultat CI confirmé pour cette PR',
+    className: 'text-muted-foreground',
   }
 }
 
@@ -156,7 +165,7 @@ function TaskRow({
   task: AiPipelineTask
   isResuming: boolean
   isResumed: boolean
-  onResume: (task: AiPipelineTask) => void
+  onResume: (task: AiPipelineTask, validate?: boolean) => void
 }) {
   const state = rowState(task)
   const StateIcon = state.icon
@@ -166,7 +175,7 @@ function TaskRow({
 
   return (
     <div
-      className={`grid grid-cols-[auto_1fr_auto] items-start gap-3 rounded-md border px-3 py-2 transition-colors ${
+      className={`grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] items-start gap-3 rounded-md border px-3 py-2 transition-colors ${
         isResumed
           ? 'border-dashed border-border bg-muted/40 opacity-70'
           : 'border-border hover:bg-muted/40'
@@ -239,21 +248,32 @@ function TaskRow({
         </div>
       </div>
 
-      <Button
-        size="sm"
-        variant={isResumed ? 'ghost' : 'outline'}
-        className="shrink-0"
-        title={
-          task.pr
-            ? 'Crée un worktree depuis la PR et t’assigne sur la tâche ClickUp + la PR GitHub'
-            : 'Crée un worktree sur une branche CU-… et t’assigne la tâche ClickUp'
-        }
-        onClick={() => onResume(task)}
-        disabled={isResuming}
-      >
-        {isResuming && <Loader2 className="size-4 animate-spin" />}
-        {isResumed ? 'Repris ✓' : 'Reprendre'}
-      </Button>
+      <div className="col-start-2 flex flex-wrap gap-2 sm:col-start-auto sm:flex-col">
+        <Button
+          size="sm"
+          variant={isResumed ? 'ghost' : 'outline'}
+          className="shrink-0"
+          title={
+            task.pr
+              ? 'Crée un worktree depuis la PR et t’assigne sur la tâche ClickUp + la PR GitHub'
+              : 'Crée un worktree sur une branche CU-… et t’assigne la tâche ClickUp'
+          }
+          onClick={() => onResume(task)}
+          disabled={isResuming || isResumed}
+        >
+          {isResuming && <Loader2 className="size-4 animate-spin" />}
+          {isResumed ? 'Récupéré ✓' : 'Récupérer'}
+        </Button>
+        {!isResumed && (
+          <Button
+            size="sm"
+            disabled={isResuming}
+            onClick={() => onResume(task, true)}
+          >
+            Récupérer et valider
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
@@ -272,7 +292,7 @@ function Section({
   tasks: AiPipelineTask[]
   resumingTaskId: string | null
   resumedTaskIds: Set<string>
-  onResume: (task: AiPipelineTask) => void
+  onResume: (task: AiPipelineTask, validate?: boolean) => void
   emptyLabel: string
 }) {
   return (
@@ -341,6 +361,7 @@ export function AiPipelineTaskList({
   const { data, isLoading, isError, error, isFetching, refetch } =
     useAiPipelineTasks(projectId, { enabled })
   const resume = useResumeAiPipelineTask(projectId)
+  const startValidation = useStartAiPipelineValidation(projectId)
 
   const review = useMemo(
     () => (data?.review ?? []).filter(t => taskMatchesQuery(t, query)),
@@ -352,7 +373,8 @@ export function AiPipelineTaskList({
   )
 
   const handleResume = useCallback(
-    (task: AiPipelineTask) => {
+    (task: AiPipelineTask, validate = false) => {
+      if (resumingTaskId) return
       const target = task.pr ? `PR #${task.pr.number}` : `ticket ${task.taskId}`
       const toastId = toast.loading(`Reprise de la ${target}…`)
       setResumingTaskId(task.taskId)
@@ -363,6 +385,31 @@ export function AiPipelineTaskList({
             reportSteps(toastId, `${target} reprise`, [res.github, res.clickup])
             setResumedTaskIds(prev => new Set(prev).add(task.taskId))
             onResumed?.(res)
+            if (validate) {
+              if (!res.github.ok || !res.clickup.ok) {
+                toast.warning(
+                  'Worktree conservé. Validation non lancée : prise en charge incomplète.'
+                )
+                return
+              }
+              startValidation.mutate(
+                {
+                  worktreeId: res.worktree.id,
+                  taskId: task.taskId,
+                  prNumber: task.pr?.number,
+                },
+                {
+                  onSuccess: () =>
+                    toast.success(
+                      'Validation privée créée. Consulte son suivi dans Pipeline IA.'
+                    ),
+                  onError: e =>
+                    toast.error(
+                      `Worktree conservé ; validation non lancée : ${e}`
+                    ),
+                }
+              )
+            }
           },
           onError: e =>
             toast.error(`Échec de la reprise (${target}) : ${e}`, {
@@ -372,7 +419,7 @@ export function AiPipelineTaskList({
         }
       )
     },
-    [resume, onResumed]
+    [resume, onResumed, startValidation, resumingTaskId]
   )
 
   if (!projectId) {
@@ -445,9 +492,7 @@ export function AiPipelineTaskList({
       )}
 
       <div className="flex shrink-0 items-center justify-between text-[11px] text-muted-foreground">
-        <span>
-          Reprendre garde la liste ouverte : enchaîne les tickets sans rouvrir.
-        </span>
+        <span>Rapports privés · aucun merge ni commentaire automatique.</span>
         <button
           type="button"
           onClick={() => refetch()}

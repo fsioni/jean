@@ -7,26 +7,21 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useUIStore } from '@/store/ui-store'
-import {
-  useAiPipelineProjectId,
-  useHasAiPipelineAccess,
-} from '@/services/ai-pipeline'
+import { useAiPipelineProjectId } from '@/services/ai-pipeline'
 
 /**
  * Permanent sidebar entry opening the AI pipeline
  * modal. Always targets the pinned project, so the same tickets show up
- * wherever it is opened from. Hidden until ClickUp is configured.
+ * wherever it is opened from. Remains visible before ClickUp configuration
+ * so setup guidance and the offline validation lab are always accessible.
  */
 export function AiPipelineSidebarButton({ isNarrow }: { isNarrow: boolean }) {
   const open = useUIStore(state => state.aiPipelineModalOpen)
-  const hasAccess = useHasAiPipelineAccess()
   const { projectId } = useAiPipelineProjectId()
 
   const handleClick = useCallback(() => {
     useUIStore.getState().setAiPipelineModalOpen(true, projectId ?? undefined)
   }, [projectId])
-
-  if (!hasAccess) return null
 
   const button = (
     <button

@@ -141,7 +141,7 @@ pub fn classify(
             pr_head_sha: head,
             behind_by: Some(0),
         },
-        (Some(_), Some(_)) => PreviewFreshness {
+        (Some(_), Some(_)) if behind_by.is_some() => PreviewFreshness {
             status: FRESH_STALE.to_string(),
             preview_sha: preview,
             sha_source: source,
@@ -388,6 +388,21 @@ mod tests {
         assert_eq!(f.preview_sha.as_deref(), Some(SHA_A));
         assert_eq!(f.pr_head_sha.as_deref(), Some(SHA_B));
         assert_eq!(f.behind_by, Some(3));
+    }
+
+    #[test]
+    fn different_shas_without_comparison_are_unknown_not_stale() {
+        let freshness = classify(
+            true,
+            Some(SHA_A),
+            Some(SHA_SOURCE_PREVIEW),
+            Some(SHA_B),
+            None,
+        );
+        assert_eq!(freshness.status, FRESH_UNKNOWN);
+        assert_eq!(freshness.preview_sha.as_deref(), Some(SHA_A));
+        assert_eq!(freshness.pr_head_sha.as_deref(), Some(SHA_B));
+        assert_eq!(freshness.behind_by, None);
     }
 
     #[test]

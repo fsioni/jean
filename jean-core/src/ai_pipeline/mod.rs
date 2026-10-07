@@ -25,3 +25,17 @@ pub mod config;
 // dispatcher (same pattern as `projects::*` and `jenkins::*`).
 pub use commands::*;
 pub use config::*;
+
+pub mod preview_version;
+pub mod validation_commands;
+pub mod validation_engine;
+pub mod validation_steps;
+pub mod validation_storage;
+pub mod validation_types;
+pub use validation_commands::*;
+
+pub mod validation_artifacts;
+pub mod validation_lab;
+pub use validation_lab::run_ai_pipeline_validation_lab;
+
+pub mod validation_ci;

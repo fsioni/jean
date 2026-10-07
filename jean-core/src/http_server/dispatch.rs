@@ -4121,6 +4121,53 @@ pub async fn dispatch_command(
         // --- /perso/deployment ---
         // --- perso/ai-pipeline ---
         // =====================================================================
+        "run_ai_pipeline_validation_lab" => {
+            if args.as_object().is_some_and(|fields| !fields.is_empty()) {
+                return Err("Le banc d’essai isolé n’accepte aucune cible réelle".into());
+            }
+            to_value(crate::ai_pipeline::run_ai_pipeline_validation_lab().await?)
+        }
+        "start_ai_pipeline_validation" => {
+            let result = crate::ai_pipeline::start_ai_pipeline_validation(
+                app.clone(),
+                field(&args, "projectId", "project_id")?,
+                field(&args, "worktreeId", "worktree_id")?,
+                field_opt(&args, "taskId", "task_id")?,
+                field_opt(&args, "prNumber", "pr_number")?,
+                field_opt(&args, "newExecution", "new_execution")?,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["ai-pipeline-validations"]);
+            to_value(result)
+        }
+        "list_ai_pipeline_validations" => to_value(
+            crate::ai_pipeline::list_ai_pipeline_validations(
+                app.clone(),
+                field(&args, "projectId", "project_id")?,
+            )
+            .await?,
+        ),
+        "get_ai_pipeline_validation" => to_value(
+            crate::ai_pipeline::get_ai_pipeline_validation(
+                app.clone(),
+                field(&args, "executionId", "execution_id")?,
+            )
+            .await?,
+        ),
+        "resume_ai_pipeline_validation" => to_value(
+            crate::ai_pipeline::resume_ai_pipeline_validation(
+                app.clone(),
+                field(&args, "executionId", "execution_id")?,
+            )
+            .await?,
+        ),
+        "pause_ai_pipeline_validation" => to_value(
+            crate::ai_pipeline::pause_ai_pipeline_validation(
+                app.clone(),
+                field(&args, "executionId", "execution_id")?,
+            )
+            .await?,
+        ),
         "get_ai_pipeline_config" => {
             let result = crate::ai_pipeline::get_ai_pipeline_config(app.clone()).await?;
             to_value(result)
@@ -4277,6 +4324,38 @@ fn field_nullable_option<T: serde::de::DeserializeOwned>(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn validation_lab_dispatch_is_targetless_and_does_not_write_app_data() {
+        let app_data = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let app = AppHandle::new(app_data.path().into(), config.path().into()).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for args in [json!({"worktreeId": "real"}), json!({"prNumber": 42})] {
+            let error = runtime
+                .block_on(dispatch_command(
+                    &app,
+                    "run_ai_pipeline_validation_lab",
+                    args,
+                ))
+                .unwrap_err();
+            assert!(error.contains("aucune cible réelle"));
+        }
+        let result = runtime
+            .block_on(dispatch_command(
+                &app,
+                "run_ai_pipeline_validation_lab",
+                json!({}),
+            ))
+            .unwrap();
+        assert_eq!(result["isolated"], true);
+        assert!(result["totalCount"].as_u64().unwrap() >= 8);
+        assert_eq!(result["passedCount"], result["totalCount"]);
+        assert!(!app_data.path().join("ai_pipeline/validations").exists());
+    }
 
     #[test]
     fn headless_dispatch_rejects_native_open_when_not_allowed() {

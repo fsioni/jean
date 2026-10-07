@@ -12,6 +12,7 @@ import { ModalCloseButton } from '@/components/ui/modal-close-button'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useProjectsStore } from '@/store/projects-store'
+import { useWorktree } from '@/services/projects'
 import { useResolvedClickUpTaskId } from '@/services/clickup'
 import {
   useAiPipelineProjectId,
@@ -19,6 +20,8 @@ import {
   useHasAiPipelineAccess,
 } from '@/services/ai-pipeline'
 import { reportSteps } from '@/lib/ai-pipeline-steps'
+import { AiPipelineValidationLab } from './AiPipelineValidationLab'
+import { AiPipelineValidationPanel } from './AiPipelineValidationPanel'
 import { AiPipelineTaskList } from './AiPipelineTaskList'
 import { AiPipelineProjectPicker } from './AiPipelineProjectPicker'
 
@@ -44,6 +47,8 @@ export function AiPipelinePrModal() {
   // Active worktree context (for the "finish" action).
   const activeWorktreeId = useChatStore(state => state.activeWorktreeId)
   const activeWorktreePath = useChatStore(state => state.activeWorktreePath)
+  const { data: activeWorktree } = useWorktree(activeWorktreeId)
+  const matchingWorktree = activeWorktree?.project_id === projectId
   const { data: activeTaskId } = useResolvedClickUpTaskId(activeWorktreeId)
 
   const handleFinish = useCallback(() => {
@@ -87,6 +92,8 @@ export function AiPipelinePrModal() {
           </div>
         </DialogHeader>
 
+        <AiPipelineValidationLab />
+
         {!hasAccess ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
             ClickUp n&apos;est pas configuré.
@@ -99,12 +106,18 @@ export function AiPipelinePrModal() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col gap-3">
+            <AiPipelineValidationPanel
+              projectId={projectId}
+              enabled={open}
+              worktreeId={matchingWorktree ? activeWorktreeId : null}
+              taskId={activeTaskId}
+            />
             {/* Finish the current worktree's PR */}
-            {activeWorktreeId && activeWorktreePath && (
+            {matchingWorktree && activeWorktreeId && activeWorktreePath && (
               <div className="rounded-md border border-border bg-muted/30 p-3">
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium">
                   <Rocket className="size-4 text-muted-foreground" />
-                  Terminer la PR courante
+                  Finalisation manuelle · merge
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-muted-foreground">
@@ -128,7 +141,7 @@ export function AiPipelinePrModal() {
                     {finish.isPending && (
                       <Loader2 className="size-4 animate-spin" />
                     )}
-                    Terminer
+                    Merger et passer TO DEPLOY
                   </Button>
                 </div>
               </div>
