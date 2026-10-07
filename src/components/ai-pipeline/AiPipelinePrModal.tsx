@@ -21,7 +21,6 @@ import {
 } from '@/services/ai-pipeline'
 import { reportSteps } from '@/lib/ai-pipeline-steps'
 import { AiPipelineValidationLab } from './AiPipelineValidationLab'
-import { AiPipelineValidationPanel } from './AiPipelineValidationPanel'
 import { AiPipelineTaskList } from './AiPipelineTaskList'
 import { AiPipelineProjectPicker } from './AiPipelineProjectPicker'
 
@@ -107,12 +106,6 @@ export function AiPipelinePrModal() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col gap-3">
-            <AiPipelineValidationPanel
-              projectId={projectId}
-              enabled={open}
-              worktreeId={matchingWorktree ? activeWorktreeId : null}
-              taskId={activeTaskId}
-            />
             {/* Finish the current worktree's PR */}
             {matchingWorktree && activeWorktreeId && activeWorktreePath && (
               <div className="rounded-md border border-border bg-muted/30 p-3">

@@ -1015,6 +1015,66 @@ pub async fn create_session(
     terminal_label: Option<String>,
     native_session_id: Option<String>,
 ) -> Result<Session, String> {
+    create_session_inner(
+        app,
+        worktree_id,
+        worktree_path,
+        name,
+        backend,
+        primary_surface,
+        terminal_command,
+        terminal_command_args,
+        terminal_label,
+        native_session_id,
+        true,
+    )
+    .await
+}
+
+/// Internal automation session creation, preserving the user's selected chat.
+/// Not an IPC command: external callers keep the normal activating semantics.
+pub(crate) async fn create_background_session(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    name: Option<String>,
+) -> Result<Session, String> {
+    create_session_inner(
+        app,
+        worktree_id,
+        worktree_path,
+        name,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+    )
+    .await
+}
+
+fn append_created_session(sessions: &mut WorktreeSessions, session: Session, activate: bool) {
+    if activate {
+        sessions.active_session_id = Some(session.id.clone());
+    }
+    sessions.sessions.push(session);
+}
+
+async fn create_session_inner(
+    app: AppHandle,
+    worktree_id: String,
+    worktree_path: String,
+    name: Option<String>,
+    backend: Option<String>,
+    primary_surface: Option<String>,
+    terminal_command: Option<String>,
+    terminal_command_args: Option<Vec<String>>,
+    terminal_label: Option<String>,
+    native_session_id: Option<String>,
+    activate: bool,
+) -> Result<Session, String> {
     log::trace!("Creating new session for worktree: {worktree_id}");
     if native_session_id.is_some() && primary_surface.as_deref() != Some("terminal") {
         return Err("Native session IDs are only valid for terminal sessions".to_string());
@@ -1124,10 +1184,7 @@ pub async fn create_session(
                 .as_ref()
                 .and_then(|prefs| default_model_for_backend(&backend_enum, prefs));
         }
-        let session_id = session.id.clone();
-
-        sessions.sessions.push(session.clone());
-        sessions.active_session_id = Some(session_id);
+        append_created_session(sessions, session.clone(), activate);
 
         log::trace!("Created session: {}", session.id);
         Ok(session)
@@ -10555,6 +10612,34 @@ pub async fn respond_opencode_permission(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_session_creation_preserves_user_selection() {
+        let mut sessions = WorktreeSessions::default();
+        let selected = sessions.active_session_id.clone();
+        let background = Session::new("Validation privée · Review".into(), 1, Backend::Claude);
+        append_created_session(&mut sessions, background.clone(), false);
+        assert_eq!(sessions.active_session_id, selected);
+        assert!(sessions.find_session(&background.id).is_some());
+        sessions.active_session_id = None;
+        append_created_session(
+            &mut sessions,
+            Session::new("Validation privée · Correction".into(), 2, Backend::Claude),
+            false,
+        );
+        assert!(sessions.active_session_id.is_none());
+    }
+
+    #[test]
+    fn manual_session_creation_still_selects_the_new_session() {
+        let mut sessions = WorktreeSessions::default();
+        let manual = Session::new("Manual".into(), 1, Backend::Claude);
+        append_created_session(&mut sessions, manual.clone(), true);
+        assert_eq!(
+            sessions.active_session_id.as_deref(),
+            Some(manual.id.as_str())
+        );
+    }
 
     #[test]
     fn permission_policy_capabilities_never_escalate_unknown_modes() {

@@ -77,13 +77,20 @@ export function resolveInitialActiveSessionId(
  */
 export function sessionsForTabBar(
   sessions: readonly Session[],
-  activeSession: Session | null | undefined
+  activeSession: Session | null | undefined,
+  groupedSessionIds: ReadonlySet<string> = new Set()
 ): Session[] {
-  if (!activeSession) return [...sessions]
-  if (sessions.some(session => session.id === activeSession.id)) {
-    return [...sessions]
+  const visible = sessions.filter(
+    session =>
+      !groupedSessionIds.has(session.id) || session.id === activeSession?.id
+  )
+  if (
+    !activeSession ||
+    visible.some(session => session.id === activeSession.id)
+  ) {
+    return visible
   }
-  return [...sessions, activeSession]
+  return [...visible, activeSession]
 }
 
 /** Add one known session to a list cache without dropping sessions already there. */

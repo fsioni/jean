@@ -50,27 +50,27 @@ describe('validation launch feedback', () => {
     ],
     [
       'waiting',
-      'Validation en attente. Consulte son suivi dans Pipeline IA.',
+      'Validation en attente. Consulte son suivi sur le worktree.',
       'warning',
     ],
     [
       'pending',
-      'Validation en attente. Consulte son suivi dans Pipeline IA.',
+      'Validation en attente. Consulte son suivi sur le worktree.',
       'warning',
     ],
     [
       'running',
-      'Validation démarrée. Consulte son suivi dans Pipeline IA.',
+      'Validation démarrée. Consulte son suivi sur le worktree.',
       'success',
     ],
     [
       'failed',
-      'Validation échouée : consulte son suivi dans Pipeline IA.',
+      'Validation échouée : consulte son suivi sur le worktree.',
       'error',
     ],
     [
       'ready',
-      'Validation prête. Consulte son suivi dans Pipeline IA.',
+      'Validation prête. Consulte son suivi sur le worktree.',
       'success',
     ],
   ] as const)(

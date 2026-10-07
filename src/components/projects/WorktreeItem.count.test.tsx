@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { render, screen, within } from '@/test/test-utils'
+import type { ValidationExecution } from '@/types/ai-pipeline'
 import type { Worktree } from '@/types/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { WorktreeItem } from './WorktreeItem'
 
 const mocks = vi.hoisted(() => ({
+  validations: [] as ValidationExecution[],
   sessions: [] as { id: string; messages: []; archived_at?: number }[],
+}))
+
+vi.mock('@/services/ai-pipeline', () => ({
+  useAiPipelineValidations: () => ({ data: mocks.validations }),
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => false }))
@@ -105,6 +111,7 @@ const worktree: Worktree = {
 describe('WorktreeItem count', () => {
   beforeEach(() => {
     mocks.sessions = []
+    mocks.validations = []
     useProjectsStore.setState({
       expandedWorktreeIds: new Set(),
       selectedWorktreeId: null,
@@ -133,6 +140,38 @@ describe('WorktreeItem count', () => {
     expect(
       screen.queryByRole('status', { name: '2 sessions' })
     ).not.toBeInTheDocument()
+  })
+
+  it('keeps technical validation sessions out of the visible count', () => {
+    mocks.sessions = [
+      { id: 'manual', messages: [] },
+      { id: 'technical', messages: [] },
+    ]
+    mocks.validations = [
+      {
+        worktree_id: worktree.id,
+        status: 'running',
+        step: 'review',
+        paused: false,
+        agent_sessions: [
+          { session_id: 'technical', step: 'review', attempt_id: 'attempt' },
+        ],
+      } as ValidationExecution,
+    ]
+    render(
+      <WorktreeItem
+        worktree={worktree}
+        projectId="project-1"
+        projectPath="/tmp/project"
+        defaultBranch="main"
+      />
+    )
+    expect(screen.getByRole('status', { name: '1 session' })).toHaveTextContent(
+      '1'
+    )
+    expect(
+      screen.getByRole('status', { name: 'Pipeline IA : Revue · En cours' })
+    ).toBeInTheDocument()
   })
 
   it('does not show an empty count', () => {

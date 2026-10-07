@@ -241,7 +241,7 @@ describe('SessionChatModal removal behavior', () => {
     const source = readSource('src/components/chat/SessionChatModal.tsx')
 
     expect(source).toMatch(
-      /resolveModalSessionId\(\s*activeSessionId,\s*sessions\.map\(session => session\.id\),\s*sessionsData\?\.active_session_id,\s*activeSessionGone\s*\)/
+      /resolveModalSessionId\(\s*activeSessionId,\s*validationsLoading && !activeSessionId \? \[\] : manualSessionIds,\s*validationsLoading \? null : sessionsData\?\.active_session_id,\s*activeSessionGone\s*\)/
     )
     expect(source).toContain(
       'const activeSessionGone = !!sessionsData && missingActiveSessionFailed'

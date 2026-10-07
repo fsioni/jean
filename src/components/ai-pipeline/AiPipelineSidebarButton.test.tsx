@@ -25,7 +25,7 @@ vi.mock('./AiPipelineProjectPicker', () => ({
   AiPipelineProjectPicker: () => null,
 }))
 vi.mock('./AiPipelineValidationPanel', () => ({
-  AiPipelineValidationPanel: () => null,
+  AiPipelineValidationPanel: () => <div>Ancien suivi dans la modale</div>,
 }))
 vi.mock('@/components/layout/LeftSideBar', () => ({
   LeftSideBar: () => <AiPipelineSidebarButton isNarrow={false} />,
@@ -62,6 +62,9 @@ describe('Pipeline entry', () => {
       'pinned-project'
     )
     expect(screen.queryByTestId('mobile-left-sidebar')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Ancien suivi dans la modale')
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Reprendre un ticket' }))
     expect(useUIStore.getState().aiPipelineModalOpen).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))

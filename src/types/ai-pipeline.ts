@@ -123,8 +123,15 @@ export interface ValidationEvidence {
   commit: string
   stale: boolean
 }
+export interface ValidationAgentSession {
+  session_id: string
+  step: ValidationStep
+  attempt_id: string
+}
 export interface ValidationExecution {
   schema_version: number
+  agent_sessions?: ValidationAgentSession[]
+  active_session_id?: string | null
   id: string
   project_id: string
   worktree_id: string

@@ -1,3 +1,6 @@
+import { useAiPipelineValidations } from '@/services/ai-pipeline'
+import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
+import { AiPipelineValidationPanel } from '@/components/ai-pipeline/AiPipelineValidationPanel'
 import {
   draggable,
   dropTargetForElements,
@@ -1237,6 +1240,9 @@ export function ProjectCanvasView({
     [openWorktreeModal]
   )
 
+  const validationQuery = useAiPipelineValidations(projectId)
+  const validationExecutions = validationQuery.data
+
   // Build worktree sections with computed card data
   const worktreeSections: WorktreeSection[] = useMemo(() => {
     const result: WorktreeSection[] = []
@@ -1267,7 +1273,13 @@ export function ProjectCanvasView({
     for (const worktree of readyWorktrees) {
       if (!matchesCanvasFilterTab(worktree, activeFilterTab)) continue
       const sessionData = sessionsByWorktreeId.get(worktree.id)
-      const sessions = sessionData?.sessions ?? []
+      const technicalSessionIds = validationSessionIds(
+        validationExecutions ?? [],
+        worktree.id
+      )
+      const sessions = (sessionData?.sessions ?? []).filter(
+        session => !technicalSessionIds.has(session.id)
+      )
       const worktreeMatchesSearch =
         !hasSearchQuery ||
         getCanvasWorktreeSearchTerms(worktree).some(term =>
@@ -1338,6 +1350,7 @@ export function ProjectCanvasView({
   }, [
     readyWorktrees,
     pendingWorktrees,
+    validationExecutions,
     sessionsByWorktreeId,
     sessionCardDataCache,
     storeState,
@@ -2013,7 +2026,13 @@ export function ProjectCanvasView({
       if (!autoOpen.shouldOpen) continue
 
       // Use specific session if provided, otherwise fall back to first session
-      const targetSession = sessionData.sessions[0]
+      const technicalIds = validationSessionIds(
+        validationExecutions ?? [],
+        worktreeId
+      )
+      const targetSession = sessionData.sessions.find(
+        session => !technicalIds.has(session.id)
+      )
 
       if (worktree && targetSession) {
         // Find the index in flatCards for keyboard selection
@@ -2040,6 +2059,7 @@ export function ProjectCanvasView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     autoOpenSessionSignal,
+    validationExecutions,
     sessionsFingerprint,
     readyWorktrees,
     flatCards,
@@ -2182,8 +2202,14 @@ export function ProjectCanvasView({
       const { activeSessionIds, setActiveSession, setLastOpenedForProject } =
         useChatStore.getState()
       const existingSessionId = activeSessionIds[worktreeId]
-      const firstSessionId =
-        sessionsByWorktreeIdRef.current.get(worktreeId)?.sessions[0]?.id
+      const firstSessionId = sessionsByWorktreeIdRef.current
+        .get(worktreeId)
+        ?.sessions.find(
+          session =>
+            !validationSessionIds(validationExecutions ?? [], worktreeId).has(
+              session.id
+            )
+        )?.id
       const targetSessionId = existingSessionId ?? firstSessionId
 
       if (targetSessionId) {
@@ -2193,7 +2219,7 @@ export function ProjectCanvasView({
         setLastOpenedForProject(projectId, worktreeId, targetSessionId)
       }
     },
-    [openWorktreeModal, projectId]
+    [openWorktreeModal, projectId, validationExecutions]
   )
 
   // Handle selection from keyboard nav
@@ -3602,6 +3628,25 @@ export function ProjectCanvasView({
                           }
                           onResolveConflicts={handleCanvasResolveConflicts}
                           disableTextSelection={disableWorktreeTextSelection}
+                        />
+                        <AiPipelineValidationPanel
+                          projectId={projectId}
+                          enabled={true}
+                          querySnapshot={validationQuery}
+                          allowStart={
+                            !!section.worktree.pr_number ||
+                            /CU[-_]/i.test(section.worktree.branch)
+                          }
+                          worktreeId={section.worktree.id}
+                          onOpenSession={sessionId => {
+                            useChatStore
+                              .getState()
+                              .setActiveSession(section.worktree.id, sessionId)
+                            openWorktreeModal(
+                              section.worktree.id,
+                              section.worktree.path
+                            )
+                          }}
                         />
                         {activeFilterTab === 'auto_fix' && (
                           <MrRobotProgress

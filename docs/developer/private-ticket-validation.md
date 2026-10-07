@@ -2,8 +2,7 @@
 
 The AI Pipeline offers two pickup actions: **Récupérer** keeps the existing
 worktree/assignment workflow; **Récupérer et valider** starts a private validation
-only after the pickup succeeds. Existing worktrees can start validation from the
-Pipeline modal. Finishing/merging remains a separate manual action.
+only after the pickup succeeds. Validation is followed directly on its worktree in the Projects canvas. Finishing/merging remains a separate manual action.
 
 ## Ownership and boundaries
 
@@ -209,3 +208,30 @@ External effects remain simulated in the lab; separate Git bare and fake-CLI tes
 exercise first-push guards and PR readback without contacting real services.
 The first real trial must still verify implementation quality, actual PR creation,
 assignment, CI/deployment formats and the installed native/Web/mobile transport.
+
+## Worktree presentation
+
+The pickup modal no longer renders execution cards. Each worktree presents one
+compact **Activité IA** row: the current step, status, and correction count.
+Expanding it exposes the latest execution (active first, otherwise most recent),
+a chronological transition journal, pause/resume, evidence and manual draft
+actions. Earlier executions stay under a collapsed history; they are neither
+deleted nor rendered as competing current cards. Technical agent sessions can
+be opened explicitly from this worktree activity without automatically populating
+the normal chat tabs. These are presentation changes only: persisted execution
+state, safety gates, proof verification and correction loops remain backend-owned.
+The shared canvas presentation is available in native, Web Access and mobile.
+
+The Projects sidebar shows the same selected execution's **step · state** under
+its worktree name. A ready status is not presented as verified when mandatory
+current proofs are missing. Sidebar session counts and canvas/manual tabs exclude
+attributed technical sessions; their persisted transcripts remain unchanged.
+
+Agent sessions are created without activating the user's chat, and their
+`agent_sessions` provenance is saved before sending the prompt. Legacy sessions
+are recovered read-only from the first run's exact structured validation prompt
+and matching execution/project/worktree/ticket/session/attempt identity, never
+from a name alone. Automatically renamed sessions remain recoverable; unprovable
+legacy sessions remain visible. Recovery is cached by the first prompt identity
+and hash, independently of ongoing streaming; it never opens a chat, drains
+queued prompts, or rewrites a running execution.

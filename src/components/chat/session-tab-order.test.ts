@@ -213,3 +213,32 @@ describe('mergeSessionIntoWorktreeSessions', () => {
     expect(merged.active_session_id).toBe('other')
   })
 })
+
+describe('pipeline session grouping in tabs', () => {
+  it('keeps manual tabs while hiding attributed background stage sessions', () => {
+    const manual = session('manual', 1)
+    const technical = session('technical', 2)
+    expect(
+      sessionsForTabBar([manual, technical], null, new Set(['technical'])).map(
+        s => s.id
+      )
+    ).toEqual(['manual'])
+  })
+  it('shows only the explicitly opened technical session, not all its siblings', () => {
+    const manual = session('manual', 1)
+    const review = session('review', 2)
+    const correction = session('correction', 3)
+    expect(
+      sessionsForTabBar(
+        [manual, review, correction],
+        correction,
+        new Set(['review', 'correction'])
+      ).map(s => s.id)
+    ).toEqual(['manual', 'correction'])
+  })
+  it('does not mutate or remove the persisted sessions', () => {
+    const sessions = [session('manual', 1), session('technical', 2)]
+    sessionsForTabBar(sessions, null, new Set(['technical']))
+    expect(sessions).toHaveLength(2)
+  })
+})

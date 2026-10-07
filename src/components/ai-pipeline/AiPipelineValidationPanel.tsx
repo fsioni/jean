@@ -1,3 +1,4 @@
+import { hasCurrentValidationProof } from '@/lib/ai-pipeline-presentation'
 import { EvidenceArtifact } from './EvidenceArtifact'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -10,19 +11,12 @@ import {
   useControlAiPipelineValidation,
   useStartAiPipelineValidation,
 } from '@/services/ai-pipeline'
-import type { ValidationExecution, ValidationStep } from '@/types/ai-pipeline'
+import {
+  selectWorktreeValidation,
+  validationStepLabel,
+} from '@/lib/ai-pipeline-presentation'
+import type { ValidationExecution } from '@/types/ai-pipeline'
 
-const stages: [ValidationStep, string][] = [
-  ['implementation', 'Implémentation'],
-  ['review', 'Review'],
-  ['correction', 'Corrections'],
-  ['git_sync', 'Git'],
-  ['create_pr', 'Création PR'],
-  ['ci', 'CI'],
-  ['preview', 'Version'],
-  ['acceptance', 'Recette'],
-  ['complete', 'Décision'],
-]
 const statuses = {
   pending: 'À démarrer',
   running: 'En cours',
@@ -33,58 +27,14 @@ const statuses = {
 }
 
 /** Never turn a backend label into a green result without current mandatory proof. */
-export function hasCurrentProof(execution: ValidationExecution) {
-  const mandatory = execution.requirements.filter(r => r.mandatory)
-  const currentEvidence = (ids: string[]) =>
-    ids.length > 0 &&
-    ids.every(id =>
-      execution.evidence.some(
-        e => e.id === id && !e.stale && e.commit === execution.head_commit
-      )
-    )
-  const systemProof = (id: string, kind: string) =>
-    execution.evidence.some(
-      e =>
-        e.id === id &&
-        e.kind === kind &&
-        !e.stale &&
-        e.commit === execution.head_commit &&
-        !!e.value.trim()
-    )
-  return (
-    systemProof('ci-head', 'backend-ci') &&
-    systemProof('preview-version', 'git-ancestry') &&
-    mandatory.some(
-      r =>
-        r.status === 'passed' &&
-        r.evidence_ids.some(id =>
-          execution.acceptance_evidence_ids?.includes(id)
-        )
-    ) &&
-    !!execution.head_commit &&
-    !!execution.deployed_commit &&
-    execution.effects.every(effect => effect.confirmed) &&
-    mandatory.length > 0 &&
-    mandatory.every(
-      r =>
-        (r.status === 'not_applicable' && !!r.justification?.trim()) ||
-        (r.status === 'passed' &&
-          currentEvidence(r.evidence_ids) &&
-          (r.id === 'ci-head' ||
-            r.evidence_ids.some(id =>
-              execution.acceptance_evidence_ids?.includes(id)
-            )))
-    ) &&
-    execution.defects
-      .filter(d => d.mandatory)
-      .every(d => d.resolved && currentEvidence(d.evidence_ids))
-  )
-}
+export const hasCurrentProof = hasCurrentValidationProof
 
 export function ValidationCard({
   execution,
+  onOpenSession,
 }: {
   execution: ValidationExecution
+  onOpenSession?: (sessionId: string) => void
 }) {
   const [details, setDetails] = useState(false)
   const [draft, setDraft] = useState<string | null>(null)
@@ -99,25 +49,14 @@ export function ValidationCard({
       : execution.status === 'ready' && !verified
         ? 'Preuves à confirmer'
         : statuses[execution.status]
-  const freshTicket =
-    !!execution.publication_base_branch ||
-    !execution.pr_number ||
-    execution.step === 'implementation' ||
-    execution.step === 'create_pr'
-  const visibleStages = freshTicket
-    ? stages
-    : stages.filter(
-        ([step]) => step !== 'implementation' && step !== 'create_pr'
-      )
-  const index = visibleStages.findIndex(([step]) => step === execution.step)
   return (
-    <article className="rounded-lg border border-border bg-background p-3">
+    <article className="min-w-0 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           {verified ? (
             <CheckCircle2 className="size-4 text-green-600" />
           ) : execution.status === 'running' ? (
-            <Loader2 className="size-4 animate-spin text-primary" />
+            <Loader2 className="size-4 animate-spin text-primary motion-reduce:animate-none" />
           ) : (
             <AlertTriangle className="size-4 text-muted-foreground" />
           )}
@@ -135,21 +74,40 @@ export function ValidationCard({
           {label}
         </span>
       </div>
-      <ol
-        className={`my-3 grid gap-1 ${freshTicket ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-4 sm:grid-cols-7'}`}
-        aria-label="Étapes de validation"
-      >
-        {visibleStages.map(([step, title], i) => (
-          <li
-            key={step}
-            aria-current={step === execution.step ? 'step' : undefined}
-            className={`border-t-2 pt-1 text-xs ${i === index ? 'border-primary font-semibold text-foreground' : 'border-border text-muted-foreground'}`}
+      <div className="my-3 border-l border-primary pl-3">
+        <p className="text-sm font-medium">
+          {validationStepLabel(execution.step)}
+        </p>
+        <p className="mt-1 break-words text-xs text-muted-foreground">
+          {execution.transitions.at(-1)?.message ||
+            'Le suivi se met à jour au fil de l’exécution.'}
+        </p>
+      </div>
+      {execution.transitions.length > 0 && (
+        <details className="mb-3 text-xs">
+          <summary className="cursor-pointer py-1 text-muted-foreground">
+            Journal d’activité ({execution.transitions.length})
+          </summary>
+          <ol
+            className="mt-2 space-y-3 border-l border-border pl-3"
+            aria-label="Journal de validation"
           >
-            <span className="sm:hidden">{i + 1}. </span>
-            {title}
-          </li>
-        ))}
-      </ol>
+            {execution.transitions.map((event, i) => (
+              <li key={`${event.revision}-${i}`}>
+                <div className="flex flex-wrap gap-x-2 text-muted-foreground">
+                  <span>{validationStepLabel(event.step)}</span>
+                  <time dateTime={event.timestamp}>
+                    {event.timestamp
+                      ? new Date(event.timestamp).toLocaleString('fr-FR')
+                      : ''}
+                  </time>
+                </div>
+                <p className="mt-1 break-words">{event.message}</p>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
           Corrections {execution.correction_cycles}/3 · sans progrès{' '}
@@ -222,7 +180,7 @@ export function ValidationCard({
         </div>
       )}
       {execution.status !== 'ready' && !execution.superseded_by && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -251,7 +209,7 @@ export function ValidationCard({
               ? 'Reprendre la validation'
               : 'Mettre en pause'}
           </Button>
-          <span className="text-xs text-muted-foreground">
+          <span className="basis-full text-xs text-muted-foreground sm:basis-auto sm:flex-1">
             La pause n’arrête ni le chat ni Run.
           </span>
         </div>
@@ -316,6 +274,37 @@ export function ValidationCard({
             )}
           </div>
         )}
+      {onOpenSession &&
+        ((execution.agent_sessions?.length ?? 0) > 0 ||
+          execution.active_session_id) && (
+          <details className="text-xs">
+            <summary className="cursor-pointer py-1 font-medium">
+              Sessions techniques
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(execution.agent_sessions?.length
+                ? execution.agent_sessions
+                : [
+                    {
+                      session_id: execution.active_session_id ?? '',
+                      step: execution.step,
+                      attempt_id: 'active',
+                    },
+                  ]
+              ).map((session, i) => (
+                <Button
+                  key={session.session_id}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onOpenSession(session.session_id)}
+                >
+                  {validationStepLabel(session.step)} · {i + 1}
+                </Button>
+              ))}
+            </div>
+          </details>
+        )}
+
       <div className="mt-3 border-t pt-3">
         <Button
           size="sm"
@@ -396,79 +385,122 @@ export function AiPipelineValidationPanel({
   enabled,
   worktreeId,
   taskId,
+  onOpenSession,
+  querySnapshot,
+  allowStart = false,
 }: {
   projectId: string | null
   enabled: boolean
   worktreeId?: string | null
   taskId?: string | null
+  allowStart?: boolean
+  onOpenSession?: (sessionId: string) => void
+  querySnapshot?: ReturnType<typeof useAiPipelineValidations>
 }) {
-  const query = useAiPipelineValidations(projectId, enabled)
-  const start = useStartAiPipelineValidation(projectId)
-  const active = query.data?.some(
-    e =>
-      e.worktree_id === worktreeId &&
-      !e.superseded_by &&
-      e.status !== 'ready' &&
-      e.status !== 'failed'
+  const ownQuery = useAiPipelineValidations(
+    projectId,
+    enabled && !querySnapshot
   )
+  const query = querySnapshot ?? ownQuery
+  const start = useStartAiPipelineValidation(projectId)
+  const [expanded, setExpanded] = useState(false)
+  const executions = (query.data ?? []).filter(
+    e => e.worktree_id === worktreeId
+  )
+  const current = worktreeId
+    ? selectWorktreeValidation(executions, worktreeId)
+    : undefined
+  const previous = executions.filter(e => e.id !== current?.id)
+  if (!worktreeId || (!current && !allowStart && !taskId)) return null
+  const currentLabel =
+    current?.status === 'ready' && !hasCurrentProof(current)
+      ? 'Preuves à confirmer'
+      : current
+        ? statuses[current.status]
+        : 'À démarrer'
   return (
     <section
-      className="max-h-[36vh] shrink-0 space-y-2 overflow-y-auto rounded-lg border border-border bg-muted/20 p-3"
-      aria-label="Validations privées"
+      className="mx-3 mb-2 min-w-0 rounded-md border border-border bg-muted/20"
+      aria-label="Activité IA du worktree"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">Validation privée</h3>
-          <p className="text-xs text-muted-foreground">
-            Des preuves pour décider, pas un merge automatique.
-          </p>
-        </div>
-        {worktreeId && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={
-              start.isPending || query.isLoading || query.isError || active
-            }
-            onClick={() =>
-              start.mutate(
-                { worktreeId, taskId: taskId ?? undefined },
-                { onError: e => toast.error(`Validation non lancée : ${e}`) }
-              )
-            }
-          >
-            {start.isPending
-              ? 'Démarrage…'
-              : active
-                ? 'Validation existante'
-                : 'Lancer la validation'}
-          </Button>
+      <div className="flex flex-wrap items-start gap-2 px-3 py-2">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left text-xs hover:text-primary"
+          aria-label="Suivre la validation"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(v => !v)}
+        >
+          <span className="flex shrink-0 items-center gap-2 whitespace-nowrap font-medium">
+            {current?.status === 'running' && !current.paused && (
+              <Loader2 className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
+            )}
+            Activité IA
+          </span>
+          <span className="basis-full text-muted-foreground sm:basis-auto">
+            {current
+              ? `${validationStepLabel(current.step)} · ${current.paused ? 'En pause' : currentLabel}`
+              : query.isLoading
+                ? 'Chargement du suivi…'
+                : 'À démarrer'}
+          </span>
+        </button>
+        {current && current.correction_cycles > 0 && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            Corrections {current.correction_cycles}/3
+          </span>
         )}
       </div>
-      {query.isLoading && (
-        <p className="text-xs text-muted-foreground">Chargement du suivi…</p>
-      )}
       {query.isError && (
-        <div role="alert" className="text-xs text-destructive">
+        <p role="alert" className="px-3 pb-2 text-xs text-destructive">
           Suivi indisponible.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => query.refetch()}
-          >
+          <button className="underline" onClick={() => query.refetch()}>
             Réessayer
           </button>
-        </div>
-      )}
-      {!query.isLoading && !query.isError && query.data?.length === 0 && (
-        <p className="py-2 text-xs text-muted-foreground">
-          Aucune validation. Récupère un ticket et lance sa validation quand tu
-          le souhaites.
         </p>
       )}
-      {query.data?.map(execution => (
-        <ValidationCard key={execution.id} execution={execution} />
-      ))}
+      {expanded && (
+        <div className="space-y-3 border-t p-3">
+          {!current && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={start.isPending || query.isLoading || query.isError}
+              onClick={() =>
+                start.mutate(
+                  { worktreeId, taskId: taskId ?? undefined },
+                  { onError: e => toast.error(`Validation non lancée : ${e}`) }
+                )
+              }
+            >
+              {start.isPending ? 'Démarrage…' : 'Lancer la validation'}
+            </Button>
+          )}
+          {current && (
+            <ValidationCard
+              key={current.id}
+              execution={current}
+              onOpenSession={onOpenSession}
+            />
+          )}
+          {previous.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer py-1 text-muted-foreground">
+                Exécutions précédentes ({previous.length})
+              </summary>
+              <div className="mt-2 space-y-2">
+                {previous.map(execution => (
+                  <ValidationCard
+                    key={execution.id}
+                    execution={execution}
+                    onOpenSession={onOpenSession}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
     </section>
   )
 }
