@@ -63,7 +63,20 @@ The review score is not a gate. Mandatory unresolved defects trigger correction;
 missing acceptance evidence does not by itself trigger code correction. At most
 three correction attempts are allowed, with an earlier stop after two attempts
 without progress on existing stable obligations. Waiting does not count as a
-correction. External waits have a persisted start time and a 30-minute ceiling.
+correction. A successful Review stage is not global Ready: mandatory CI or
+acceptance criteria may remain Unverified while Review advances to Git sync,
+CI, preview and acceptance. Only unresolved mandatory functional failures send
+that review back to correction; missing future-stage evidence must not trap it
+in a review waiting loop. Fresh CI, preview and acceptance proofs remain mandatory
+before Ready.
+
+Review must return a non-waiting decision. A Review `waiting` result is a contract
+error, not an external deployment wait: the first occurrence schedules exactly
+one immediate targeted repair retry at Review (Pending), with its budget persisted
+across recovery. A second occurrence blocks fail-closed for intervention. Neither
+occurrence increments correction/no-progress counters or starts a 60-second wait.
+This exception does not weaken genuine external CI/preview waits: they retain a
+persisted start time and a 30-minute ceiling.
 
 A new validation after a blocked execution is explicit and confirmed in the UI.
 It preserves the previous snapshot through `superseded_by`; it does not reset
@@ -155,6 +168,10 @@ The lab exercises the actual transition engine, strict result parser, private
 storage and local Git ancestry checks. Agent responses and CI/preview evidence
 are scripted fixtures, explicitly **not** observations from real services. It
 does not exercise the live worker's external adapters or assess AI judgment.
+The fourteen scenarios include a review that advances with Unverified CI/recipe
+criteria after five resolved defects and three corrections, and a Review waiting
+contract-error budget that survives snapshot reload. They assert no false Ready,
+no extra correction cycle and no repeated external wait for that contract error.
 Every scenario exposes checks and its transition trace; a failing check stays
 red. A successful lab report is not a readiness certificate for a real ticket.
 
@@ -235,3 +252,8 @@ from a name alone. Automatically renamed sessions remain recoverable; unprovable
 legacy sessions remain visible. Recovery is cached by the first prompt identity
 and hash, independently of ongoing streaming; it never opens a chat, drains
 queued prompts, or rewrites a running execution.
+
+Agent prompts retain all requirements, defects, proofs and identities, but include
+only the last six activity transitions and omit the technical session list.
+This reduces repetitive context on long runs without deleting durable history,
+changing the proof contract or skipping a review.

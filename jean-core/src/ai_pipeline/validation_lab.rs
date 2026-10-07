@@ -48,7 +48,7 @@ mod tests {
         let (report, removed_root) = run_all_with_cleanup().unwrap();
         assert!(report.isolated);
         assert!(!removed_root.exists());
-        assert_eq!(report.total_count, 12);
+        assert_eq!(report.total_count, 14);
         assert_eq!(report.passed_count, report.total_count, "{report:#?}");
         for scenario in &report.scenarios {
             assert!(scenario.passed);
@@ -87,6 +87,34 @@ mod tests {
         }
         assert_eq!(cursor, expected.len());
         assert!(scenario.summary.contains("simul"));
+    }
+    #[test]
+    fn unverified_review_reaches_recipe_without_spending_another_correction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut context = LabContext::new(dir.path()).unwrap();
+        review_unverified_progress(&mut context).unwrap();
+        assert!(
+            context.checks.iter().all(|check| check.passed),
+            "{:#?}",
+            context.checks
+        );
+        assert_eq!(context.execution.status, ValidationStatus::Ready);
+        assert_eq!(context.execution.correction_cycles, 3);
+        assert_eq!(context.execution.defects.len(), 5);
+    }
+    #[test]
+    fn review_wait_contract_error_blocks_after_one_persisted_repair_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut context = LabContext::new(dir.path()).unwrap();
+        review_wait_budget(&mut context).unwrap();
+        assert!(
+            context.checks.iter().all(|check| check.passed),
+            "{:#?}",
+            context.checks
+        );
+        assert_eq!(context.execution.status, ValidationStatus::Blocked);
+        assert_eq!(context.execution.step, ValidationStep::Review);
+        assert!(!validation_engine::is_ready(&context.execution));
     }
     #[test]
     fn malformed_script_is_not_salvaged_into_a_passing_result() {
@@ -281,6 +309,126 @@ fn happy(c: &mut LabContext) -> Result<(), String> {
     c.check(
         "Aucun effet externe ni session réelle créés",
         c.execution.effects.is_empty() && c.execution.active_session_id.is_none(),
+    );
+    Ok(())
+}
+
+fn review_unverified_progress(c: &mut LabContext) -> Result<(), String> {
+    c.execution.correction_cycles = 3;
+    c.execution.defects = (0..5)
+        .map(|index| Defect {
+            id: format!("resolved-defect-{index}"),
+            description: "SIMULÉ : défaut corrigé et vérifié indépendamment".into(),
+            mandatory: true,
+            resolved: true,
+            evidence_ids: vec!["review-regressions".into()],
+        })
+        .collect();
+    let mut ci = criterion(RequirementStatus::Unverified, vec![]);
+    ci.id = "ci-head".into();
+    ci.label = "CI du head exact encore non vérifiée".into();
+    c.execution.requirements.push(ci);
+    c.script(
+        StepOutcome::Passed,
+        HEAD,
+        vec![],
+        vec![proof("review-regressions", "test", HEAD)],
+        vec![],
+        None,
+    )?;
+    c.check(
+        "Cinq défauts résolus après trois corrections : revue réussie malgré CI/recette Unverified",
+        c.execution.step == ValidationStep::GitSync
+            && c.execution
+                .requirements
+                .iter()
+                .all(|r| r.status == RequirementStatus::Unverified)
+            && c.execution.correction_cycles == 3
+            && !validation_engine::is_ready(&c.execution),
+    );
+    c.passed()?;
+    c.check(
+        "GitSync atteint CI sans faux Ready",
+        c.execution.step == ValidationStep::Ci && !validation_engine::is_ready(&c.execution),
+    );
+    let mut confirmed_ci = c.execution.requirements[1].clone();
+    confirmed_ci.status = RequirementStatus::Passed;
+    confirmed_ci.evidence_ids = vec!["ci-head".into()];
+    c.script(
+        StepOutcome::Passed,
+        HEAD,
+        vec![confirmed_ci],
+        vec![proof("ci-head", "backend-ci", HEAD)],
+        vec![],
+        None,
+    )?;
+    c.check(
+        "CI atteint Preview sans remplacer la recette",
+        c.execution.step == ValidationStep::Preview && !validation_engine::is_ready(&c.execution),
+    );
+    c.script(
+        StepOutcome::Passed,
+        HEAD,
+        vec![],
+        vec![proof("preview-version", "git-ancestry", HEAD)],
+        vec![],
+        Some(DEPLOYED),
+    )?;
+    c.check(
+        "Preview atteint Acceptance, toujours non prêt",
+        c.execution.step == ValidationStep::Acceptance
+            && c.execution.status != ValidationStatus::Ready
+            && c.execution.acceptance_evidence_ids.is_empty()
+            && !validation_engine::is_ready(&c.execution),
+    );
+    c.finish_acceptance()?;
+    c.check(
+        "La recette fraîche seule termine la chaîne avec les preuves système",
+        c.execution.status == ValidationStatus::Ready
+            && validation_engine::is_ready(&c.execution)
+            && c.execution.correction_cycles == 3,
+    );
+    Ok(())
+}
+
+fn review_wait_budget(c: &mut LabContext) -> Result<(), String> {
+    c.execution.correction_cycles = 3;
+    c.execution.no_progress_cycles = 1;
+    c.script(StepOutcome::Waiting, HEAD, vec![], vec![], vec![], None)?;
+    c.check(
+        "Premier waiting de revue : retry ciblé Pending immédiat, sans minuterie ni correction",
+        c.execution.step == ValidationStep::Review
+            && c.execution.status == ValidationStatus::Pending
+            && c.execution.review_wait_retries == 1
+            && c.execution.waiting_since.is_none()
+            && c.execution.correction_cycles == 3
+            && c.execution.no_progress_cycles == 1
+            && c.execution.active_attempt.is_none()
+            && !validation_engine::is_ready(&c.execution),
+    );
+    // script() already reloads the real private snapshot; reload explicitly again
+    // to demonstrate that restarting cannot grant another repair budget.
+    c.execution = c
+        .store
+        .get(&c.execution.id)?
+        .ok_or("Budget de revue absent")?;
+    c.check(
+        "Le budget de réparation survit au rechargement",
+        c.execution.review_wait_retries == 1,
+    );
+    c.script(StepOutcome::Waiting, HEAD, vec![], vec![], vec![], None)?;
+    c.check(
+        "Second waiting : blocage fail-closed, pas de boucle de douze attentes",
+        c.execution.step == ValidationStep::Review
+            && c.execution.status == ValidationStatus::Blocked
+            && c.execution.waiting_since.is_none()
+            && c.execution.correction_cycles == 3
+            && c.execution.no_progress_cycles == 1
+            && !validation_engine::is_ready(&c.execution),
+    );
+    c.check(
+        "Le snapshot terminal conserve le blocage et aucune tentative active",
+        c.execution.blocker.is_some() && c.execution.active_attempt.is_none(),
     );
     Ok(())
 }
@@ -920,8 +1068,18 @@ fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
         .tempdir()
         .map_err(|e| format!("Laboratoire temporaire indisponible : {e}"))?;
     let root = temporary.path().to_path_buf();
-    let definitions: [(&str, &str, ScenarioRunner); 12] = [
+    let definitions: [(&str, &str, ScenarioRunner); 14] = [
         ("happy-path", "Validation complète", happy),
+        (
+            "review-unverified-progress",
+            "Revue réussie : CI et recette encore non vérifiées",
+            review_unverified_progress,
+        ),
+        (
+            "review-wait-budget",
+            "Revue waiting : une réparation ciblée puis blocage",
+            review_wait_budget,
+        ),
         (
             "fresh-ticket",
             "Ticket sans PR : implémentation → PR → recette",
