@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -27,12 +26,10 @@ import {
 } from '@/components/ui/tooltip'
 import { openExternal } from '@/lib/platform'
 import { clickupTaskUrl } from '@/lib/clickup'
-import { reportSteps } from '@/lib/ai-pipeline-steps'
 import { formatAge, taskMatchesQuery } from '@/lib/ai-pipeline-format'
 import {
   useAiPipelineTasks,
   useResumeAiPipelineTask,
-  useStartAiPipelineValidation,
 } from '@/services/ai-pipeline'
 import type { AiPipelineTask, ResumeResult } from '@/types/ai-pipeline'
 
@@ -361,7 +358,6 @@ export function AiPipelineTaskList({
   const { data, isLoading, isError, error, isFetching, refetch } =
     useAiPipelineTasks(projectId, { enabled })
   const resume = useResumeAiPipelineTask(projectId)
-  const startValidation = useStartAiPipelineValidation(projectId)
 
   const review = useMemo(
     () => (data?.review ?? []).filter(t => taskMatchesQuery(t, query)),
@@ -375,56 +371,23 @@ export function AiPipelineTaskList({
   const handleResume = useCallback(
     (task: AiPipelineTask, validate = false) => {
       if (resumingTaskId) return
-      const target = task.pr ? `PR #${task.pr.number}` : `ticket ${task.taskId}`
-      const toastId = toast.loading(`Reprise de la ${target}…`)
       setResumingTaskId(task.taskId)
       resume.mutate(
-        { taskId: task.taskId, prNumber: task.pr?.number },
+        {
+          taskId: task.taskId,
+          prNumber: task.pr?.number,
+          ...(validate ? { validate: true } : {}),
+        },
         {
           onSuccess: res => {
-            reportSteps(toastId, `${target} reprise`, [res.github, res.clickup])
             setResumedTaskIds(prev => new Set(prev).add(task.taskId))
             onResumed?.(res)
-            if (validate) {
-              if (!res.github.ok || !res.clickup.ok) {
-                toast.warning(
-                  'Worktree conservé. Validation non lancée : prise en charge incomplète.'
-                )
-                return
-              }
-              const validationToastId = toast.loading(
-                'Préparation du worktree puis démarrage de la validation…'
-              )
-              startValidation.mutate(
-                {
-                  worktreeId: res.worktree.id,
-                  taskId: task.taskId,
-                  prNumber: task.pr?.number,
-                },
-                {
-                  onSuccess: () =>
-                    toast.success(
-                      'Validation privée créée. Consulte son suivi dans Pipeline IA.',
-                      { id: validationToastId }
-                    ),
-                  onError: e =>
-                    toast.error(
-                      `Worktree conservé ; validation non lancée : ${e}`,
-                      { id: validationToastId }
-                    ),
-                }
-              )
-            }
           },
-          onError: e =>
-            toast.error(`Échec de la reprise (${target}) : ${e}`, {
-              id: toastId,
-            }),
           onSettled: () => setResumingTaskId(null),
         }
       )
     },
-    [resume, onResumed, startValidation, resumingTaskId]
+    [resume, onResumed, resumingTaskId]
   )
 
   if (!projectId) {

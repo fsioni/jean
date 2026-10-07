@@ -91,9 +91,11 @@ export interface FinishResult {
 
 /** Private persisted validation state; backend serialization is snake_case. */
 export type ValidationStep =
+  | 'implementation'
   | 'review'
   | 'correction'
   | 'git_sync'
+  | 'create_pr'
   | 'ci'
   | 'preview'
   | 'acceptance'
@@ -127,8 +129,14 @@ export interface ValidationExecution {
   project_id: string
   worktree_id: string
   repository_path: string
+  runtime_config_baseline?: {
+    working_sha256: string
+    head_blob: string
+  } | null
   task_id: string
   pr_number: number | null
+  publication_base_branch?: string | null
+  publication_remote_identity?: string | null
   revision: number
   step: ValidationStep
   status: ValidationStatus

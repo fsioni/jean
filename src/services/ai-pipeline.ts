@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@/lib/transport'
+import { toast } from 'sonner'
+import { reportSteps } from '@/lib/ai-pipeline-steps'
 import type {
   AiPipelineConfig,
   AiPipelinePr,
@@ -169,20 +171,56 @@ export function useAssignPrToMe(projectId: string | null) {
  */
 export function useResumeAiPipelineTask(projectId: string | null) {
   const queryClient = useQueryClient()
+  const validation = useStartAiPipelineValidation(projectId, { notify: true })
   return useMutation({
     mutationFn: async (vars: {
       taskId: string
       prNumber?: number
       targetStatus?: string
+      validate?: boolean
     }): Promise<ResumeResult> => {
-      return invoke<ResumeResult>('resume_ai_pipeline_task', {
+      const resumed = await invoke<ResumeResult>('resume_ai_pipeline_task', {
         projectId: projectId ?? undefined,
         taskId: vars.taskId,
         prNumber: vars.prNumber,
         targetStatus: vars.targetStatus,
       })
+      if (vars.validate) {
+        if (!resumed.github.ok || !resumed.clickup.ok) {
+          toast.warning(
+            'Worktree conservé. Validation non lancée : prise en charge incomplète.'
+          )
+        } else {
+          await validation
+            .mutateAsync({
+              worktreeId: resumed.worktree.id,
+              taskId: vars.taskId,
+              prNumber: vars.prNumber,
+            })
+            .catch(() => undefined)
+        }
+      }
+      return resumed
     },
-    onSuccess: () => {
+    onMutate: vars => {
+      const target = vars.prNumber
+        ? `PR #${vars.prNumber}`
+        : `ticket ${vars.taskId}`
+      return { target, toastId: toast.loading(`Reprise de la ${target}…`) }
+    },
+    onError: (error, _vars, context) => {
+      if (!context) return
+      toast.error(`Échec de la reprise (${context.target}) : ${error}`, {
+        id: context.toastId,
+      })
+    },
+    onSuccess: (resumed, _vars, context) => {
+      if (context) {
+        reportSteps(context.toastId, `${context.target} reprise`, [
+          resumed.github,
+          resumed.clickup,
+        ])
+      }
       if (projectId) {
         queryClient.invalidateQueries({
           queryKey: projectsQueryKeys.worktrees(projectId),
@@ -257,7 +295,10 @@ export function useAiPipelineValidations(
   })
 }
 
-export function useStartAiPipelineValidation(projectId: string | null) {
+export function useStartAiPipelineValidation(
+  projectId: string | null,
+  options?: { notify?: boolean }
+) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (vars: {
@@ -270,8 +311,44 @@ export function useStartAiPipelineValidation(projectId: string | null) {
         projectId,
         ...vars,
       }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all }),
+    onMutate: () => ({
+      toastId: options?.notify
+        ? toast.loading(
+            'Préparation du worktree puis démarrage de la validation…'
+          )
+        : undefined,
+    }),
+    onSuccess: (execution, _vars, context) => {
+      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all })
+      if (context?.toastId === undefined) return
+      const feedback = { id: context.toastId }
+      if (execution.status === 'blocked' || execution.status === 'failed') {
+        const message = `Validation ${execution.status === 'blocked' ? 'bloquée' : 'échouée'} : ${execution.blocker || 'consulte son suivi dans Pipeline IA.'}`
+        if (execution.status === 'failed') toast.error(message, feedback)
+        else toast.warning(message, feedback)
+      } else if (
+        execution.status === 'waiting' ||
+        execution.status === 'pending'
+      ) {
+        toast.warning(
+          `Validation en attente${execution.blocker ? ` : ${execution.blocker}` : '. Consulte son suivi dans Pipeline IA.'}`,
+          feedback
+        )
+      } else {
+        toast.success(
+          execution.status === 'ready'
+            ? 'Validation prête. Consulte son suivi dans Pipeline IA.'
+            : 'Validation démarrée. Consulte son suivi dans Pipeline IA.',
+          feedback
+        )
+      }
+    },
+    onError: (error, _vars, context) => {
+      if (context?.toastId === undefined) return
+      toast.error(`Worktree conservé ; validation non lancée : ${error}`, {
+        id: context.toastId,
+      })
+    },
   })
 }
 

@@ -22,6 +22,8 @@ Backend implementation lives in `jean-core/src/ai_pipeline/`:
 - `validation_ci.rs`: exact PR/head checks requiring the known Planexpo Jenkins context.
 - `validation_commands.rs`: job ownership, external effect reconciliation and IPC.
 - `validation_steps.rs`: agent instructions, strict result parsing and Git sync.
+- `validation_publication.rs`: reviewed-head publication and idempotent PR creation.
+- `runtime_config.rs`: proven setup configuration baseline and protected staging.
 - `preview_version.rs`: bounded `/version` reads and Git ancestry verification.
 
 Commands are dispatched through `jean-core/src/http_server/dispatch.rs`; native
@@ -32,6 +34,24 @@ Web Access and mobile. Do not add a frontend-owned workflow loop.
 
 Review → optional correction/tests → independent review → Git sync → CI →
 preview version → acceptance testing → ready for the user's decision.
+
+For a ticket without a PR or remote branch, the same action starts with
+implementation/tests → independent review → optional correction/review → first
+Git sync → PR creation/assignment → CI → preview → acceptance. Agents never
+commit or publish: backend commit/push/PR operations follow persisted intent.
+Initial implementation is not a successful review or recipe and cannot mark ready.
+
+The first push requires a successful fetch, the current remote base to be an
+ancestor of the reviewed commit, a clean attributable tree and an unchanged
+branch/HEAD. Ambiguous/divergent bases block; no merge or force-push is attempted.
+Fetch/push destinations must be unique and identical, are bound privately across
+recovery, and explicit captured destinations are used for publication.
+PR creation reconciles repository/head/base/SHA before retrying, checks remote
+head, and refuses multiple, closed, foreign-owned or differently bound PRs.
+The public title/body describe the ticket only, not private findings or automation.
+PR identity is attached to the worktree under the project storage lock, and guarded
+self-assignment is confirmed before CI. Interrupted publication resumes without
+silently creating a second PR or rerunning implementation.
 
 A functional failure found during acceptance returns to correction, then independent
 review, Git sync, CI, preview verification and a new acceptance pass. Failed mandatory
@@ -119,8 +139,8 @@ The backend agent tools are **not technically confined**. The prohibition on
 publication/production is an instruction, not an OS/network sandbox. The UI
 shows this limit. Keep the worktree reserved while correction is running: the
 backend cannot safely attribute simultaneous user edits to a particular agent.
-The feature currently requires an existing PR; a pickup without a PR is blocked
-with an explicit reason rather than manufacturing a preview or CI result.
+CI, preview and acceptance still require a confirmed PR. Its absence during initial
+implementation is expected, not proof of failed CI or a fabricated preview.
 
 ## Tests and manual verification
 
@@ -144,7 +164,7 @@ Web Access/mobile. It accepts no target arguments and does not use app-data or
 configured credentials. The private temporary directories are cleaned after
 each run. Closing the lab does not interact with Jean chat sessions or Run.
 
-Before a real trial, keep the worktree exclusive, use an existing PR preview and
+Before a real trial, keep the worktree exclusive, use only the confirmed PR preview and
 review the privacy/tool-limit notice. The first trial still needs to confirm real
 authentication, CI/deployment response formats and functional acceptance behavior.
 
@@ -170,3 +190,22 @@ waits for its persisted record (250 ms polling, 10 minute limit), outside the
 mutation lock. A project mismatch or storage error fails immediately. Timeout
 preserves the checkout: retry validation from its worktree, not ticket pickup.
 Web Access uses the extended command timeout for this preparation step.
+
+The pickup setup may copy the root project's `jean.json` into the worktree.
+With successful setup, validation recognizes only a byte-identical root copy
+whose setup starts with the documented copy command. Its SHA-256 and original
+HEAD blob are persisted as a private runtime baseline. The file stays untouched
+and is excluded from correction staging; baseline changes, staged configuration
+or unrelated edits still block. Existing jobs blocked on this setup copy can
+adopt the same strict baseline on explicit resume before any agent/effect.
+
+Start feedback is owned by the mutation lifecycle (not mounted row callbacks),
+so automatic navigation cannot leave a loading toast behind. Blocked and waiting
+results are displayed as such rather than reported as success.
+
+The offline lab includes two unpublished-ticket scenarios: full scripted
+implementation/publication/recipe and interrupted PR intention reconciliation.
+External effects remain simulated in the lab; separate Git bare and fake-CLI tests
+exercise first-push guards and PR readback without contacting real services.
+The first real trial must still verify implementation quality, actual PR creation,
+assignment, CI/deployment formats and the installed native/Web/mobile transport.

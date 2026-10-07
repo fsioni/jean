@@ -4,11 +4,9 @@ import type { AiPipelinePr, AiPipelineTask } from '@/types/ai-pipeline'
 
 const mockTasks = vi.fn()
 const mockResumeMutate = vi.fn()
-const mockStart = vi.fn()
 
 vi.mock('@/services/ai-pipeline', () => ({
   useAiPipelineTasks: () => mockTasks(),
-  useStartAiPipelineValidation: () => ({ mutate: mockStart }),
   useResumeAiPipelineTask: () => ({ mutate: mockResumeMutate }),
 }))
 vi.mock('@/lib/platform', () => ({ openExternal: vi.fn() }))
@@ -81,7 +79,6 @@ function setTasks(
 beforeEach(() => {
   mockTasks.mockReset()
   mockResumeMutate.mockReset()
-  mockStart.mockReset()
 })
 
 describe('AiPipelineTaskList', () => {
@@ -185,24 +182,11 @@ describe('private validation launch', () => {
     })
     const view = render(<AiPipelineTaskList projectId="p1" />)
     fireEvent.click(view.getByRole('button', { name: 'Récupérer et valider' }))
-    expect(mockStart).toHaveBeenCalledWith(
-      { worktreeId: 'w1', taskId: '86cauhzpd', prNumber: 4140 },
+    expect(mockResumeMutate).toHaveBeenCalledWith(
+      { taskId: '86cauhzpd', prNumber: 4140, validate: true },
       expect.anything()
     )
     expect(view.getByRole('button', { name: 'Récupéré ✓' })).toBeDisabled()
-  })
-  it('does not start after a partial assignment failure', () => {
-    setTasks([task()], [])
-    mockResumeMutate.mockImplementation((_vars, handlers) => {
-      handlers.onSuccess({
-        worktree: { id: 'w1' },
-        github: { ok: true },
-        clickup: { ok: false },
-      })
-    })
-    const view = render(<AiPipelineTaskList projectId="p1" />)
-    fireEvent.click(view.getByRole('button', { name: 'Récupérer et valider' }))
-    expect(mockStart).not.toHaveBeenCalled()
   })
   it('does not infer green CI from absent status', () => {
     setTasks([task({ pr: pr({ ci: undefined }) })], [])

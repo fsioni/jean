@@ -14,6 +14,8 @@ pub enum ValidationStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStep {
+    Implementation,
+    CreatePr,
     Review,
     Correction,
     GitSync,
@@ -90,7 +92,13 @@ pub struct ValidationExecution {
     pub worktree_id: String,
     pub repository_path: String,
     #[serde(default)]
+    pub runtime_config_baseline: Option<super::runtime_config::RuntimeConfigBaseline>,
+    #[serde(default)]
     pub original_branch: Option<String>,
+    #[serde(default)]
+    pub publication_base_branch: Option<String>,
+    #[serde(default)]
+    pub publication_remote_identity: Option<String>,
     pub task_id: String,
     pub pr_number: Option<u32>,
     pub revision: u64,
@@ -156,11 +164,18 @@ impl ValidationExecution {
             project_id,
             worktree_id,
             repository_path,
+            runtime_config_baseline: None,
             original_branch: None,
+            publication_base_branch: None,
+            publication_remote_identity: None,
             task_id,
             pr_number,
             revision: 0,
-            step: ValidationStep::Review,
+            step: if pr_number.is_none() {
+                ValidationStep::Implementation
+            } else {
+                ValidationStep::Review
+            },
             status: ValidationStatus::Pending,
             created_at: now.clone(),
             updated_at: now,

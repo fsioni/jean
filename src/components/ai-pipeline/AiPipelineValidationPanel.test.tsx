@@ -47,6 +47,25 @@ const fixture = (
   ...overrides,
 })
 describe('private validation evidence', () => {
+  it('shows initial implementation and PR creation for a fresh ticket', () => {
+    const view = render(
+      <ValidationCard
+        execution={fixture({ pr_number: null, step: 'implementation' })}
+      />
+    )
+    expect(view.getByText('Implémentation')).toBeInTheDocument()
+    expect(view.getByText('Création PR')).toBeInTheDocument()
+    expect(view.getByText('Implémentation').closest('li')).toHaveAttribute(
+      'aria-current',
+      'step'
+    )
+  })
+
+  it('does not add implementation to an existing PR validation', () => {
+    const view = render(<ValidationCard execution={fixture()} />)
+    expect(view.queryByText('Implémentation')).not.toBeInTheDocument()
+    expect(view.queryByText('Création PR')).not.toBeInTheDocument()
+  })
   it('never announces ready without mandatory evidence', () => {
     const view = render(
       <ValidationCard execution={fixture({ status: 'ready' })} />
