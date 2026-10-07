@@ -156,6 +156,24 @@ pub async fn start_ai_pipeline_validation(
     pr_number: Option<u32>,
     new_execution: Option<bool>,
 ) -> Result<ValidationExecution, String> {
+    // checkout_pr/create_worktree return a pending record immediately. Their
+    // background setup persists the real record later: do not mistake that
+    // normal window for a missing worktree, or hold MUTATIONS while waiting.
+    super::worktree_readiness::wait_until_ready(
+        || {
+            let data = crate::projects::storage::load_projects_data(&app)?;
+            match data.worktrees.iter().find(|w| w.id == worktree_id) {
+                Some(worktree) if worktree.project_id != project_id => {
+                    Err("Worktree lié à un autre projet".into())
+                }
+                Some(worktree) => Ok(Some(worktree.clone())),
+                None => Ok(None),
+            }
+        },
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_millis(250),
+    )
+    .await?;
     let execution = {
         let _guard = MUTATIONS
             .get_or_init(|| Mutex::new(()))

@@ -973,6 +973,7 @@ export class WsTransport {
   private static readonly LONG_RUNNING_COMMANDS: ReadonlySet<string> = new Set([
     'send_chat_message',
     'run_review_with_ai',
+    'start_ai_pipeline_validation',
     'create_pr_with_ai_content',
     'create_commit_with_ai',
     'execute_summarization',

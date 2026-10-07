@@ -164,3 +164,9 @@ pickup, review/correction, CI and preview, acceptance proofs, pause/resume,
 interruption/recovery and manual draft. Verify native, Web Access and mobile
 separately. Simulated component tests and headless component screenshots do not
 prove the installed native app or its real integrations have been exercised.
+
+Checkout returns a pending worktree before background Git/setup finishes. Validation
+waits for its persisted record (250 ms polling, 10 minute limit), outside the
+mutation lock. A project mismatch or storage error fails immediately. Timeout
+preserves the checkout: retry validation from its worktree, not ticket pickup.
+Web Access uses the extended command timeout for this preparation step.
