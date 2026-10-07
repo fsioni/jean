@@ -13,9 +13,11 @@ import {
 import type { ValidationExecution, ValidationStep } from '@/types/ai-pipeline'
 
 const stages: [ValidationStep, string][] = [
+  ['implementation', 'Implémentation'],
   ['review', 'Review'],
   ['correction', 'Corrections'],
   ['git_sync', 'Git'],
+  ['create_pr', 'Création PR'],
   ['ci', 'CI'],
   ['preview', 'Version'],
   ['acceptance', 'Recette'],
@@ -97,7 +99,17 @@ export function ValidationCard({
       : execution.status === 'ready' && !verified
         ? 'Preuves à confirmer'
         : statuses[execution.status]
-  const index = stages.findIndex(([step]) => step === execution.step)
+  const freshTicket =
+    !!execution.publication_base_branch ||
+    !execution.pr_number ||
+    execution.step === 'implementation' ||
+    execution.step === 'create_pr'
+  const visibleStages = freshTicket
+    ? stages
+    : stages.filter(
+        ([step]) => step !== 'implementation' && step !== 'create_pr'
+      )
+  const index = visibleStages.findIndex(([step]) => step === execution.step)
   return (
     <article className="rounded-lg border border-border bg-background p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -124,10 +136,10 @@ export function ValidationCard({
         </span>
       </div>
       <ol
-        className="my-3 grid grid-cols-4 gap-1 sm:grid-cols-7"
+        className={`my-3 grid gap-1 ${freshTicket ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-4 sm:grid-cols-7'}`}
         aria-label="Étapes de validation"
       >
-        {stages.map(([step, title], i) => (
+        {visibleStages.map(([step, title], i) => (
           <li
             key={step}
             aria-current={step === execution.step ? 'step' : undefined}

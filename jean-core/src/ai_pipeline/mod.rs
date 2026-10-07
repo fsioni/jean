@@ -38,5 +38,8 @@ pub mod validation_artifacts;
 pub mod validation_lab;
 pub use validation_lab::run_ai_pipeline_validation_lab;
 
+mod runtime_config;
 pub mod validation_ci;
 mod worktree_readiness;
+
+pub mod validation_publication;

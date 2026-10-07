@@ -85,10 +85,11 @@ async fn refresh_ready_snapshot(
     }
     let observed_revision = execution.revision;
     let path = execution.repository_path.clone();
+    let baseline = execution.runtime_config_baseline.clone();
     let local = tauri::async_runtime::spawn_blocking(move || -> Result<(String, bool), String> {
         Ok((
             steps::git(&path, &["rev-parse", "HEAD"])?,
-            steps::git(&path, &["status", "--porcelain"])?.is_empty(),
+            super::runtime_config::is_clean(&path, baseline.as_ref())?,
         ))
     })
     .await
@@ -246,20 +247,60 @@ pub async fn start_ai_pipeline_validation(
             pr_number.or(worktree.pr_number),
         );
         execution.original_branch = Some(worktree.branch.clone());
+        if execution.pr_number.is_none() {
+            let branch = steps::git(
+                &execution.repository_path,
+                &["symbolic-ref", "--quiet", "--short", "HEAD"],
+            )?;
+            if worktree.project_id != execution.project_id
+                || worktree.path != execution.repository_path
+                || worktree.pr_number.is_some()
+                || worktree.branch != branch
+                || execution
+                    .original_branch
+                    .as_deref()
+                    .is_some_and(|original| original != branch)
+            {
+                return Err(
+                    "Identité du worktree initial modifiée ; nouvelle exécution requise".into(),
+                );
+            }
+            let base = worktree
+                .base_branch
+                .as_deref()
+                .filter(|base| !base.is_empty() && !base.starts_with('-'))
+                .ok_or("Branche de base initiale absente")?;
+            steps::git(
+                &execution.repository_path,
+                &["check-ref-format", "--branch", base],
+            )?;
+            execution.original_branch = Some(branch);
+            if execution.runtime_config_baseline.is_none() && worktree.setup_success == Some(true) {
+                let project = data
+                    .find_project(&execution.project_id)
+                    .ok_or("Projet absent")?;
+                execution.runtime_config_baseline =
+                    super::runtime_config::capture(&execution.repository_path, &project.path)?;
+            }
+            execution.publication_base_branch = worktree.base_branch.clone();
+            execution.publication_remote_identity = Some(
+                super::validation_publication::capture_remote_identity(&execution.repository_path)?,
+            );
+        }
+        if worktree.setup_success == Some(true) {
+            if let Some(project) = data.find_project(&execution.project_id) {
+                execution.runtime_config_baseline =
+                    super::runtime_config::capture(&execution.repository_path, &project.path)?;
+            }
+        }
         execution.limitations.push("Le worktree doit rester réservé à cette validation : Jean ne peut pas distinguer les éditions utilisateur concurrentes de celles de l'agent pendant une correction.".into());
         execution.limitations.push("Les outils des agents ne sont pas techniquement confinés ; les interdictions de publication et production sont des instructions. Aucun merge automatique.".into());
         execution.head_commit = Some(steps::git(
             &execution.repository_path,
             &["rev-parse", "HEAD"],
         )?);
-        if !steps::git(&execution.repository_path, &["status", "--porcelain"])?.is_empty() {
+        if !steps::is_clean(&execution)? {
             engine::block(&mut execution, "Modifications préexistantes : attribution ambiguë. Nettoie ou sauvegarde le worktree avant de reprendre.");
-        }
-        if execution.pr_number.is_none() {
-            engine::block(
-                &mut execution,
-                "Une PR existante est requise pour vérifier la CI et la preview.",
-            );
         }
         if let Some(mut previous) = previous {
             previous.superseded_by = Some(execution.id.clone());
@@ -294,6 +335,11 @@ pub async fn pause_ai_pipeline_validation(
     save(&app, &execution)?;
     Ok(execution)
 }
+fn legacy_missing_pr_blocker(reason: Option<&str>) -> bool {
+    reason.is_some_and(|reason| reason == "Une PR existante est requise pour vérifier la CI et la preview."
+        || reason == "Ticket récupéré sans PR : l'implémentation et la création d'une PR sont requises avant cette validation de revue/recette.")
+}
+
 pub async fn resume_ai_pipeline_validation(
     app: AppHandle,
     execution_id: String,
@@ -315,14 +361,67 @@ pub async fn resume_ai_pipeline_validation(
         {
             return Err("Limite de correction atteinte ; crée une nouvelle exécution après décision explicite".into());
         }
+        if execution.pr_number.is_none()
+            && execution.effects.is_empty()
+            && execution.active_attempt.is_none()
+            && execution.step == ValidationStep::Review
+            && execution.correction_cycles == 0
+            && legacy_missing_pr_blocker(execution.blocker.as_deref())
+        {
+            if steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?
+                != execution.head_commit.clone().ok_or("HEAD manquant")?
+            {
+                return Err("HEAD initial changé ; nouvelle exécution requise".into());
+            }
+            let data = crate::projects::storage::load_projects_data(&app)?;
+            let worktree = data
+                .find_worktree(&execution.worktree_id)
+                .ok_or("Worktree absent")?;
+            execution.publication_base_branch = worktree.base_branch.clone();
+            execution.publication_remote_identity = Some(
+                super::validation_publication::capture_remote_identity(&execution.repository_path)?,
+            );
+            execution.step = ValidationStep::Implementation;
+        }
         if execution.active_attempt.is_none() {
-            if execution.step == ValidationStep::Review
-                && !steps::git(&execution.repository_path, &["status", "--porcelain"])?.is_empty()
+            // Older snapshots may have blocked on the setup's copied jean.json.
+            // Adopt only the same strictly proven runtime copy, before any work.
+            if execution.runtime_config_baseline.is_none()
+                && matches!(
+                    execution.step,
+                    ValidationStep::Review | ValidationStep::Implementation
+                )
+                && execution.effects.is_empty()
+                && execution.correction_cycles == 0
+                && execution
+                    .blocker
+                    .as_deref()
+                    .is_some_and(|reason| reason.starts_with("Modifications préexistantes"))
+            {
+                let data = crate::projects::storage::load_projects_data(&app)?;
+                if data.find_worktree(&execution.worktree_id).is_some_and(|w| {
+                    w.project_id == execution.project_id
+                        && w.path == execution.repository_path
+                        && w.setup_success == Some(true)
+                }) {
+                    if let Some(project) = data.find_project(&execution.project_id) {
+                        execution.runtime_config_baseline = super::runtime_config::capture(
+                            &execution.repository_path,
+                            &project.path,
+                        )?;
+                    }
+                }
+            }
+            if matches!(
+                execution.step,
+                ValidationStep::Review | ValidationStep::Implementation
+            ) && !steps::is_clean(&execution)?
             {
                 return Err("Le worktree doit être propre avant reprise de review".into());
             }
             execution.blocker = None;
         }
+        steps::verify_runtime_config(&execution)?;
         execution.status = ValidationStatus::Pending;
         execution.paused = false;
         engine::record(&mut execution, "Reprise demandée");
@@ -368,6 +467,20 @@ fn launch(app: AppHandle, id: String) {
     });
 }
 
+fn pending_pr_publication(execution: &ValidationExecution) -> bool {
+    execution.step == ValidationStep::CreatePr
+        && execution.active_attempt.as_ref().is_some_and(|attempt| {
+            attempt.execution_id == execution.id
+                && attempt.step == ValidationStep::CreatePr
+                && execution.effects.iter().any(|effect| {
+                    effect.id == format!("create-pr:{}", attempt.attempt_id)
+                        && effect.kind == "create_pr"
+                        && !effect.confirmed
+                        && Some(&effect.intended_commit) == execution.head_commit.as_ref()
+                })
+        })
+}
+
 async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut waits = 0;
     loop {
@@ -382,15 +495,23 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             return Ok(());
         }
         let data = crate::projects::storage::load_projects_data(app)?;
+        steps::verify_runtime_config(&execution)?;
         let worktree = data
             .worktrees
             .iter()
             .find(|w| w.id == execution.worktree_id && w.project_id == execution.project_id)
             .ok_or("Worktree absent ou changé de projet")?;
+        if execution.publication_base_branch.is_some()
+            && (execution.pr_number.is_none() || execution.step == ValidationStep::CreatePr)
+            && worktree.base_branch != execution.publication_base_branch
+        {
+            return Err("Branche de base initiale modifiée : publication refusée".into());
+        }
         if worktree.path != execution.repository_path
-            || worktree
+            || (worktree
                 .pr_number
                 .is_some_and(|pr| Some(pr) != execution.pr_number)
+                && !(pending_pr_publication(&execution)))
         {
             return Err("Périmètre worktree/PR différent de celui de l'exécution".into());
         }
@@ -410,14 +531,27 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             execution.original_branch = Some(worktree.branch.clone());
             save_worker(app, &mut execution)?;
         }
-        let pr = execution.pr_number.ok_or("PR requise pour continuer")?;
-        super::commands::verify_ai_pipeline_github_assignment(
-            app.clone(),
-            execution.project_id.clone(),
-            pr,
-        )
-        .await?;
-        if execution.step == ValidationStep::Review
+        if let Some(pr) = execution
+            .pr_number
+            .filter(|_| !(pending_pr_publication(&execution)))
+        {
+            super::commands::verify_ai_pipeline_github_assignment(
+                app.clone(),
+                execution.project_id.clone(),
+                pr,
+            )
+            .await?;
+        } else if matches!(
+            execution.step,
+            ValidationStep::Ci
+                | ValidationStep::Preview
+                | ValidationStep::Acceptance
+                | ValidationStep::Complete
+        ) {
+            return Err("PR requise pour CI/preview/recette".into());
+        }
+        if execution.pr_number.is_some()
+            && execution.step == ValidationStep::Review
             && execution.correction_cycles == 0
             && execution.effects.is_empty()
         {
@@ -459,22 +593,28 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
         } else {
             match execution.step {
                 ValidationStep::GitSync => {
-                    assert_pr_branch(app, &execution).await?;
-                    if !steps::git(&execution.repository_path, &["status", "--porcelain"])?
-                        .is_empty()
-                    {
+                    if execution.pr_number.is_some() {
+                        assert_pr_branch(app, &execution).await?;
+                    }
+                    if !steps::is_clean(&execution)? {
                         return Err("Worktree modifié après review : push refusé".into());
                     }
                     let head = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
                     if execution.head_commit.as_ref() != Some(&head) {
                         return Err("HEAD a changé après review".into());
                     }
-                    execution.effects.push(ExternalEffect {
-                        id: identity.attempt_id.clone(),
-                        kind: "push".into(),
-                        intended_commit: head.clone(),
-                        confirmed: false,
-                    });
+                    if !execution
+                        .effects
+                        .iter()
+                        .any(|effect| effect.id == identity.attempt_id)
+                    {
+                        execution.effects.push(ExternalEffect {
+                            id: identity.attempt_id.clone(),
+                            kind: "push".into(),
+                            intended_commit: head.clone(),
+                            confirmed: false,
+                        });
+                    }
                     save_worker(app, &mut execution)?;
                     let path = execution.repository_path.clone();
                     let sync_execution = execution.clone();
@@ -494,12 +634,16 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                     save_worker(app, &mut execution)?;
                     basic_result(identity.clone(), head)
                 }
+                ValidationStep::CreatePr => {
+                    create_pr_result(app, &mut execution, &identity).await?
+                }
                 ValidationStep::Ci => ci_result(app, &mut execution, &identity).await?,
                 ValidationStep::Preview => preview_result(&execution, identity.clone()).await?,
                 ValidationStep::Complete => return Ok(()),
                 _ => execute_agent(app, &mut execution, &identity).await?,
             }
         };
+        steps::verify_runtime_config(&execution)?;
         if execution.step == ValidationStep::Ci && execution.active_session_id.is_some() {
             let check = remote_check(app, &execution).await?;
             if check.head_sha != execution.head_commit {
@@ -531,7 +675,16 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                 }
             }
         }
-        if execution.step == ValidationStep::Correction && result.outcome == StepOutcome::Passed {
+        if matches!(
+            execution.step,
+            ValidationStep::Correction | ValidationStep::Implementation
+        ) && result.outcome == StepOutcome::Passed
+        {
+            let commit_subject = if execution.step == ValidationStep::Implementation {
+                "feat: implement ticket"
+            } else {
+                "fix: address review findings"
+            };
             let actual_head = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
             if execution.head_commit.as_ref() != Some(&actual_head) {
                 let parent = steps::git(&execution.repository_path, &["rev-parse", "HEAD^"])?;
@@ -542,22 +695,25 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                         && effect.kind == "commit"
                         && effect.intended_commit == parent
                 });
-                if !intended
-                    || subject != "fix: address review findings"
-                    || !steps::git(&execution.repository_path, &["status", "--porcelain"])?
-                        .is_empty()
-                {
+                if !intended || subject != commit_subject || !steps::is_clean(&execution)? {
                     return Err("HEAD a changé sans commit de correction réconciliable ; intervention requise".into());
                 }
             }
             // Commit the corrected tree before the next independent review. Do not
             // relabel the agent's old test evidence as proof of the new revision.
-            if !steps::git(&execution.repository_path, &["status", "--porcelain"])?.is_empty() {
+            if !steps::is_clean(&execution)? {
                 let head_before = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
                 if execution.head_commit.as_ref() != Some(&head_before) {
                     return Err("HEAD changé pendant correction ; commit refusé".into());
                 }
                 let effect_id = format!("commit:{}", identity.attempt_id);
+                if execution
+                    .effects
+                    .iter()
+                    .any(|effect| effect.id == effect_id && effect.intended_commit != head_before)
+                {
+                    return Err("Intention de commit différente du HEAD initial".into());
+                }
                 if !execution.effects.iter().any(|e| e.id == effect_id) {
                     execution.effects.push(ExternalEffect {
                         id: effect_id,
@@ -567,17 +723,20 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                     });
                 }
                 save_worker(app, &mut execution)?;
-                steps::git(&execution.repository_path, &["add", "--all"])?;
+                super::runtime_config::stage_correction(
+                    &execution.repository_path,
+                    execution.runtime_config_baseline.as_ref(),
+                )?;
                 steps::git(
                     &execution.repository_path,
-                    &["commit", "-m", "fix: address review findings"],
+                    &["commit", "-m", commit_subject],
                 )?;
             }
             result.commit = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
             execution
                 .effects
                 .iter_mut()
-                .filter(|e| e.kind == "commit")
+                .filter(|e| e.kind == "commit" && e.id == format!("commit:{}", identity.attempt_id))
                 .for_each(|e| e.confirmed = true);
             save_worker(app, &mut execution)?;
             result.evidence.clear();
@@ -653,6 +812,142 @@ fn assert_acceptance_version(
         return Err("La preview a changé pendant la recette : résultat à refaire".into());
     }
     Ok(())
+}
+
+fn verify_publication_remote_identity(expected: Option<&str>, actual: &str) -> Result<(), String> {
+    if expected != Some(actual) {
+        return Err("Identité du dépôt distant absente ou modifiée : publication refusée".into());
+    }
+    Ok(())
+}
+
+async fn create_pr_result(
+    app: &AppHandle,
+    execution: &mut ValidationExecution,
+    identity: &StepIdentity,
+) -> Result<StepResult, String> {
+    if !steps::is_clean(execution)? {
+        return Err("Worktree modifié après review : PR refusée".into());
+    }
+    let remote_identity =
+        super::validation_publication::capture_remote_identity(&execution.repository_path)?;
+    verify_publication_remote_identity(
+        execution.publication_remote_identity.as_deref(),
+        &remote_identity,
+    )?;
+    let head = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
+    if execution.head_commit.as_ref() != Some(&head) {
+        return Err("HEAD changé après review : PR refusée".into());
+    }
+    let branch = execution
+        .original_branch
+        .clone()
+        .ok_or("Branche initiale absente")?;
+    let base = execution
+        .publication_base_branch
+        .clone()
+        .ok_or("Branche de base absente : création PR bloquée")?;
+    let token = crate::projects::resolve_clickup_token(app, Some(&execution.project_id))?;
+    let task = crate::projects::clickup_client::clickup_get(
+        &token,
+        &format!("/task/{}", execution.task_id),
+    )
+    .await?;
+    let title = task
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Titre ticket absent")?
+        .to_owned();
+    let effect_id = format!("create-pr:{}", identity.attempt_id);
+    if execution
+        .effects
+        .iter()
+        .any(|effect| effect.id == effect_id && effect.intended_commit != head)
+    {
+        return Err("Intention de création PR différente du HEAD revu".into());
+    }
+    if !execution
+        .effects
+        .iter()
+        .any(|effect| effect.id == effect_id)
+    {
+        execution.effects.push(ExternalEffect {
+            id: effect_id.clone(),
+            kind: "create_pr".into(),
+            intended_commit: head.clone(),
+            confirmed: false,
+        });
+        save_worker(app, execution)?;
+    }
+    let cwd = execution.repository_path.clone();
+    let task_id = execution.task_id.clone();
+    let gh = crate::gh_cli::config::resolve_gh_binary(app);
+    let owned_app = app.clone();
+    let intended_head = head.clone();
+    let expected_remote = execution.publication_remote_identity.clone();
+    let published = tauri::async_runtime::spawn_blocking(move || {
+        let actual_remote = super::validation_publication::capture_remote_identity(&cwd)?;
+        verify_publication_remote_identity(expected_remote.as_deref(), &actual_remote)?;
+        let repository = super::commands::repo_slug_for_path(&cwd)?;
+        let login = super::commands::gh_login(&owned_app, &cwd, &repository)?;
+        super::validation_publication::publish_pr(
+            &cwd,
+            &gh,
+            &repository,
+            &branch,
+            &base,
+            &intended_head,
+            &title,
+            &task_id,
+            &login,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    crate::projects::storage::persist_validation_pr(app, execution, &published)?;
+    execution.pr_number = Some(published.number);
+    save_worker(app, execution)?;
+    let assignment_id = format!("assign-pr:{}", identity.attempt_id);
+    if !execution
+        .effects
+        .iter()
+        .any(|effect| effect.id == assignment_id)
+    {
+        execution.effects.push(ExternalEffect {
+            id: assignment_id.clone(),
+            kind: "assign_pr".into(),
+            intended_commit: head.clone(),
+            confirmed: false,
+        });
+        save_worker(app, execution)?;
+    }
+    let assignment = super::commands::assign_pr_to_me(
+        app.clone(),
+        execution.project_id.clone(),
+        published.number,
+    )
+    .await?;
+    if !assignment.ok {
+        return Err("Assignation GitHub de la PR non confirmée ; publication à reprendre".into());
+    }
+    super::commands::verify_ai_pipeline_github_assignment(
+        app.clone(),
+        execution.project_id.clone(),
+        published.number,
+    )
+    .await?;
+    execution
+        .effects
+        .iter_mut()
+        .filter(|effect| effect.id == assignment_id && effect.intended_commit == head)
+        .for_each(|effect| effect.confirmed = true);
+    execution
+        .effects
+        .iter_mut()
+        .filter(|effect| effect.id == effect_id && effect.intended_commit == head)
+        .for_each(|effect| effect.confirmed = true);
+    save_worker(app, execution)?;
+    Ok(basic_result(identity.clone(), head))
 }
 
 fn basic_result(identity: StepIdentity, commit: String) -> StepResult {
@@ -976,6 +1271,46 @@ async fn criteria_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn publication_remote_anchor_is_required_and_must_match() {
+        assert!(verify_publication_remote_identity(None, "identity").is_err());
+        assert!(verify_publication_remote_identity(Some("foreign"), "identity").is_err());
+        assert!(verify_publication_remote_identity(Some("identity"), "identity").is_ok());
+    }
+
+    #[test]
+    fn legacy_missing_pr_migration_matches_only_known_blockers() {
+        assert!(legacy_missing_pr_blocker(Some(
+            "Une PR existante est requise pour vérifier la CI et la preview."
+        )));
+        assert!(legacy_missing_pr_blocker(Some("Ticket récupéré sans PR : l'implémentation et la création d'une PR sont requises avant cette validation de revue/recette.")));
+        assert!(!legacy_missing_pr_blocker(Some(
+            "Ticket récupéré sans PR mais modifié"
+        )));
+        assert!(!legacy_missing_pr_blocker(None));
+    }
+
+    #[test]
+    fn publication_recovery_requires_exact_attempt_and_head() {
+        let mut execution =
+            ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
+        execution.step = ValidationStep::CreatePr;
+        execution.head_commit = Some("head".into());
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        execution.effects.push(ExternalEffect {
+            id: format!("create-pr:{}", identity.attempt_id),
+            kind: "create_pr".into(),
+            intended_commit: "head".into(),
+            confirmed: false,
+        });
+        assert!(pending_pr_publication(&execution));
+        execution.effects[0].intended_commit = "foreign".into();
+        assert!(!pending_pr_publication(&execution));
+        execution.effects[0].intended_commit = "head".into();
+        execution.active_attempt = None;
+        assert!(!pending_pr_publication(&execution));
+    }
+
     #[test]
     fn acceptance_rejects_unknown_or_waiting_preview_even_with_equal_versions() {
         let mut execution =

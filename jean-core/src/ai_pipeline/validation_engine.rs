@@ -7,6 +7,92 @@ mod tests {
     fn execution() -> ValidationExecution {
         ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), Some(1))
     }
+    #[test]
+    fn unpublished_execution_implements_reviews_and_creates_pr_before_ci() {
+        let mut e =
+            ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
+        assert_eq!(e.step, ValidationStep::Implementation);
+        complete_step(&mut e, StepOutcome::Passed);
+        assert_eq!(e.step, ValidationStep::Review);
+        complete_step(&mut e, StepOutcome::Passed);
+        assert_eq!(e.step, ValidationStep::GitSync);
+        complete_step(&mut e, StepOutcome::Passed);
+        assert_eq!(e.step, ValidationStep::CreatePr);
+        e.pr_number = Some(3);
+        complete_step(&mut e, StepOutcome::Passed);
+        assert_eq!(e.step, ValidationStep::Ci);
+        assert!(!is_ready(&e));
+    }
+    #[test]
+    fn implementation_commit_invalidates_existing_proofs() {
+        let mut e = ready_fixture();
+        e.pr_number = None;
+        e.step = ValidationStep::Implementation;
+        let identity = begin_attempt(&mut e).unwrap();
+        apply_result(
+            &mut e,
+            StepResult {
+                identity,
+                outcome: StepOutcome::Passed,
+                commit: "implemented".into(),
+                requirements: vec![],
+                defects: vec![],
+                evidence: vec![],
+                message: None,
+                deployed_commit: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(e.step, ValidationStep::Review);
+        assert!(e.evidence.iter().all(|proof| proof.stale));
+        assert!(e.deployed_commit.is_none());
+        assert!(e.acceptance_evidence_ids.is_empty());
+    }
+    #[test]
+    fn publication_requires_confirmed_pr_identity_even_with_complete_evidence() {
+        let mut e = ready_fixture();
+        e.pr_number = None;
+        assert!(!is_ready(&e));
+        e.step = ValidationStep::CreatePr;
+        let identity = begin_attempt(&mut e).unwrap();
+        assert!(apply_result(
+            &mut e,
+            StepResult {
+                identity,
+                outcome: StepOutcome::Passed,
+                commit: "abc".into(),
+                requirements: vec![],
+                defects: vec![],
+                evidence: vec![],
+                message: None,
+                deployed_commit: None
+            }
+        )
+        .is_err());
+        assert_eq!(e.step, ValidationStep::CreatePr);
+    }
+    #[test]
+    fn failed_implementation_never_becomes_ready() {
+        let mut e =
+            ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
+        complete_step(&mut e, StepOutcome::Failed);
+        assert_eq!(e.status, ValidationStatus::Failed);
+        assert_eq!(e.step, ValidationStep::Implementation);
+    }
+    #[test]
+    fn old_execution_defaults_publication_base_without_changing_review() {
+        let mut json = serde_json::to_value(execution()).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("publication_base_branch");
+        json.as_object_mut()
+            .unwrap()
+            .remove("publication_remote_identity");
+        let migrated: ValidationExecution = serde_json::from_value(json).unwrap();
+        assert_eq!(migrated.publication_base_branch, None);
+        assert_eq!(migrated.publication_remote_identity, None);
+        assert_eq!(migrated.step, ValidationStep::Review);
+    }
     fn ready_fixture() -> ValidationExecution {
         let mut e = execution();
         e.head_commit = Some("abc".into());
@@ -591,7 +677,8 @@ fn has_system_proof(execution: &ValidationExecution, id: &str, kind: &str) -> bo
 }
 
 pub fn is_ready(execution: &ValidationExecution) -> bool {
-    has_system_proof(execution, "ci-head", "backend-ci")
+    execution.pr_number.is_some()
+        && has_system_proof(execution, "ci-head", "backend-ci")
         && has_system_proof(execution, "preview-version", "git-ancestry")
         && execution
             .requirements
@@ -665,6 +752,12 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
     }) {
         return Err("Mandatory obligations cannot be downgraded by an agent".into());
     }
+    if result.identity.step == ValidationStep::CreatePr
+        && result.outcome == StepOutcome::Passed
+        && execution.pr_number.is_none()
+    {
+        return Err("PR creation has no confirmed PR identity".into());
+    }
     if result.commit.trim().is_empty() {
         return Err("Result has no tested commit".into());
     }
@@ -688,11 +781,13 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
     if result.evidence.iter().any(|e| e.commit != result.commit) {
         return Err("Evidence belongs to another commit".into());
     }
-    if result.identity.step != ValidationStep::Correction
-        && execution
-            .head_commit
-            .as_ref()
-            .is_some_and(|head| head != &result.commit)
+    if !matches!(
+        result.identity.step,
+        ValidationStep::Correction | ValidationStep::Implementation
+    ) && execution
+        .head_commit
+        .as_ref()
+        .is_some_and(|head| head != &result.commit)
     {
         execution.active_attempt = None;
         execution.active_session_id = None;
@@ -854,9 +949,17 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
         }
         StepOutcome::Passed => {
             execution.step = match execution.step {
+                ValidationStep::Implementation => ValidationStep::Review,
+                ValidationStep::CreatePr => ValidationStep::Ci,
                 ValidationStep::Review => ValidationStep::GitSync,
                 ValidationStep::Correction => ValidationStep::Review,
-                ValidationStep::GitSync => ValidationStep::Ci,
+                ValidationStep::GitSync => {
+                    if execution.pr_number.is_none() {
+                        ValidationStep::CreatePr
+                    } else {
+                        ValidationStep::Ci
+                    }
+                }
                 ValidationStep::Ci => ValidationStep::Preview,
                 ValidationStep::Preview => ValidationStep::Acceptance,
                 ValidationStep::Acceptance | ValidationStep::Complete => ValidationStep::Complete,

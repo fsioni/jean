@@ -435,7 +435,7 @@ fn project_path_for(app: &AppHandle, project_id: &str) -> Result<String, String>
         .ok_or_else(|| format!("Project not found: {project_id}"))
 }
 
-fn repo_slug_for_path(project_path: &str) -> Result<String, String> {
+pub(super) fn repo_slug_for_path(project_path: &str) -> Result<String, String> {
     let url = get_github_url(project_path)?;
     repo_slug_from_github_url(&url)
         .ok_or_else(|| format!("Could not parse owner/repo from GitHub URL: {url}"))
@@ -535,7 +535,11 @@ fn fetch_repo_prs_json(
 }
 
 /// Current GitHub login from `gh api user`.
-fn gh_login(app: &AppHandle, project_path: &str, repo_slug: &str) -> Result<String, String> {
+pub(super) fn gh_login(
+    app: &AppHandle,
+    project_path: &str,
+    repo_slug: &str,
+) -> Result<String, String> {
     let output = pipeline_gh_command(app, project_path, repo_slug)
         .args(["api", "user", "--jq", ".login"])
         .output()

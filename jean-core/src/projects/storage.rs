@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::http_server::EmitExt;
 use once_cell::sync::Lazy;
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -500,6 +501,46 @@ fn save_projects_data_internal(app: &AppHandle, data: &ProjectsData) -> Result<(
 pub fn save_projects_data(app: &AppHandle, data: &ProjectsData) -> Result<(), String> {
     let _lock = PROJECTS_LOCK.lock().unwrap();
     save_projects_data_internal(app, data)
+}
+
+/// Bind a confirmed publication without overwriting concurrent worktree metadata.
+pub fn persist_validation_pr(
+    app: &AppHandle,
+    execution: &crate::ai_pipeline::validation_types::ValidationExecution,
+    pr: &crate::ai_pipeline::validation_publication::PublishedPr,
+) -> Result<(), String> {
+    let _lock = PROJECTS_LOCK
+        .lock()
+        .map_err(|_| "Verrou projets indisponible")?;
+    let mut data = load_projects_data_internal(app)?;
+    let worktree = data
+        .worktrees
+        .iter_mut()
+        .find(|w| w.id == execution.worktree_id)
+        .ok_or("Worktree de publication introuvable")?;
+    if worktree.project_id != execution.project_id
+        || worktree.path != execution.repository_path
+        || worktree.branch != pr.head_branch
+        || execution.original_branch.as_deref() != Some(&pr.head_branch)
+        || execution.head_commit.as_deref() != Some(&pr.head_sha)
+        || execution.publication_base_branch.as_deref() != Some(&pr.base_branch)
+        || worktree.base_branch.as_deref() != Some(&pr.base_branch)
+        || worktree.pr_number.is_some_and(|number| number != pr.number)
+        || worktree.pr_url.as_ref().is_some_and(|url| url != &pr.url)
+    {
+        return Err("Identité worktree/PR modifiée ; rattachement refusé".into());
+    }
+    worktree.pr_number = Some(pr.number);
+    worktree.pr_url = Some(pr.url.clone());
+    save_projects_data_internal(app, &data)?;
+    drop(_lock);
+    if let Err(error) = app.emit_all(
+        "cache:invalidate",
+        &serde_json::json!({ "keys": ["projects", "worktrees", "ai-pipeline"] }),
+    ) {
+        log::warn!("Failed to refresh published PR metadata: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

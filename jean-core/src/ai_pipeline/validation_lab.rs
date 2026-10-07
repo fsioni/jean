@@ -48,7 +48,7 @@ mod tests {
         let (report, removed_root) = run_all_with_cleanup().unwrap();
         assert!(report.isolated);
         assert!(!removed_root.exists());
-        assert_eq!(report.total_count, 10);
+        assert_eq!(report.total_count, 12);
         assert_eq!(report.passed_count, report.total_count, "{report:#?}");
         for scenario in &report.scenarios {
             assert!(scenario.passed);
@@ -118,7 +118,7 @@ impl LabContext {
                 .to_string_lossy()
                 .into_owned(),
             "offline-ticket".into(),
-            None,
+            Some(42),
         );
         execution.head_commit = Some(HEAD.into());
         execution
@@ -281,6 +281,175 @@ fn happy(c: &mut LabContext) -> Result<(), String> {
     c.check(
         "Aucun effet externe ni session réelle créés",
         c.execution.effects.is_empty() && c.execution.active_session_id.is_none(),
+    );
+    Ok(())
+}
+
+fn unpublished_to_pr(c: &mut LabContext) -> Result<(), String> {
+    c.execution = ValidationExecution::new(
+        "offline-lab".into(),
+        "offline-worktree".into(),
+        c.root
+            .join("scripted-repository")
+            .to_string_lossy()
+            .into_owned(),
+        "offline-ticket".into(),
+        None,
+    );
+    c.execution.publication_base_branch = Some("main".into());
+    c.execution.head_commit = Some(HEAD.into());
+    c.execution.limitations.push(
+        "LAB : implémentation et publication entièrement simulées, aucun agent/push/PR réel."
+            .into(),
+    );
+    c.check(
+        "Un ticket sans PR commence par l’implémentation",
+        c.execution.step == ValidationStep::Implementation,
+    );
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![criterion(
+            RequirementStatus::Passed,
+            vec!["implementation-test".into()],
+        )],
+        vec![proof("implementation-test", "test", CORRECTED_HEAD)],
+        vec![],
+        None,
+    )?;
+    c.check(
+        "L’implémentation ne remplace pas la revue indépendante",
+        c.execution.step == ValidationStep::Review && c.execution.status != ValidationStatus::Ready,
+    );
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![criterion(
+            RequirementStatus::Passed,
+            vec!["review-test".into()],
+        )],
+        vec![proof("review-test", "test", CORRECTED_HEAD)],
+        vec![],
+        None,
+    )?;
+    c.check(
+        "La revue précède le premier push",
+        c.execution.step == ValidationStep::GitSync,
+    );
+    c.execution.effects.push(ExternalEffect {
+        id: "lab-first-push".into(),
+        kind: "push".into(),
+        intended_commit: CORRECTED_HEAD.into(),
+        confirmed: true,
+    });
+    c.passed()?;
+    c.check(
+        "Sans PR, le push mène à sa création et non directement à la CI",
+        c.execution.step == ValidationStep::CreatePr && c.execution.pr_number.is_none(),
+    );
+    Ok(())
+}
+
+fn fresh_ticket(c: &mut LabContext) -> Result<(), String> {
+    unpublished_to_pr(c)?;
+    c.execution.effects.push(ExternalEffect {
+        id: "lab-create-pr".into(),
+        kind: "create_pr".into(),
+        intended_commit: CORRECTED_HEAD.into(),
+        confirmed: true,
+    });
+    c.execution.pr_number = Some(42);
+    c.passed()?;
+    c.check(
+        "La PR confirmée permet ensuite la CI",
+        c.execution.step == ValidationStep::Ci,
+    );
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![],
+        vec![proof("ci-head", "backend-ci", CORRECTED_HEAD)],
+        vec![],
+        None,
+    )?;
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![],
+        vec![proof("preview-version", "git-ancestry", CORRECTED_HEAD)],
+        vec![],
+        Some(DEPLOYED),
+    )?;
+    c.check(
+        "Le ticket neuf doit lui aussi passer la recette",
+        c.execution.step == ValidationStep::Acceptance
+            && c.execution.status != ValidationStatus::Ready,
+    );
+    c.finish_acceptance()?;
+    c.check(
+        "Prêt uniquement après preuves métier fraîches",
+        c.execution.status == ValidationStatus::Ready && validation_engine::is_ready(&c.execution),
+    );
+    Ok(())
+}
+
+fn fresh_pr_recovery(c: &mut LabContext) -> Result<(), String> {
+    unpublished_to_pr(c)?;
+    let identity = validation_engine::begin_attempt(&mut c.execution)?;
+    c.execution.effects.push(ExternalEffect {
+        id: identity.attempt_id.clone(),
+        kind: "create_pr".into(),
+        intended_commit: CORRECTED_HEAD.into(),
+        confirmed: false,
+    });
+    c.store.save(&c.execution)?;
+    let recovered = c
+        .store
+        .get(&c.execution.id)?
+        .ok_or("Intention PR du lab absente")?;
+    c.check(
+        "L’interruption conserve l’identité et l’intention avant création",
+        recovered.active_attempt.as_ref() == Some(&identity)
+            && recovered
+                .effects
+                .iter()
+                .filter(|e| e.kind == "create_pr")
+                .count()
+                == 1,
+    );
+    c.execution = recovered;
+    // Script the observed PR from the backend reconciliation, without publishing.
+    c.execution.pr_number = Some(42);
+    c.execution
+        .effects
+        .iter_mut()
+        .filter(|e| e.kind == "create_pr")
+        .for_each(|e| e.confirmed = true);
+    validation_engine::apply_result(
+        &mut c.execution,
+        StepResult {
+            identity,
+            outcome: StepOutcome::Passed,
+            commit: CORRECTED_HEAD.into(),
+            requirements: vec![],
+            defects: vec![],
+            evidence: vec![],
+            deployed_commit: None,
+            message: Some("LAB : PR retrouvée, aucune création dupliquée".into()),
+        },
+    )?;
+    c.store.save(&c.execution)?;
+    c.check(
+        "Une seule intention réconciliée, puis CI",
+        c.execution.step == ValidationStep::Ci
+            && c.execution.active_attempt.is_none()
+            && c.execution
+                .effects
+                .iter()
+                .filter(|e| e.kind == "create_pr")
+                .count()
+                == 1
+            && c.execution.effects.iter().all(|e| e.confirmed),
     );
     Ok(())
 }
@@ -561,7 +730,7 @@ fn recovery(c: &mut LabContext) -> Result<(), String> {
         "recovery-worktree".into(),
         c.root.join("recovery-repo").to_string_lossy().into_owned(),
         "offline-ticket".into(),
-        None,
+        Some(42),
     );
     let identity = validation_engine::begin_attempt(&mut interrupted)?;
     c.store.save(&interrupted)?;
@@ -751,8 +920,18 @@ fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
         .tempdir()
         .map_err(|e| format!("Laboratoire temporaire indisponible : {e}"))?;
     let root = temporary.path().to_path_buf();
-    let definitions: [(&str, &str, ScenarioRunner); 10] = [
+    let definitions: [(&str, &str, ScenarioRunner); 12] = [
         ("happy-path", "Validation complète", happy),
+        (
+            "fresh-ticket",
+            "Ticket sans PR : implémentation → PR → recette",
+            fresh_ticket,
+        ),
+        (
+            "fresh-pr-recovery",
+            "Création PR interrompue : intention réconciliée",
+            fresh_pr_recovery,
+        ),
         (
             "acceptance-correction",
             "Défaut en recette → correction → nouvelle recette",
