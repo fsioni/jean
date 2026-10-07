@@ -39,3 +39,4 @@ pub mod validation_lab;
 pub use validation_lab::run_ai_pipeline_validation_lab;
 
 pub mod validation_ci;
+mod worktree_readiness;

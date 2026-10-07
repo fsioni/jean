@@ -722,29 +722,32 @@ describe('transport bootstrap', () => {
     expect(ws.close).toHaveBeenCalledTimes(1)
   })
 
-  it('uses extended timeout for terminal lifecycle commands', async () => {
-    vi.useFakeTimers()
-    const transport = await loadTransportModule()
+  it.each(['terminal_write', 'start_ai_pipeline_validation'])(
+    'uses extended timeout for %s',
+    async command => {
+      vi.useFakeTimers()
+      const transport = await loadTransportModule()
 
-    let rejected = false
-    const request = transport
-      .invoke('terminal_write', { terminalId: 'term-1', data: 'echo hi\r' })
-      .catch(() => {
-        rejected = true
-      })
+      let rejected = false
+      const request = transport
+        .invoke(command, { terminalId: 'term-1', data: 'echo hi\r' })
+        .catch(() => {
+          rejected = true
+        })
 
-    vi.advanceTimersByTime(60_001)
-    await flushAsync()
+      vi.advanceTimersByTime(60_001)
+      await flushAsync()
 
-    expect(rejected).toBe(false)
+      expect(rejected).toBe(false)
 
-    vi.advanceTimersByTime(30 * 60_000)
-    await request
+      vi.advanceTimersByTime(30 * 60_000)
+      await request
 
-    expect(rejected).toBe(true)
+      expect(rejected).toBe(true)
 
-    vi.useRealTimers()
-  })
+      vi.useRealTimers()
+    }
+  )
 
   it('can explicitly request terminal replay from seq zero after full page reload', async () => {
     const transport = await loadTransportModule()

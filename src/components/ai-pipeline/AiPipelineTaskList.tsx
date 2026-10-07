@@ -392,6 +392,9 @@ export function AiPipelineTaskList({
                 )
                 return
               }
+              const validationToastId = toast.loading(
+                'Préparation du worktree puis démarrage de la validation…'
+              )
               startValidation.mutate(
                 {
                   worktreeId: res.worktree.id,
@@ -401,11 +404,13 @@ export function AiPipelineTaskList({
                 {
                   onSuccess: () =>
                     toast.success(
-                      'Validation privée créée. Consulte son suivi dans Pipeline IA.'
+                      'Validation privée créée. Consulte son suivi dans Pipeline IA.',
+                      { id: validationToastId }
                     ),
                   onError: e =>
                     toast.error(
-                      `Worktree conservé ; validation non lancée : ${e}`
+                      `Worktree conservé ; validation non lancée : ${e}`,
+                      { id: validationToastId }
                     ),
                 }
               )
