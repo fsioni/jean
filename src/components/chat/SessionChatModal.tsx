@@ -1,3 +1,5 @@
+import { useAiPipelineValidations } from '@/services/ai-pipeline'
+import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
 import {
   useCallback,
   useEffect,
@@ -282,6 +284,19 @@ export function SessionChatModal({
     () => sessionsData?.sessions ?? [],
     [sessionsData?.sessions]
   )
+  const { data: validations, isLoading: validationsLoading } =
+    useAiPipelineValidations(project?.id ?? null, isOpen)
+  const groupedSessionIds = useMemo(
+    () => validationSessionIds(validations ?? [], worktreeId),
+    [validations, worktreeId]
+  )
+  const manualSessionIds = useMemo(
+    () =>
+      sessions
+        .filter(session => !groupedSessionIds.has(session.id))
+        .map(session => session.id),
+    [sessions, groupedSessionIds]
+  )
   // Active session from store. The chat can render from this id before the
   // worktree session list arrives. Keep that session in the tab row.
   const activeSessionId = useChatStore(
@@ -302,17 +317,28 @@ export function SessionChatModal({
   const activeSessionGone = !!sessionsData && missingActiveSessionFailed
   const currentSessionId = resolveModalSessionId(
     activeSessionId,
-    sessions.map(session => session.id),
-    sessionsData?.active_session_id,
+    validationsLoading && !activeSessionId ? [] : manualSessionIds,
+    validationsLoading ? null : sessionsData?.active_session_id,
     activeSessionGone
   )
   const tabSessions = useMemo(
     () =>
       sessionsForTabBar(
         sessions,
-        activeSessionGone ? null : (missingActiveSession ?? null)
+        activeSessionGone
+          ? null
+          : (sessions.find(session => session.id === currentSessionId) ??
+              missingActiveSession ??
+              null),
+        groupedSessionIds
       ),
-    [activeSessionGone, missingActiveSession, sessions]
+    [
+      activeSessionGone,
+      missingActiveSession,
+      sessions,
+      currentSessionId,
+      groupedSessionIds,
+    ]
   )
   const showSessionTabs = tabSessions.length > 0 || !!currentSessionId
   const serverId = parseServerResourceKey(worktreeId)?.serverId

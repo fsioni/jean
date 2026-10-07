@@ -22,6 +22,8 @@ import {
 } from './worktree-close-decision'
 import { useRenameWorktree } from '@/services/projects'
 import { useSessions } from '@/services/chat'
+import { useAiPipelineValidations } from '@/services/ai-pipeline'
+import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
 import { isAskUserQuestion, isPlanToolCall, type Session } from '@/types/chat'
 import {
   computeSessionCardData,
@@ -37,6 +39,7 @@ import {
 } from '@/components/ui/tooltip'
 import { useSidebarWidth } from '@/components/layout/SidebarWidthContext'
 import { CollapsedCountBadge } from './CollapsedCountBadge'
+import { WorktreeValidationStatus } from './WorktreeValidationStatus'
 
 interface WorktreeItemProps {
   worktree: Worktree
@@ -104,6 +107,13 @@ export function WorktreeItem({
 
   // Fetch sessions to check for persisted unanswered questions
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
+  const { data: validations } = useAiPipelineValidations(projectId)
+  const visibleSessions = useMemo(() => {
+    const technicalIds = validationSessionIds(validations ?? [], worktree.id)
+    return (sessionsData?.sessions ?? []).filter(
+      session => !technicalIds.has(session.id)
+    )
+  }, [validations, sessionsData?.sessions, worktree.id])
 
   // Canonical worktree actions — computed once here and passed to
   // WorktreeContextMenu so the hook isn't run twice per row. The middle-click
@@ -297,11 +307,11 @@ export function WorktreeItem({
   // O(sessions × messages) computation entirely for collapsed rows.
   const sessionGroups = useMemo(() => {
     if (!isExpanded) return []
-    const sessions = sessionsData?.sessions ?? []
+    const sessions = visibleSessions
     return groupCardsByStatus(
       sessions.map(s => computeSessionCardData(s, storeState))
     )
-  }, [isExpanded, sessionsData?.sessions, storeState])
+  }, [isExpanded, visibleSessions, storeState])
 
   const handleChevronClick = useCallback(
     (e: React.MouseEvent) => {
@@ -384,11 +394,12 @@ export function WorktreeItem({
     useChatStore.getState().clearActiveWorktree()
 
     // Open session modal with the first active session
-    const sessions = sessionsData?.sessions ?? []
-    const activeSessions = sessions.filter(s => !s.archived_at)
+    const activeSessions = visibleSessions.filter(s => !s.archived_at)
     const activeSessionId =
       useChatStore.getState().activeSessionIds[worktree.id]
-    const targetSessionId = activeSessionId ?? activeSessions[0]?.id
+    const targetSessionId =
+      activeSessions.find(session => session.id === activeSessionId)?.id ??
+      activeSessions[0]?.id
     if (targetSessionId) {
       useChatStore.getState().setActiveSession(worktree.id, targetSessionId)
     }
@@ -415,7 +426,7 @@ export function WorktreeItem({
     projectId,
     worktree.id,
     worktree.path,
-    sessionsData?.sessions,
+    visibleSessions,
     selectProject,
     selectWorktree,
   ])
@@ -696,12 +707,18 @@ export function WorktreeItem({
               </Tooltip>
             )}
             <CollapsedCountBadge
-              count={sessionsData?.sessions.length ?? 0}
+              count={visibleSessions.length}
               label="sessions"
               isExpanded={isExpanded}
             />
           </div>
         </WorktreeContextMenu>
+
+        <WorktreeValidationStatus
+          executions={validations ?? []}
+          worktreeId={worktree.id}
+          className={cn('pr-2', isNarrowSidebar ? 'pl-4' : 'pl-7')}
+        />
 
         {worktree.pr_number != null && (
           <div

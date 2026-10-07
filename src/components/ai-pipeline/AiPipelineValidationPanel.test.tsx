@@ -47,24 +47,49 @@ const fixture = (
   ...overrides,
 })
 describe('private validation evidence', () => {
-  it('shows initial implementation and PR creation for a fresh ticket', () => {
+  it('shows the live activity rather than a fixed stage checklist', () => {
     const view = render(
       <ValidationCard
         execution={fixture({ pr_number: null, step: 'implementation' })}
       />
     )
     expect(view.getByText('Implémentation')).toBeInTheDocument()
-    expect(view.getByText('Création PR')).toBeInTheDocument()
-    expect(view.getByText('Implémentation').closest('li')).toHaveAttribute(
-      'aria-current',
-      'step'
-    )
-  })
-
-  it('does not add implementation to an existing PR validation', () => {
-    const view = render(<ValidationCard execution={fixture()} />)
-    expect(view.queryByText('Implémentation')).not.toBeInTheDocument()
+    expect(
+      view.queryByLabelText('Étapes de validation')
+    ).not.toBeInTheDocument()
     expect(view.queryByText('Création PR')).not.toBeInTheDocument()
+  })
+  it('keeps transition history collapsed until requested', () => {
+    const view = render(
+      <ValidationCard
+        execution={fixture({
+          transitions: [
+            {
+              revision: 1,
+              step: 'acceptance',
+              status: 'running',
+              message: 'Retour en correction du filtre',
+              timestamp: '2026-10-07T10:00:00Z',
+            },
+            {
+              revision: 2,
+              step: 'correction',
+              status: 'running',
+              message: 'Correction en cours',
+              timestamp: '2026-10-07T10:01:00Z',
+            },
+          ],
+        })}
+      />
+    )
+    expect(
+      view.getByText('Journal d’activité (2)').closest('details')
+    ).not.toHaveAttribute('open')
+    fireEvent.click(view.getByText('Journal d’activité (2)'))
+    expect(
+      view.getByText('Journal d’activité (2)').closest('details')
+    ).toHaveAttribute('open')
+    expect(view.getByText('Retour en correction du filtre')).toBeInTheDocument()
   })
   it('never announces ready without mandatory evidence', () => {
     const view = render(
@@ -319,10 +344,11 @@ describe('private validation evidence', () => {
     const view = render(
       <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
     )
+    fireEvent.click(view.getByRole('button', { name: /Suivre la validation/ }))
     expect(view.getByText('Ticket t1 · PR #42')).toBeInTheDocument()
     expect(
-      view.getByRole('button', { name: 'Validation existante' })
-    ).toBeDisabled()
+      view.queryByRole('button', { name: 'Validation existante' })
+    ).not.toBeInTheDocument()
     fireEvent.click(
       view.getByRole('button', { name: 'Reprendre la validation' })
     )
@@ -331,4 +357,98 @@ describe('private validation evidence', () => {
       expect.anything()
     )
   })
+})
+
+describe('worktree validation focus', () => {
+  it('shows one execution and hides past executions and other worktrees', () => {
+    query.mockReturnValue({
+      data: [
+        fixture({
+          id: 'old',
+          task_id: 'old',
+          status: 'ready',
+          updated_at: '2026-01-01',
+        }),
+        fixture({
+          id: 'active',
+          task_id: 'active',
+          status: 'running',
+          updated_at: '2026-01-02',
+        }),
+        fixture({ id: 'other', worktree_id: 'w2', task_id: 'other' }),
+      ],
+      isLoading: false,
+      isError: false,
+    })
+    const view = render(
+      <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+    )
+    expect(view.getByText(/Review|Revue/)).toBeInTheDocument()
+    expect(view.queryByText('Ticket old · PR #42')).not.toBeInTheDocument()
+    expect(view.queryByText('Ticket other · PR #42')).not.toBeInTheDocument()
+    fireEvent.click(view.getByRole('button', { name: /Suivre la validation/ }))
+    expect(view.getByText('Ticket active · PR #42')).toBeInTheDocument()
+    fireEvent.click(view.getByText('Exécutions précédentes (1)'))
+    expect(view.getByText('Ticket old · PR #42')).toBeInTheDocument()
+  })
+})
+
+it('opens technical sessions only when explicitly requested, including historical executions', () => {
+  const open = vi.fn()
+  const view = render(
+    <ValidationCard
+      execution={fixture({
+        agent_sessions: [
+          { session_id: 'technical', step: 'correction', attempt_id: 'a1' },
+        ],
+        superseded_by: 'new',
+      })}
+      onOpenSession={open}
+    />
+  )
+  expect(open).not.toHaveBeenCalled()
+  fireEvent.click(view.getByText('Sessions techniques'))
+  fireEvent.click(view.getByRole('button', { name: 'Correction · 1' }))
+  expect(open).toHaveBeenCalledWith('technical')
+})
+
+it('keeps a discreet manual launch on linked worktrees without an execution', () => {
+  query.mockReturnValue({ data: [], isLoading: false, isError: false })
+  const view = render(
+    <AiPipelineValidationPanel
+      projectId="p1"
+      enabled
+      worktreeId="w1"
+      allowStart
+    />
+  )
+  fireEvent.click(view.getByRole('button', { name: 'Suivre la validation' }))
+  fireEvent.click(view.getByRole('button', { name: 'Lancer la validation' }))
+  expect(start).toHaveBeenCalledWith(
+    { worktreeId: 'w1', taskId: undefined },
+    expect.anything()
+  )
+})
+
+it('does not expose the pipeline on an unrelated worktree', () => {
+  query.mockReturnValue({ data: [], isLoading: false, isError: false })
+  const view = render(
+    <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+  )
+  expect(
+    view.queryByLabelText('Activité IA du worktree')
+  ).not.toBeInTheDocument()
+})
+
+it('keeps unproven readiness qualified in the compact worktree summary', () => {
+  query.mockReturnValue({
+    data: [fixture({ status: 'ready' })],
+    isLoading: false,
+    isError: false,
+  })
+  const view = render(
+    <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+  )
+  expect(view.getByText(/Preuves à confirmer/)).toBeInTheDocument()
+  expect(view.queryByText(/Prêt pour ta décision/)).not.toBeInTheDocument()
 })

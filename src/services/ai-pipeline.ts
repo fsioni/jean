@@ -323,7 +323,7 @@ export function useStartAiPipelineValidation(
       if (context?.toastId === undefined) return
       const feedback = { id: context.toastId }
       if (execution.status === 'blocked' || execution.status === 'failed') {
-        const message = `Validation ${execution.status === 'blocked' ? 'bloquée' : 'échouée'} : ${execution.blocker || 'consulte son suivi dans Pipeline IA.'}`
+        const message = `Validation ${execution.status === 'blocked' ? 'bloquée' : 'échouée'} : ${execution.blocker || 'consulte son suivi sur le worktree.'}`
         if (execution.status === 'failed') toast.error(message, feedback)
         else toast.warning(message, feedback)
       } else if (
@@ -331,14 +331,14 @@ export function useStartAiPipelineValidation(
         execution.status === 'pending'
       ) {
         toast.warning(
-          `Validation en attente${execution.blocker ? ` : ${execution.blocker}` : '. Consulte son suivi dans Pipeline IA.'}`,
+          `Validation en attente${execution.blocker ? ` : ${execution.blocker}` : '. Consulte son suivi sur le worktree.'}`,
           feedback
         )
       } else {
         toast.success(
           execution.status === 'ready'
-            ? 'Validation prête. Consulte son suivi dans Pipeline IA.'
-            : 'Validation démarrée. Consulte son suivi dans Pipeline IA.',
+            ? 'Validation prête. Consulte son suivi sur le worktree.'
+            : 'Validation démarrée. Consulte son suivi sur le worktree.',
           feedback
         )
       }

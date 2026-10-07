@@ -3,7 +3,7 @@ use super::{
     validation_engine as engine, validation_steps as steps, validation_storage::ValidationStore,
     validation_types::*,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
 
@@ -62,7 +62,8 @@ pub async fn list_ai_pipeline_validations(
     let snapshots = store(&app)?.list()?;
     let mut results = Vec::new();
     for execution in snapshots.into_iter().filter(|e| e.project_id == project_id) {
-        results.push(refresh_ready_snapshot(&app, execution).await?);
+        let execution = refresh_ready_snapshot(&app, execution).await?;
+        results.push(enrich_agent_session_provenance(&app, execution).await?);
     }
     Ok(results)
 }
@@ -70,7 +71,168 @@ pub async fn get_ai_pipeline_validation(
     app: AppHandle,
     execution_id: String,
 ) -> Result<ValidationExecution, String> {
-    refresh_ready_snapshot(&app, get(&app, &execution_id)?).await
+    let execution = refresh_ready_snapshot(&app, get(&app, &execution_id)?).await?;
+    enrich_agent_session_provenance(&app, execution).await
+}
+
+// Presentation-only recovery of historical sessions. Never opens a session or
+// rewrites a coordinator snapshot. Cache is bound to the immutable first prompt;
+// transient read failures are not cached.
+type HistoricalSessionCache = HashMap<String, Option<ValidationAgentSession>>;
+static HISTORICAL_SESSION_CACHE: OnceLock<Mutex<HistoricalSessionCache>> = OnceLock::new();
+
+fn historical_session_provenance(
+    execution: &ValidationExecution,
+    session_id: &str,
+    _name: &str,
+    prompt: &str,
+) -> Option<ValidationAgentSession> {
+    if !prompt.starts_with("Validation privée Jean, contrat v1.\n") {
+        return None;
+    }
+    let (_, input) = prompt.split_once("\nÉtat d'entrée :\n")?;
+    let input: serde_json::Value = serde_json::Deserializer::from_str(input)
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()?;
+    for (field, expected) in [
+        ("id", execution.id.as_str()),
+        ("project_id", execution.project_id.as_str()),
+        ("worktree_id", execution.worktree_id.as_str()),
+        ("repository_path", execution.repository_path.as_str()),
+        ("task_id", execution.task_id.as_str()),
+    ] {
+        if input.get(field)?.as_str()? != expected {
+            return None;
+        }
+    }
+    let (_, sample) = prompt.rsplit_once("L'identité doit être exactement celle-ci :\n")?;
+    let sample = serde_json::Deserializer::from_str(sample)
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()?;
+    let identity: StepIdentity = serde_json::from_value(sample.get("identity")?.clone()).ok()?;
+    if identity.execution_id != execution.id
+        || identity.attempt_id.is_empty()
+        || input.get("active_session_id")?.as_str()? != session_id
+        || input.get("active_attempt")? != &serde_json::to_value(&identity).ok()?
+        || input.get("step")? != &serde_json::to_value(identity.step).ok()?
+        || !matches!(
+            identity.step,
+            ValidationStep::Implementation
+                | ValidationStep::Review
+                | ValidationStep::Correction
+                | ValidationStep::Ci
+                | ValidationStep::Acceptance
+        )
+    {
+        return None;
+    }
+    Some(ValidationAgentSession {
+        session_id: session_id.into(),
+        step: identity.step,
+        attempt_id: identity.attempt_id,
+    })
+}
+
+fn read_historical_session_index(
+    path: &std::path::Path,
+) -> Option<crate::chat::types::WorktreeIndex> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+async fn enrich_agent_session_provenance(
+    app: &AppHandle,
+    mut execution: ValidationExecution,
+) -> Result<ValidationExecution, String> {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use sha2::{Digest, Sha256};
+        let Ok(app_data) = app.path().app_data_dir() else {
+            return execution;
+        };
+        // Storage path helpers create directories; migration must remain read-only.
+        let safe_id = crate::chat::storage::sanitize_filename(&execution.worktree_id);
+        let index_path = app_data
+            .join("sessions/index")
+            .join(format!("{safe_id}.json"));
+        let Some(index) = read_historical_session_index(&index_path) else {
+            return execution;
+        };
+        if index.worktree_id != execution.worktree_id {
+            return execution;
+        }
+        for session in index.sessions {
+            if execution
+                .agent_sessions
+                .iter()
+                .any(|known| known.session_id == session.id)
+            {
+                continue;
+            }
+            let mut components = std::path::Path::new(&session.id).components();
+            if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+                || components.next().is_some()
+            {
+                continue;
+            }
+            let metadata_path = app_data
+                .join("sessions/data")
+                .join(&session.id)
+                .join("metadata.json");
+            let Ok(bytes) = std::fs::read(metadata_path) else {
+                continue;
+            };
+            let Ok(metadata) =
+                serde_json::from_slice::<crate::chat::types::SessionMetadata>(&bytes)
+            else {
+                continue;
+            };
+            if metadata.id != session.id || metadata.worktree_id != execution.worktree_id {
+                continue;
+            }
+            let Some(first_run) = metadata.runs.first() else {
+                continue;
+            };
+            let key = format!(
+                "{}:{}:{}:{:x}",
+                execution.id,
+                session.id,
+                first_run.user_message_id,
+                Sha256::digest(first_run.user_message.as_bytes())
+            );
+            let cache = HISTORICAL_SESSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+            let cached = cache
+                .lock()
+                .ok()
+                .and_then(|entries| entries.get(&key).cloned());
+            let provenance = match cached {
+                Some(value) => value,
+                None => {
+                    let value = historical_session_provenance(
+                        &execution,
+                        &session.id,
+                        &session.name,
+                        &first_run.user_message,
+                    );
+                    if let Ok(mut entries) = cache.lock() {
+                        // Bound presentation cache independently of the number of past polls.
+                        if entries.len() >= 2048 {
+                            entries.clear();
+                        }
+                        entries.insert(key, value.clone());
+                    }
+                    value
+                }
+            };
+            if let Some(provenance) = provenance {
+                execution.agent_sessions.push(provenance);
+            }
+        }
+        execution
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Finished proofs are snapshots, not perpetual guarantees. Local changes are
@@ -972,20 +1134,14 @@ async fn execute_agent(
         let version = preview_result(execution, identity.clone()).await?;
         assert_acceptance_version(execution, &version)?;
     }
-    let session = crate::chat::create_session(
+    let session = crate::chat::create_background_session(
         app.clone(),
         execution.worktree_id.clone(),
         execution.repository_path.clone(),
         Some(format!("Validation privée · {:?}", execution.step)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
     )
     .await?;
-    execution.active_session_id = Some(session.id.clone());
+    execution.record_agent_session(session.id.clone(), identity);
     save_worker(app, execution)?;
     send_existing_session(app, execution, identity, session.id).await
 }
@@ -1271,6 +1427,97 @@ async fn criteria_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn historical_index_read_never_creates_missing_storage() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("missing-worktree").join("index.json");
+        assert!(read_historical_session_index(&path).is_none());
+        assert!(!path.exists());
+        assert!(!path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn historical_session_provenance_requires_structured_execution_binding() {
+        let mut execution = ValidationExecution::new(
+            "project".into(),
+            "worktree".into(),
+            "/repo".into(),
+            "task".into(),
+            Some(42),
+        );
+        let identity = StepIdentity {
+            execution_id: execution.id.clone(),
+            step: ValidationStep::Review,
+            attempt_id: "attempt".into(),
+            input_revision: 1,
+        };
+        execution.active_attempt = Some(identity.clone());
+        execution.record_agent_session("session".into(), &identity);
+        let prompt = steps::prompt(&execution, &identity).unwrap();
+        let session = historical_session_provenance(
+            &execution,
+            "session",
+            "Validation privée · Review",
+            &prompt,
+        )
+        .unwrap();
+        assert_eq!(session.attempt_id, "attempt");
+        assert!(historical_session_provenance(
+            &execution,
+            "session",
+            "Validation privée · Review",
+            "manual prompt"
+        )
+        .is_none());
+        assert!(historical_session_provenance(
+            &execution,
+            "session",
+            "Review privée ticket PR",
+            &prompt
+        )
+        .is_some());
+        assert!(historical_session_provenance(
+            &execution,
+            "copied-session",
+            "Review privée ticket PR",
+            &prompt
+        )
+        .is_none());
+        let mismatched_attempt = prompt.replace("\"input_revision\": 1", "\"input_revision\": 2");
+        assert!(historical_session_provenance(
+            &execution,
+            "session",
+            "Review privée ticket PR",
+            &mismatched_attempt
+        )
+        .is_none());
+        let mut wrong = execution.clone();
+        wrong.worktree_id = "other".into();
+        assert!(historical_session_provenance(
+            &wrong,
+            "session",
+            "Validation privée · Review",
+            &prompt
+        )
+        .is_none());
+        wrong = execution.clone();
+        wrong.id = "other".into();
+        assert!(historical_session_provenance(
+            &wrong,
+            "session",
+            "Validation privée · Review",
+            &prompt
+        )
+        .is_none());
+        let wrong_identity = prompt.replace("\"attempt\"", "\"\"");
+        assert!(historical_session_provenance(
+            &execution,
+            "session",
+            "Validation privée · Review",
+            &wrong_identity
+        )
+        .is_none());
+    }
     #[test]
     fn publication_remote_anchor_is_required_and_must_match() {
         assert!(verify_publication_remote_identity(None, "identity").is_err());
