@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
+  Bot,
   CheckCircle2,
   Clock3,
   ExternalLink,
@@ -23,7 +24,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { useUIStore } from '@/store/ui-store'
-import { useAiPipelineProjectId } from '@/services/ai-pipeline'
+import {
+  useAiPipelineProjectId,
+  useHasAiPipelineAccess,
+} from '@/services/ai-pipeline'
 import {
   useCloseAllDeployedTasks,
   useCloseDeployedTask,
@@ -61,6 +65,7 @@ function taskState(task: DeploymentTask) {
 
 export function DeploymentView() {
   const { projectId, project } = useAiPipelineProjectId()
+  const hasPipelineAccess = useHasAiPipelineAccess()
   const overview = useDeploymentOverview(projectId)
   const closeOne = useCloseDeployedTask(projectId)
   const closeAll = useCloseAllDeployedTasks(projectId)
@@ -152,18 +157,35 @@ export function DeploymentView() {
             {deployedTasks.length === 1 ? '' : 's'}
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto"
-          onClick={() => overview.refetch()}
-          disabled={overview.isFetching}
-        >
-          <RefreshCw
-            className={cn('size-3.5', overview.isFetching && 'animate-spin')}
-          />
-          Rafraîchir
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {hasPipelineAccess && (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Pipeline IA"
+              onClick={() =>
+                useUIStore
+                  .getState()
+                  .setAiPipelineModalOpen(true, projectId ?? undefined)
+              }
+            >
+              <Bot className="size-3.5" />
+              <span className="hidden sm:inline">Pipeline IA</span>
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Rafraîchir"
+            onClick={() => overview.refetch()}
+            disabled={overview.isFetching}
+          >
+            <RefreshCw
+              className={cn('size-3.5', overview.isFetching && 'animate-spin')}
+            />
+            <span className="hidden sm:inline">Rafraîchir</span>
+          </Button>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

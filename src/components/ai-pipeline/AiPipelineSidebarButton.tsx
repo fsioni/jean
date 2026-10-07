@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { Bot } from '@/components/icons/reicon'
 import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
   Tooltip,
   TooltipContent,
@@ -16,12 +17,16 @@ import { useAiPipelineProjectId } from '@/services/ai-pipeline'
  * so setup guidance and the offline validation lab are always accessible.
  */
 export function AiPipelineSidebarButton({ isNarrow }: { isNarrow: boolean }) {
+  const isMobile = useIsMobile()
   const open = useUIStore(state => state.aiPipelineModalOpen)
   const { projectId } = useAiPipelineProjectId()
 
   const handleClick = useCallback(() => {
-    useUIStore.getState().setAiPipelineModalOpen(true, projectId ?? undefined)
-  }, [projectId])
+    const { setLeftSidebarVisible, setAiPipelineModalOpen } =
+      useUIStore.getState()
+    if (isMobile) setLeftSidebarVisible(false)
+    setAiPipelineModalOpen(true, projectId ?? undefined)
+  }, [isMobile, projectId])
 
   const button = (
     <button
