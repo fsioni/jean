@@ -153,6 +153,7 @@ export interface ValidationExecution {
   deployed_commit: string | null
   correction_cycles: number
   no_progress_cycles: number
+  review_wait_retries?: number
   requirements: ValidationRequirement[]
   evidence: ValidationEvidence[]
   acceptance_evidence_ids?: string[]

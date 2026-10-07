@@ -132,6 +132,9 @@ pub struct ValidationExecution {
     pub waiting_since: Option<String>,
     #[serde(default)]
     pub no_progress_cycles: u8,
+    /// Invalid Review waiting outcomes on the current head (one immediate retry).
+    #[serde(default)]
+    pub review_wait_retries: u8,
     #[serde(default)]
     pub requirements: Vec<Requirement>,
     #[serde(default)]
@@ -197,6 +200,7 @@ impl ValidationExecution {
             correction_cycles: 0,
             waiting_since: None,
             no_progress_cycles: 0,
+            review_wait_retries: 0,
             requirements: vec![],
             defects: vec![],
             evidence: vec![],

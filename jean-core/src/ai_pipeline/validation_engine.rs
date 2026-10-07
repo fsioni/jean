@@ -8,6 +8,113 @@ mod tests {
         ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), Some(1))
     }
     #[test]
+    fn review_wait_retries_immediately_then_blocks_after_reload_without_budget_use() {
+        let mut e = failed_acceptance_fixture();
+        e.step = ValidationStep::Review;
+        e.requirements[0].status = RequirementStatus::Unverified;
+        e.correction_cycles = 3;
+        e.no_progress_cycles = 1;
+        e.correction_pending_verification = true;
+        complete_step(&mut e, StepOutcome::Waiting);
+        assert_eq!(e.status, ValidationStatus::Pending);
+        assert_eq!(e.step, ValidationStep::Review);
+        assert!(e.waiting_since.is_none());
+        assert!(!is_ready(&e));
+        e = serde_json::from_value(serde_json::to_value(&e).unwrap()).unwrap();
+        complete_step(&mut e, StepOutcome::Waiting);
+        assert_eq!(e.status, ValidationStatus::Blocked);
+        assert_eq!(e.step, ValidationStep::Review);
+        assert!(e
+            .blocker
+            .as_deref()
+            .unwrap()
+            .contains("La revue n’attend pas"));
+        assert_eq!(e.correction_cycles, 3);
+        assert_eq!(e.no_progress_cycles, 1);
+        assert!(e.correction_pending_verification);
+        assert_eq!(e.requirements[0].status, RequirementStatus::Unverified);
+    }
+    #[test]
+    fn legacy_execution_defaults_review_wait_retries_to_zero() {
+        let mut json = serde_json::to_value(execution()).unwrap();
+        json.as_object_mut().unwrap().remove("review_wait_retries");
+        let restored: ValidationExecution = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.review_wait_retries, 0);
+    }
+    #[test]
+    fn conclusive_review_resets_retry_and_unverified_checks_continue_to_git_sync() {
+        for outcome in [StepOutcome::Passed, StepOutcome::Blocked] {
+            let mut e = failed_acceptance_fixture();
+            e.step = ValidationStep::Review;
+            e.requirements[0].status = RequirementStatus::Unverified;
+            complete_step(&mut e, StepOutcome::Waiting);
+            assert_eq!(e.review_wait_retries, 1);
+            complete_step(&mut e, outcome);
+            assert_eq!(e.review_wait_retries, 0);
+            assert_eq!(e.requirements[0].status, RequirementStatus::Unverified);
+            assert!(!is_ready(&e));
+            if outcome == StepOutcome::Passed {
+                assert_eq!(e.step, ValidationStep::GitSync);
+            } else {
+                assert_eq!(e.status, ValidationStatus::Blocked);
+            }
+        }
+    }
+    #[test]
+    fn new_head_resets_review_wait_contract_retry() {
+        let mut e = execution();
+        complete_step(&mut e, StepOutcome::Waiting);
+        e.step = ValidationStep::Implementation;
+        let identity = begin_attempt(&mut e).unwrap();
+        apply_result(
+            &mut e,
+            StepResult {
+                identity,
+                outcome: StepOutcome::Passed,
+                commit: "new-head".into(),
+                requirements: vec![],
+                defects: vec![],
+                evidence: vec![],
+                message: None,
+                deployed_commit: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(e.review_wait_retries, 0);
+        complete_step(&mut e, StepOutcome::Waiting);
+        assert_eq!(e.status, ValidationStatus::Pending);
+        assert_eq!(e.review_wait_retries, 1);
+    }
+    #[test]
+    fn invalid_wait_retry_does_not_allow_passed_review_to_bypass_correction_ceiling() {
+        for (cycles, no_progress) in [(3, 0), (1, 2)] {
+            let mut e = failed_acceptance_fixture();
+            e.step = ValidationStep::Review;
+            e.correction_cycles = cycles;
+            e.no_progress_cycles = no_progress;
+            complete_step(&mut e, StepOutcome::Waiting);
+            complete_step(&mut e, StepOutcome::Passed);
+            assert_eq!(e.status, ValidationStatus::Blocked);
+            assert_eq!(e.correction_cycles, cycles);
+            assert_eq!(e.no_progress_cycles, no_progress);
+            assert_eq!(e.review_wait_retries, 0);
+        }
+    }
+    #[test]
+    fn downstream_steps_can_wait_for_external_operations() {
+        for step in [
+            ValidationStep::Ci,
+            ValidationStep::Preview,
+            ValidationStep::Acceptance,
+        ] {
+            let mut e = execution();
+            e.step = step;
+            complete_step(&mut e, StepOutcome::Waiting);
+            assert_eq!(e.status, ValidationStatus::Waiting);
+            assert!(e.waiting_since.is_some());
+        }
+    }
+    #[test]
     fn unpublished_execution_implements_reviews_and_creates_pr_before_ci() {
         let mut e =
             ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
@@ -802,6 +909,7 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
         .as_ref()
         .is_some_and(|head| head != &result.commit)
     {
+        execution.review_wait_retries = 0;
         execution.evidence.iter_mut().for_each(|e| e.stale = true);
         execution
             .requirements
@@ -846,6 +954,28 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
     execution.active_session_id = None;
     if let Some(commit) = result.deployed_commit {
         execution.deployed_commit = Some(commit);
+    }
+    if result.identity.step == ValidationStep::Review {
+        if result.outcome == StepOutcome::Waiting {
+            execution.review_wait_retries = execution.review_wait_retries.saturating_add(1);
+            execution.waiting_since = None;
+            let reason = "La revue n’attend pas les preuves de CI ou de recette : elles seront vérifiées aux étapes suivantes. Conclus passed si la revue est terminée sans défaut concret, correction_required pour un défaut concret, ou blocked pour un accès ou une décision manquante.";
+            if execution.review_wait_retries >= 2 {
+                block(
+                    execution,
+                    format!("{reason} La revue n’a pas conclu après sa relance ciblée ; reprise explicite nécessaire, aucun contrôle contourné."),
+                );
+            } else {
+                execution.status = ValidationStatus::Pending;
+                execution.blocker = None;
+                record(
+                    execution,
+                    format!("{reason} Relance ciblée immédiate, une seule fois."),
+                );
+            }
+            return Ok(());
+        }
+        execution.review_wait_retries = 0;
     }
     if execution.step == ValidationStep::Correction
         && matches!(
