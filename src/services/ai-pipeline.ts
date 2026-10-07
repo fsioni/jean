@@ -7,8 +7,9 @@ import type {
   FinishResult,
   ResumeResult,
   StepResult,
+  ValidationExecution,
 } from '@/types/ai-pipeline'
-import { isTauri, projectsQueryKeys, useProjects } from './projects'
+import { projectsQueryKeys, useProjects } from './projects'
 import { useProjectsStore } from '@/store/projects-store'
 import { useClickUpConfig } from './clickup'
 
@@ -33,7 +34,6 @@ export function useAiPipelineConfig() {
   return useQuery({
     queryKey: aiPipelineQueryKeys.config(),
     queryFn: async (): Promise<AiPipelineConfig> => {
-      if (!isTauri()) return {}
       return invoke<AiPipelineConfig>('get_ai_pipeline_config')
     },
     staleTime: 1000 * 60 * 5,
@@ -65,7 +65,7 @@ export function useAiPipelinePrs(
   return useQuery({
     queryKey: aiPipelineQueryKeys.prs(projectId ?? ''),
     queryFn: async (): Promise<AiPipelinePr[]> => {
-      if (!isTauri() || !projectId) return []
+      if (!projectId) return []
       return invoke<AiPipelinePr[]>('list_ai_pipeline_prs', { projectId })
     },
     enabled,
@@ -92,7 +92,7 @@ export function useAiPipelineTasks(
   return useQuery({
     queryKey: aiPipelineQueryKeys.tasks(projectId ?? ''),
     queryFn: async (): Promise<AiPipelineTaskLists> => {
-      if (!isTauri() || !projectId) return EMPTY_TASK_LISTS
+      if (!projectId) return EMPTY_TASK_LISTS
       return invoke<AiPipelineTaskLists>('list_ai_pipeline_tasks', {
         projectId,
       })
@@ -237,5 +237,52 @@ export function useSaveAiPipelineConfig() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all })
     },
+  })
+}
+
+/** Backend-owned private validations. Polling also restores state after disconnect. */
+export function useAiPipelineValidations(
+  projectId: string | null,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [...aiPipelineQueryKeys.all, 'validations', projectId],
+    queryFn: () =>
+      invoke<ValidationExecution[]>('list_ai_pipeline_validations', {
+        projectId,
+      }),
+    enabled: enabled && !!projectId,
+    refetchInterval: enabled ? 3000 : false,
+    retry: 1,
+  })
+}
+
+export function useStartAiPipelineValidation(projectId: string | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: {
+      worktreeId: string
+      taskId?: string
+      prNumber?: number
+      newExecution?: boolean
+    }) =>
+      invoke<ValidationExecution>('start_ai_pipeline_validation', {
+        projectId,
+        ...vars,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all }),
+  })
+}
+
+export function useControlAiPipelineValidation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: { executionId: string; action: 'resume' | 'pause' }) =>
+      invoke<ValidationExecution>(`${vars.action}_ai_pipeline_validation`, {
+        executionId: vars.executionId,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all }),
   })
 }

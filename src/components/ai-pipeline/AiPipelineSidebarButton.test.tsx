@@ -24,6 +24,9 @@ vi.mock('./AiPipelineTaskList', () => ({
 vi.mock('./AiPipelineProjectPicker', () => ({
   AiPipelineProjectPicker: () => null,
 }))
+vi.mock('./AiPipelineValidationPanel', () => ({
+  AiPipelineValidationPanel: () => null,
+}))
 vi.mock('@/components/layout/LeftSideBar', () => ({
   LeftSideBar: () => <AiPipelineSidebarButton isNarrow={false} />,
 }))

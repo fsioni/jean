@@ -4,9 +4,11 @@ import type { AiPipelinePr, AiPipelineTask } from '@/types/ai-pipeline'
 
 const mockTasks = vi.fn()
 const mockResumeMutate = vi.fn()
+const mockStart = vi.fn()
 
 vi.mock('@/services/ai-pipeline', () => ({
   useAiPipelineTasks: () => mockTasks(),
+  useStartAiPipelineValidation: () => ({ mutate: mockStart }),
   useResumeAiPipelineTask: () => ({ mutate: mockResumeMutate }),
 }))
 vi.mock('@/lib/platform', () => ({ openExternal: vi.fn() }))
@@ -79,6 +81,7 @@ function setTasks(
 beforeEach(() => {
   mockTasks.mockReset()
   mockResumeMutate.mockReset()
+  mockStart.mockReset()
 })
 
 describe('AiPipelineTaskList', () => {
@@ -103,7 +106,7 @@ describe('AiPipelineTaskList', () => {
     // The "no PR" state is spelled out, not just colored.
     expect(getAllByText('sans PR').length).toBeGreaterThan(0)
 
-    fireEvent.click(getByRole('button', { name: 'Reprendre' }))
+    fireEvent.click(getByRole('button', { name: 'Récupérer' }))
     expect(mockResumeMutate).toHaveBeenCalledWith(
       { taskId: '86canbg67', prNumber: undefined },
       expect.anything()
@@ -114,7 +117,7 @@ describe('AiPipelineTaskList', () => {
     setTasks([task()], [])
     const { getByRole } = render(<AiPipelineTaskList projectId="p1" />)
 
-    fireEvent.click(getByRole('button', { name: 'Reprendre' }))
+    fireEvent.click(getByRole('button', { name: 'Récupérer' }))
     expect(mockResumeMutate).toHaveBeenCalledWith(
       { taskId: '86cauhzpd', prNumber: 4140 },
       expect.anything()
@@ -136,9 +139,9 @@ describe('AiPipelineTaskList', () => {
     const { getByRole, getByText } = render(
       <AiPipelineTaskList projectId="p1" onResumed={onResumed} />
     )
-    fireEvent.click(getByRole('button', { name: 'Reprendre' }))
+    fireEvent.click(getByRole('button', { name: 'Récupérer' }))
 
-    await waitFor(() => expect(getByText('Repris ✓')).toBeInTheDocument())
+    await waitFor(() => expect(getByText('Récupéré ✓')).toBeInTheDocument())
     // Still mounted: the next ticket is one click away.
     expect(getByText('Expliciter le menu Actions en masse')).toBeInTheDocument()
     expect(onResumed).toHaveBeenCalledOnce()
@@ -167,5 +170,44 @@ describe('AiPipelineTaskList', () => {
     const { getByText } = render(<AiPipelineTaskList projectId="p1" />)
     expect(getByText(/Aucun ticket en review à reprendre/)).toBeInTheDocument()
     expect(getByText(/Aucun ticket bloqué/)).toBeInTheDocument()
+  })
+})
+
+describe('private validation launch', () => {
+  it('starts only after successful recovery and retains the worktree context', () => {
+    setTasks([task()], [])
+    mockResumeMutate.mockImplementation((_vars, handlers) => {
+      handlers.onSuccess({
+        worktree: { id: 'w1' },
+        github: { ok: true },
+        clickup: { ok: true },
+      })
+    })
+    const view = render(<AiPipelineTaskList projectId="p1" />)
+    fireEvent.click(view.getByRole('button', { name: 'Récupérer et valider' }))
+    expect(mockStart).toHaveBeenCalledWith(
+      { worktreeId: 'w1', taskId: '86cauhzpd', prNumber: 4140 },
+      expect.anything()
+    )
+    expect(view.getByRole('button', { name: 'Récupéré ✓' })).toBeDisabled()
+  })
+  it('does not start after a partial assignment failure', () => {
+    setTasks([task()], [])
+    mockResumeMutate.mockImplementation((_vars, handlers) => {
+      handlers.onSuccess({
+        worktree: { id: 'w1' },
+        github: { ok: true },
+        clickup: { ok: false },
+      })
+    })
+    const view = render(<AiPipelineTaskList projectId="p1" />)
+    fireEvent.click(view.getByRole('button', { name: 'Récupérer et valider' }))
+    expect(mockStart).not.toHaveBeenCalled()
+  })
+  it('does not infer green CI from absent status', () => {
+    setTasks([task({ pr: pr({ ci: undefined }) })], [])
+    const view = render(<AiPipelineTaskList projectId="p1" />)
+    expect(view.getByText('CI inconnue')).toBeInTheDocument()
+    expect(view.queryByText('CI OK')).not.toBeInTheDocument()
   })
 })

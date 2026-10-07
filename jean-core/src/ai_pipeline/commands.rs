@@ -551,6 +551,46 @@ fn gh_login(app: &AppHandle, project_path: &str, repo_slug: &str) -> Result<Stri
     Ok(login)
 }
 
+/// Read-only validation guard, including worktrees resumed before private jobs existed.
+/// A failed pickup cannot be bypassed by starting validation from the worktree.
+pub async fn verify_ai_pipeline_github_assignment(
+    app: AppHandle,
+    project_id: String,
+    pr_number: u32,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project_path = project_path_for(&app, &project_id)?;
+        let slug = repo_slug_for_path(&project_path)?;
+        let me = gh_login(&app, &project_path, &slug)?;
+        let assignees = gh_pr_assignees(&app, &project_path, &slug, pr_number)?;
+        require_github_assignment(&me, &assignees)
+    })
+    .await
+    .map_err(|e| format!("GitHub assignment check failed: {e}"))?
+}
+
+/// Reconcile actual pickup state instead of trusting a previous HTTP success.
+pub fn verify_ai_pipeline_pickup_status(status: Option<&str>) -> Result<(), String> {
+    if status.is_some_and(|value| {
+        [IN_REVIEW_STATUS, IN_PROGRESS_STATUS]
+            .iter()
+            .any(|expected| value.trim().eq_ignore_ascii_case(expected))
+    }) {
+        Ok(())
+    } else {
+        Err("La prise en charge ClickUp n'est pas terminée (statut attendu : in review ou in progress)".into())
+    }
+}
+
+fn require_github_assignment(me: &str, assignees: &[String]) -> Result<(), String> {
+    match github_assign_decision(me, assignees)? {
+        GithubAssign::AlreadyMine => Ok(()),
+        GithubAssign::Assign => {
+            Err("La PR n'est pas assignée à toi : termine la récupération avant validation".into())
+        }
+    }
+}
+
 /// Read the PR's current assignee logins via `gh pr view`.
 fn gh_pr_assignees(
     app: &AppHandle,
@@ -1477,5 +1517,23 @@ mod tests {
             task_inclusion(Some("In Review"), &[], 7),
             Some((TaskBucket::Review, false))
         );
+    }
+}
+
+#[cfg(test)]
+mod validation_assignment_tests {
+    use super::{require_github_assignment, verify_ai_pipeline_pickup_status};
+    #[test]
+    fn assignment_alone_does_not_confirm_pickup_status() {
+        assert!(verify_ai_pipeline_pickup_status(Some("to review")).is_err());
+        assert!(verify_ai_pipeline_pickup_status(None).is_err());
+        assert!(verify_ai_pipeline_pickup_status(Some("IN REVIEW")).is_ok());
+        assert!(verify_ai_pipeline_pickup_status(Some("in progress")).is_ok());
+    }
+    #[test]
+    fn pickup_must_have_completed_before_validation() {
+        assert!(require_github_assignment("fares", &[]).is_err());
+        assert!(require_github_assignment("fares", &["colleague".into()]).is_err());
+        assert!(require_github_assignment("fares", &["FARES".into()]).is_ok());
     }
 }
