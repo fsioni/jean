@@ -1,3 +1,4 @@
+import { WorktreeValidationHeader } from '@/components/ai-pipeline/WorktreeValidationHeader'
 import { useAiPipelineValidations } from '@/services/ai-pipeline'
 import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
 import {
@@ -284,8 +285,8 @@ export function SessionChatModal({
     () => sessionsData?.sessions ?? [],
     [sessionsData?.sessions]
   )
-  const { data: validations, isLoading: validationsLoading } =
-    useAiPipelineValidations(project?.id ?? null, isOpen)
+  const validationQuery = useAiPipelineValidations(project?.id ?? null, isOpen)
+  const { data: validations, isLoading: validationsLoading } = validationQuery
   const groupedSessionIds = useMemo(
     () => validationSessionIds(validations ?? [], worktreeId),
     [validations, worktreeId]
@@ -1067,8 +1068,8 @@ export function SessionChatModal({
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {!zenMode && (
             <div className="shrink-0 border-b border-border/40 sm:text-left">
-              <div className="flex h-auto items-start justify-between gap-2 px-4 py-2 sm:h-11 sm:items-center">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-initial sm:flex-nowrap">
+              <div className="flex h-auto items-start justify-between gap-2 px-4 py-2 sm:min-h-11 sm:items-center">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                   <h2 className="text-sm font-medium min-w-0 flex-1 basis-full truncate sm:basis-auto">
                     {project && !isMobile && (
                       <span className="text-muted-foreground font-normal">
@@ -1100,6 +1101,16 @@ export function SessionChatModal({
                       <ClickUpStatusLink
                         projectId={worktree.project_id}
                         worktreeId={worktreeId}
+                      />
+                      <WorktreeValidationHeader
+                        key={worktreeId}
+                        worktreeId={worktreeId}
+                        query={validationQuery}
+                        onOpenSession={sessionId =>
+                          useChatStore
+                            .getState()
+                            .setActiveSession(worktreeId, sessionId)
+                        }
                       />
                     </>
                   )}
