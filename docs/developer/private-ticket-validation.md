@@ -113,12 +113,19 @@ Ready snapshots recheck the local worktree on every read and remote conditions
 at most every 30 seconds; failed checks withdraw readiness rather than preserve
 an unverified green status.
 
-CI validation requires the exact Planexpo context `Execution du job 'build-and-test'`
-on the PR head. An unrelated green check alone is not a successful pipeline.
-Absent/unknown/skipped required context stays unconfirmed; other reported failures
-or pending checks also prevent a green verdict. This validation is intentionally
-Planexpo-specific: a renamed Jenkins context must be explicitly supported before
-it can produce a ready validation, rather than guessed from any green check.
+CI validation requires positive proof on the exact PR head: either the legacy
+`Execution du job 'build-and-test'` context or all six contexts published by
+Planexpo's unified Jenkins pipeline: `ci/rust-unit`, `ci/elm-unit`,
+`ci/runtime-build`, `ci/images`, `ci/cypress`, and `preview/deploy`.
+Any explicit failure wins even if the legacy context is absent. Unrelated or
+partial green results never validate CI; absent/unknown/skipped required stages
+remain unconfirmed, and other pending checks prevent a green verdict.
+The six-context contract was verified in `Spottt/planexpo-deploy`,
+`compose/jenkins/unified-build-test-deploy.groovy` at
+`b64e27aa4cb042d6bbb6d25236dd92972b1df2c9` (stage map and finalization list).
+Docs-only publishes all six successful exemptions; reused validation keeps
+`preview/deploy` pending until deployment. The proof remains Planexpo-specific,
+not a guess from any green check.
 
 ## Persistence and recovery
 

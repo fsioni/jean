@@ -3,6 +3,22 @@ use crate::jenkins::gh_checks::PrCheck;
 use std::path::Path;
 
 pub const REQUIRED_JENKINS_CONTEXT: &str = "Execution du job 'build-and-test'";
+// unified-build-test-deploy.groovy publishes all six on every PR, including
+// docs-only and reused validation. Missing/skipped stages are never green proof.
+const REQUIRED_UNIFIED_CONTEXTS: [&str; 6] = [
+    "ci/rust-unit",
+    "ci/elm-unit",
+    "ci/runtime-build",
+    "ci/images",
+    "ci/cypress",
+    "preview/deploy",
+];
+
+fn context_name(node: &serde_json::Value) -> Option<&str> {
+    node.get("context")
+        .and_then(|value| value.as_str())
+        .or_else(|| node.get("name").and_then(|value| value.as_str()))
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CheckVerdict {
@@ -38,8 +54,9 @@ fn check_verdict(node: &serde_json::Value) -> CheckVerdict {
     }
 }
 
-/// The named Planexpo pipeline must positively report success. An unrelated
-/// green check, a skipped required check, or an unknown status cannot stand in.
+/// The legacy Planexpo job or every unified stage must positively report
+/// success on this PR head. Any explicit failure wins, even without a recognized
+/// pipeline. Unrelated/partial green checks cannot replace required CI proof.
 pub fn parse_validation_pr_check(json: &str, pr: u32) -> Result<PrCheck, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|_| "Invalid validation CI JSON")?;
@@ -55,25 +72,29 @@ pub fn parse_validation_pr_check(json: &str, pr: u32) -> Result<PrCheck, String>
         .get("statusCheckRollup")
         .and_then(|value| value.as_array())
         .ok_or("Validation CI rollup missing or malformed")?;
-    let required: Vec<_> = nodes
+    let legacy: Vec<_> = nodes
         .iter()
-        .filter(|node| {
-            node.get("context").and_then(|value| value.as_str()) == Some(REQUIRED_JENKINS_CONTEXT)
-                || node.get("name").and_then(|value| value.as_str())
-                    == Some(REQUIRED_JENKINS_CONTEXT)
-        })
+        .filter(|node| context_name(node) == Some(REQUIRED_JENKINS_CONTEXT))
         .map(check_verdict)
         .collect();
-    let verdict = if required.is_empty() {
-        None
-    } else if nodes
+    let unified_complete = REQUIRED_UNIFIED_CONTEXTS.iter().all(|context| {
+        nodes.iter().any(|node| {
+            context_name(node) == Some(*context) && check_verdict(node) == CheckVerdict::Success
+        })
+    });
+    let recognized = !legacy.is_empty()
+        || nodes.iter().any(|node| {
+            context_name(node).is_some_and(|name| REQUIRED_UNIFIED_CONTEXTS.contains(&name))
+        });
+    let verdict = if nodes
         .iter()
         .any(|node| check_verdict(node) == CheckVerdict::Failure)
     {
         Some("FAILURE".into())
-    } else if required
-        .iter()
-        .all(|status| *status == CheckVerdict::Success)
+    } else if !recognized {
+        None
+    } else if (unified_complete
+        || (!legacy.is_empty() && legacy.iter().all(|status| *status == CheckVerdict::Success)))
         && nodes.iter().all(|node| {
             matches!(
                 check_verdict(node),
@@ -225,6 +246,148 @@ mod tests {
             .as_deref(),
             Some("SUCCESS")
         );
+    }
+    // Exact contexts published by the current Planexpo Jenkins pipeline.
+    fn modern(state: &str) -> Vec<Value> {
+        [
+            "ci/elm-unit",
+            "ci/rust-unit",
+            "ci/runtime-build",
+            "ci/images",
+            "ci/cypress",
+            "preview/deploy",
+        ]
+        .iter()
+        .map(|name| json!({"context": name, "state": state}))
+        .collect()
+    }
+    #[test]
+    fn modern_failure_without_legacy_context_is_never_waiting() {
+        let mut nodes = modern("SUCCESS");
+        nodes[0]["state"] = json!("FAILURE");
+        nodes[3]["state"] = json!("FAILURE");
+        assert_eq!(
+            parse_validation_pr_check(&fixture(nodes), 42)
+                .unwrap()
+                .verdict
+                .as_deref(),
+            Some("FAILURE")
+        );
+        for nodes in [
+            vec![check("ci/elm-unit", "COMPLETED", Some("FAILURE"))],
+            vec![check("unrelated", "COMPLETED", Some("TIMED_OUT"))],
+            vec![json!({"context":"ci/elm-unit", "state":"ERROR"})],
+        ] {
+            assert_eq!(
+                parse_validation_pr_check(&fixture(nodes), 42)
+                    .unwrap()
+                    .verdict
+                    .as_deref(),
+                Some("FAILURE")
+            );
+        }
+    }
+    #[test]
+    fn modern_complete_green_pipeline_is_confirmed() {
+        for nodes in [
+            modern("SUCCESS"),
+            modern("SUCCESS")
+                .iter()
+                .map(|node| {
+                    check(
+                        node["context"].as_str().unwrap(),
+                        "COMPLETED",
+                        Some("SUCCESS"),
+                    )
+                })
+                .collect(),
+        ] {
+            let result = parse_validation_pr_check(&fixture(nodes), 42).unwrap();
+            assert_eq!(result.verdict.as_deref(), Some("SUCCESS"));
+            assert_eq!(result.head_sha.as_deref(), Some(HEAD));
+        }
+    }
+    #[test]
+    fn named_check_runs_with_null_context_are_supported() {
+        let nodes = modern("SUCCESS")
+            .iter()
+            .map(|node| {
+                let mut run = check(
+                    node["context"].as_str().unwrap(),
+                    "COMPLETED",
+                    Some("SUCCESS"),
+                );
+                run["context"] = Value::Null;
+                run
+            })
+            .collect();
+        assert_eq!(
+            parse_validation_pr_check(&fixture(nodes), 42)
+                .unwrap()
+                .verdict
+                .as_deref(),
+            Some("SUCCESS")
+        );
+    }
+    #[test]
+    fn modern_missing_pending_unknown_or_skipped_checks_never_validate() {
+        for index in 0..modern("SUCCESS").len() {
+            let mut missing = modern("SUCCESS");
+            missing.remove(index);
+            assert_ne!(
+                parse_validation_pr_check(&fixture(missing), 42)
+                    .unwrap()
+                    .verdict
+                    .as_deref(),
+                Some("SUCCESS")
+            );
+            for state in ["PENDING", "EXPECTED", "UNKNOWN"] {
+                let mut nodes = modern("SUCCESS");
+                nodes[index]["state"] = json!(state);
+                assert_ne!(
+                    parse_validation_pr_check(&fixture(nodes), 42)
+                        .unwrap()
+                        .verdict
+                        .as_deref(),
+                    Some("SUCCESS")
+                );
+            }
+            let mut nodes = modern("SUCCESS");
+            nodes[index] = check(
+                nodes[index]["context"].as_str().unwrap(),
+                "COMPLETED",
+                Some("SKIPPED"),
+            );
+            assert_ne!(
+                parse_validation_pr_check(&fixture(nodes), 42)
+                    .unwrap()
+                    .verdict
+                    .as_deref(),
+                Some("SUCCESS")
+            );
+        }
+    }
+    #[test]
+    fn modern_green_cannot_hide_other_failure_pending_or_duplicate_failure() {
+        for (node, expected) in [
+            (check("lint", "COMPLETED", Some("FAILURE")), "FAILURE"),
+            (check("lint", "IN_PROGRESS", None), "BUILDING"),
+            (
+                json!({"context":"ci/elm-unit", "state":"FAILURE"}),
+                "FAILURE",
+            ),
+            (required("PENDING"), "BUILDING"),
+        ] {
+            let mut nodes = modern("SUCCESS");
+            nodes.push(node);
+            assert_eq!(
+                parse_validation_pr_check(&fixture(nodes), 42)
+                    .unwrap()
+                    .verdict
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
     #[test]
     fn malformed_identity_and_rollup_are_refused() {
