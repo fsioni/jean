@@ -452,3 +452,120 @@ it('keeps unproven readiness qualified in the compact worktree summary', () => {
   expect(view.getByText(/Preuves à confirmer/)).toBeInTheDocument()
   expect(view.queryByText(/Prêt pour ta décision/)).not.toBeInTheDocument()
 })
+
+describe('honest correction recovery actions', () => {
+  it.each([
+    'Correction limit reached; manual decision required',
+    'Limite de correction atteinte : 3 tentatives maximum ou 2 tentatives sans progrès vérifié. Une décision explicite est nécessaire pour poursuivre.',
+  ])(
+    'does not offer a resume that cannot pass an exhausted correction budget: %s',
+    blocker => {
+      const view = render(
+        <ValidationCard
+          execution={fixture({
+            step: 'ci',
+            correction_cycles: 3,
+            blocker,
+            transitions: [
+              {
+                revision: 2,
+                step: 'ci',
+                status: 'blocked',
+                message: blocker,
+                timestamp: '',
+              },
+            ],
+          })}
+        />
+      )
+      expect(
+        view.queryByRole('button', { name: 'Reprendre la validation' })
+      ).not.toBeInTheDocument()
+      expect(view.getByRole('alert')).toHaveTextContent(
+        /Limite de corrections? atteinte/
+      )
+      expect(
+        view.getByRole('button', { name: 'Nouvelle validation…' })
+      ).toBeInTheDocument()
+      if (blocker.startsWith('Correction limit')) {
+        expect(view.queryByText(blocker)).not.toBeInTheDocument()
+      }
+    }
+  )
+
+  it('does not repeat the same blocker as the current activity', () => {
+    const view = render(
+      <ValidationCard
+        execution={fixture({
+          transitions: [
+            {
+              revision: 2,
+              step: 'review',
+              status: 'blocked',
+              message: 'Accès indisponible',
+              timestamp: '',
+            },
+          ],
+        })}
+      />
+    )
+    // One alert and one preserved historical entry, not a third current summary.
+    expect(view.getAllByText('Accès indisponible')).toHaveLength(2)
+  })
+
+  it('retains resume for a technical correction failure with budget remaining', () => {
+    const view = render(
+      <ValidationCard
+        execution={fixture({
+          step: 'correction',
+          status: 'failed',
+          correction_cycles: 0,
+          blocker: 'Le run agent est interrompu',
+        })}
+      />
+    )
+    expect(
+      view.getByRole('button', { name: 'Reprendre la validation' })
+    ).toBeInTheDocument()
+  })
+
+  it('does not infer exhaustion from three cycles on a paused review', () => {
+    control.mockClear()
+    const view = render(
+      <ValidationCard
+        execution={fixture({
+          status: 'running',
+          paused: true,
+          blocker: null,
+          correction_cycles: 3,
+        })}
+      />
+    )
+    fireEvent.click(
+      view.getByRole('button', { name: 'Reprendre la validation' })
+    )
+    expect(control).toHaveBeenCalledWith(
+      { executionId: 'v1', action: 'resume' },
+      expect.anything()
+    )
+  })
+})
+
+it('preserves the diagnostic attached to the French correction limit', () => {
+  const blocker =
+    'Limite de correction atteinte : 3 tentatives maximum ou 2 tentatives sans progrès vérifié. Une décision explicite est nécessaire pour poursuivre. Dernier résultat : test Elm de visibilité IA en échec.'
+  const view = render(
+    <ValidationCard
+      execution={fixture({
+        step: 'correction',
+        status: 'blocked',
+        correction_cycles: 3,
+        blocker,
+      })}
+    />
+  )
+  expect(view.getByRole('alert')).toHaveTextContent(blocker)
+  expect(
+    view.queryByRole('button', { name: 'Reprendre la validation' })
+  ).not.toBeInTheDocument()
+})

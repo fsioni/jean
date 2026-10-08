@@ -127,6 +127,35 @@ Docs-only publishes all six successful exemptions; reused validation keeps
 `preview/deploy` pending until deployment. The proof remains Planexpo-specific,
 not a guess from any green check.
 
+## Recovery after a partial correction
+
+A completed Correction attempt reporting `failed` now stays in the same execution
+and schedules a targeted diagnostic/correction attempt automatically. Existing
+local edits, stable defects, proofs and the last failed-test message are retained.
+No defect or successful proof is fabricated from prose. The next agent must
+diagnose the failing test, record a stable concrete defect with real evidence,
+and return `correction_required` while a test is still red. Missing access or a
+business decision remains `blocked`, not an automatic retry.
+
+Every completed correction (`passed`, `correction_required`, or `failed`)
+consumes one attempt. An unsuccessful attempt counts toward the existing
+no-progress guard; limits remain three attempts or two without verified progress.
+Failed corrections never reach review/Git sync or trigger staging, commit or
+push. Only a successful correction proceeds through independent review, exact
+HEAD CI, preview ancestry and acceptance before any Ready state.
+
+The offline lab's `failed-correction-recovery` scenario replays the observed
+pattern: a resolved ligature defect plus a new red AI-visibility test, followed
+by targeted repair and the full review/CI/preview/acceptance path, without
+replacing the execution. Legacy already-failed snapshots are not rewritten or
+silently restarted by this change.
+
+The UI preserves the last failure, localizes legacy budget stops, and removes
+futile Resume actions for explicit exhausted-budget blockers. Historical
+execution counters and the activity journal are retained; starting a new
+validation still requires an explicit confirmation and is not the normal
+recovery path.
+
 ## Persistence and recovery
 
 Snapshots live in `<app_data>/ai_pipeline/validations/<uuid>/state.json`, not in
@@ -175,7 +204,7 @@ The lab exercises the actual transition engine, strict result parser, private
 storage and local Git ancestry checks. Agent responses and CI/preview evidence
 are scripted fixtures, explicitly **not** observations from real services. It
 does not exercise the live worker's external adapters or assess AI judgment.
-The fourteen scenarios include a review that advances with Unverified CI/recipe
+The fifteen scenarios include a review that advances with Unverified CI/recipe
 criteria after five resolved defects and three corrections, and a Review waiting
 contract-error budget that survives snapshot reload. They assert no false Ready,
 no extra correction cycle and no repeated external wait for that contract error.
