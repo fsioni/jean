@@ -634,6 +634,73 @@ mod tests {
         assert_eq!(e.status, ValidationStatus::Blocked);
     }
     #[test]
+    fn failed_correction_retries_same_execution_and_counts_bounded_attempts() {
+        let mut e = execution();
+        e.step = ValidationStep::Correction;
+        let id = e.id.clone();
+        for attempt in 1..=2 {
+            let identity = begin_attempt(&mut e).unwrap();
+            apply_result(
+                &mut e,
+                StepResult {
+                    identity,
+                    outcome: StepOutcome::Failed,
+                    commit: "abc".into(),
+                    requirements: vec![],
+                    defects: vec![],
+                    evidence: vec![],
+                    message: Some("elm-test: visibilité IA rouge après correction ligature".into()),
+                    deployed_commit: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(e.id, id);
+            assert_eq!(e.step, ValidationStep::Correction);
+            assert_eq!(e.correction_cycles, attempt);
+            assert_eq!(e.no_progress_cycles, attempt);
+            assert!(!is_ready(&e));
+            assert!(e
+                .transitions
+                .last()
+                .unwrap()
+                .message
+                .contains("visibilité IA"));
+            e = serde_json::from_value(serde_json::to_value(&e).unwrap()).unwrap();
+            assert_eq!(
+                e.status,
+                if attempt == 1 {
+                    ValidationStatus::Pending
+                } else {
+                    ValidationStatus::Blocked
+                }
+            );
+        }
+        assert!(begin_attempt(&mut e).is_err());
+    }
+    #[test]
+    fn failed_correction_spends_last_attempt_and_cannot_reset_budget() {
+        let mut e = execution();
+        e.step = ValidationStep::Correction;
+        e.correction_cycles = 2;
+        complete_step(&mut e, StepOutcome::Failed);
+        assert_eq!(e.correction_cycles, 3);
+        assert_eq!(e.status, ValidationStatus::Blocked);
+        assert!(e
+            .blocker
+            .as_deref()
+            .unwrap()
+            .starts_with("Limite de correction atteinte :"));
+        assert!(begin_attempt(&mut e).is_err());
+    }
+    #[test]
+    fn correction_access_blocker_never_retries_or_spends_attempt_budget() {
+        let mut e = execution();
+        e.step = ValidationStep::Correction;
+        complete_step(&mut e, StepOutcome::Blocked);
+        assert_eq!(e.status, ValidationStatus::Blocked);
+        assert_eq!(e.correction_cycles, 0);
+    }
+    #[test]
     fn two_failed_corrections_stop_without_score_progress() {
         let mut e = execution();
         e.step = ValidationStep::Correction;
@@ -736,7 +803,7 @@ pub fn begin_attempt(execution: &mut ValidationExecution) -> Result<StepIdentity
     if execution.step == ValidationStep::Correction
         && (execution.correction_cycles >= 3 || execution.no_progress_cycles >= 2)
     {
-        return Err("Correction limit reached".into());
+        return Err("Limite de correction atteinte : 3 tentatives maximum ou 2 tentatives sans progrès vérifié".into());
     }
     execution.status = ValidationStatus::Running;
     execution.blocker = None;
@@ -980,12 +1047,15 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
     if execution.step == ValidationStep::Correction
         && matches!(
             result.outcome,
-            StepOutcome::Passed | StepOutcome::CorrectionRequired
+            StepOutcome::Passed | StepOutcome::CorrectionRequired | StepOutcome::Failed
         )
     {
         execution.correction_cycles += 1;
         execution.correction_pending_verification = result.outcome == StepOutcome::Passed;
-        if result.outcome == StepOutcome::CorrectionRequired {
+        if matches!(
+            result.outcome,
+            StepOutcome::CorrectionRequired | StepOutcome::Failed
+        ) {
             execution.no_progress_cycles += 1;
         }
     }
@@ -1023,7 +1093,10 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
             ))
             || (result.outcome == StepOutcome::Failed
                 && result.identity.step == ValidationStep::Acceptance));
-    let outcome = if should_remediate {
+    let outcome = if should_remediate
+        || (result.identity.step == ValidationStep::Correction
+            && result.outcome == StepOutcome::Failed)
+    {
         StepOutcome::CorrectionRequired
     } else {
         result.outcome
@@ -1055,7 +1128,7 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
             if execution.correction_cycles >= 3 || execution.no_progress_cycles >= 2 {
                 block(
                     execution,
-                    "Correction limit reached; manual decision required",
+                    format!("Limite de correction atteinte : 3 tentatives maximum ou 2 tentatives sans progrès vérifié. Une décision explicite est nécessaire pour poursuivre. Dernier résultat : {}", result.message.as_deref().unwrap_or("aucune précision fournie")),
                 );
                 return Ok(());
             }

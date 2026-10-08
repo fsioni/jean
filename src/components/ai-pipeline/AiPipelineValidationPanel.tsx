@@ -26,6 +26,24 @@ const statuses = {
   ready: 'Prêt pour ta décision',
 }
 
+const legacyCorrectionLimit =
+  'Correction limit reached; manual decision required'
+const correctionLimitExplanation =
+  'Limite de corrections atteinte : 3 tentatives maximum ou 2 tentatives sans progrès vérifié. Une décision explicite est nécessaire pour poursuivre.'
+
+function isCorrectionLimit(message: string | null | undefined) {
+  return (
+    message === legacyCorrectionLimit ||
+    !!message?.startsWith('Limite de correction atteinte :')
+  )
+}
+
+function activityMessage(message: string) {
+  return message === legacyCorrectionLimit
+    ? correctionLimitExplanation
+    : message
+}
+
 /** Never turn a backend label into a green result without current mandatory proof. */
 export const hasCurrentProof = hasCurrentValidationProof
 
@@ -41,6 +59,13 @@ export function ValidationCard({
   const [confirmRestart, setConfirmRestart] = useState(false)
   const start = useStartAiPipelineValidation(execution.project_id)
   const control = useControlAiPipelineValidation()
+  const exhaustedCorrectionBudget =
+    ['blocked', 'failed'].includes(execution.status) &&
+    isCorrectionLimit(execution.blocker)
+  const blocker = execution.blocker ? activityMessage(execution.blocker) : null
+  const latestActivity = execution.transitions.at(-1)?.message
+  const showLatestActivity =
+    latestActivity && latestActivity !== execution.blocker
   const verified = execution.status === 'ready' && hasCurrentProof(execution)
   const label = execution.superseded_by
     ? 'Remplacée · historique'
@@ -78,10 +103,15 @@ export function ValidationCard({
         <p className="text-sm font-medium">
           {validationStepLabel(execution.step)}
         </p>
-        <p className="mt-1 break-words text-xs text-muted-foreground">
-          {execution.transitions.at(-1)?.message ||
-            'Le suivi se met à jour au fil de l’exécution.'}
-        </p>
+        {showLatestActivity ? (
+          <p className="mt-1 break-words text-xs text-muted-foreground">
+            {activityMessage(latestActivity)}
+          </p>
+        ) : !blocker ? (
+          <p className="mt-1 break-words text-xs text-muted-foreground">
+            Le suivi se met à jour au fil de l’exécution.
+          </p>
+        ) : null}
       </div>
       {execution.transitions.length > 0 && (
         <details className="mb-3 text-xs">
@@ -102,7 +132,9 @@ export function ValidationCard({
                       : ''}
                   </time>
                 </div>
-                <p className="mt-1 break-words">{event.message}</p>
+                <p className="mt-1 break-words">
+                  {activityMessage(event.message)}
+                </p>
               </li>
             ))}
           </ol>
@@ -127,7 +159,7 @@ export function ValidationCard({
           className="mt-3 rounded-md border border-orange-500/20 bg-orange-500/5 p-2 text-xs leading-relaxed"
           role="alert"
         >
-          {execution.blocker}
+          {blocker}
         </p>
       )}
       {details && (
@@ -179,41 +211,45 @@ export function ValidationCard({
           </p>
         </div>
       )}
-      {execution.status !== 'ready' && !execution.superseded_by && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={control.isPending}
-            onClick={() =>
-              control.mutate(
-                {
-                  executionId: execution.id,
-                  action:
-                    execution.paused ||
-                    execution.status === 'blocked' ||
-                    execution.status === 'failed'
-                      ? 'resume'
-                      : 'pause',
-                },
-                {
-                  onError: e =>
-                    toast.error(`Impossible de modifier la validation : ${e}`),
-                }
-              )
-            }
-          >
-            {execution.paused ||
-            execution.status === 'blocked' ||
-            execution.status === 'failed'
-              ? 'Reprendre la validation'
-              : 'Mettre en pause'}
-          </Button>
-          <span className="basis-full text-xs text-muted-foreground sm:basis-auto sm:flex-1">
-            La pause n’arrête ni le chat ni Run.
-          </span>
-        </div>
-      )}
+      {execution.status !== 'ready' &&
+        !execution.superseded_by &&
+        !exhaustedCorrectionBudget && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={control.isPending}
+              onClick={() =>
+                control.mutate(
+                  {
+                    executionId: execution.id,
+                    action:
+                      execution.paused ||
+                      execution.status === 'blocked' ||
+                      execution.status === 'failed'
+                        ? 'resume'
+                        : 'pause',
+                  },
+                  {
+                    onError: e =>
+                      toast.error(
+                        `Impossible de modifier la validation : ${e}`
+                      ),
+                  }
+                )
+              }
+            >
+              {execution.paused ||
+              execution.status === 'blocked' ||
+              execution.status === 'failed'
+                ? 'Reprendre la validation'
+                : 'Mettre en pause'}
+            </Button>
+            <span className="basis-full text-xs text-muted-foreground sm:basis-auto sm:flex-1">
+              La pause n’arrête ni le chat ni Run.
+            </span>
+          </div>
+        )}
       {!execution.superseded_by &&
         ['blocked', 'failed', 'ready'].includes(execution.status) && (
           <div className="mt-3 space-y-2 border-t pt-3">

@@ -48,7 +48,7 @@ mod tests {
         let (report, removed_root) = run_all_with_cleanup().unwrap();
         assert!(report.isolated);
         assert!(!removed_root.exists());
-        assert_eq!(report.total_count, 14);
+        assert_eq!(report.total_count, 15);
         assert_eq!(report.passed_count, report.total_count, "{report:#?}");
         for scenario in &report.scenarios {
             assert!(scenario.passed);
@@ -87,6 +87,19 @@ mod tests {
         }
         assert_eq!(cursor, expected.len());
         assert!(scenario.summary.contains("simul"));
+    }
+    #[test]
+    fn partial_correction_failed_test_resumes_same_execution_until_real_recipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut context = LabContext::new(dir.path()).unwrap();
+        failed_correction_recovery(&mut context).unwrap();
+        assert!(
+            context.checks.iter().all(|c| c.passed),
+            "{:#?}",
+            context.checks
+        );
+        assert_eq!(context.execution.status, ValidationStatus::Ready);
+        assert_eq!(context.execution.correction_cycles, 2);
     }
     #[test]
     fn unverified_review_reaches_recipe_without_spending_another_correction() {
@@ -692,6 +705,88 @@ fn acceptance_correction(c: &mut LabContext) -> Result<(), String> {
     );
     Ok(())
 }
+fn failed_correction_recovery(c: &mut LabContext) -> Result<(), String> {
+    c.execution.step = ValidationStep::Correction;
+    let execution_id = c.execution.id.clone();
+    let resolved = Defect {
+        id: "ligature".into(),
+        description: "SIMULÉ : ligature corrigée, autre test encore rouge".into(),
+        mandatory: true,
+        resolved: true,
+        evidence_ids: vec!["ligature-test".into()],
+    };
+    c.script(
+        StepOutcome::Failed,
+        HEAD,
+        vec![],
+        vec![proof("ligature-test", "test", HEAD)],
+        vec![resolved],
+        None,
+    )?;
+    c.check("Failed après correction partielle : diagnostic ciblé sans nouvelle exécution ni publication",
+        c.execution.id == execution_id && c.execution.step == ValidationStep::Correction
+        && c.execution.status == ValidationStatus::Pending && c.execution.correction_cycles == 1
+        && c.execution.defects[0].resolved && !validation_engine::is_ready(&c.execution));
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![],
+        vec![],
+        vec![],
+        None,
+    )?;
+    c.check(
+        "Seule la correction réussie revient en revue indépendante",
+        c.execution.step == ValidationStep::Review && c.execution.correction_cycles == 2,
+    );
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![criterion(
+            RequirementStatus::Passed,
+            vec!["regression-test".into()],
+        )],
+        vec![proof("regression-test", "test", CORRECTED_HEAD)],
+        vec![Defect {
+            id: "ligature".into(),
+            description: "SIMULÉ : régression vérifiée".into(),
+            mandatory: true,
+            resolved: true,
+            evidence_ids: vec!["regression-test".into()],
+        }],
+        None,
+    )?;
+    c.passed()?;
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![],
+        vec![proof("ci-head", "backend-ci", CORRECTED_HEAD)],
+        vec![],
+        None,
+    )?;
+    c.script(
+        StepOutcome::Passed,
+        CORRECTED_HEAD,
+        vec![],
+        vec![proof("preview-version", "git-ancestry", CORRECTED_HEAD)],
+        vec![],
+        Some(DEPLOYED),
+    )?;
+    c.check(
+        "CI et preview restent obligatoires avant recette",
+        c.execution.step == ValidationStep::Acceptance
+            && !validation_engine::is_ready(&c.execution),
+    );
+    c.finish_acceptance()?;
+    c.check(
+        "Ready uniquement après recette nouvelle preuve, historique même exécution conservé",
+        c.execution.status == ValidationStatus::Ready
+            && c.execution.id == execution_id
+            && c.execution.correction_cycles == 2,
+    );
+    Ok(())
+}
 fn missing_evidence(c: &mut LabContext) -> Result<(), String> {
     c.prepare_acceptance()?;
     c.script(
@@ -1068,8 +1163,13 @@ fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
         .tempdir()
         .map_err(|e| format!("Laboratoire temporaire indisponible : {e}"))?;
     let root = temporary.path().to_path_buf();
-    let definitions: [(&str, &str, ScenarioRunner); 14] = [
+    let definitions: [(&str, &str, ScenarioRunner); 15] = [
         ("happy-path", "Validation complète", happy),
+        (
+            "failed-correction-recovery",
+            "Correction partielle : test rouge → diagnostic → correction → recette",
+            failed_correction_recovery,
+        ),
         (
             "review-unverified-progress",
             "Revue réussie : CI et recette encore non vérifiées",
