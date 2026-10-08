@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@/test/test-utils'
+import { fireEvent, render, screen, within } from '@/test/test-utils'
 import { useUIStore } from '@/store/ui-store'
+import type { ValidationExecution } from '@/types/ai-pipeline'
 import type { Project, Worktree } from '@/types/projects'
 import type { JenkinsWorktreeStatus } from '@/types/jenkins'
 import type { ClickUpTask } from '@/types/clickup'
@@ -8,10 +9,25 @@ import type * as Environment from '@/lib/environment'
 import { SessionChatModal } from './SessionChatModal'
 
 const mocks = vi.hoisted(() => ({
+  validations: [] as ValidationExecution[],
+  control: vi.fn(),
   mobile: false,
   native: true,
   ci: undefined as JenkinsWorktreeStatus | undefined,
   task: undefined as ClickUpTask | undefined,
+}))
+
+vi.mock('@/services/ai-pipeline', () => ({
+  useAiPipelineValidations: () => ({
+    data: mocks.validations,
+    isLoading: false,
+    isError: false,
+  }),
+  useControlAiPipelineValidation: () => ({
+    mutate: mocks.control,
+    isPending: false,
+  }),
+  useStartAiPipelineValidation: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mocks.mobile }))
@@ -116,6 +132,8 @@ function renderOpenWorktree(
 
 beforeEach(() => {
   useUIStore.setState({ zenMode: false })
+  mocks.validations = []
+  mocks.control.mockClear()
   mocks.mobile = false
   mocks.native = true
   mocks.ci = {
@@ -164,6 +182,65 @@ describe('open worktree title-bar status', () => {
     }
   )
 
+  it.each([
+    ['native desktop', false, true],
+    ['web desktop', false, false],
+    ['mobile', true, false],
+  ] as const)(
+    'opens the pipeline from the real worktree header on %s',
+    (_, mobile, native) => {
+      mocks.mobile = mobile
+      mocks.native = native
+      mocks.validations = [
+        {
+          schema_version: 1,
+          id: 'validation',
+          project_id: 'project-1',
+          worktree_id: 'wt-1',
+          repository_path: '/tmp/wt-1',
+          task_id: 'task-1',
+          pr_number: 42,
+          revision: 1,
+          step: 'review',
+          status: 'blocked',
+          created_at: '',
+          updated_at: '',
+          head_commit: null,
+          deployed_commit: null,
+          correction_cycles: 3,
+          no_progress_cycles: 0,
+          requirements: [],
+          evidence: [],
+          defects: [],
+          transitions: [],
+          effects: [],
+          limitations: [],
+          blocker: 'Revue annulée',
+          paused: false,
+        },
+      ]
+      renderOpenWorktree()
+      const titleRow = screen.getByRole('heading', {
+        name: /Feature/,
+      }).parentElement
+      if (!titleRow) throw new Error('Missing title row')
+      fireEvent.click(
+        within(titleRow).getByRole('button', { name: /Suivre la pipeline IA/ })
+      )
+      expect(screen.getByText('Revue annulée')).toBeInTheDocument()
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reprendre la validation' })
+      )
+      expect(mocks.control).toHaveBeenCalledWith(
+        { executionId: 'validation', action: 'resume' },
+        expect.anything()
+      )
+      expect(
+        screen.getByRole('heading', { name: /Feature/ })
+      ).toBeInTheDocument()
+    }
+  )
+
   it('shows status before the optional project snapshot loads', () => {
     renderOpenWorktree(worktree, null)
 
@@ -177,7 +254,7 @@ describe('open worktree title-bar status', () => {
       .toBeInTheDocument()
   })
 
-  it('wraps status below a full-width mobile title and stays inline on desktop', () => {
+  it('wraps status below a mobile title and allows desktop badges to wrap without clipping', () => {
     mocks.mobile = true
     renderOpenWorktree()
 
@@ -185,8 +262,8 @@ describe('open worktree title-bar status', () => {
     const titleGroup = title.parentElement
     const header = titleGroup?.parentElement
     expect.soft(title).toHaveClass('basis-full', 'sm:basis-auto')
-    expect.soft(titleGroup).toHaveClass('flex-wrap', 'sm:flex-nowrap')
-    expect.soft(header).toHaveClass('h-auto', 'sm:h-11')
+    expect.soft(titleGroup).toHaveClass('flex-wrap')
+    expect.soft(header).toHaveClass('h-auto', 'sm:min-h-11')
     expect.soft(header).toHaveClass('items-start', 'sm:items-center')
   })
 

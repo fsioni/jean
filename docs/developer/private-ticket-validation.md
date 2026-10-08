@@ -239,6 +239,16 @@ the normal chat tabs. These are presentation changes only: persisted execution
 state, safety gates, proof verification and correction loops remain backend-owned.
 The shared canvas presentation is available in native, Web Access and mobile.
 
+The worktree chat header also exposes a clickable **IA · step · state** badge,
+next to CI/preview and ClickUp. Its responsive popover reuses `ValidationCard`
+for the blocker, journal, proofs, pause/resume and collapsed execution history,
+without navigating away from chat. It shares the modal's existing polling query
+(no second polling subscription), scopes selection to the current worktree, and
+opens technical sessions only on explicit request. Escape closes the popover,
+not the chat. This shared header is rendered in native, Web Access and mobile;
+zen mode deliberately hides the entire header. Worktrees without a validation
+remain unchanged. A query error offers retry rather than silently hiding access.
+
 The Projects sidebar shows the same selected execution's **step · state** under
 its worktree name. A ready status is not presented as verified when mandatory
 current proofs are missing. Sidebar session counts and canvas/manual tabs exclude
