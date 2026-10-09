@@ -35,17 +35,10 @@ export function selectWorktreeValidation(
       )[0] ?? null
     )
   }
-  const priority = (execution: ValidationExecution) => {
-    if (!execution.paused && execution.status === 'running') return 3
-    if (!execution.paused && ['pending', 'waiting'].includes(execution.status))
-      return 2
-    if (execution.status === 'blocked' || execution.paused) return 1
-    return 0
-  }
+
   return (
     current.sort(
       (a, b) =>
-        priority(b) - priority(a) ||
         b.created_at.localeCompare(a.created_at) ||
         b.updated_at.localeCompare(a.updated_at) ||
         b.id.localeCompare(a.id)
@@ -114,4 +107,63 @@ export function hasCurrentValidationProof(execution: ValidationExecution) {
       .filter(d => d.mandatory)
       .every(d => d.resolved && currentEvidence(d.evidence_ids))
   )
+}
+
+/** Describe the persisted lifecycle, never activity inferred from another chat. */
+export function validationNextAction(
+  execution: ValidationExecution,
+  {
+    historical = false,
+    ambiguous = false,
+  }: { historical?: boolean; ambiguous?: boolean } = {}
+): string {
+  if (historical || execution.superseded_by)
+    return 'Historique consultable : aucune action ne sera relancée.'
+  if (ambiguous)
+    return 'Les actions sont suspendues : plusieurs cycles se déclarent courants.'
+  if (execution.paused)
+    return 'Reprends ce cycle pour poursuivre à la même étape.'
+  if (execution.status === 'ready')
+    return hasCurrentValidationProof(execution)
+      ? 'Relis les preuves, puis décide de la suite. Aucun merge automatique.'
+      : 'Les preuves actuelles ne suffisent pas à confirmer la recette.'
+  if (execution.status === 'failed' || execution.status === 'blocked')
+    return 'Ce cycle est arrêté. Consulte le blocage avant de le reprendre.'
+  if (execution.status === 'waiting')
+    return 'Le cycle attend un résultat externe ; le suivi se met à jour automatiquement.'
+  return 'Le cycle poursuit cette étape. Aucune action attendue de ta part.'
+}
+
+/** Actual recent route; revisiting review/correction is not linear progress. */
+export function validationRecentSteps(
+  execution: ValidationExecution
+): ValidationStep[] {
+  const steps: ValidationStep[] = []
+  for (const step of [
+    ...execution.transitions.map(t => t.step),
+    execution.step,
+  ]) {
+    if (steps.at(-1) !== step) steps.push(step)
+  }
+  return steps.slice(-3)
+}
+
+export function validationProofSummary(execution: ValidationExecution) {
+  const mandatory = execution.requirements.filter(r => r.mandatory)
+  const confirmed = mandatory.filter(
+    r =>
+      r.status === 'passed' &&
+      r.evidence_ids.length > 0 &&
+      r.evidence_ids.every(id =>
+        execution.evidence.some(
+          e =>
+            e.id === id &&
+            !e.stale &&
+            !!execution.head_commit &&
+            e.commit === execution.head_commit &&
+            !!e.value.trim()
+        )
+      )
+  ).length
+  return { confirmed, total: mandatory.length }
 }

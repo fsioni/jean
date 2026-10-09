@@ -20,21 +20,36 @@ export function WorktreeValidationStatus({
   executions,
   worktreeId,
   className,
+  stale = false,
 }: {
   executions: readonly ValidationExecution[]
   worktreeId: string
   className?: string
+  stale?: boolean
 }) {
   const execution = selectWorktreeValidation(executions, worktreeId)
   if (!execution) return null
 
+  const ambiguous =
+    executions.filter(e => e.worktree_id === worktreeId && !e.superseded_by)
+      .length > 1
   const verifiedReady =
-    execution.status === 'ready' && hasCurrentValidationProof(execution)
-  const statusLabel = execution.paused
-    ? 'En pause'
-    : execution.status === 'ready' && !verifiedReady
-      ? 'Preuves à confirmer'
-      : statusLabels[execution.status]
+    !stale &&
+    !ambiguous &&
+    !execution.superseded_by &&
+    execution.status === 'ready' &&
+    hasCurrentValidationProof(execution)
+  const statusLabel = stale
+    ? 'Suivi périmé'
+    : ambiguous
+      ? 'Suivi ambigu'
+      : execution.superseded_by
+        ? 'Historique · remplacée'
+        : execution.paused
+          ? 'En pause'
+          : execution.status === 'ready' && !verifiedReady
+            ? 'Preuves à confirmer'
+            : statusLabels[execution.status]
   const label = `${validationStepLabel(execution.step)} · ${statusLabel}`
   return (
     <div
@@ -50,11 +65,22 @@ export function WorktreeValidationStatus({
         aria-hidden="true"
         className={cn(
           'size-1.5 shrink-0 rounded-full bg-muted-foreground/50',
-          !execution.paused &&
+          !stale &&
+            !ambiguous &&
+            !execution.superseded_by &&
+            !execution.paused &&
             execution.status === 'running' &&
             'bg-primary motion-safe:animate-pulse',
-          !execution.paused && verifiedReady && 'bg-success',
-          !execution.paused &&
+          !stale &&
+            !ambiguous &&
+            !execution.superseded_by &&
+            !execution.paused &&
+            verifiedReady &&
+            'bg-success',
+          !stale &&
+            !ambiguous &&
+            !execution.superseded_by &&
+            !execution.paused &&
             (execution.status === 'blocked' || execution.status === 'failed') &&
             'bg-destructive'
         )}

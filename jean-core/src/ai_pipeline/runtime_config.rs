@@ -95,6 +95,105 @@ pub fn is_clean(repo: &str, baseline: Option<&RuntimeConfigBaseline>) -> Result<
     }
 }
 
+/// Snapshot a partial owned tree, including the index and untracked content.
+/// It is an interruption guard, not proof of authorship during an active agent.
+pub fn working_tree_fingerprint(
+    repo: &str,
+    baseline: Option<&RuntimeConfigBaseline>,
+) -> Result<String, String> {
+    if let Some(baseline) = baseline {
+        verify(repo, baseline)?;
+    }
+    let run = |args: &[&str]| -> Result<Vec<u8>, String> {
+        let output = crate::platform::silent_command("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| format!("Empreinte worktree inaccessible : {e}"))?;
+        if !output.status.success() {
+            return Err("Git ne permet pas de confirmer les modifications conservées".into());
+        }
+        if output.stdout.len() > 64 * 1024 * 1024 {
+            return Err("Modifications trop volumineuses pour attribution sûre".into());
+        }
+        Ok(output.stdout)
+    };
+    let mut digest = Sha256::new();
+    for base_args in [
+        vec!["status", "--porcelain", "-z"],
+        vec!["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"],
+        vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--cached",
+        ],
+    ] {
+        let mut args = base_args;
+        args.extend(["--", "."]);
+        if baseline.is_some() {
+            args.push(":(exclude)jean.json");
+        }
+        let content = run(&args)?;
+        digest.update((content.len() as u64).to_le_bytes());
+        digest.update(content);
+    }
+    let mut args = vec![
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ".",
+    ];
+    if baseline.is_some() {
+        args.push(":(exclude)jean.json");
+    }
+    let names = run(&args)?;
+    let mut total = 0_u64;
+    for name in names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let name = std::str::from_utf8(name).map_err(|_| "Nom non UTF-8 : attribution refusée")?;
+        let relative = Path::new(name);
+        if relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err("Chemin non relatif : attribution refusée".into());
+        }
+        let path = Path::new(repo).join(relative);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|e| format!("Fichier de correction inaccessible : {e}"))?;
+        let content = if metadata.file_type().is_symlink() {
+            fs::read_link(&path)
+                .map_err(|e| e.to_string())?
+                .into_os_string()
+                .into_string()
+                .map_err(|_| "Lien non UTF-8 : attribution refusée")?
+                .into_bytes()
+        } else if metadata.is_file() && metadata.len() <= 16 * 1024 * 1024 {
+            fs::read(&path).map_err(|e| e.to_string())?
+        } else {
+            return Err(
+                "Fichier non attribuable ou trop volumineux ; modifications conservées".into(),
+            );
+        };
+        total = total.saturating_add(content.len() as u64);
+        if total > 64 * 1024 * 1024 {
+            return Err("Modifications non suivies trop volumineuses ; attribution refusée".into());
+        }
+        digest.update((name.len() as u64).to_le_bytes());
+        digest.update(name.as_bytes());
+        digest.update([u8::from(metadata.file_type().is_symlink())]);
+        digest.update((content.len() as u64).to_le_bytes());
+        digest.update(content);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 pub fn stage_correction(
     repo: &str,
     baseline: Option<&RuntimeConfigBaseline>,
@@ -151,6 +250,36 @@ mod tests {
         fn baseline(&self) -> RuntimeConfigBaseline {
             capture(&self.repo, &self.root).unwrap().unwrap()
         }
+    }
+
+    #[test]
+    fn owned_tree_fingerprint_detects_foreign_content_index_and_untracked_edits() {
+        let f = Fixture::new();
+        let baseline = f.baseline();
+        fs::write(format!("{}/code.txt", f.repo), "partial correction").unwrap();
+        let owned = working_tree_fingerprint(&f.repo, Some(&baseline)).unwrap();
+        assert_eq!(
+            owned,
+            working_tree_fingerprint(&f.repo, Some(&baseline)).unwrap()
+        );
+        fs::write(format!("{}/code.txt", f.repo), "foreign same-path edit").unwrap();
+        assert_ne!(
+            owned,
+            working_tree_fingerprint(&f.repo, Some(&baseline)).unwrap()
+        );
+        fs::write(format!("{}/code.txt", f.repo), "partial correction").unwrap();
+        fs::write(format!("{}/foreign.txt", f.repo), "foreign untracked").unwrap();
+        assert_ne!(
+            owned,
+            working_tree_fingerprint(&f.repo, Some(&baseline)).unwrap()
+        );
+        fs::remove_file(format!("{}/foreign.txt", f.repo)).unwrap();
+        git(&f.repo, &["add", "code.txt"]).unwrap();
+        assert_ne!(
+            owned,
+            working_tree_fingerprint(&f.repo, Some(&baseline)).unwrap()
+        );
+        assert_eq!(bytes(&f.repo).unwrap(), f.copied);
     }
 
     #[test]

@@ -101,6 +101,9 @@ pub struct ValidationExecution {
     pub runtime_config_baseline: Option<super::runtime_config::RuntimeConfigBaseline>,
     #[serde(default)]
     pub original_branch: Option<String>,
+    /// Exact uncommitted tree retained after an attributable code attempt.
+    #[serde(default)]
+    pub owned_worktree_fingerprint: Option<String>,
     #[serde(default)]
     pub publication_base_branch: Option<String>,
     #[serde(default)]
@@ -135,6 +138,11 @@ pub struct ValidationExecution {
     /// Invalid Review waiting outcomes on the current head (one immediate retry).
     #[serde(default)]
     pub review_wait_retries: u8,
+    /// One format-only repair per step, never a retry of code changes.
+    #[serde(default)]
+    pub agent_result_repair_retries: u8,
+    #[serde(default)]
+    pub agent_result_repair_source_session: Option<String>,
     #[serde(default)]
     pub requirements: Vec<Requirement>,
     #[serde(default)]
@@ -177,6 +185,7 @@ impl ValidationExecution {
             repository_path,
             runtime_config_baseline: None,
             original_branch: None,
+            owned_worktree_fingerprint: None,
             publication_base_branch: None,
             publication_remote_identity: None,
             task_id,
@@ -201,6 +210,8 @@ impl ValidationExecution {
             waiting_since: None,
             no_progress_cycles: 0,
             review_wait_retries: 0,
+            agent_result_repair_retries: 0,
+            agent_result_repair_source_session: None,
             requirements: vec![],
             defects: vec![],
             evidence: vec![],
@@ -267,6 +278,24 @@ pub struct StepResult {
 #[cfg(test)]
 mod session_provenance_tests {
     use super::*;
+
+    #[test]
+    fn legacy_execution_defaults_new_recovery_guards_without_claiming_ownership() {
+        let execution =
+            ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), Some(42));
+        let mut json = serde_json::to_value(execution).unwrap();
+        for field in [
+            "owned_worktree_fingerprint",
+            "agent_result_repair_retries",
+            "agent_result_repair_source_session",
+        ] {
+            json.as_object_mut().unwrap().remove(field);
+        }
+        let restored: ValidationExecution = serde_json::from_value(json).unwrap();
+        assert!(restored.owned_worktree_fingerprint.is_none());
+        assert!(restored.agent_result_repair_source_session.is_none());
+        assert_eq!(restored.agent_result_repair_retries, 0);
+    }
 
     #[test]
     fn legacy_execution_defaults_to_no_agent_sessions() {

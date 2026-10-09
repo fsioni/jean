@@ -48,7 +48,7 @@ mod tests {
         let (report, removed_root) = run_all_with_cleanup().unwrap();
         assert!(report.isolated);
         assert!(!removed_root.exists());
-        assert_eq!(report.total_count, 15);
+        assert_eq!(report.total_count, 21);
         assert_eq!(report.passed_count, report.total_count, "{report:#?}");
         for scenario in &report.scenarios {
             assert!(scenario.passed);
@@ -1156,6 +1156,198 @@ fn preview_unknown(c: &mut LabContext) -> Result<(), String> {
     Ok(())
 }
 
+fn canonical_failed_owner(c: &mut LabContext) -> Result<(), String> {
+    c.execution.step = ValidationStep::Correction;
+    c.execution.status = ValidationStatus::Failed;
+    c.execution.correction_cycles = 1;
+    c.store.save(&c.execution)?;
+    let snapshots = c.store.list()?;
+    let owner =
+        super::validation_orchestration::canonical_execution(&snapshots, &c.execution.worktree_id)?;
+    c.check(
+        "Une correction échouée reste propriétaire après relecture disque, sans nouveau cycle",
+        owner.is_some_and(|e| e.id == c.execution.id && e.correction_cycles == 1),
+    );
+    c.check(
+        "Une erreur terminale n'est pas redémarrée aveuglément",
+        !super::validation_orchestration::recoverable(&c.execution),
+    );
+    Ok(())
+}
+
+fn ambiguous_resume_command(c: &mut LabContext) -> Result<(), String> {
+    let isolated = c.root.join("isolated-command-runtime");
+    let app = crate::RuntimeContext::new(isolated.clone(), isolated.clone())?;
+    let store = ValidationStore::new(&isolated);
+    let mut failed = c.execution.clone();
+    failed.step = ValidationStep::Correction;
+    failed.status = ValidationStatus::Failed;
+    store.save(&failed)?;
+    let mut duplicate = failed.clone();
+    duplicate.id = uuid::Uuid::new_v4().to_string();
+    duplicate.step = ValidationStep::Review;
+    duplicate.status = ValidationStatus::Blocked;
+    store.save(&duplicate)?;
+    let before = serde_json::to_value(store.list()?).map_err(|e| e.to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let result = runtime.block_on(super::validation_commands::resume_ai_pipeline_validation(
+        app,
+        duplicate.id,
+    ));
+    let after = serde_json::to_value(store.list()?).map_err(|e| e.to_string())?;
+    c.check(
+        "Vraie commande Resume : deux propriétaires persistés refusés avant effet",
+        result.is_err() && before == after,
+    );
+    c.check(
+        "Aucun résultat ambigu n'est assimilé à Ready",
+        !validation_engine::is_ready(&failed),
+    );
+    Ok(())
+}
+
+fn restart_eligibility(c: &mut LabContext) -> Result<(), String> {
+    for status in [
+        ValidationStatus::Pending,
+        ValidationStatus::Running,
+        ValidationStatus::Waiting,
+    ] {
+        c.execution.status = status;
+        c.store.save(&c.execution)?;
+        let restored = c.store.get(&c.execution.id)?.ok_or("Snapshot absent")?;
+        c.check(
+            format!(
+                "Après relecture : {status:?} reprend automatiquement sans nouveau propriétaire"
+            ),
+            super::validation_orchestration::recoverable(&restored),
+        );
+        let mut paused = restored.clone();
+        paused.paused = true;
+        c.check(
+            format!("{status:?} en pause ne reprend jamais"),
+            !super::validation_orchestration::recoverable(&paused),
+        );
+        let mut historical = restored;
+        historical.superseded_by = Some(uuid::Uuid::new_v4().to_string());
+        c.check(
+            format!("{status:?} historique ne reprend jamais"),
+            !super::validation_orchestration::recoverable(&historical),
+        );
+    }
+    for status in [
+        ValidationStatus::Blocked,
+        ValidationStatus::Failed,
+        ValidationStatus::Ready,
+    ] {
+        c.execution.status = status;
+        c.check(
+            format!("{status:?} ne redémarre pas à l'insu de l'utilisateur"),
+            !super::validation_orchestration::recoverable(&c.execution),
+        );
+    }
+    Ok(())
+}
+
+fn terminal_run_binding(c: &mut LabContext) -> Result<(), String> {
+    let identity = validation_engine::begin_attempt(&mut c.execution)?;
+    c.execution
+        .record_agent_session("isolated-run-session".into(), &identity);
+    c.store.save(&c.execution)?;
+    c.execution = c.store.get(&c.execution.id)?.ok_or("Snapshot absent")?;
+    let restored = c.execution.clone();
+    let verify = |prompt, count, cancelled, completed| {
+        super::validation_orchestration::assert_run_binding(
+            &restored,
+            "isolated-run-session",
+            prompt,
+            count,
+            cancelled,
+            completed,
+        )
+    };
+    c.check(
+        "Un seul run terminal du prompt exact est récupérable",
+        verify(Some(&identity), 1, false, true).is_ok(),
+    );
+    c.check(
+        "Une relance manuelle ajoutée à la même session ne fournit pas de preuve au coordinateur",
+        verify(Some(&identity), 2, false, true).is_err(),
+    );
+    c.check(
+        "Prompt absent ou annulation ou erreur backend : sortie refusée",
+        verify(None, 1, false, true).is_err()
+            && verify(Some(&identity), 1, true, true).is_err()
+            && verify(Some(&identity), 1, false, false).is_err(),
+    );
+    Ok(())
+}
+
+fn malformed_format_repair(c: &mut LabContext) -> Result<(), String> {
+    c.execution.step = ValidationStep::Correction;
+    c.execution.correction_cycles = 2;
+    c.execution.no_progress_cycles = 1;
+    let identity = validation_engine::begin_attempt(&mut c.execution)?;
+    c.execution
+        .record_agent_session("isolated-invalid-output".into(), &identity);
+    let error = parse_agent_result("je crois que tout va bien", &identity).unwrap_err();
+    let retry = validation_engine::repair_agent_result(&mut c.execution, &error);
+    c.store.save(&c.execution)?;
+    c.execution = c.store.get(&c.execution.id)?.ok_or("Snapshot absent")?;
+    c.check(
+        "Sortie libre malformée : une seule réparation de FORMAT, pas de correction code",
+        retry
+            && c.execution.status == ValidationStatus::Pending
+            && c.execution.correction_cycles == 2
+            && c.execution.no_progress_cycles == 1
+            && c.execution.agent_result_repair_source_session.as_deref()
+                == Some("isolated-invalid-output"),
+    );
+    validation_engine::begin_attempt(&mut c.execution)?;
+    let second = validation_engine::repair_agent_result(&mut c.execution, &error);
+    c.check(
+        "Après redémarrage : deuxième sortie invalide bloque, budgets non réinitialisés",
+        !second
+            && c.execution.status == ValidationStatus::Blocked
+            && c.execution.correction_cycles == 2
+            && c.execution.no_progress_cycles == 1
+            && !validation_engine::is_ready(&c.execution),
+    );
+    Ok(())
+}
+
+fn dirty_publication_refused(c: &mut LabContext) -> Result<(), String> {
+    let repo = c.root.join("real-local-repository");
+    std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
+    let path = repo.to_string_lossy().into_owned();
+    let git = |args: &[&str]| super::validation_steps::git(&path, args);
+    git(&["init", "-b", "main"])?;
+    git(&["config", "user.name", "Isolated lab"])?;
+    git(&["config", "user.email", "lab@example.invalid"])?;
+    std::fs::write(repo.join("owned.txt"), "initial\n").map_err(|e| e.to_string())?;
+    git(&["add", "owned.txt"])?;
+    git(&["commit", "-m", "isolated initial"])?;
+    std::fs::write(repo.join("owned.txt"), "partial correction\n").map_err(|e| e.to_string())?;
+    std::fs::write(repo.join("foreign.txt"), "unattributed work\n").map_err(|e| e.to_string())?;
+    let before = git(&["status", "--porcelain"])?;
+    let mut execution = c.execution.clone();
+    execution.repository_path = path;
+    let rejected = super::validation_steps::sync_git(&execution).is_err();
+    let after =
+        super::validation_steps::git(&execution.repository_path, &["status", "--porcelain"])?;
+    c.check(
+        "Vrai Git local : publication d'un arbre sale refusée sans staging ni suppression",
+        rejected && before == after && repo.join("foreign.txt").exists(),
+    );
+    c.check(
+        "Aucune preuve fraîche créée à partir des fichiers locaux",
+        !validation_engine::is_ready(&execution),
+    );
+    Ok(())
+}
+
 type ScenarioRunner = fn(&mut LabContext) -> Result<(), String>;
 fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
     let temporary = tempfile::Builder::new()
@@ -1163,8 +1355,38 @@ fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
         .tempdir()
         .map_err(|e| format!("Laboratoire temporaire indisponible : {e}"))?;
     let root = temporary.path().to_path_buf();
-    let definitions: [(&str, &str, ScenarioRunner); 15] = [
+    let definitions: [(&str, &str, ScenarioRunner); 21] = [
         ("happy-path", "Validation complète", happy),
+        (
+            "canonical-failed-owner",
+            "Correction échouée : propriétaire conservé",
+            canonical_failed_owner,
+        ),
+        (
+            "ambiguous-resume-command",
+            "Commande réelle : reprise ambiguë refusée",
+            ambiguous_resume_command,
+        ),
+        (
+            "restart-eligibility",
+            "Redémarrage : états éligibles et exclusions",
+            restart_eligibility,
+        ),
+        (
+            "terminal-run-binding",
+            "Résultat lié au run exact, pas au dernier chat",
+            terminal_run_binding,
+        ),
+        (
+            "malformed-format-repair",
+            "JSON invalide : réparation bornée persistée",
+            malformed_format_repair,
+        ),
+        (
+            "dirty-publication-refused",
+            "Git réel : modifications étrangères préservées",
+            dirty_publication_refused,
+        ),
         (
             "failed-correction-recovery",
             "Correction partielle : test rouge → diagnostic → correction → recette",
@@ -1253,7 +1475,7 @@ fn run_all_with_cleanup() -> Result<(ValidationLabReport, PathBuf), String> {
                 message: format!("LAB : {}", t.message),
             })
             .collect();
-        scenarios.push(ValidationLabScenario { id: id.into(), label: label.into(), passed, summary: "Moteur, parser et stockage réels ; agents, CI et preview simulés. Git éventuel strictement local. Ce rapport n’est pas une validation d’un ticket réel.".into(), checks: context.checks, transitions, execution: Some(context.execution) });
+        scenarios.push(ValidationLabScenario { id: id.into(), label: label.into(), passed, summary: "Moteur, parser, stockage et décisions partagées des commandes réels ; reprise ambiguë exercée via la vraie commande, Git strictement local. Agents, CI et preview simulés ; le cycle drive complet n’est pas testé ici. Ce rapport n’est pas une validation d’un ticket réel.".into(), checks: context.checks, transitions, execution: Some(context.execution) });
     }
     let total_count = scenarios.len();
     let passed_count = scenarios.iter().filter(|s| s.passed).count();

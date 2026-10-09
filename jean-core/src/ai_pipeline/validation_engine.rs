@@ -179,9 +179,81 @@ mod tests {
         assert_eq!(e.step, ValidationStep::CreatePr);
     }
     #[test]
+    fn failed_review_or_ci_with_concrete_defect_keeps_the_correction_loop() {
+        for step in [ValidationStep::Review, ValidationStep::Ci] {
+            let mut e = execution();
+            e.step = step;
+            let identity = begin_attempt(&mut e).unwrap();
+            apply_result(
+                &mut e,
+                StepResult {
+                    identity,
+                    outcome: StepOutcome::Failed,
+                    commit: "abc".into(),
+                    requirements: vec![],
+                    defects: vec![Defect {
+                        id: "known-regression".into(),
+                        description: "Reproduced regression".into(),
+                        mandatory: true,
+                        resolved: false,
+                        evidence_ids: vec![],
+                    }],
+                    evidence: vec![],
+                    message: Some("Reproduced test red".into()),
+                    deployed_commit: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(e.step, ValidationStep::Correction);
+            assert_eq!(e.status, ValidationStatus::Pending);
+            assert_eq!(e.correction_cycles, 0);
+        }
+    }
+
+    #[test]
+    fn reproduced_implementation_failure_enters_correction_without_new_execution() {
+        let mut e =
+            ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
+        let id = e.id.clone();
+        let identity = begin_attempt(&mut e).unwrap();
+        apply_result(
+            &mut e,
+            StepResult {
+                identity,
+                outcome: StepOutcome::Failed,
+                commit: "abc".into(),
+                requirements: vec![],
+                defects: vec![Defect {
+                    id: "test-save".into(),
+                    description: "save then reload fails in executed test".into(),
+                    mandatory: true,
+                    resolved: false,
+                    evidence_ids: vec![],
+                }],
+                evidence: vec![],
+                message: Some("Test save fails".into()),
+                deployed_commit: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(e.id, id);
+        assert_eq!(e.status, ValidationStatus::Pending);
+        assert_eq!(e.step, ValidationStep::Correction);
+        assert!(!is_ready(&e));
+    }
+
+    #[test]
     fn failed_implementation_never_becomes_ready() {
         let mut e =
             ValidationExecution::new("p".into(), "w".into(), "/tmp".into(), "t".into(), None);
+        e.requirements.push(Requirement {
+            id: "unexplained-red".into(),
+            label: "Unexplained failure without concrete defect".into(),
+            mandatory: true,
+            status: RequirementStatus::Failed,
+            evidence_ids: vec![],
+            justification: None,
+        });
         complete_step(&mut e, StepOutcome::Failed);
         assert_eq!(e.status, ValidationStatus::Failed);
         assert_eq!(e.step, ValidationStep::Implementation);
@@ -758,6 +830,48 @@ mod tests {
         assert!(e.requirements[0].mandatory);
     }
     #[test]
+    fn malformed_result_repair_is_persisted_once_without_code_retry_or_budget_reset() {
+        let mut e = execution();
+        e.step = ValidationStep::Correction;
+        e.correction_cycles = 2;
+        e.no_progress_cycles = 1;
+        e.head_commit = Some("abc".into());
+        let identity = begin_attempt(&mut e).unwrap();
+        e.record_agent_session("broken-output-session".into(), &identity);
+        assert!(repair_agent_result(
+            &mut e,
+            "Résultat structuré invalide : syntaxe"
+        ));
+        assert_eq!(e.status, ValidationStatus::Pending);
+        assert_eq!(e.step, ValidationStep::Correction);
+        assert_eq!(e.correction_cycles, 2);
+        assert_eq!(e.no_progress_cycles, 1);
+        assert!(e.active_attempt.is_none());
+        assert_eq!(e.agent_sessions.len(), 1);
+        e = serde_json::from_value(serde_json::to_value(&e).unwrap()).unwrap();
+        begin_attempt(&mut e).unwrap();
+        assert!(!repair_agent_result(&mut e, "Résultat JSON incomplet"));
+        assert_eq!(e.status, ValidationStatus::Blocked);
+        assert!(e.active_attempt.is_none());
+        assert_eq!(e.correction_cycles, 2);
+        assert_eq!(e.no_progress_cycles, 1);
+    }
+
+    #[test]
+    fn result_repair_never_retries_wrong_identity_or_reserved_proof() {
+        for reason in [
+            "Identité du résultat incohérente",
+            "Un résultat agent tente de remplacer une preuve réservée au backend",
+        ] {
+            let mut e = execution();
+            begin_attempt(&mut e).unwrap();
+            let before = serde_json::to_value(&e).unwrap();
+            assert!(!repair_agent_result(&mut e, reason));
+            assert_eq!(serde_json::to_value(&e).unwrap(), before);
+        }
+    }
+
+    #[test]
     fn cycle_ceiling_does_not_prevent_third_cycle_ci() {
         let mut e = execution();
         e.correction_cycles = 3;
@@ -793,6 +907,28 @@ pub fn pause(execution: &mut ValidationExecution) {
         "Pause requested; active operation must be reconciled, not cancelled",
     );
 }
+/// Retry only the response format, not the work or an untrusted identity.
+/// The terminal source session is retained so the coordinator can supply its output.
+pub fn repair_agent_result(execution: &mut ValidationExecution, reason: &str) -> bool {
+    if !reason.starts_with("Résultat structuré invalide :") && reason != "Résultat JSON incomplet"
+    {
+        return false;
+    }
+    if execution.agent_result_repair_retries >= 1 {
+        execution.active_attempt = None;
+        execution.active_session_id = None;
+        block(execution, "Résultat agent illisible après une réparation de format. Aucun résultat accepté ; consulter la session technique.");
+        return false;
+    }
+    execution.agent_result_repair_retries += 1;
+    execution.agent_result_repair_source_session = execution.active_session_id.take();
+    execution.active_attempt = None;
+    execution.status = ValidationStatus::Pending;
+    execution.blocker = None;
+    record(execution, "Résultat JSON invalide : une réparation de format automatique, sans réexécuter le travail ni publier.");
+    true
+}
+
 pub fn begin_attempt(execution: &mut ValidationExecution) -> Result<StepIdentity, String> {
     if execution.paused
         || execution.active_attempt.is_some()
@@ -985,6 +1121,8 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
         execution.deployed_commit = None;
         execution.acceptance_evidence_ids.clear();
     }
+    execution.agent_result_repair_retries = 0;
+    execution.agent_result_repair_source_session = None;
     execution.head_commit = Some(result.commit.clone());
     for evidence in result.evidence {
         execution
@@ -1092,7 +1230,11 @@ pub fn apply_result(execution: &mut ValidationExecution, result: StepResult) -> 
                 ValidationStep::Review | ValidationStep::Ci | ValidationStep::Acceptance
             ))
             || (result.outcome == StepOutcome::Failed
-                && result.identity.step == ValidationStep::Acceptance));
+                && (matches!(
+                    result.identity.step,
+                    ValidationStep::Review | ValidationStep::Ci | ValidationStep::Acceptance
+                ) || (result.identity.step == ValidationStep::Implementation
+                    && execution.defects.iter().any(|d| d.mandatory && !d.resolved)))));
     let outcome = if should_remediate
         || (result.identity.step == ValidationStep::Correction
             && result.outcome == StepOutcome::Failed)

@@ -113,6 +113,33 @@ const worktree: Worktree = {
   order: 0,
 }
 
+const validation: ValidationExecution = {
+  schema_version: 1,
+  id: 'validation',
+  project_id: 'project-1',
+  worktree_id: 'wt-1',
+  repository_path: '/tmp/wt-1',
+  task_id: 'task-1',
+  pr_number: 42,
+  revision: 1,
+  step: 'review',
+  status: 'blocked',
+  created_at: '',
+  updated_at: '',
+  head_commit: null,
+  deployed_commit: null,
+  correction_cycles: 3,
+  no_progress_cycles: 0,
+  requirements: [],
+  evidence: [],
+  defects: [],
+  transitions: [],
+  effects: [],
+  limitations: [],
+  blocker: 'Revue annulée',
+  paused: false,
+}
+
 function renderOpenWorktree(
   currentWorktree = worktree,
   currentProject: Project | null = project
@@ -187,47 +214,34 @@ describe('open worktree title-bar status', () => {
     ['web desktop', false, false],
     ['mobile', true, false],
   ] as const)(
-    'opens the pipeline from the real worktree header on %s',
+    'shows automation permanently below the real title row without a menu on %s',
     (_, mobile, native) => {
       mocks.mobile = mobile
       mocks.native = native
-      mocks.validations = [
-        {
-          schema_version: 1,
-          id: 'validation',
-          project_id: 'project-1',
-          worktree_id: 'wt-1',
-          repository_path: '/tmp/wt-1',
-          task_id: 'task-1',
-          pr_number: 42,
-          revision: 1,
-          step: 'review',
-          status: 'blocked',
-          created_at: '',
-          updated_at: '',
-          head_commit: null,
-          deployed_commit: null,
-          correction_cycles: 3,
-          no_progress_cycles: 0,
-          requirements: [],
-          evidence: [],
-          defects: [],
-          transitions: [],
-          effects: [],
-          limitations: [],
-          blocker: 'Revue annulée',
-          paused: false,
-        },
-      ]
+      mocks.validations = [validation]
       renderOpenWorktree()
       const titleRow = screen.getByRole('heading', {
         name: /Feature/,
       }).parentElement
       if (!titleRow) throw new Error('Missing title row')
-      fireEvent.click(
-        within(titleRow).getByRole('button', { name: /Suivre la pipeline IA/ })
-      )
+      const strip = screen.getByRole('region', {
+        name: 'Automatisation du worktree',
+      })
+      expect(
+        within(titleRow).queryByRole('region', {
+          name: 'Automatisation du worktree',
+        })
+      ).not.toBeInTheDocument()
+      expect(strip.previousElementSibling).toBe(titleRow.parentElement)
+      expect(within(strip).getByRole('status')).toHaveTextContent('Bloqué')
+      expect(within(strip).getByText('Revue')).toBeInTheDocument()
       expect(screen.getByText('Revue annulée')).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Suivre la pipeline/ })
+      ).not.toBeInTheDocument()
+      expect(
+        within(strip).getByText('Détails de validation').closest('details')
+      ).not.toHaveAttribute('open')
       fireEvent.click(
         screen.getByRole('button', { name: 'Reprendre la validation' })
       )
@@ -275,6 +289,14 @@ describe('open worktree title-bar status', () => {
     expect(screen.queryByText('CI OK')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'IN PROGRESS' })
+    ).not.toBeInTheDocument()
+  })
+  it('hides the permanent automation strip together with the title in zen mode', () => {
+    mocks.validations = [validation]
+    useUIStore.setState({ zenMode: true })
+    renderOpenWorktree()
+    expect(
+      screen.queryByRole('region', { name: 'Automatisation du worktree' })
     ).not.toBeInTheDocument()
   })
 })

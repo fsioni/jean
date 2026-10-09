@@ -1102,16 +1102,6 @@ export function SessionChatModal({
                         projectId={worktree.project_id}
                         worktreeId={worktreeId}
                       />
-                      <WorktreeValidationHeader
-                        key={worktreeId}
-                        worktreeId={worktreeId}
-                        query={validationQuery}
-                        onOpenSession={sessionId =>
-                          useChatStore
-                            .getState()
-                            .setActiveSession(worktreeId, sessionId)
-                        }
-                      />
                     </>
                   )}
                   {!zenMode && stackedBaseBranch && (
@@ -1255,6 +1245,18 @@ export function SessionChatModal({
                   )}
                 </div>
               </div>
+              {worktree && (
+                <WorktreeValidationHeader
+                  key={worktreeId}
+                  worktreeId={worktreeId}
+                  query={validationQuery}
+                  onOpenSession={sessionId =>
+                    useChatStore
+                      .getState()
+                      .setActiveSession(worktreeId, sessionId)
+                  }
+                />
+              )}
             </div>
           )}
 

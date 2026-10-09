@@ -43,30 +43,34 @@ function snapshot(data = [execution], isError = false) {
   >
 }
 
-describe('worktree header validation access', () => {
-  it('does not add an action for an unrelated worktree', () => {
-    const { container } = render(
+describe('permanent inline worktree automation', () => {
+  it('does not invent automation on an unrelated worktree', () => {
+    const view = render(
       <WorktreeValidationHeader worktreeId="other" query={snapshot()} />
     )
-    expect(container).toBeEmptyDOMElement()
+    expect(view.container).toBeEmptyDOMElement()
   })
-  it.each([1280, 768, 390])(
-    'opens details and resumes the same execution at viewport width %s',
+  it.each([1280, 390, 320])(
+    'shows stage, state, blocker and resume without any opening click at %s',
     width => {
       Object.defineProperty(window, 'innerWidth', {
         value: width,
         configurable: true,
       })
+      control.mockClear()
       render(<WorktreeValidationHeader worktreeId="w1" query={snapshot()} />)
-      fireEvent.click(
-        screen.getByRole('button', { name: /Suivre la pipeline IA/ })
-      )
       expect(
-        screen.getByRole('dialog', { name: 'Suivi de la pipeline IA' })
+        screen.getByRole('region', { name: 'Automatisation du worktree' })
       ).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('Bloqué')
+      expect(screen.getByText('Revue')).toBeInTheDocument()
       expect(
         screen.getByText('Étape agent annulée ; réconciliation requise')
       ).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Suivre la pipeline/ })
+      ).not.toBeInTheDocument()
       fireEvent.click(
         screen.getByRole('button', { name: 'Reprendre la validation' })
       )
@@ -74,76 +78,143 @@ describe('worktree header validation access', () => {
         { executionId: 'v1', action: 'resume' },
         expect.anything()
       )
+      expect(
+        screen.getByText('Détails de validation').closest('details')
+      ).not.toHaveAttribute('open')
     }
   )
-  it('pauses without stopping chat and scopes controls to the current worktree', () => {
-    render(
+  it('pauses a running cycle directly and renders persisted status changes inline', () => {
+    const view = render(
       <WorktreeValidationHeader
         worktreeId="w1"
-        query={snapshot([
-          { ...execution, id: 'foreign', worktree_id: 'other' },
-          { ...execution, status: 'running', blocker: null },
-        ])}
+        query={snapshot([{ ...execution, status: 'running', blocker: null }])}
       />
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: /Suivre la pipeline IA/ })
     )
     fireEvent.click(screen.getByRole('button', { name: 'Mettre en pause' }))
     expect(control).toHaveBeenLastCalledWith(
       { executionId: 'v1', action: 'pause' },
       expect.anything()
     )
-    expect(screen.queryByText(/Exécutions précédentes/)).not.toBeInTheDocument()
-  })
-  it('shows refreshed status and never claims ready without proofs', () => {
-    const view = render(
-      <WorktreeValidationHeader worktreeId="w1" query={snapshot()} />
-    )
-    expect(
-      screen.getByRole('button', { name: /Suivre la pipeline IA/ })
-    ).toHaveTextContent('Revue · Bloqué')
     view.rerender(
       <WorktreeValidationHeader
         worktreeId="w1"
         query={snapshot([{ ...execution, status: 'ready' }])}
       />
     )
-    expect(
-      screen.getByRole('button', { name: /Suivre la pipeline IA/ })
-    ).toHaveTextContent('Preuves à confirmer')
+    expect(screen.getByRole('status')).toHaveTextContent('Preuves à confirmer')
   })
-  it('keeps history separate and opens an existing technical session', () => {
-    const onOpenSession = vi.fn()
+  it('keeps sessions and historical executions secondary without a popup', () => {
+    const open = vi.fn()
     render(
       <WorktreeValidationHeader
         worktreeId="w1"
         query={snapshot([
-          { ...execution, active_session_id: 'session' },
+          { ...execution, active_session_id: 'technical' },
           { ...execution, id: 'old', superseded_by: 'v1' },
         ])}
-        onOpenSession={onOpenSession}
+        onOpenSession={open}
       />
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: /Suivre la pipeline IA/ })
     )
     expect(
       screen.getByText('Exécutions précédentes (1)').closest('details')
     ).not.toHaveAttribute('open')
-    fireEvent.click(screen.getByText('Sessions techniques'))
+    fireEvent.click(screen.getByText('Détails de validation'))
+    const sessions = screen.getAllByText('Sessions techniques')[0]
+    if (!sessions) throw new Error('Technical session disclosure missing')
+    fireEvent.click(sessions)
     fireEvent.click(screen.getByRole('button', { name: 'Revue · 1' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(onOpenSession).toHaveBeenCalledWith('session')
+    expect(open).toHaveBeenCalledWith('technical')
+    expect(
+      screen.getByRole('region', { name: 'Automatisation du worktree' })
+    ).toBeInTheDocument()
   })
-  it('does not hide a query failure as absence of validation', () => {
+  it('qualifies stale cached status immediately and leaves refresh available', () => {
     render(
-      <WorktreeValidationHeader worktreeId="w1" query={snapshot([], true)} />
+      <WorktreeValidationHeader
+        worktreeId="w1"
+        query={snapshot([execution], true)}
+      />
     )
-    fireEvent.click(
-      screen.getByRole('button', { name: /Suivre la pipeline IA/ })
-    )
+    expect(screen.getByRole('status')).toHaveTextContent('Suivi périmé')
+    expect(
+      screen.queryByRole('button', { name: 'Reprendre la validation' })
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Réessayer' }))
     expect(refetch).toHaveBeenCalled()
   })
+})
+
+it('keeps long activity compact and exposes the full genuine blocker explicitly', () => {
+  const blocker = `Erreur de compilation : ${'diagnostic très long '.repeat(40)}\nDernière ligne utile`
+  render(
+    <WorktreeValidationHeader
+      worktreeId="w1"
+      query={snapshot([{ ...execution, blocker }])}
+    />
+  )
+  expect(
+    screen.getByText('Afficher le blocage complet').closest('details')
+  ).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByText('Afficher le blocage complet'))
+  expect(
+    screen.getByText('Afficher le blocage complet').closest('details')
+  ).toHaveAttribute('open')
+  expect(screen.getByRole('alert')).toHaveTextContent('Dernière ligne utile')
+})
+
+it('keeps the explicit new-cycle action visible when the correction budget is exhausted', () => {
+  render(
+    <WorktreeValidationHeader
+      worktreeId="w1"
+      query={snapshot([
+        {
+          ...execution,
+          step: 'correction',
+          blocker: 'Correction limit reached; manual decision required',
+        },
+      ])}
+    />
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Reprendre la validation' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Nouvelle validation…' })
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('Détails de validation').closest('details')
+  ).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByRole('button', { name: 'Nouvelle validation…' }))
+  expect(
+    screen.getByRole('button', { name: 'Confirmer la nouvelle validation' })
+  ).toBeInTheDocument()
+})
+
+it('prioritizes the current blocker over a redundant old activity in the compact strip', () => {
+  const message = 'Ancienne activité de correction'
+  render(
+    <WorktreeValidationHeader
+      worktreeId="w1"
+      query={snapshot([
+        {
+          ...execution,
+          transitions: [
+            {
+              revision: 1,
+              step: 'review',
+              status: 'running',
+              message,
+              timestamp: '',
+            },
+          ],
+        },
+      ])}
+    />
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent('Étape agent annulée')
+  const activity = screen.getByText(message)
+  expect(activity.closest('details')).not.toHaveAttribute('open')
+  expect(
+    screen.getByRole('button', { name: 'Reprendre la validation' })
+  ).toBeInTheDocument()
 })

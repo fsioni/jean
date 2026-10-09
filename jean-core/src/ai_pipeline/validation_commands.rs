@@ -1,11 +1,30 @@
 //! Durable private validation jobs. Every external action starts from persisted intent.
 use super::{
-    validation_engine as engine, validation_steps as steps, validation_storage::ValidationStore,
-    validation_types::*,
+    validation_engine as engine, validation_orchestration as orchestration,
+    validation_steps as steps, validation_storage::ValidationStore, validation_types::*,
 };
+use crate::http_server::EmitExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
+
+#[cfg(test)]
+struct CommandDriveFixture {
+    reattached: Mutex<Vec<String>>,
+    observed: Mutex<Vec<ValidationExecution>>,
+    agents: Mutex<std::collections::VecDeque<(ValidationStep, StepOutcome, Option<String>)>>,
+}
+fn has_drive_fixture(app: &AppHandle) -> bool {
+    #[cfg(test)]
+    {
+        return app.try_state::<CommandDriveFixture>().is_some();
+    }
+    #[cfg(not(test))]
+    {
+        let _ = app;
+        false
+    }
+}
 
 static JOBS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
@@ -20,17 +39,35 @@ fn get(app: &AppHandle, id: &str) -> Result<ValidationExecution, String> {
         .ok_or_else(|| "Validation introuvable".into())
 }
 fn save(app: &AppHandle, execution: &ValidationExecution) -> Result<(), String> {
-    store(app)?.save(execution)
+    store(app)?.save(execution)?;
+    let _ = app.emit_all(
+        "cache:invalidate",
+        &serde_json::json!({"keys": ["ai-pipeline-validations"]}),
+    );
+    Ok(())
 }
 
 // Persist worker snapshots under the same lock as user actions. User pause and
 // its journal entry win even when requested during an awaited agent call.
 fn save_worker(app: &AppHandle, execution: &mut ValidationExecution) -> Result<(), String> {
+    save_worker_checked(app, execution, None)
+}
+fn save_worker_checked(
+    app: &AppHandle,
+    execution: &mut ValidationExecution,
+    expected_attempt: Option<&StepIdentity>,
+) -> Result<(), String> {
     let _guard = MUTATIONS
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|e| e.to_string())?;
     if let Some(latest) = store(app)?.get(&execution.id)? {
+        orchestration::assert_worker_current(execution, &latest)?;
+        if expected_attempt.is_some() && latest.active_attempt.as_ref() != expected_attempt {
+            return Err(
+                "Tentative modifiée pendant consommation ; snapshot obsolète refusé".into(),
+            );
+        }
         execution.paused = latest.paused;
         for transition in latest.transitions {
             if !execution
@@ -343,10 +380,8 @@ pub async fn start_ai_pipeline_validation(
             .lock()
             .map_err(|e| e.to_string())?;
         let storage = store(&app)?;
-        let previous = storage
-            .list()?
-            .into_iter()
-            .find(|e| e.worktree_id == worktree_id && e.is_active());
+        let snapshots = storage.list()?;
+        let previous = orchestration::canonical_execution(&snapshots, &worktree_id)?.cloned();
         if let Some(existing) = &previous {
             if !new_execution.unwrap_or(false) {
                 return Ok(existing.clone());
@@ -497,6 +532,38 @@ pub async fn pause_ai_pipeline_validation(
     save(&app, &execution)?;
     Ok(execution)
 }
+fn verify_owned_worktree(execution: &ValidationExecution) -> Result<(), String> {
+    if !matches!(
+        execution.step,
+        ValidationStep::Implementation | ValidationStep::Correction
+    ) {
+        return Ok(());
+    }
+    if let Some(expected) = execution.owned_worktree_fingerprint.as_deref() {
+        let actual = super::runtime_config::working_tree_fingerprint(
+            &execution.repository_path,
+            execution.runtime_config_baseline.as_ref(),
+        )?;
+        if actual != expected {
+            return Err(
+                "Modifications extérieures depuis la tentative propriétaire ; reprise refusée"
+                    .into(),
+            );
+        }
+        if execution.head_commit.as_ref()
+            != Some(&steps::git(
+                &execution.repository_path,
+                &["rev-parse", "HEAD"],
+            )?)
+        {
+            return Err("HEAD modifié depuis la tentative propriétaire ; reprise refusée".into());
+        }
+    } else if !steps::is_clean(execution)? {
+        return Err("Worktree modifié sans attribution prouvée à la tentative ; réconciliation explicite requise".into());
+    }
+    Ok(())
+}
+
 fn legacy_missing_pr_blocker(reason: Option<&str>) -> bool {
     reason.is_some_and(|reason| reason == "Une PR existante est requise pour vérifier la CI et la preview."
         || reason == "Ticket récupéré sans PR : l'implémentation et la création d'une PR sont requises avant cette validation de revue/recette.")
@@ -512,6 +579,12 @@ pub async fn resume_ai_pipeline_validation(
             .lock()
             .map_err(|e| e.to_string())?;
         let mut execution = get(&app, &execution_id)?;
+        let snapshots = store(&app)?.list()?;
+        if orchestration::canonical_execution(&snapshots, &execution.worktree_id)?
+            .is_none_or(|owner| owner.id != execution.id)
+        {
+            return Err("Cette validation n’est pas le propriétaire canonique du worktree".into());
+        }
         if execution.superseded_by.is_some() {
             return Err("Cette validation a été remplacée ; consulte la nouvelle exécution".into());
         }
@@ -574,24 +647,42 @@ pub async fn resume_ai_pipeline_validation(
                     }
                 }
             }
-            if matches!(
-                execution.step,
-                ValidationStep::Review | ValidationStep::Implementation
-            ) && !steps::is_clean(&execution)?
-            {
+            if execution.step == ValidationStep::Review && !steps::is_clean(&execution)? {
                 return Err("Le worktree doit être propre avant reprise de review".into());
             }
+            verify_owned_worktree(&execution)?;
             execution.blocker = None;
         }
         steps::verify_runtime_config(&execution)?;
         execution.status = ValidationStatus::Pending;
         execution.paused = false;
+        // Explicit retry grants a fresh external wait window; startup recovery
+        // keeps the original deadline, and correction budgets are never reset.
+        execution.waiting_since = None;
         engine::record(&mut execution, "Reprise demandée");
         save(&app, &execution)?;
         execution
     };
     launch(app, execution.id.clone());
     Ok(execution)
+}
+
+/// Called once during application startup; never resumes genuinely blocked jobs.
+/// Conflicting historical owners fail closed rather than being selected by date.
+pub fn recover_ai_pipeline_validations(app: AppHandle) -> Result<(), String> {
+    let snapshots = store(&app)?.list()?;
+    for execution in &snapshots {
+        if orchestration::recoverable(execution) {
+            match orchestration::canonical_execution(&snapshots, &execution.worktree_id) {
+                Ok(Some(owner)) if owner.id == execution.id => {
+                    launch(app.clone(), execution.id.clone())
+                }
+                Err(error) => log::warn!("Validation {} recovery refused: {error}", execution.id),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn launch(app: AppHandle, id: String) {
@@ -606,24 +697,57 @@ fn launch(app: AppHandle, id: String) {
         if let Err(error) = drive(&app, &id).await {
             let _guard = MUTATIONS.get_or_init(|| Mutex::new(())).lock().ok();
             if let Ok(mut execution) = get(&app, &id) {
-                engine::block(&mut execution, error);
-                let _ = save(&app, &execution);
+                if execution.superseded_by.is_none()
+                    && !error.contains("snapshot obsolète refusé")
+                    && error != "Worker interrompu par pause ou remplacement"
+                {
+                    // Parsing failed only after successful run/prompt binding. Preserve
+                    // this attempt's edits before scheduling a format-only repair.
+                    if (error.starts_with("Résultat structuré invalide :")
+                        || error == "Résultat JSON incomplet")
+                        && matches!(
+                            execution.step,
+                            ValidationStep::Implementation | ValidationStep::Correction
+                        )
+                        && execution.active_attempt.is_some()
+                        && execution.active_session_id.is_some()
+                    {
+                        match super::runtime_config::working_tree_fingerprint(
+                            &execution.repository_path,
+                            execution.runtime_config_baseline.as_ref(),
+                        ) {
+                            Ok(fingerprint) => {
+                                execution.owned_worktree_fingerprint = Some(fingerprint)
+                            }
+                            Err(fingerprint_error) => {
+                                engine::block(&mut execution, format!("Attribution des éditions avant réparation impossible : {fingerprint_error}"));
+                                let _ = save(&app, &execution);
+                                if let Ok(mut jobs) =
+                                    JOBS.get_or_init(|| Mutex::new(HashSet::new())).lock()
+                                {
+                                    jobs.remove(&id);
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    if !engine::repair_agent_result(&mut execution, &error)
+                        && !(execution.status == ValidationStatus::Blocked
+                            && execution.agent_result_repair_retries > 0
+                            && (error.starts_with("Résultat structuré invalide :")
+                                || error == "Résultat JSON incomplet"))
+                    {
+                        engine::block(&mut execution, error);
+                    }
+                    let _ = save(&app, &execution);
+                }
             }
         }
         if let Ok(mut jobs) = JOBS.get_or_init(|| Mutex::new(HashSet::new())).lock() {
             jobs.remove(&id);
         }
         // A resume can race with the old worker observing pause and exiting.
-        if get(&app, &id).is_ok_and(|execution| {
-            !execution.paused
-                && execution.superseded_by.is_none()
-                && matches!(
-                    execution.status,
-                    ValidationStatus::Pending
-                        | ValidationStatus::Running
-                        | ValidationStatus::Waiting
-                )
-        }) {
+        if get(&app, &id).is_ok_and(|execution| orchestration::recoverable(&execution)) {
             launch(app, id);
         }
     });
@@ -655,6 +779,31 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             )
         {
             return Ok(());
+        }
+        if let Some(session_id) = execution.active_session_id.as_deref() {
+            if crate::chat::registry::is_session_actively_managed(session_id) {
+                let metadata = crate::chat::storage::load_metadata(app, session_id)?
+                    .ok_or("Run actif sans manifest ; réconciliation requise")?;
+                if session_requires_manual_reconciliation(&metadata) {
+                    return Err("Run en attente de décision ou permission utilisateur ; reprise explicite nécessaire".into());
+                }
+                let run = metadata.runs.last().ok_or("Run actif absent du manifest")?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_secs();
+                if now.saturating_sub(run.started_at) >= 3600 {
+                    return Err("Run agent toujours actif après une heure ; aucun second prompt envoyé. Reprise explicite après sa fin.".into());
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                continue;
+            }
+        }
+        let snapshots = store(app)?.list()?;
+        if orchestration::canonical_execution(&snapshots, &execution.worktree_id)?
+            .is_none_or(|owner| owner.id != execution.id)
+        {
+            return Err("Validation non canonique ; aucune action autorisée".into());
         }
         let data = crate::projects::storage::load_projects_data(app)?;
         steps::verify_runtime_config(&execution)?;
@@ -697,12 +846,14 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             .pr_number
             .filter(|_| !(pending_pr_publication(&execution)))
         {
-            super::commands::verify_ai_pipeline_github_assignment(
-                app.clone(),
-                execution.project_id.clone(),
-                pr,
-            )
-            .await?;
+            if !has_drive_fixture(app) {
+                super::commands::verify_ai_pipeline_github_assignment(
+                    app.clone(),
+                    execution.project_id.clone(),
+                    pr,
+                )
+                .await?;
+            }
         } else if matches!(
             execution.step,
             ValidationStep::Ci
@@ -743,6 +894,7 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
         let identity = if let Some(identity) = execution.active_attempt.clone() {
             identity
         } else {
+            verify_owned_worktree(&execution)?;
             let identity = engine::begin_attempt(&mut execution)?;
             save_worker(app, &mut execution)?;
             identity
@@ -895,6 +1047,7 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                 )?;
             }
             result.commit = steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?;
+            execution.owned_worktree_fingerprint = None;
             execution
                 .effects
                 .iter_mut()
@@ -925,6 +1078,18 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             save_worker(app, &mut execution)?;
             return Err("Le ticket a changé pendant l'étape ; résultat rejeté".into());
         }
+        if matches!(
+            execution.step,
+            ValidationStep::Implementation | ValidationStep::Correction
+        ) && result.outcome != StepOutcome::Passed
+        {
+            execution.owned_worktree_fingerprint =
+                Some(super::runtime_config::working_tree_fingerprint(
+                    &execution.repository_path,
+                    execution.runtime_config_baseline.as_ref(),
+                )?);
+            save_worker(app, &mut execution)?;
+        }
         // Pause may have been requested while send_chat_message was awaited.
         execution.paused = get(app, id)?.paused;
         let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -936,7 +1101,7 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())??;
         engine::apply_result(&mut execution, result)?;
-        save_worker(app, &mut execution)?;
+        save_worker_checked(app, &mut execution, Some(&identity))?;
         if execution.status == ValidationStatus::Waiting {
             waits += 1;
             let elapsed = execution
@@ -1129,6 +1294,37 @@ async fn execute_agent(
     execution: &mut ValidationExecution,
     identity: &StepIdentity,
 ) -> Result<StepResult, String> {
+    #[cfg(test)]
+    if let Some(fixture) = app.try_state::<CommandDriveFixture>() {
+        fixture
+            .observed
+            .lock()
+            .map_err(|error| error.to_string())?
+            .push(execution.clone());
+        let (step, outcome, edit) = fixture
+            .agents
+            .lock()
+            .map_err(|error| error.to_string())?
+            .pop_front()
+            .ok_or("Unexpected external agent call in isolated drive fixture")?;
+        if step != execution.step {
+            return Err("Scripted agent step mismatch".into());
+        }
+        if let Some(edit) = edit {
+            std::fs::write(
+                std::path::Path::new(&execution.repository_path).join("owned.txt"),
+                edit,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        let mut result = basic_result(
+            identity.clone(),
+            steps::git(&execution.repository_path, &["rev-parse", "HEAD"])?,
+        );
+        result.outcome = outcome;
+        result.message = Some("isolated scripted agent result".into());
+        return Ok(result);
+    }
     if execution.step == ValidationStep::Acceptance {
         assert_remote_head(app, execution).await?;
         let version = preview_result(execution, identity.clone()).await?;
@@ -1138,26 +1334,87 @@ async fn execute_agent(
         app.clone(),
         execution.worktree_id.clone(),
         execution.repository_path.clone(),
-        Some(format!("Validation privée · {:?}", execution.step)),
+        Some(format!(
+            "Validation privée · {:?} · {}",
+            execution.step, identity.attempt_id
+        )),
     )
     .await?;
     execution.record_agent_session(session.id.clone(), identity);
     save_worker(app, execution)?;
     send_existing_session(app, execution, identity, session.id).await
 }
+async fn agent_prompt(
+    app: &AppHandle,
+    execution: &ValidationExecution,
+    identity: &StepIdentity,
+    current_session: &str,
+) -> Result<String, String> {
+    let Some(source_id) = execution.agent_result_repair_source_session.as_deref() else {
+        if execution.agent_result_repair_retries > 0 {
+            return Err("Réparation sans session source prouvée ; aucun travail rejoué".into());
+        }
+        return steps::prompt(execution, identity);
+    };
+    if source_id == current_session {
+        return Err("La session de réparation ne peut pas être la source".into());
+    }
+    let metadata = crate::chat::storage::load_metadata(app, source_id)?
+        .ok_or("Session source de réparation introuvable")?;
+    if metadata.id != source_id
+        || metadata.worktree_id != execution.worktree_id
+        || metadata.runs.len() != 1
+    {
+        return Err("Session source de réparation ambiguë".into());
+    }
+    let run = &metadata.runs[0];
+    let source_identity =
+        prompt_step_identity(&run.user_message).ok_or("Prompt source non lié à une tentative")?;
+    if source_identity.execution_id != execution.id
+        || source_identity.step != execution.step
+        || run.cancelled
+        || run.status != crate::chat::types::RunStatus::Completed
+        || !execution.agent_sessions.iter().any(|session| {
+            session.session_id == source_id
+                && session.attempt_id == source_identity.attempt_id
+                && session.step == source_identity.step
+        })
+    {
+        return Err("Tentative source de réparation non prouvée".into());
+    }
+    let assistant_id = run
+        .assistant_message_id
+        .as_deref()
+        .ok_or("Message source absent")?;
+    let source_messages = crate::chat::run_log::load_session_messages(app, source_id)?;
+    let source = source_messages
+        .iter()
+        .find(|message| {
+            message.id == assistant_id
+                && message.session_id == source_id
+                && matches!(message.role, crate::chat::types::MessageRole::Assistant)
+                && !message.cancelled
+        })
+        .ok_or("Sortie source de réparation introuvable")?;
+    if source.content.len() > 200_000 {
+        return Err("Sortie source trop volumineuse pour réparation sûre".into());
+    }
+    steps::format_repair_prompt(execution, identity, &source.content)
+}
+
 async fn send_existing_session(
     app: &AppHandle,
     execution: &ValidationExecution,
     identity: &StepIdentity,
     session_id: String,
 ) -> Result<StepResult, String> {
-    let prompt = steps::prompt(execution, identity)?;
+    let prompt = agent_prompt(app, execution, identity, &session_id).await?;
     let message = crate::chat::send_chat_message(
         app.clone(),
-        session_id,
+        session_id.clone(),
         execution.worktree_id.clone(),
         execution.repository_path.clone(),
-        prompt,
+        prompt.clone(),
         None,
         Some("yolo".into()),
         None,
@@ -1172,12 +1429,70 @@ async fn send_existing_session(
         Some(false),
     )
     .await?;
-    if message.cancelled {
-        return Err("Étape agent annulée ; réconciliation requise".into());
+    let metadata = crate::chat::storage::load_metadata(app, &session_id)?
+        .ok_or("Manifest agent absent après envoi ; réconciliation requise")?;
+    let run = metadata.runs.last().ok_or("Run agent absent après envoi")?;
+    orchestration::assert_run_binding(
+        execution,
+        &session_id,
+        (run.user_message == prompt).then_some(identity),
+        metadata.runs.len(),
+        message.cancelled || run.cancelled,
+        run.status == crate::chat::types::RunStatus::Completed,
+    )?;
+    if message.session_id != session_id
+        || run.assistant_message_id.as_deref() != Some(message.id.as_str())
+    {
+        return Err("Message assistant non lié au run agent ; résultat refusé".into());
     }
     let result = steps::parse_agent_result(&message.content, identity)?;
     reject_reserved_agent_fields(&result)?;
     Ok(result)
+}
+
+fn prompt_step_identity(prompt: &str) -> Option<StepIdentity> {
+    let (_, sample) = prompt.rsplit_once("L'identité doit être exactement celle-ci :\n")?;
+    let sample = serde_json::Deserializer::from_str(sample)
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()?;
+    serde_json::from_value(sample.get("identity")?.clone()).ok()
+}
+
+fn session_requires_manual_reconciliation(metadata: &crate::chat::types::SessionMetadata) -> bool {
+    !metadata.queued_messages.is_empty()
+        || metadata.to_session().waiting_for_input
+        || !metadata.pending_permission_denials.is_empty()
+        || !metadata.pending_codex_permission_requests.is_empty()
+        || !metadata.pending_opencode_permission_requests.is_empty()
+        || !metadata.pending_acp_permission_requests.is_empty()
+        || !metadata.pending_codex_command_approval_requests.is_empty()
+        || !metadata.pending_codex_user_input_requests.is_empty()
+        || !metadata.pending_codex_mcp_elicitation_requests.is_empty()
+        || !metadata.pending_codex_dynamic_tool_call_requests.is_empty()
+}
+
+async fn reattach_existing_run(
+    app: &AppHandle,
+    session_id: &str,
+    worktree_id: &str,
+) -> Result<bool, String> {
+    #[cfg(test)]
+    if let Some(fixture) = app.try_state::<CommandDriveFixture>() {
+        fixture
+            .reattached
+            .lock()
+            .map_err(|error| error.to_string())?
+            .push(session_id.into());
+        let mut metadata = crate::chat::storage::load_metadata(app, session_id)?
+            .ok_or("Fixture metadata absent")?;
+        metadata.runs[0].status = crate::chat::types::RunStatus::Completed;
+        crate::chat::storage::save_metadata(app, &metadata)?;
+        return Ok(true);
+    }
+    let result =
+        crate::chat::resume_session(app.clone(), session_id.into(), worktree_id.into()).await?;
+    Ok(result.resumed || crate::chat::registry::is_session_actively_managed(session_id))
 }
 
 async fn reconcile_session(
@@ -1189,56 +1504,85 @@ async fn reconcile_session(
         .active_session_id
         .clone()
         .ok_or("Session manquante")?;
-    if crate::chat::registry::is_session_actively_managed(&session_id) {
-        return Err("Le run de cette étape est toujours actif. Aucun second prompt envoyé ; réessaie après sa fin.".into());
-    }
-    let metadata = crate::chat::storage::load_metadata(app, &session_id)?;
-    if metadata
-        .as_ref()
-        .is_none_or(|metadata| metadata.runs.is_empty())
-    {
-        let session = crate::chat::get_session(
-            app.clone(),
-            execution.worktree_id.clone(),
-            execution.repository_path.clone(),
-            session_id.clone(),
-            None,
-        )
-        .await?;
-        if session
-            .messages
-            .iter()
-            .any(|message| matches!(message.role, crate::chat::types::MessageRole::User))
-        {
-            return Err(
-                "Session sans run mais contenant un prompt : réconciliation requise avant envoi"
-                    .into(),
-            );
+    let mut reattached = false;
+    let metadata = loop {
+        let metadata = crate::chat::storage::load_metadata(app, &session_id)?
+            .ok_or("Manifest du run introuvable")?;
+        if metadata.id != session_id || metadata.worktree_id != execution.worktree_id {
+            return Err("Manifest du run non lié au worktree/session".into());
         }
-        return send_existing_session(app, execution, identity, session_id).await;
-    }
-    let metadata = metadata.ok_or("Manifest du run introuvable")?;
+        if session_requires_manual_reconciliation(&metadata) {
+            return Err("Session avec prompts en attente ou décision/permission utilisateur requise ; réconciliation explicite nécessaire".into());
+        }
+        if metadata.runs.is_empty() {
+            let messages = crate::chat::run_log::load_session_messages(app, &session_id)?;
+            if messages
+                .iter()
+                .any(|message| matches!(message.role, crate::chat::types::MessageRole::User))
+            {
+                return Err("Session sans run mais contenant un prompt : réconciliation requise avant envoi".into());
+            }
+            return send_existing_session(app, execution, identity, session_id).await;
+        }
+        let run = metadata.runs.last().ok_or("Run manquant")?;
+        let prompt_binding =
+            historical_session_provenance(execution, &session_id, "", &run.user_message)
+                .filter(|binding| {
+                    binding.attempt_id == identity.attempt_id
+                        && binding.step == identity.step
+                        && prompt_step_identity(&run.user_message).as_ref() == Some(identity)
+                })
+                .map(|_| identity);
+        // Establish immutable ownership before any attachment. Terminal success
+        // is checked separately after the existing run has finished.
+        orchestration::assert_run_binding(
+            execution,
+            &session_id,
+            prompt_binding,
+            metadata.runs.len(),
+            run.cancelled || run.status == crate::chat::types::RunStatus::Cancelled,
+            true,
+        )?;
+        if get(app, &execution.id)
+            .is_ok_and(|latest| latest.paused || latest.superseded_by.is_some())
+        {
+            return Err("Worker interrompu par pause ou remplacement".into());
+        }
+        match run.status {
+            crate::chat::types::RunStatus::Completed => break metadata,
+            crate::chat::types::RunStatus::Resumable if !reattached => {
+                reattached = true;
+                if !reattach_existing_run(app, &session_id, &execution.worktree_id).await? {
+                    return Err("Run récupérable non réattaché ; réconciliation explicite nécessaire, aucun prompt dupliqué".into());
+                }
+                continue;
+            }
+            crate::chat::types::RunStatus::Running | crate::chat::types::RunStatus::Resumable => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_secs();
+                if now.saturating_sub(run.started_at) >= 3600 {
+                    return Err("Run agent toujours actif après une heure ; aucun second prompt envoyé. Reprise explicite après sa fin.".into());
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+            _ => return Err("Run annulé ou non terminé avec succès ; résultat refusé".into()),
+        }
+    };
     let run = metadata.runs.last().ok_or("Run manquant")?;
-    if run.status != crate::chat::types::RunStatus::Completed
-        && !crate::chat::run_log::jsonl_has_result_line(app, &session_id, &run.run_id)
-    {
-        return Err(
-            "Run non terminal : aucune sortie finale confirmée, aucun prompt dupliqué".into(),
-        );
-    }
-    let session = crate::chat::get_session(
-        app.clone(),
-        execution.worktree_id.clone(),
-        execution.repository_path.clone(),
-        session_id,
-        None,
-    )
-    .await?;
-    let message = session
-        .messages
+    let assistant_id = run
+        .assistant_message_id
+        .as_deref()
+        .ok_or("Run terminal sans message assistant lié ; réconciliation requise")?;
+    let messages = crate::chat::run_log::load_session_messages(app, &session_id)?;
+    let message = messages
         .iter()
-        .rev()
-        .find(|m| matches!(m.role, crate::chat::types::MessageRole::Assistant))
+        .find(|m| {
+            m.id == assistant_id
+                && m.session_id == session_id
+                && matches!(m.role, crate::chat::types::MessageRole::Assistant)
+        })
         .ok_or("Aucun résultat terminal récupérable ; le run doit être réconcilié avant reprise")?;
     if message.cancelled {
         return Err("Le run récupéré a été annulé".into());
@@ -1324,6 +1668,9 @@ async fn assert_remote_head(
     app: &AppHandle,
     execution: &ValidationExecution,
 ) -> Result<(), String> {
+    if has_drive_fixture(app) {
+        return Ok(());
+    }
     let check = remote_check(app, execution).await?;
     if check.head_sha != execution.head_commit {
         return Err(
@@ -1390,6 +1737,9 @@ async fn criteria_fingerprint(
     app: &AppHandle,
     execution: &ValidationExecution,
 ) -> Result<String, String> {
+    if has_drive_fixture(app) {
+        return Ok("isolated-fixture-criteria".into());
+    }
     use sha2::{Digest, Sha256};
     let token = crate::projects::resolve_clickup_token(app, Some(&execution.project_id))?;
     let task = crate::projects::clickup_client::clickup_get(
@@ -1427,6 +1777,677 @@ async fn criteria_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn resume_command_rejects_conflicting_persisted_owners_without_mutation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut failed = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        failed.status = ValidationStatus::Failed;
+        failed.step = ValidationStep::Correction;
+        let review = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        save(&app, &failed).unwrap();
+        save(&app, &review).unwrap();
+        let before = serde_json::to_value(get(&app, &failed.id).unwrap()).unwrap();
+        let error = resume_ai_pipeline_validation(app.clone(), failed.id.clone())
+            .await
+            .unwrap_err();
+        assert!(error.contains("Plusieurs validations"), "{error}");
+        assert_eq!(
+            before,
+            serde_json::to_value(get(&app, &failed.id).unwrap()).unwrap()
+        );
+        assert_eq!(store(&app).unwrap().list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn worker_consumption_preserves_concurrent_pause_and_rejects_replacement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        engine::begin_attempt(&mut execution).unwrap();
+        save(&app, &execution).unwrap();
+        let mut persisted = execution.clone();
+        engine::pause(&mut persisted);
+        save(&app, &persisted).unwrap();
+        execution.active_attempt = None;
+        execution.revision += 1;
+        save_worker(&app, &mut execution).unwrap();
+        assert!(get(&app, &execution.id).unwrap().paused);
+        let mut replaced = get(&app, &execution.id).unwrap();
+        replaced.superseded_by = Some(uuid::Uuid::new_v4().to_string());
+        save(&app, &replaced).unwrap();
+        assert!(save_worker(&app, &mut execution).is_err());
+        assert!(get(&app, &execution.id).unwrap().superseded_by.is_some());
+    }
+
+    #[test]
+    fn consumed_result_cannot_overwrite_newer_attempt_even_after_clearing_active() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut worker = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        let consumed = engine::begin_attempt(&mut worker).unwrap();
+        let mut persisted = worker.clone();
+        persisted.active_attempt.as_mut().unwrap().attempt_id = "newer-attempt".into();
+        save(&app, &persisted).unwrap();
+        worker.active_attempt = None;
+        assert!(save_worker_checked(&app, &mut worker, Some(&consumed)).is_err());
+        assert_eq!(
+            get(&app, &worker.id)
+                .unwrap()
+                .active_attempt
+                .unwrap()
+                .attempt_id,
+            "newer-attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_rejects_unrelated_and_cancelled_persisted_runs_before_loading_output() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        execution.record_agent_session("isolated-session".into(), &identity);
+        let mut metadata = crate::chat::types::SessionMetadata::new(
+            "isolated-session".into(),
+            "w".into(),
+            "test".into(),
+            0,
+        );
+        let mut run: crate::chat::types::RunEntry = serde_json::from_value(serde_json::json!({
+            "run_id": "run", "user_message_id": "user", "user_message": "unrelated prompt", "started_at": 1, "status": "completed", "assistant_message_id": "assistant"
+        })).unwrap();
+        metadata.runs.push(run.clone());
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        assert!(reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap_err()
+            .contains("non lié"));
+        run.user_message = steps::prompt(&execution, &identity).unwrap();
+        run.cancelled = true;
+        metadata.runs[0] = run;
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        assert!(reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap_err()
+            .contains("annulé"));
+        assert_eq!(
+            crate::chat::storage::load_metadata(&app, "isolated-session")
+                .unwrap()
+                .unwrap()
+                .runs
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_prompt_without_proven_source_never_reexecutes_step() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        execution.agent_result_repair_retries = 1;
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        assert!(agent_prompt(&app, &execution, &identity, "new-session")
+            .await
+            .unwrap_err()
+            .contains("aucun travail rejoué"));
+        execution.agent_result_repair_source_session = Some("new-session".into());
+        assert!(agent_prompt(&app, &execution, &identity, "new-session")
+            .await
+            .unwrap_err()
+            .contains("ne peut pas être la source"));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_consumes_bound_terminal_output_and_formatter_never_repeats_work() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let mut execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        execution.head_commit = Some("head".into());
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        execution.record_agent_session("source-session".into(), &identity);
+        let prompt = steps::prompt(&execution, &identity).unwrap();
+        let mut metadata = crate::chat::types::SessionMetadata::new(
+            "source-session".into(),
+            "w".into(),
+            "test".into(),
+            0,
+        );
+        let run: crate::chat::types::RunEntry = serde_json::from_value(serde_json::json!({
+            "run_id": "run", "user_message_id": "user", "user_message": prompt, "started_at": 1, "status": "completed", "assistant_message_id": "assistant"
+        })).unwrap();
+        metadata.runs.push(run.clone());
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        let result = basic_result(identity.clone(), "head".into());
+        let output = serde_json::to_string(&result).unwrap();
+        let path = crate::chat::run_log::get_run_log_path(&app, "source-session", "run").unwrap();
+        let write_output = |content: &str| {
+            let assistant = serde_json::json!({"type":"assistant", "message":{"role":"assistant", "content":[{"type":"text", "text":content}]}});
+            std::fs::write(
+                &path,
+                format!("{assistant}\n{{\"type\":\"result\",\"is_error\":false}}\n"),
+            )
+            .unwrap();
+        };
+        write_output(&output);
+        let recovered = reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap();
+        assert_eq!(recovered.identity, identity);
+        assert_eq!(recovered.commit, "head");
+        metadata.runs.push(run);
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        assert!(reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap_err()
+            .contains("non lié"));
+        metadata.runs.truncate(1);
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        write_output("Le test est rouge. Ne prétends pas une réussite.");
+        execution.agent_result_repair_retries = 1;
+        execution.agent_result_repair_source_session = Some("source-session".into());
+        execution.active_attempt = None;
+        execution.active_session_id = None;
+        let repair_identity = engine::begin_attempt(&mut execution).unwrap();
+        let repair_prompt = agent_prompt(&app, &execution, &repair_identity, "repair-session")
+            .await
+            .unwrap();
+        assert!(repair_prompt.contains("RÉPARATION DE FORMAT, AUCUNE EXÉCUTION"));
+        assert!(repair_prompt.contains("n'appelle aucun outil"));
+        assert!(repair_prompt.contains("Le test est rouge"));
+        assert!(repair_prompt.contains("n'invente aucune preuve"));
+        assert!(!repair_prompt.contains("Review indépendante du ticket et de la PR"));
+        assert_eq!(
+            crate::chat::storage::load_metadata(&app, "source-session")
+                .unwrap()
+                .unwrap()
+                .runs
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn dirty_retry_requires_exact_owned_tree_and_head_not_blanket_permission() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().to_string_lossy().into_owned();
+        let git = |args: &[&str]| {
+            let output = crate::platform::silent_command("git")
+                .args(args)
+                .current_dir(&path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "isolated-test"]);
+        git(&["config", "user.email", "isolated@example.invalid"]);
+        std::fs::write(temporary.path().join("owned.txt"), "original").unwrap();
+        git(&["add", "owned.txt"]);
+        git(&["commit", "-qm", "initial"]);
+        let mut execution =
+            ValidationExecution::new("p".into(), "w".into(), path, "t".into(), Some(42));
+        execution.step = ValidationStep::Correction;
+        execution.head_commit =
+            Some(steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap());
+        std::fs::write(temporary.path().join("owned.txt"), "agent correction").unwrap();
+        assert!(verify_owned_worktree(&execution).is_err());
+        execution.owned_worktree_fingerprint = Some(
+            super::super::runtime_config::working_tree_fingerprint(
+                &execution.repository_path,
+                None,
+            )
+            .unwrap(),
+        );
+        verify_owned_worktree(&execution).unwrap();
+        std::fs::write(temporary.path().join("owned.txt"), "foreign edit same path").unwrap();
+        assert!(verify_owned_worktree(&execution)
+            .unwrap_err()
+            .contains("extérieures"));
+        std::fs::write(temporary.path().join("owned.txt"), "agent correction").unwrap();
+        verify_owned_worktree(&execution).unwrap();
+        std::fs::write(temporary.path().join("foreign.txt"), "foreign untracked").unwrap();
+        assert!(verify_owned_worktree(&execution).is_err());
+    }
+
+    #[test]
+    fn startup_recovery_leaves_manual_terminal_paused_and_superseded_snapshots_untouched() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        for (index, status) in [
+            ValidationStatus::Blocked,
+            ValidationStatus::Failed,
+            ValidationStatus::Ready,
+            ValidationStatus::Running,
+            ValidationStatus::Pending,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut execution = ValidationExecution::new(
+                "p".into(),
+                format!("w-{index}"),
+                "/not-accessed".into(),
+                "t".into(),
+                Some(42),
+            );
+            execution.status = status;
+            if status == ValidationStatus::Running {
+                execution.paused = true;
+            }
+            if status == ValidationStatus::Pending {
+                execution.superseded_by = Some(uuid::Uuid::new_v4().to_string());
+            }
+            save(&app, &execution).unwrap();
+        }
+        let before = serde_json::to_value(store(&app).unwrap().list().unwrap()).unwrap();
+        recover_ai_pipeline_validations(app.clone()).unwrap();
+        assert_eq!(
+            before,
+            serde_json::to_value(store(&app).unwrap().list().unwrap()).unwrap()
+        );
+        let jobs = JOBS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap();
+        assert!(store(&app)
+            .unwrap()
+            .list()
+            .unwrap()
+            .iter()
+            .all(|execution| !jobs.contains(&execution.id)));
+    }
+
+    fn drive_test_fixture(
+        agents: Vec<(ValidationStep, StepOutcome, Option<String>)>,
+    ) -> (tempfile::TempDir, AppHandle, ValidationExecution) {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = crate::RuntimeContext::new(
+            temporary.path().join("data"),
+            temporary.path().join("resources"),
+        )
+        .unwrap();
+        let repo = temporary.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let output = crate::platform::silent_command("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "isolated-branch"]);
+        git(&["config", "user.name", "isolated-test"]);
+        git(&["config", "user.email", "isolated@example.invalid"]);
+        std::fs::write(repo.join("owned.txt"), "original").unwrap();
+        git(&["add", "owned.txt"]);
+        git(&["commit", "-qm", "initial"]);
+        let worktree: crate::projects::types::Worktree = serde_json::from_value(serde_json::json!({
+            "id":"w", "project_id":"p", "name":"isolated", "path":repo, "branch":"isolated-branch", "created_at":1
+        })).unwrap();
+        let data = crate::projects::types::ProjectsData {
+            projects: vec![],
+            worktrees: vec![worktree],
+        };
+        crate::projects::storage::save_projects_data(&app, &data).unwrap();
+        app.manage(CommandDriveFixture {
+            reattached: Mutex::new(vec![]),
+            observed: Mutex::new(vec![]),
+            agents: Mutex::new(agents.into()),
+        });
+        let mut execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            repo.to_string_lossy().into_owned(),
+            "t".into(),
+            Some(42),
+        );
+        execution.step = ValidationStep::Correction;
+        execution.original_branch = Some("isolated-branch".into());
+        execution.head_commit =
+            Some(steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap());
+        (temporary, app, execution)
+    }
+
+    #[tokio::test]
+    async fn actual_drive_failed_dirty_correction_retries_same_owner_commits_then_reviews() {
+        let (_temporary, app, execution) = drive_test_fixture(vec![
+            (
+                ValidationStep::Correction,
+                StepOutcome::Failed,
+                Some("agent red partial correction".into()),
+            ),
+            (
+                ValidationStep::Correction,
+                StepOutcome::Passed,
+                Some("agent corrected green".into()),
+            ),
+            (ValidationStep::Review, StepOutcome::Blocked, None),
+        ]);
+        let initial_head = execution.head_commit.clone();
+        save(&app, &execution).unwrap();
+        drive(&app, &execution.id).await.unwrap();
+        let terminal = get(&app, &execution.id).unwrap();
+        assert_eq!(terminal.status, ValidationStatus::Blocked);
+        let fixture = app.state::<CommandDriveFixture>();
+        let observed = fixture.observed.lock().unwrap();
+        assert_eq!(observed.len(), 3);
+        let retry = &observed[1];
+        assert_eq!(retry.id, execution.id);
+        assert_eq!(retry.correction_cycles, 1);
+        assert_eq!(retry.head_commit, initial_head);
+        assert!(retry.owned_worktree_fingerprint.is_some());
+        assert_eq!(retry.step, ValidationStep::Correction);
+        drop(observed);
+        assert_eq!(terminal.step, ValidationStep::Review);
+        assert_eq!(terminal.correction_cycles, 2);
+        assert_ne!(terminal.head_commit, initial_head);
+        assert!(terminal.owned_worktree_fingerprint.is_none());
+        assert!(steps::is_clean(&terminal).unwrap());
+        assert!(terminal
+            .effects
+            .iter()
+            .any(|effect| effect.kind == "commit" && effect.confirmed));
+        assert_eq!(
+            steps::git(&terminal.repository_path, &["log", "-1", "--format=%s"]).unwrap(),
+            "fix: address review findings"
+        );
+        let states = store(&app).unwrap().list().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(
+            orchestration::canonical_execution(&states, "w")
+                .unwrap()
+                .unwrap()
+                .id,
+            execution.id
+        );
+        assert!(app
+            .state::<CommandDriveFixture>()
+            .agents
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn actual_drive_repeated_failed_correction_stops_budget_without_commit() {
+        let (_temporary, app, execution) = drive_test_fixture(vec![
+            (
+                ValidationStep::Correction,
+                StepOutcome::Failed,
+                Some("first failed changes".into()),
+            ),
+            (
+                ValidationStep::Correction,
+                StepOutcome::Failed,
+                Some("second failed changes".into()),
+            ),
+        ]);
+        save(&app, &execution).unwrap();
+        drive(&app, &execution.id).await.unwrap();
+        let terminal = get(&app, &execution.id).unwrap();
+        assert_eq!(terminal.status, ValidationStatus::Blocked);
+        assert_eq!(terminal.step, ValidationStep::Correction);
+        assert_eq!(terminal.head_commit, execution.head_commit);
+        assert_eq!(terminal.no_progress_cycles, 2);
+        assert_eq!(terminal.correction_cycles, 2);
+        assert!(terminal.effects.is_empty());
+        assert!(terminal.owned_worktree_fingerprint.is_some());
+        assert!(terminal.blocker.unwrap().contains("Limite"));
+        assert_eq!(store(&app).unwrap().list().unwrap().len(), 1);
+        assert!(resume_ai_pipeline_validation(app.clone(), execution.id)
+            .await
+            .unwrap_err()
+            .contains("Limite"));
+    }
+
+    #[tokio::test]
+    async fn actual_drive_recovers_persisted_terminal_attempt_without_replaying_agent() {
+        exercise_persisted_attempt_recovery("completed").await;
+    }
+    #[tokio::test]
+    async fn actual_drive_reattaches_resumable_attempt_without_replaying_agent() {
+        exercise_persisted_attempt_recovery("resumable").await;
+    }
+    async fn exercise_persisted_attempt_recovery(status: &str) {
+        let (_temporary, app, mut execution) =
+            drive_test_fixture(vec![(ValidationStep::Review, StepOutcome::Blocked, None)]);
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        execution.record_agent_session("persisted-session".into(), &identity);
+        let prompt = steps::prompt(&execution, &identity).unwrap();
+        let mut metadata = crate::chat::types::SessionMetadata::new(
+            "persisted-session".into(),
+            "w".into(),
+            "test".into(),
+            0,
+        );
+        metadata.runs.push(serde_json::from_value(serde_json::json!({
+            "run_id":"run", "user_message_id":"user", "user_message":prompt, "started_at":1, "status":status, "assistant_message_id":"assistant"
+        })).unwrap());
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        let result = basic_result(identity, execution.head_commit.clone().unwrap());
+        let assistant = serde_json::json!({"type":"assistant", "message":{"role":"assistant", "content":[{"type":"text", "text":serde_json::to_string(&result).unwrap()}]}});
+        let path =
+            crate::chat::run_log::get_run_log_path(&app, "persisted-session", "run").unwrap();
+        std::fs::write(
+            path,
+            format!("{assistant}\n{{\"type\":\"result\",\"is_error\":false}}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            std::path::Path::new(&execution.repository_path).join("owned.txt"),
+            "completed agent correction",
+        )
+        .unwrap();
+        save(&app, &execution).unwrap();
+        drive(&app, &execution.id).await.unwrap();
+        let terminal = get(&app, &execution.id).unwrap();
+        assert_eq!(
+            app.state::<CommandDriveFixture>()
+                .reattached
+                .lock()
+                .unwrap()
+                .len(),
+            usize::from(status == "resumable")
+        );
+        assert_eq!(terminal.status, ValidationStatus::Blocked);
+        assert_eq!(terminal.step, ValidationStep::Review);
+        assert_ne!(terminal.head_commit, execution.head_commit);
+        assert!(terminal
+            .effects
+            .iter()
+            .any(|effect| effect.kind == "commit" && effect.confirmed));
+        assert_eq!(
+            app.state::<CommandDriveFixture>()
+                .observed
+                .lock()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::chat::storage::load_metadata(&app, "persisted-session")
+                .unwrap()
+                .unwrap()
+                .runs
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn resumable_session_with_user_decision_or_queued_prompt_is_not_reattached() {
+        let (_temporary, app, mut execution) = drive_test_fixture(vec![]);
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        execution.record_agent_session("manual-session".into(), &identity);
+        let mut metadata = crate::chat::types::SessionMetadata::new(
+            "manual-session".into(),
+            "w".into(),
+            "test".into(),
+            0,
+        );
+        metadata.runs.push(serde_json::from_value(serde_json::json!({
+            "run_id":"run", "user_message_id":"user", "user_message":steps::prompt(&execution, &identity).unwrap(), "started_at":1, "status":"resumable"
+        })).unwrap());
+        metadata.waiting_for_input = true;
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        assert!(reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap_err()
+            .contains("décision"));
+        metadata.waiting_for_input = false;
+        metadata
+            .queued_messages
+            .push(serde_json::json!({"content":"unrelated prompt"}));
+        crate::chat::storage::save_metadata(&app, &metadata).unwrap();
+        assert!(reconcile_session(&app, &execution, &identity)
+            .await
+            .unwrap_err()
+            .contains("prompts en attente"));
+        assert!(app
+            .state::<CommandDriveFixture>()
+            .reattached
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            crate::chat::storage::load_metadata(&app, "manual-session")
+                .unwrap()
+                .unwrap()
+                .runs[0]
+                .status,
+            crate::chat::types::RunStatus::Resumable
+        );
+    }
+
+    #[test]
+    fn saved_snapshot_broadcasts_after_persistence_but_failed_save_never_broadcasts() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app =
+            crate::RuntimeContext::new(temporary.path().into(), temporary.path().into()).unwrap();
+        let execution = ValidationExecution::new(
+            "p".into(),
+            "w".into(),
+            "/not-accessed".into(),
+            "t".into(),
+            Some(42),
+        );
+        let received = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let events = received.clone();
+        let observer = app.clone();
+        let id = execution.id.clone();
+        app.listen("cache:invalidate", move |event| {
+            assert!(
+                store(&observer).unwrap().get(&id).unwrap().is_some(),
+                "event must follow durable save"
+            );
+            events.lock().unwrap().push(event.payload().to_string());
+        });
+        save(&app, &execution).unwrap();
+        assert_eq!(received.lock().unwrap().len(), 1);
+        assert!(received.lock().unwrap()[0].contains("ai-pipeline-validations"));
+        let mut invalid = execution;
+        invalid.id = "invalid-id".into();
+        assert!(save(&app, &invalid).is_err());
+        assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_resume_grants_new_wait_window_without_resetting_failure_budgets() {
+        let (_temporary, app, mut execution) = drive_test_fixture(vec![(
+            ValidationStep::Correction,
+            StepOutcome::Blocked,
+            None,
+        )]);
+        execution.status = ValidationStatus::Blocked;
+        execution.blocker =
+            Some("Attente externe dépassée (30 minutes) ; reprise explicite disponible".into());
+        execution.waiting_since =
+            Some((chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339());
+        execution.correction_cycles = 1;
+        execution.no_progress_cycles = 1;
+        save(&app, &execution).unwrap();
+        let resumed = resume_ai_pipeline_validation(app.clone(), execution.id.clone())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if get(&app, &execution.id).unwrap().status == ValidationStatus::Blocked {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            resumed.waiting_since.is_none(),
+            "explicit retry must not inherit an already expired external wait"
+        );
+        assert_eq!(resumed.correction_cycles, 1);
+        assert_eq!(resumed.no_progress_cycles, 1);
+        assert_eq!(resumed.head_commit, execution.head_commit);
+    }
+
     #[test]
     fn historical_index_read_never_creates_missing_storage() {
         let temporary = tempfile::tempdir().unwrap();

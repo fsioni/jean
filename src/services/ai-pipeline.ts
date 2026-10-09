@@ -25,6 +25,9 @@ export const aiPipelineQueryKeys = {
   config: () => [...aiPipelineQueryKeys.all, 'config'] as const,
   prs: (projectId: string) =>
     [...aiPipelineQueryKeys.all, 'prs', projectId] as const,
+  validations: () => [...aiPipelineQueryKeys.all, 'validations'] as const,
+  projectValidations: (projectId: string | null) =>
+    [...aiPipelineQueryKeys.all, 'validations', projectId] as const,
   tasks: (projectId: string) =>
     [...aiPipelineQueryKeys.all, 'tasks', projectId] as const,
 }
@@ -284,12 +287,15 @@ export function useAiPipelineValidations(
   enabled = true
 ) {
   return useQuery({
-    queryKey: [...aiPipelineQueryKeys.all, 'validations', projectId],
+    queryKey: aiPipelineQueryKeys.projectValidations(projectId),
     queryFn: () =>
       invoke<ValidationExecution[]>('list_ai_pipeline_validations', {
         projectId,
       }),
     enabled: enabled && !!projectId,
+    // Shared project cache deduplicates worktree observers; events refresh it
+    // immediately, polling remains the reconnect/missed-event safety net.
+    staleTime: 1000,
     refetchInterval: enabled ? 3000 : false,
     retry: 1,
   })
@@ -319,7 +325,9 @@ export function useStartAiPipelineValidation(
         : undefined,
     }),
     onSuccess: (execution, _vars, context) => {
-      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all })
+      queryClient.invalidateQueries({
+        queryKey: aiPipelineQueryKeys.validations(),
+      })
       if (context?.toastId === undefined) return
       const feedback = { id: context.toastId }
       if (execution.status === 'blocked' || execution.status === 'failed') {
@@ -360,6 +368,8 @@ export function useControlAiPipelineValidation() {
         executionId: vars.executionId,
       }),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: aiPipelineQueryKeys.all }),
+      queryClient.invalidateQueries({
+        queryKey: aiPipelineQueryKeys.validations(),
+      }),
   })
 }

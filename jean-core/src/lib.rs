@@ -4705,6 +4705,11 @@ pub fn initialize_runtime(context: &RuntimeContext) -> Result<(), String> {
     if let Err(error) = chat::run_log::recover_incomplete_runs(context) {
         log::warn!("Failed to recover incomplete runs: {error}");
     }
+    // The backend, not a connected client or a Resume click, owns continuation.
+    // Only unpaused canonical Pending/Running/Waiting validations are eligible.
+    if let Err(error) = ai_pipeline::recover_ai_pipeline_validations(context.clone()) {
+        log::warn!("Failed to restore private validation jobs: {error}");
+    }
     let task_manager = background_tasks::BackgroundTaskManager::new(context.clone());
     task_manager.start();
     context.manage(task_manager);
