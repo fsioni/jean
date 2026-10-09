@@ -147,6 +147,14 @@ export interface ValidationExecution {
   pr_number: number | null
   publication_base_branch?: string | null
   publication_remote_identity?: string | null
+  pending_git_integration?: {
+    local_head: string
+    remote_head: string
+    branch: string
+    remote_identity: string
+    expected_tree: string
+  } | null
+  remote_integration_attempts?: number
   revision: number
   step: ValidationStep
   status: ValidationStatus

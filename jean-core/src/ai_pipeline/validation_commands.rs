@@ -767,8 +767,150 @@ fn pending_pr_publication(execution: &ValidationExecution) -> bool {
         })
 }
 
+/// An integrated remote commit is never a publication result: restart review.
+async fn integrate_remote_before_publication(
+    app: &AppHandle,
+    execution: &mut ValidationExecution,
+    identity: &StepIdentity,
+) -> Result<bool, String> {
+    use super::validation_publication as publication;
+    // A truly unpublished feature has no remote branch. Preparation proves its
+    // absence; a feature already pushed before PR creation still needs integration.
+    let plan = if let Some(plan) = execution.pending_git_integration.clone() {
+        plan
+    } else {
+        let snapshot = execution.clone();
+        let plan =
+            tokio::task::spawn_blocking(move || publication::prepare_remote_integration(&snapshot))
+                .await
+                .map_err(|error| error.to_string())??;
+        let Some(plan) = plan else {
+            return Ok(false);
+        };
+        if execution.remote_integration_attempts >= 3 {
+            return Err("La branche distante change de façon répétée : 3 intégrations maximum, aucun push forcé".into());
+        }
+        execution.remote_integration_attempts += 1;
+        // Legacy PR executions did not capture origin. Bind the authorized target
+        // at this durable intent so subsequent rounds cannot silently adopt another.
+        execution
+            .publication_remote_identity
+            .get_or_insert_with(|| plan.remote_identity.clone());
+        execution.pending_git_integration = Some(plan.clone());
+        engine::record(
+            execution,
+            "Mise à jour distante détectée : préparation d’une fusion locale, sans publication",
+        );
+        save_worker_checked(app, execution, Some(identity))?;
+        plan
+    };
+    let current = get(app, &execution.id)?;
+    orchestration::assert_worker_current(execution, &current)?;
+    if current.active_attempt.as_ref() != Some(identity)
+        || current.pending_git_integration.as_ref() != Some(&plan)
+        || current.head_commit != execution.head_commit
+    {
+        return Err(
+            "Tentative ou intention modifiée avant intégration Git ; action refusée".into(),
+        );
+    }
+    if current.paused {
+        return Ok(true);
+    }
+    let snapshot = execution.clone();
+    let merge_plan = plan.clone();
+    // A pause during an in-flight Git operation does not cancel that operation;
+    // its result is persisted, but no review/push starts while paused. No lock over network.
+    let merged = tokio::task::spawn_blocking(move || {
+        let head = steps::git(&snapshot.repository_path, &["rev-parse", "HEAD"])?;
+        if head == merge_plan.local_head {
+            publication::execute_remote_integration(&snapshot, &merge_plan)
+        } else {
+            publication::verify_completed_integration(&snapshot, &merge_plan)
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let head = match merged {
+        Ok(head) => head,
+        Err(error)
+            if error == "La branche distante a changé depuis la préparation"
+                || error == "Le plan de fusion a changé"
+                || error == "Intégration devenue inutile ; plan refusé" =>
+        {
+            // These errors precede merge. Replace stale intent only with untouched local HEAD/tree.
+            if steps::git(&execution.repository_path, &["rev-parse", "HEAD"])? != plan.local_head
+                || !steps::is_clean(execution)?
+            {
+                return Err(error);
+            }
+            execution.pending_git_integration = None;
+            engine::record(execution, "La branche distante a encore avancé ; nouvelle préparation bornée avant publication");
+            save_worker_checked(app, execution, Some(identity))?;
+            return Ok(true);
+        }
+        Err(error) => return Err(error),
+    };
+    execution.head_commit = Some(head);
+    execution.pending_git_integration = None;
+    execution
+        .evidence
+        .iter_mut()
+        .for_each(|proof| proof.stale = true);
+    execution.requirements.iter_mut().for_each(|requirement| {
+        requirement.status = RequirementStatus::Unverified;
+        requirement.evidence_ids.clear();
+        requirement.justification = None;
+    });
+    execution.defects.iter_mut().for_each(|defect| {
+        defect.resolved = false;
+        defect.evidence_ids.clear();
+    });
+    execution.acceptance_evidence_ids.clear();
+    execution.deployed_commit = None;
+    execution.last_ready_check = None;
+    execution.owned_worktree_fingerprint = None;
+    execution.active_attempt = None;
+    execution.active_session_id = None;
+    execution.agent_result_repair_retries = 0;
+    execution.agent_result_repair_source_session = None;
+    execution.review_wait_retries = 0;
+    execution.waiting_since = None;
+    // An unconfirmed intent for the old HEAD is obsolete after integration.
+    // This does not claim it was never published; the new HEAD needs new review.
+    execution.effects.retain(|effect| {
+        !(effect.kind == "push" && !effect.confirmed && effect.intended_commit == plan.local_head)
+    });
+    execution.effects.push(ExternalEffect {
+        id: format!("git-integration:{}", identity.attempt_id),
+        kind: "git_integration".into(),
+        intended_commit: execution
+            .head_commit
+            .clone()
+            .ok_or("HEAD intégré manquant")?,
+        confirmed: true,
+    });
+    execution.step = ValidationStep::Review;
+    execution.status = ValidationStatus::Pending;
+    execution.blocker = None;
+    engine::record(execution, "Branche distante intégrée localement sans conflit ; anciennes intentions de push remplacées, preuves invalidées et nouvelle revue obligatoire avant publication");
+    save_worker_checked(app, execution, Some(identity))?;
+    Ok(true)
+}
+
+fn retry_remote_divergence(error: &str, retries: &mut u8) -> bool {
+    if error != "La branche feature distante a divergé ; intégration puis nouvelle review requises"
+        || *retries >= 2
+    {
+        return false;
+    }
+    *retries += 1;
+    true
+}
+
 async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut waits = 0;
+    let mut git_sync_races = 0;
     loop {
         let mut execution = get(app, id)?;
         if execution.superseded_by.is_some()
@@ -910,6 +1052,9 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                     if execution.pr_number.is_some() {
                         assert_pr_branch(app, &execution).await?;
                     }
+                    if integrate_remote_before_publication(app, &mut execution, &identity).await? {
+                        continue;
+                    }
                     if !steps::is_clean(&execution)? {
                         return Err("Worktree modifié après review : push refusé".into());
                     }
@@ -932,11 +1077,23 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
                     save_worker(app, &mut execution)?;
                     let path = execution.repository_path.clone();
                     let sync_execution = execution.clone();
-                    let head = tauri::async_runtime::spawn_blocking(move || {
+                    let publication = tauri::async_runtime::spawn_blocking(move || {
                         steps::sync_git(&sync_execution)
                     })
                     .await
-                    .map_err(|e| e.to_string())??;
+                    .map_err(|e| e.to_string())?;
+                    let head = match publication {
+                        Ok(head) => head,
+                        Err(error) if retry_remote_divergence(&error, &mut git_sync_races) => {
+                            // A bot may update the remote between preparation and fetch.
+                            // This precise ancestry refusal precedes push; refetch/integrate
+                            // on the next loop, never retry an ambiguous push failure.
+                            engine::record(&mut execution, "Branche distante mise à jour juste avant publication ; retour à la préparation Git, sans push forcé");
+                            save_worker_checked(app, &mut execution, Some(&identity))?;
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     if steps::git(&path, &["rev-parse", "HEAD"])? != head {
                         return Err("HEAD a changé pendant le push".into());
                     }
@@ -2168,6 +2325,219 @@ mod tests {
         (temporary, app, execution)
     }
 
+    fn remote_integration_drive_fixture(
+    ) -> (tempfile::TempDir, AppHandle, ValidationExecution, String) {
+        let (temporary, app, mut execution) =
+            drive_test_fixture(vec![(ValidationStep::Review, StepOutcome::Blocked, None)]);
+        let path = execution.repository_path.clone();
+        let remote = temporary.path().join("remote.git");
+        steps::git(&path, &["init", "--bare", remote.to_str().unwrap()]).unwrap();
+        steps::git(
+            &path,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        steps::git(&path, &["push", "origin", "isolated-branch"]).unwrap();
+        let bot = temporary.path().join("bot");
+        steps::git(
+            &path,
+            &[
+                "clone",
+                "-b",
+                "isolated-branch",
+                remote.to_str().unwrap(),
+                bot.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let bot_path = bot.to_str().unwrap();
+        steps::git(bot_path, &["config", "user.name", "bot"]).unwrap();
+        steps::git(bot_path, &["config", "user.email", "bot@example.invalid"]).unwrap();
+        std::fs::write(bot.join("remote.txt"), "remote integration").unwrap();
+        steps::git(bot_path, &["add", "remote.txt"]).unwrap();
+        steps::git(bot_path, &["commit", "-m", "remote update"]).unwrap();
+        steps::git(bot_path, &["push", "origin", "isolated-branch"]).unwrap();
+        let remote_head = steps::git(bot_path, &["rev-parse", "HEAD"]).unwrap();
+        std::fs::write(
+            std::path::Path::new(&path).join("local.txt"),
+            "local correction",
+        )
+        .unwrap();
+        steps::git(&path, &["add", "local.txt"]).unwrap();
+        steps::git(&path, &["commit", "-m", "local correction"]).unwrap();
+        execution.head_commit = Some(steps::git(&path, &["rev-parse", "HEAD"]).unwrap());
+        let before = execution.head_commit.clone().unwrap();
+        execution.step = ValidationStep::GitSync;
+        execution.correction_cycles = 1;
+        execution.publication_remote_identity =
+            Some(super::super::validation_publication::capture_remote_identity(&path).unwrap());
+        execution.effects.push(ExternalEffect {
+            id: "legacy-push".into(),
+            kind: "push".into(),
+            intended_commit: before.clone(),
+            confirmed: false,
+        });
+        execution.evidence.push(Evidence {
+            id: "old".into(),
+            label: "old proof".into(),
+            kind: "test".into(),
+            value: "passed".into(),
+            commit: before.clone(),
+            stale: false,
+        });
+        (temporary, app, execution, remote_head)
+    }
+
+    #[tokio::test]
+    async fn actual_drive_remote_update_integrates_then_reviews_before_any_push() {
+        let (temporary, app, mut execution, remote_head) = remote_integration_drive_fixture();
+        execution.publication_remote_identity = None; // Legacy existing PR snapshot.
+        let path = execution.repository_path.clone();
+        let remote = temporary.path().join("remote.git");
+        let before = execution.head_commit.clone().unwrap();
+        save(&app, &execution).unwrap();
+        drive(&app, &execution.id).await.unwrap();
+        let terminal = get(&app, &execution.id).unwrap();
+        assert_eq!(terminal.step, ValidationStep::Review);
+        assert_eq!(terminal.status, ValidationStatus::Blocked);
+        assert_ne!(terminal.head_commit.as_ref(), Some(&before));
+        assert_eq!(terminal.correction_cycles, 1);
+        assert_eq!(
+            terminal.publication_remote_identity,
+            Some(super::super::validation_publication::capture_remote_identity(&path).unwrap())
+        );
+        assert!(terminal.evidence.iter().all(|proof| proof.stale));
+        assert_eq!(
+            steps::git(
+                remote.to_str().unwrap(),
+                &["rev-parse", "refs/heads/isolated-branch"]
+            )
+            .unwrap(),
+            remote_head
+        );
+        assert!(std::path::Path::new(&path).join("local.txt").exists());
+        assert!(std::path::Path::new(&path).join("remote.txt").exists());
+        assert!(terminal.effects.iter().all(|effect| effect.kind != "push"));
+    }
+
+    #[test]
+    fn late_remote_divergence_retry_is_bounded_and_never_retries_unknown_push_errors() {
+        let mut retries = 0;
+        assert!(!retry_remote_divergence(
+            "Push failed after network disconnect",
+            &mut retries
+        ));
+        assert!(!retry_remote_divergence(
+            "La base distante a avancé ; première publication refusée",
+            &mut retries
+        ));
+        assert_eq!(retries, 0);
+        let divergence =
+            "La branche feature distante a divergé ; intégration puis nouvelle review requises";
+        assert!(retry_remote_divergence(divergence, &mut retries));
+        assert!(retry_remote_divergence(divergence, &mut retries));
+        assert!(!retry_remote_divergence(divergence, &mut retries));
+        assert_eq!(retries, 2);
+    }
+
+    #[tokio::test]
+    async fn remote_integration_recovers_only_exact_completed_merge_then_reviews() {
+        let (_temporary, app, mut execution, _) = remote_integration_drive_fixture();
+        let plan = super::super::validation_publication::prepare_remote_integration(&execution)
+            .unwrap()
+            .unwrap();
+        execution.pending_git_integration = Some(plan.clone());
+        execution.remote_integration_attempts = 1;
+        engine::begin_attempt(&mut execution).unwrap();
+        save(&app, &execution).unwrap();
+        let merged =
+            super::super::validation_publication::execute_remote_integration(&execution, &plan)
+                .unwrap();
+        drive(&app, &execution.id).await.unwrap();
+        let current = get(&app, &execution.id).unwrap();
+        assert_eq!(current.head_commit.as_deref(), Some(merged.as_str()));
+        assert_eq!(current.step, ValidationStep::Review);
+        assert_eq!(current.remote_integration_attempts, 1);
+        assert!(current.pending_git_integration.is_none());
+        assert_eq!(
+            steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap(),
+            merged
+        );
+        assert_eq!(
+            current
+                .effects
+                .iter()
+                .filter(|effect| effect.kind == "git_integration")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_integration_never_adopts_manual_head_or_merges_after_pause_or_budget() {
+        // Refuse a foreign commit even with a persisted integration intent.
+        let (_temporary, app, mut execution, _) = remote_integration_drive_fixture();
+        let plan = super::super::validation_publication::prepare_remote_integration(&execution)
+            .unwrap()
+            .unwrap();
+        execution.pending_git_integration = Some(plan);
+        engine::begin_attempt(&mut execution).unwrap();
+        save(&app, &execution).unwrap();
+        steps::git(
+            &execution.repository_path,
+            &["commit", "--allow-empty", "-m", "manual commit"],
+        )
+        .unwrap();
+        let foreign = steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap();
+        assert!(drive(&app, &execution.id)
+            .await
+            .unwrap_err()
+            .contains("fusion distante prévue"));
+        assert_eq!(
+            steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap(),
+            foreign
+        );
+        assert_eq!(
+            get(&app, &execution.id).unwrap().head_commit,
+            execution.head_commit
+        );
+
+        // An explicit pause prevents the pending Git operation from starting.
+        let (_temporary, app, mut execution, _) = remote_integration_drive_fixture();
+        let plan = super::super::validation_publication::prepare_remote_integration(&execution)
+            .unwrap()
+            .unwrap();
+        execution.pending_git_integration = Some(plan);
+        let identity = engine::begin_attempt(&mut execution).unwrap();
+        let mut paused = execution.clone();
+        engine::pause(&mut paused);
+        save(&app, &paused).unwrap();
+        assert!(
+            integrate_remote_before_publication(&app, &mut execution, &identity)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap(),
+            execution.head_commit.unwrap()
+        );
+        assert!(get(&app, &execution.id).unwrap().paused);
+
+        // No fourth remote integration and no reset of the functional correction budget.
+        let (_temporary, app, mut execution, _) = remote_integration_drive_fixture();
+        execution.remote_integration_attempts = 3;
+        save(&app, &execution).unwrap();
+        let error = drive(&app, &execution.id).await.unwrap_err();
+        assert!(error.contains("3 intégrations maximum"), "{error}");
+        let current = get(&app, &execution.id).unwrap();
+        assert_eq!(current.remote_integration_attempts, 3);
+        assert_eq!(current.correction_cycles, 1);
+        assert_eq!(
+            steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap(),
+            execution.head_commit.unwrap()
+        );
+    }
+
     #[tokio::test]
     async fn actual_drive_failed_dirty_correction_retries_same_owner_commits_then_reviews() {
         let (_temporary, app, execution) = drive_test_fixture(vec![
@@ -2646,6 +3016,9 @@ fn add_ci_proof(result: &mut StepResult, pr: u32) {
 }
 
 async fn assert_pr_branch(app: &AppHandle, execution: &ValidationExecution) -> Result<(), String> {
+    if has_drive_fixture(app) {
+        return Ok(());
+    }
     let path = execution.repository_path.clone();
     let expected = execution
         .original_branch
