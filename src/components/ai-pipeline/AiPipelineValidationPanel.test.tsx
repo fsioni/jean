@@ -344,8 +344,9 @@ describe('private validation evidence', () => {
     const view = render(
       <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
     )
-    fireEvent.click(view.getByRole('button', { name: /Suivre la validation/ }))
-    expect(view.getByText('Ticket t1 · PR #42')).toBeInTheDocument()
+    expect(
+      view.getByRole('region', { name: 'Automatisation du worktree' })
+    ).toBeInTheDocument()
     expect(
       view.queryByRole('button', { name: 'Validation existante' })
     ).not.toBeInTheDocument()
@@ -383,11 +384,12 @@ describe('worktree validation focus', () => {
     const view = render(
       <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
     )
-    expect(view.getByText(/Review|Revue/)).toBeInTheDocument()
-    expect(view.queryByText('Ticket old · PR #42')).not.toBeInTheDocument()
+    expect(view.getAllByText(/Review|Revue/).length).toBeGreaterThan(0)
+    expect(
+      view.getByText('Exécutions précédentes (1)').closest('details')
+    ).not.toHaveAttribute('open')
     expect(view.queryByText('Ticket other · PR #42')).not.toBeInTheDocument()
-    fireEvent.click(view.getByRole('button', { name: /Suivre la validation/ }))
-    expect(view.getByText('Ticket active · PR #42')).toBeInTheDocument()
+    expect(view.getByText('Automatisation')).toBeInTheDocument()
     fireEvent.click(view.getByText('Exécutions précédentes (1)'))
     expect(view.getByText('Ticket old · PR #42')).toBeInTheDocument()
   })
@@ -422,7 +424,6 @@ it('keeps a discreet manual launch on linked worktrees without an execution', ()
       allowStart
     />
   )
-  fireEvent.click(view.getByRole('button', { name: 'Suivre la validation' }))
   fireEvent.click(view.getByRole('button', { name: 'Lancer la validation' }))
   expect(start).toHaveBeenCalledWith(
     { worktreeId: 'w1', taskId: undefined },
@@ -436,7 +437,7 @@ it('does not expose the pipeline on an unrelated worktree', () => {
     <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
   )
   expect(
-    view.queryByLabelText('Activité IA du worktree')
+    view.queryByLabelText('Automatisation du worktree')
   ).not.toBeInTheDocument()
 })
 
@@ -569,3 +570,114 @@ it('preserves the diagnostic attached to the French correction limit', () => {
     view.queryByRole('button', { name: 'Reprendre la validation' })
   ).not.toBeInTheDocument()
 })
+
+it('keeps legacy non-superseded history read-only and resumes the exact current execution', () => {
+  control.mockClear()
+  query.mockReturnValue({
+    data: [
+      fixture({ id: 'failed-old', status: 'failed', superseded_by: 'current' }),
+      fixture({ id: 'current', status: 'running' }),
+    ],
+    isLoading: false,
+    isError: false,
+  })
+  const view = render(
+    <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+  )
+  fireEvent.click(view.getByText('Exécutions précédentes (1)'))
+  expect(
+    view.queryByRole('button', { name: 'Reprendre la validation' })
+  ).not.toBeInTheDocument()
+  expect(
+    view.queryByRole('button', { name: 'Nouvelle validation…' })
+  ).not.toBeInTheDocument()
+  fireEvent.click(view.getByRole('button', { name: 'Mettre en pause' }))
+  expect(control).toHaveBeenCalledWith(
+    { executionId: 'current', action: 'pause' },
+    expect.anything()
+  )
+})
+
+it('disables ambiguous legacy current executions rather than guessing ownership', () => {
+  control.mockClear()
+  query.mockReturnValue({
+    data: [
+      fixture({ id: 'correction-failed', status: 'failed' }),
+      fixture({
+        id: 'review-new',
+        status: 'running',
+        created_at: '2026-10-08',
+      }),
+    ],
+    isLoading: false,
+    isError: false,
+  })
+  const view = render(
+    <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+  )
+  fireEvent.click(view.getByText('Exécutions précédentes (1)'))
+  expect(
+    view.getByText(/Plusieurs validations courantes existent/)
+  ).toBeInTheDocument()
+  expect(
+    view.queryByRole('button', { name: 'Reprendre la validation' })
+  ).not.toBeInTheDocument()
+  expect(
+    view.queryByRole('button', { name: 'Mettre en pause' })
+  ).not.toBeInTheDocument()
+  expect(
+    view.queryByRole('button', { name: 'Nouvelle validation…' })
+  ).not.toBeInTheDocument()
+  expect(control).not.toHaveBeenCalled()
+})
+
+it('does not label an ambiguous current card as running', () => {
+  const view = render(
+    <ValidationCard execution={fixture({ status: 'running' })} ambiguous />
+  )
+  expect(view.getByRole('status')).toHaveTextContent('Suivi ambigu')
+  expect(view.getByRole('status')).not.toHaveTextContent('En cours')
+})
+
+it('keeps stale cached execution read-only instead of showing a live resumable cycle', () => {
+  query.mockReturnValue({
+    data: [fixture()],
+    isLoading: false,
+    isError: true,
+    refetch: vi.fn(),
+  })
+  const view = render(
+    <AiPipelineValidationPanel projectId="p1" enabled worktreeId="w1" />
+  )
+  expect(view.getByText(/Suivi périmé/)).toBeInTheDocument()
+  expect(
+    view.queryByRole('button', { name: 'Reprendre la validation' })
+  ).not.toBeInTheDocument()
+})
+
+it('explains the expected action and discloses technical identifiers only with proofs', () => {
+  const view = render(
+    <ValidationCard execution={fixture({ status: 'running', blocker: null })} />
+  )
+  expect(
+    view.getByText(/Aucune action attendue de ta part/)
+  ).toBeInTheDocument()
+  expect(view.queryByText('Exécution v1')).not.toBeInTheDocument()
+  fireEvent.click(
+    view.getByRole('button', { name: 'Voir les preuves et limites' })
+  )
+  expect(view.getByText('Exécution v1')).toBeInTheDocument()
+  expect(
+    view.getByRole('button', { name: 'Masquer les preuves' })
+  ).toHaveAttribute('aria-controls', 'proofs-v1')
+})
+
+it.each(['running', 'waiting', 'pending'] as const)(
+  'keeps an old blocker as neutral provenance while the cycle is %s',
+  status => {
+    const view = render(<ValidationCard execution={fixture({ status })} />)
+    expect(view.queryByRole('alert')).not.toBeInTheDocument()
+    expect(view.getByText('Dernier point signalé')).toBeInTheDocument()
+    expect(view.getByText('Accès indisponible')).toBeInTheDocument()
+  }
+)

@@ -9,6 +9,7 @@ import { useChatStore } from '@/store/chat-store'
 import { isPanelTerminal, useTerminalStore } from '@/store/terminal-store'
 import { useBrowserStore } from '@/store/browser-store'
 import { projectsQueryKeys } from '@/services/projects'
+import { aiPipelineQueryKeys } from '@/services/ai-pipeline'
 import { chatQueryKeys } from '@/services/chat'
 import { MCP_SERVERS_KEY } from '@/services/mcp'
 import { claudeCliQueryKeys } from '@/services/claude-cli'
@@ -226,6 +227,11 @@ export function applyCacheInvalidationKeys(
         // Native sidebar also reads the multi-server project list.
         queryClient.invalidateQueries({
           queryKey: ['multi-server', 'projects'],
+        })
+        break
+      case 'ai-pipeline-validations':
+        queryClient.invalidateQueries({
+          queryKey: aiPipelineQueryKeys.validations(),
         })
         break
       case 'preferences':

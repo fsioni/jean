@@ -778,6 +778,20 @@ describe('applySessionRenamedToCaches', () => {
 })
 
 describe('applyCacheInvalidationKeys', () => {
+  it('refreshes every project validation without invalidating unrelated pipeline data', () => {
+    const queryClient = new QueryClient()
+    const first = ['ai-pipeline', 'validations', 'p1']
+    const second = ['ai-pipeline', 'validations', 'p2']
+    const config = ['ai-pipeline', 'config']
+    for (const key of [first, second, config]) queryClient.setQueryData(key, [])
+
+    applyCacheInvalidationKeys(queryClient, ['ai-pipeline-validations'])
+
+    expect(queryClient.getQueryState(first)?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(second)?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(config)?.isInvalidated).toBe(false)
+  })
+
   it('refreshes the multi-server sidebar project list on project changes', () => {
     const queryClient = new QueryClient()
     const multiServerKey = ['multi-server', 'projects', 'server-1:true']

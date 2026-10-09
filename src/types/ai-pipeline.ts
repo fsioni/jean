@@ -131,6 +131,9 @@ export interface ValidationAgentSession {
 export interface ValidationExecution {
   schema_version: number
   agent_sessions?: ValidationAgentSession[]
+  owned_worktree_fingerprint?: string | null
+  agent_result_repair_retries?: number
+  agent_result_repair_source_session?: string | null
   active_session_id?: string | null
   id: string
   project_id: string

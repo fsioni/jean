@@ -107,7 +107,8 @@ export function WorktreeItem({
 
   // Fetch sessions to check for persisted unanswered questions
   const { data: sessionsData } = useSessions(worktree.id, worktree.path)
-  const { data: validations } = useAiPipelineValidations(projectId)
+  const { data: validations, isError: validationError } =
+    useAiPipelineValidations(projectId)
   const visibleSessions = useMemo(() => {
     const technicalIds = validationSessionIds(validations ?? [], worktree.id)
     return (sessionsData?.sessions ?? []).filter(
@@ -716,6 +717,7 @@ export function WorktreeItem({
 
         <WorktreeValidationStatus
           executions={validations ?? []}
+          stale={validationError}
           worktreeId={worktree.id}
           className={cn('pr-2', isNarrowSidebar ? 'pl-4' : 'pl-7')}
         />

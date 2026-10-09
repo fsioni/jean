@@ -23,7 +23,9 @@ export function AiPipelineValidationLab() {
     report.totalCount > 0 &&
     report.scenarios.length === report.totalCount &&
     report.passedCount === report.totalCount &&
-    report.scenarios.every(s => s.passed && s.checks.every(c => c.passed))
+    report.scenarios.every(
+      s => s.passed && s.checks.length > 0 && s.checks.every(c => c.passed)
+    )
   const launch = () => {
     if (busy.current) return
     busy.current = true
@@ -65,15 +67,19 @@ export function AiPipelineValidationLab() {
                 Une répétition technique, pas une recette réelle.
               </p>
               <p className="mt-1">
-                Aucun agent IA, appel CI ou preview externe. Les résultats ne
-                prouvent ni la qualité d’un ticket ni le bon fonctionnement d’un
-                déploiement.
+                Ne vérifie pas un agent réel ni tout le cycle de
+                commandes/CI/preview. Aucun agent IA, appel CI ou preview
+                externe. Les résultats ne prouvent ni la qualité d’un ticket ni
+                le bon fonctionnement d’un déploiement.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={launch} disabled={run.isPending}>
                 {run.isPending && (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  <Loader2
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                 )}
                 {run.isPending
                   ? 'Scénarios en cours…'
@@ -130,6 +136,10 @@ export function AiPipelineValidationLab() {
                         ? 'Contrôles isolés réussis.'
                         : 'Des contrôles restent en échec ou non confirmés.'}{' '}
                       Aucun résultat live.
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Ces résultats ne confirment pas une orchestration
+                      opérationnelle.
                     </p>
                   </div>
                 </div>

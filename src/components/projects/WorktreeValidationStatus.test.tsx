@@ -136,13 +136,63 @@ describe('WorktreeValidationStatus', () => {
     rerender(<Subject />)
     expect(screen.getByRole('status')).toHaveTextContent('Recette · En attente')
   })
-  it('shows only one execution, preferring active work over an older blocked run', () => {
+  it('qualifies ambiguous legacy current executions without claiming running', () => {
     executions = [
       execution({ id: 'old', status: 'blocked' }),
       execution({ id: 'new', step: 'ci', updated_at: '2026-10-07T11:00:00Z' }),
     ]
     render(<Subject />)
     expect(screen.getAllByRole('status')).toHaveLength(1)
-    expect(screen.getByRole('status')).toHaveTextContent('CI · En cours')
+    expect(screen.getByRole('status')).toHaveTextContent('CI · Suivi ambigu')
   })
+})
+
+it('shows a missing replacement as history without a false running indicator', () => {
+  const { container } = render(
+    <WorktreeValidationStatus
+      executions={[execution({ superseded_by: 'not-loaded' })]}
+      worktreeId="worktree"
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Historique · remplacée')
+  expect(container.querySelector('.motion-safe\\:animate-pulse')).toBeNull()
+})
+
+it('reacts to persisted lifecycle changes without using unrelated session activity', () => {
+  const view = render(
+    <WorktreeValidationStatus
+      executions={[execution({ step: 'correction', status: 'failed' })]}
+      worktreeId="worktree"
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Correction · Échec')
+  view.rerender(
+    <WorktreeValidationStatus
+      executions={[
+        execution({ step: 'correction', status: 'failed' }),
+        execution({ worktree_id: 'unrelated', status: 'running' }),
+      ]}
+      worktreeId="worktree"
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Correction · Échec')
+  view.rerender(
+    <WorktreeValidationStatus
+      executions={[execution({ step: 'correction', status: 'running' })]}
+      worktreeId="worktree"
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Correction · En cours')
+})
+
+it('qualifies stale cached readiness before the user opens details', () => {
+  const view = render(
+    <WorktreeValidationStatus
+      executions={[execution({ status: 'ready' })]}
+      worktreeId="worktree"
+      stale
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Suivi périmé')
+  expect(view.container.querySelector('.bg-success')).toBeNull()
 })

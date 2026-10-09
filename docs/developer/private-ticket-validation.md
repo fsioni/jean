@@ -17,7 +17,8 @@ Backend implementation lives in `jean-core/src/ai_pipeline/`:
 - `validation_engine.rs`: pure state transitions and proof/readiness invariants.
 - `validation_storage.rs`: private snapshots, atomic replacement, durability.
 - `validation_artifacts.rs`: bounded artifact validation and private durable copies.
-- `validation_lab.rs`: targetless offline scenarios using the real engine/parser/store.
+- `validation_lab.rs`: targetless offline scenarios using the real engine/parser/store and selected command boundaries.
+- `validation_orchestration.rs`: shared canonical-owner, recovery and run-binding guards.
 - `validation_ci.rs`: exact PR/head checks requiring the known Planexpo Jenkins context.
 - `validation_commands.rs`: job ownership, external effect reconciliation and IPC.
 - `validation_steps.rs`: agent instructions, strict result parsing and Git sync.
@@ -77,6 +78,8 @@ across recovery. A second occurrence blocks fail-closed for intervention. Neithe
 occurrence increments correction/no-progress counters or starts a 60-second wait.
 This exception does not weaken genuine external CI/preview waits: they retain a
 persisted start time and a 30-minute ceiling.
+
+Exactly one non-superseded execution owns a worktree, including Failed and Ready snapshots. Start without explicit replacement returns that owner rather than creating a competing review. Multiple legacy owners fail closed: the UI shows **Suivi ambigu**, preserves the history and does not offer misleading resume actions. No historical state is silently rewritten.
 
 A new validation after a blocked execution is explicit and confirmed in the UI.
 It preserves the previous snapshot through `superseded_by`; it does not reset
@@ -148,7 +151,8 @@ The offline lab's `failed-correction-recovery` scenario replays the observed
 pattern: a resolved ligature defect plus a new red AI-visibility test, followed
 by targeted repair and the full review/CI/preview/acceptance path, without
 replacing the execution. Legacy already-failed snapshots are not rewritten or
-silently restarted by this change.
+silently restarted by this change. A dirty legacy tree without a recorded ownership
+fingerprint remains manual: the coordinator does not guess which edits belong to it.
 
 The UI preserves the last failure, localizes legacy budget stops, and removes
 futile Resume actions for explicit exhausted-budget blockers. Historical
@@ -169,8 +173,52 @@ resume inspects terminal run state before consuming results and must not send a
 second prompt to an active run. The worktree must initially be clean, and its
 project, linked ticket, PR and assignments are checked server-side.
 
-Recovery is explicit through **Reprendre la validation** after restart or an
-intervention. Do not represent this as an automatic startup recovery service.
+Shared native/headless runtime initialization now restores canonical, unpaused
+Pending/Running/Waiting validations after recovering chat runs. A still-managed
+agent is observed, not duplicated; polling is bounded by its persisted start time.
+Blocked, Failed, Ready, superseded and paused snapshots are never restarted by this
+hook. Explicit resume is reserved for an actual intervention, not each normal step.
+
+Run consumption checks the exact session/worktree, unique run, original prompt
+identity, terminal successful status and linked assistant message ID. Appending a
+manual prompt to a technical session does not supply a new orchestration proof.
+Reads use the run-log loader, not a session getter that may drain queued messages.
+The final result save uses the expected attempt as a compare-and-swap guard; a
+late worker cannot replace a newer attempt or undo supersession. A concurrent
+pause wins while the completed result is still recorded.
+
+Malformed terminal JSON receives one persisted **format-only** repair, sourced
+from the exact prior terminal message. It does not rerun code, reset correction
+budgets, relax identity checks or accept reserved backend evidence. The repair
+instruction forbids tools but is not a technical sandbox. A second malformed
+output stops with a readable diagnostic.
+
+Partial implementation/correction trees carry an exact private fingerprint over
+working content, index and untracked files (excluding only verified runtime
+configuration). The fingerprint and HEAD are checked before another attempt;
+additional edits stop safely without reset, stash, staging or deletion. This is
+an interruption guard, not proof of authorship when another process writes during
+an active agent. Initial work still requires a clean attributable tree.
+
+## Adversarial verification and scope
+
+The 21-scenario UI lab includes the Failed canonical-owner regression, ambiguous
+resume through the real command with temporary RuntimeContext/storage, startup
+eligibility, unrelated-run rejection, persistent bounded JSON repair, and a real
+local Git refusal preserving a dirty tree. Its service results remain simulated;
+its green summary is deliberately not an operational approval of the feature.
+
+Separate command integration tests use temporary RuntimeContext, persisted
+metadata/JSONL, and real local Git to exercise result consumption, concurrent
+pause, stale-worker compare-and-swap, source-only formatting, dirty-tree guards
+and the actual drive loop. External agent/assignment/ticket services in that loop
+are explicitly injected test fixtures. This does not certify a live agent,
+Jenkins deployment, authenticated browser recipe or production database.
+
+There remains a narrow interruption window between creating an empty technical
+session and persisting its execution binding. No prompt is sent before the binding
+is durable, so this can leave an empty orphan session, not an untracked agent run.
+No automated migration guesses ownership of historical conflicting executions.
 
 ## Privacy and practical limits
 
@@ -264,26 +312,22 @@ assignment, CI/deployment formats and the installed native/Web/mobile transport.
 
 ## Worktree presentation
 
-The pickup modal no longer renders execution cards. Each worktree presents one
-compact **Activité IA** row: the current step, status, and correction count.
-Expanding it exposes the latest execution (active first, otherwise most recent),
-a chronological transition journal, pause/resume, evidence and manual draft
-actions. Earlier executions stay under a collapsed history; they are neither
-deleted nor rendered as competing current cards. Technical agent sessions can
-be opened explicitly from this worktree activity without automatically populating
-the normal chat tabs. These are presentation changes only: persisted execution
-state, safety gates, proof verification and correction loops remain backend-owned.
-The shared canvas presentation is available in native, Web Access and mobile.
+The pickup modal no longer renders execution cards. Each tracked worktree shows
+a permanent inline **Automatisation** surface: current step/state, latest activity,
+next expected action and direct pause/resume control. None of these essential
+items requires opening a menu or expanding a card. Canvas and chat reuse the
+same compact presentation and backend-owned query.
 
-The worktree chat header also exposes a clickable **IA · step · state** badge,
-next to CI/preview and ClickUp. Its responsive popover reuses `ValidationCard`
-for the blocker, journal, proofs, pause/resume and collapsed execution history,
-without navigating away from chat. It shares the modal's existing polling query
-(no second polling subscription), scopes selection to the current worktree, and
-opens technical sessions only on explicit request. Escape closes the popover,
-not the chat. This shared header is rendered in native, Web Access and mobile;
-zen mode deliberately hides the entire header. Worktrees without a validation
-remain unchanged. A query error offers retry rather than silently hiding access.
+In chat the surface is below the title/status toolbar, before session tabs, not
+a clickable badge next to CI/preview and ClickUp. There is no validation popover
+or overlay. Secondary evidence, full journal, technical sessions, editable draft
+and execution history remain optional disclosures; previous executions remain
+read-only. Technical sessions open only on explicit request. An empty worktree
+stays unchanged unless its existing canvas entry point allows starting validation.
+Query errors stay visible with retry and inhibit controls based on stale data.
+Zen mode hides the inline chat surface together with the title toolbar. The
+shared surface is used in native, Web Access and mobile. Backend proof gates,
+correction loops and persisted execution state remain unchanged.
 
 The Projects sidebar shows the same selected execution's **step · state** under
 its worktree name. A ready status is not presented as verified when mandatory
@@ -303,3 +347,35 @@ Agent prompts retain all requirements, defects, proofs and identities, but inclu
 only the last six activity transitions and omit the technical session list.
 This reduces repetitive context on long runs without deleting durable history,
 changing the proof contract or skipping a review.
+
+The inline surface leads with the current step, latest recorded activity and
+next expected action. When stopped by a genuine blocker, its reason replaces
+redundant previous activity; the full activity remains in the journal. Long
+blockers have a visible summary and explicit full-text disclosure, preserving
+space for chat. No linear progress estimate is invented: review/correction may
+revisit a step. Execution IDs, budgets and commit hashes remain secondary. An
+exhausted correction budget exposes its explicit new-cycle decision directly,
+with confirmation, rather than hiding the only available action in details.
+History remains read-only. Reduced-motion preferences disable animations and
+stale states suppress controls until the query recovers.
+
+### Reactive worktree updates
+
+Successful coordinator persistence broadcasts `cache:invalidate` with
+`ai-pipeline-validations`; failed writes do not broadcast an unpersisted state.
+The shared MainWindow listener maps that key to the project validation query
+prefix (native, Web Access and mobile) and coalesces bursts over 250 ms.
+Worktree surfaces observe the same project cache; they do not poll independently
+per worktree or invalidate unrelated ClickUp/PR feeds after validation controls.
+The 3-second polling fallback remains for missed events and reconnection.
+A stale/error response must stay visible as unavailable, not imply fresh proof.
+
+Explicit resume clears only the expired external-wait window. Correction and
+no-progress budgets, evidence and execution identity remain unchanged. Restart
+recovery does not grant a new timeout or reset those budgets.
+
+Known latency limitation: refreshing an old Ready execution still performs
+local Git validation and periodic remote verification before completing the
+project-wide list. A slow remote check can therefore delay another worktree's
+refresh. Do not reuse an old Ready snapshot as fresh evidence to hide that
+latency; transport errors are surfaced as stale/unavailable instead.

@@ -37,7 +37,7 @@ describe('pipeline presentation', () => {
       )
     ).toBe(running)
   })
-  it('prefers a running execution over a more recently refreshed terminal one', () => {
+  it('uses creation order rather than a refresh or status priority', () => {
     const running = execution()
     expect(
       selectWorktreeValidation(
@@ -46,6 +46,7 @@ describe('pipeline presentation', () => {
           execution({
             id: 'ready',
             status: 'ready',
+            created_at: '2026-10-06T09:00:00Z',
             updated_at: '2026-10-07T12:00:00Z',
           }),
         ],
@@ -79,6 +80,7 @@ describe('pipeline presentation', () => {
           execution({
             id: 'failed',
             status: 'failed',
+            created_at: '2026-10-06T09:00:00Z',
             updated_at: '2026-10-07T08:00:00Z',
           }),
         ],
@@ -141,4 +143,63 @@ it('never treats a ready label without current proofs as verified', async () => 
 it('preserves access to history when the replacement is not in the loaded list', () => {
   const historical = execution({ superseded_by: 'missing' })
   expect(selectWorktreeValidation([historical], 'w1')).toBe(historical)
+})
+
+it('keeps a newer failed correction current ahead of ready history', () => {
+  const failed = execution({
+    id: 'failed',
+    status: 'failed',
+    created_at: '2026-10-08',
+  })
+  const ready = execution({
+    id: 'ready',
+    status: 'ready',
+    created_at: '2026-10-01',
+  })
+  expect(selectWorktreeValidation([ready, failed], 'w1')).toBe(failed)
+})
+
+it('shows the actual revisited route, not a fixed stage percentage', async () => {
+  const { validationRecentSteps } = await import('./ai-pipeline-presentation')
+  expect(
+    validationRecentSteps(
+      execution({
+        step: 'review',
+        transitions: [
+          { step: 'acceptance' },
+          { step: 'correction' },
+          { step: 'correction' },
+        ] as ValidationExecution['transitions'],
+      })
+    )
+  ).toEqual(['acceptance', 'correction', 'review'])
+})
+it('does not count a passed label with stale evidence as confirmed progress', async () => {
+  const { validationProofSummary } = await import('./ai-pipeline-presentation')
+  expect(
+    validationProofSummary(
+      execution({
+        head_commit: 'head',
+        requirements: [
+          {
+            id: 'r',
+            label: 'Recette',
+            mandatory: true,
+            status: 'passed',
+            evidence_ids: ['e'],
+          },
+        ],
+        evidence: [
+          {
+            id: 'e',
+            label: 'preuve',
+            kind: 'test',
+            value: 'OK',
+            commit: 'head',
+            stale: true,
+          },
+        ],
+      })
+    )
+  ).toEqual({ confirmed: 0, total: 1 })
 })

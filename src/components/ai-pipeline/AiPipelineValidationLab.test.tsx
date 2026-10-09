@@ -158,3 +158,68 @@ describe('isolated validation lab', () => {
     expect(invoke).toHaveBeenCalledTimes(2)
   })
 })
+
+it.each(['native desktop', 'web desktop', 'mobile'])(
+  'qualifies successful isolated results in the shared %s surface',
+  async surface => {
+    // No platform branch: this actual component is shared by all three surfaces.
+    vi.stubGlobal(
+      '__TAURI_INTERNALS__',
+      surface === 'native desktop' ? {} : undefined
+    )
+    vi.stubGlobal('innerWidth', surface === 'mobile' ? 390 : 1280)
+    invoke.mockResolvedValue({
+      ...report,
+      totalCount: 1,
+      passedCount: 1,
+      scenarios: [report.scenarios[0]],
+    })
+    const view = setup()
+    fireEvent.click(view.getByRole('button', { name: 'Lancer les scénarios' }))
+    await waitFor(() =>
+      expect(view.getByText('1/1 scénarios réussis')).toBeInTheDocument()
+    )
+    expect(
+      view.getByText(
+        /Ne vérifie pas un agent réel ni tout le cycle de commandes\/CI\/preview/
+      )
+    ).toBeInTheDocument()
+    expect(
+      view.getByText(
+        'Ces résultats ne confirment pas une orchestration opérationnelle.'
+      )
+    ).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  }
+)
+
+it.each([
+  { ...report, totalCount: 0, passedCount: 0, scenarios: [] },
+  {
+    ...report,
+    totalCount: 1,
+    passedCount: 1,
+    scenarios: [{ ...report.scenarios[0], checks: [] }],
+  },
+  {
+    ...report,
+    totalCount: 2,
+    passedCount: 2,
+    scenarios: [report.scenarios[0]],
+  },
+])(
+  'does not label empty or inconsistent reports as successful controls',
+  async result => {
+    invoke.mockResolvedValue(result)
+    const view = setup()
+    fireEvent.click(view.getByRole('button', { name: 'Lancer les scénarios' }))
+    await waitFor(() =>
+      expect(
+        view.getByLabelText('Résultats du banc d’essai')
+      ).toBeInTheDocument()
+    )
+    expect(
+      view.getByText(/Des contrôles restent en échec ou non confirmés/)
+    ).toBeInTheDocument()
+  }
+)
