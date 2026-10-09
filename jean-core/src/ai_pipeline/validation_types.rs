@@ -108,6 +108,11 @@ pub struct ValidationExecution {
     pub publication_base_branch: Option<String>,
     #[serde(default)]
     pub publication_remote_identity: Option<String>,
+    /// Pinned local integration intent, persisted before any merge. No URL or credentials.
+    #[serde(default)]
+    pub pending_git_integration: Option<super::validation_publication::RemoteIntegrationPlan>,
+    #[serde(default)]
+    pub remote_integration_attempts: u8,
     pub task_id: String,
     pub pr_number: Option<u32>,
     pub revision: u64,
@@ -188,6 +193,8 @@ impl ValidationExecution {
             owned_worktree_fingerprint: None,
             publication_base_branch: None,
             publication_remote_identity: None,
+            pending_git_integration: None,
+            remote_integration_attempts: 0,
             task_id,
             pr_number,
             revision: 0,

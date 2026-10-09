@@ -399,8 +399,23 @@ pub fn sync_git(execution: &ValidationExecution) -> Result<String, String> {
     if execution.head_commit.as_deref() != Some(&head) {
         return Err("Commit différent du commit reviewé ; push refusé".into());
     }
-    git(path, &["merge-base", "--is-ancestor", &ancestor, &head])
-        .map_err(|_| "La base distante a divergé ; réconciliation manuelle requise".to_string())?;
+    let ancestry = crate::platform::silent_command("git")
+        .args(["merge-base", "--is-ancestor", &ancestor, &head])
+        .current_dir(path)
+        .status()
+        .map_err(|_| "Vérification de l'ascendance Git inaccessible")?;
+    if !ancestry.success() {
+        return Err(if ancestry.code() == Some(1) {
+            if exists.success() {
+                "La branche feature distante a divergé ; intégration puis nouvelle review requises"
+            } else {
+                "La base distante a avancé ; première publication refusée"
+            }
+        } else {
+            "Impossible de vérifier l'ascendance distante ; publication refusée"
+        }
+        .into());
+    }
     if !is_clean(execution)?
         || git(path, &["rev-parse", "HEAD"])? != head
         || git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])? != branch
@@ -587,4 +602,436 @@ pub fn publish_pr(
     }
     created?;
     Err("PR créée mais confirmation exacte indisponible ; réconciliation requise".into())
+}
+
+/// Durable integration intent contains object IDs and an origin fingerprint, never URLs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteIntegrationPlan {
+    pub local_head: String,
+    pub remote_head: String,
+    pub branch: String,
+    pub remote_identity: String,
+    pub expected_tree: String,
+}
+
+fn integration_guard(
+    execution: &ValidationExecution,
+    head: &str,
+    branch: &str,
+) -> Result<(), String> {
+    let path = &execution.repository_path;
+    if execution.original_branch.as_deref() != Some(branch)
+        || git(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])? != branch
+        || git(path, &["rev-parse", "HEAD"])? != head
+        || !is_clean(execution)?
+    {
+        return Err("Branche, HEAD ou worktree modifié ; intégration distante refusée".into());
+    }
+    git(path, &["check-ref-format", "--branch", branch])?;
+    // Never continue an unrelated interrupted operation.
+    for name in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+        if git(path, &["rev-parse", "--verify", name]).is_ok() {
+            return Err("Opération Git déjà en cours ; intégration refusée".into());
+        }
+    }
+    for name in ["rebase-merge", "rebase-apply"] {
+        let git_path = git(path, &["rev-parse", "--git-path", name])?;
+        let operation = Path::new(path).join(git_path);
+        if operation.exists() {
+            return Err("Rebase déjà en cours ; intégration refusée".into());
+        }
+    }
+    Ok(())
+}
+
+fn fetch_integration_head(path: &str, branch: &str, identity: &str) -> Result<String, String> {
+    let target = publication_remote(path)?;
+    if remote_identity(&target) != identity {
+        return Err("La cible origin a changé ; intégration refusée".into());
+    }
+    let reference = format!("refs/heads/{branch}");
+    // A private ref avoids FETCH_HEAD / origin tracking ref races with other fetches.
+    let private_ref = format!("refs/jean/integration/{}", uuid::Uuid::new_v4());
+    let refspec = format!("{reference}:{private_ref}");
+    let hooks = tempfile::tempdir().map_err(|_| "Dossier de hooks inaccessible")?;
+    let hooks_config = format!("core.hooksPath={}", hooks.path().display());
+    let result = (|| {
+        private_git(
+            path,
+            &[
+                "-c",
+                &hooks_config,
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                &target,
+                &refspec,
+            ],
+        )?;
+        verify_publication_remote(path, &target)?;
+        git(
+            path,
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("{private_ref}^{{commit}}"),
+            ],
+        )
+    })();
+    let cleanup = private_git(
+        path,
+        &["-c", &hooks_config, "update-ref", "-d", &private_ref],
+    );
+    cleanup?;
+    result
+}
+
+/// Prepare without changing the index or worktree. A clean merge is NOT a review.
+pub fn prepare_remote_integration(
+    execution: &ValidationExecution,
+) -> Result<Option<RemoteIntegrationPlan>, String> {
+    let path = &execution.repository_path;
+    let head = execution
+        .head_commit
+        .as_deref()
+        .ok_or("HEAD reviewé manquant")?;
+    let branch = execution
+        .original_branch
+        .as_deref()
+        .ok_or("Branche initiale manquante")?;
+    integration_guard(execution, head, branch)?;
+    let identity = capture_remote_identity(path)?;
+    if execution
+        .publication_remote_identity
+        .as_ref()
+        .is_some_and(|expected| expected != &identity)
+    {
+        return Err("La cible origin diffère de la cible autorisée".into());
+    }
+    let target = publication_remote(path)?;
+    if remote_identity(&target) != identity {
+        return Err("La cible origin a changé ; préparation refusée".into());
+    }
+    let reference = format!("refs/heads/{branch}");
+    let advertised = private_git(path, &["ls-remote", "--heads", &target, &reference])?;
+    verify_publication_remote(path, &target)?;
+    if advertised.is_empty() {
+        integration_guard(execution, head, branch)?;
+        return if execution.pr_number.is_none() {
+            Ok(None)
+        } else {
+            Err("Branche distante de la PR introuvable ; intégration refusée".into())
+        };
+    }
+    let mut lines = advertised.lines();
+    let fields: Vec<_> = lines
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    if lines.next().is_some()
+        || fields.len() != 2
+        || fields[1] != reference
+        || !matches!(fields[0].len(), 40 | 64)
+        || !fields[0].bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(
+            "Réponse distante ambiguë ou référence inattendue ; intégration refusée".into(),
+        );
+    }
+    let remote_head = fetch_integration_head(path, branch, &identity)?;
+    if git(path, &["merge-base", "--is-ancestor", &remote_head, head]).is_ok() {
+        integration_guard(execution, head, branch)?;
+        return Ok(None);
+    }
+    let tree = git(path, &["merge-tree", "--write-tree", head, &remote_head]).map_err(|_| {
+        "Conflit avec la branche feature distante ; index et worktree préservés".to_string()
+    })?;
+    let expected_tree = tree
+        .lines()
+        .next()
+        .ok_or("Arbre de fusion absent")?
+        .to_string();
+    git(
+        path,
+        &["cat-file", "-e", &format!("{expected_tree}^{{tree}}")],
+    )?;
+    if let Some(baseline) = &execution.runtime_config_baseline {
+        if git(path, &["rev-parse", &format!("{expected_tree}:jean.json")])? != baseline.head_blob {
+            return Err("La fusion modifierait la configuration runtime protégée".into());
+        }
+    }
+    integration_guard(execution, head, branch)?;
+    Ok(Some(RemoteIntegrationPlan {
+        local_head: head.into(),
+        remote_head,
+        branch: branch.into(),
+        remote_identity: identity,
+        expected_tree,
+    }))
+}
+
+/// Confirm a pinned merge after completion or interruption, without publishing it.
+pub fn verify_completed_integration(
+    execution: &ValidationExecution,
+    plan: &RemoteIntegrationPlan,
+) -> Result<String, String> {
+    let path = &execution.repository_path;
+    if execution.head_commit.as_deref() != Some(&plan.local_head)
+        || execution
+            .publication_remote_identity
+            .as_ref()
+            .is_some_and(|identity| identity != &plan.remote_identity)
+    {
+        return Err("Intent de fusion différent de la cible autorisée".into());
+    }
+    let head = git(path, &["rev-parse", "HEAD"])?;
+    integration_guard(execution, &head, &plan.branch)?;
+    if capture_remote_identity(path)? != plan.remote_identity {
+        return Err("La cible origin a changé".into());
+    }
+    let parents = git(path, &["show", "-s", "--format=%P", &head])?;
+    if parents != format!("{} {}", plan.local_head, plan.remote_head)
+        || git(path, &["rev-parse", "HEAD^{tree}"])? != plan.expected_tree
+    {
+        return Err("Le commit ne correspond pas à la fusion distante prévue".into());
+    }
+    Ok(head)
+}
+
+/// Execute only the persisted, pinned plan. Never autostash, reset or force-push.
+pub fn execute_remote_integration(
+    execution: &ValidationExecution,
+    plan: &RemoteIntegrationPlan,
+) -> Result<String, String> {
+    let path = &execution.repository_path;
+    if execution.head_commit.as_deref() != Some(&plan.local_head) {
+        return Err("Le plan ne correspond pas au HEAD reviewé".into());
+    }
+    integration_guard(execution, &plan.local_head, &plan.branch)?;
+    if fetch_integration_head(path, &plan.branch, &plan.remote_identity)? != plan.remote_head {
+        return Err("La branche distante a changé depuis la préparation".into());
+    }
+    // Recompute to reject a corrupted intent and config changes affecting merge behavior.
+    let fresh = prepare_remote_integration(execution)?
+        .ok_or("Intégration devenue inutile ; plan refusé")?;
+    if fresh.remote_head != plan.remote_head
+        || fresh.expected_tree != plan.expected_tree
+        || fresh.remote_identity != plan.remote_identity
+    {
+        return Err("Le plan de fusion a changé".into());
+    }
+    let hooks = tempfile::tempdir().map_err(|_| "Dossier de hooks inaccessible")?;
+    let hooks_config = format!("core.hooksPath={}", hooks.path().display());
+    private_git(
+        path,
+        &[
+            "-c",
+            &hooks_config,
+            "-c",
+            "merge.autoStash=false",
+            "-c",
+            "rerere.enabled=false",
+            "-c",
+            "commit.gpgSign=false",
+            "-c",
+            "merge.verifySignatures=false",
+            "merge",
+            "--commit",
+            "--no-squash",
+            "--no-ff",
+            "--no-edit",
+            &plan.remote_head,
+        ],
+    )?;
+    verify_completed_integration(execution, plan)
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    fn fixture() -> (tempfile::TempDir, ValidationExecution, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("local");
+        let bot = dir.path().join("bot");
+        std::fs::create_dir(&repo).unwrap();
+        let path = repo.to_str().unwrap();
+        git(path, &["init", "-b", "main"]).unwrap();
+        git(path, &["config", "user.name", "Test"]).unwrap();
+        git(path, &["config", "user.email", "test@example.invalid"]).unwrap();
+        std::fs::write(repo.join("base"), "base").unwrap();
+        git(path, &["add", "."]).unwrap();
+        git(path, &["commit", "-m", "base"]).unwrap();
+        let remote = dir.path().join("remote.git");
+        git(path, &["init", "--bare", remote.to_str().unwrap()]).unwrap();
+        git(path, &["remote", "add", "origin", remote.to_str().unwrap()]).unwrap();
+        git(path, &["push", "origin", "main"]).unwrap();
+        git(path, &["checkout", "-b", "feature"]).unwrap();
+        git(path, &["push", "origin", "feature"]).unwrap();
+        git(
+            path,
+            &[
+                "clone",
+                "-b",
+                "feature",
+                remote.to_str().unwrap(),
+                bot.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let bot = bot.to_str().unwrap().to_string();
+        git(&bot, &["config", "user.name", "Bot"]).unwrap();
+        git(&bot, &["config", "user.email", "bot@example.invalid"]).unwrap();
+        std::fs::write(repo.join("local"), "local").unwrap();
+        git(path, &["add", "."]).unwrap();
+        git(path, &["commit", "-m", "reviewed local"]).unwrap();
+        let mut execution =
+            ValidationExecution::new("p".into(), "w".into(), path.into(), "t".into(), None);
+        execution.original_branch = Some("feature".into());
+        execution.head_commit = Some(git(path, &["rev-parse", "HEAD"]).unwrap());
+        execution.publication_remote_identity = Some(capture_remote_identity(path).unwrap());
+        (dir, execution, bot)
+    }
+    #[test]
+    fn integrates_bot_base_merge_without_publishing_and_refuses_changed_remote() {
+        let (_dir, execution, bot) = fixture();
+        git(&bot, &["checkout", "-b", "main", "origin/main"]).unwrap();
+        std::fs::write(Path::new(&bot).join("base"), "new base").unwrap();
+        git(&bot, &["add", "."]).unwrap();
+        git(&bot, &["commit", "-m", "base advanced"]).unwrap();
+        git(&bot, &["checkout", "feature"]).unwrap();
+        git(&bot, &["merge", "--no-ff", "--no-edit", "main"]).unwrap();
+        git(&bot, &["push", "origin", "feature"]).unwrap();
+        let plan = prepare_remote_integration(&execution).unwrap().unwrap();
+        let head = execute_remote_integration(&execution, &plan).unwrap();
+        assert_ne!(head, plan.local_head);
+        assert_eq!(
+            verify_completed_integration(&execution, &plan).unwrap(),
+            head
+        );
+        assert_eq!(
+            fetch_integration_head(&execution.repository_path, "feature", &plan.remote_identity)
+                .unwrap(),
+            plan.remote_head
+        );
+        assert!(execute_remote_integration(&execution, &plan).is_err());
+    }
+    #[test]
+    fn conflict_and_foreign_changes_preserve_head_index_and_files() {
+        let (_dir, execution, bot) = fixture();
+        std::fs::write(Path::new(&bot).join("local"), "conflicting").unwrap();
+        git(&bot, &["add", "."]).unwrap();
+        git(&bot, &["commit", "-m", "remote conflict"]).unwrap();
+        git(&bot, &["push", "origin", "feature"]).unwrap();
+        let path = &execution.repository_path;
+        let tree = git(path, &["write-tree"]).unwrap();
+        assert!(prepare_remote_integration(&execution).is_err());
+        assert_eq!(
+            git(path, &["rev-parse", "HEAD"]).unwrap(),
+            execution.head_commit.clone().unwrap()
+        );
+        assert_eq!(git(path, &["write-tree"]).unwrap(), tree);
+        assert_eq!(
+            std::fs::read_to_string(Path::new(path).join("local")).unwrap(),
+            "local"
+        );
+        std::fs::write(Path::new(path).join("foreign"), "preserve").unwrap();
+        assert!(prepare_remote_integration(&execution).is_err());
+        assert!(Path::new(path).join("foreign").exists());
+    }
+    #[test]
+    fn refuses_remote_change_after_preparation() {
+        let (_dir, execution, bot) = fixture();
+        std::fs::write(Path::new(&bot).join("remote"), "remote").unwrap();
+        git(&bot, &["add", "."]).unwrap();
+        git(&bot, &["commit", "-m", "remote"]).unwrap();
+        git(&bot, &["push", "origin", "feature"]).unwrap();
+        let plan = prepare_remote_integration(&execution).unwrap().unwrap();
+        git(&bot, &["commit", "--allow-empty", "-m", "changed"]).unwrap();
+        git(&bot, &["push", "origin", "feature"]).unwrap();
+        assert!(execute_remote_integration(&execution, &plan).is_err());
+        assert_eq!(
+            git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap(),
+            plan.local_head
+        );
+    }
+    #[test]
+    fn ancestor_noop_and_branch_head_dirty_guards() {
+        let (_dir, mut execution, _bot) = fixture();
+        assert!(prepare_remote_integration(&execution).unwrap().is_none());
+        execution.original_branch = Some("main".into());
+        assert!(prepare_remote_integration(&execution).is_err());
+        execution.original_branch = Some("feature".into());
+        execution.head_commit = Some("wrong".into());
+        assert!(prepare_remote_integration(&execution).is_err());
+        execution.head_commit =
+            Some(git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap());
+        std::fs::write(
+            Path::new(&execution.repository_path).join("foreign"),
+            "foreign",
+        )
+        .unwrap();
+        assert!(prepare_remote_integration(&execution).is_err());
+    }
+    #[test]
+    fn protected_runtime_is_never_overwritten() {
+        use sha2::{Digest, Sha256};
+        let (_dir, mut execution, bot) = fixture();
+        let path = &execution.repository_path;
+        std::fs::write(Path::new(path).join("jean.json"), "tracked").unwrap();
+        git(path, &["add", "jean.json"]).unwrap();
+        git(path, &["commit", "-m", "tracked runtime"]).unwrap();
+        git(path, &["push", "origin", "feature"]).unwrap();
+        git(&bot, &["pull", "--ff-only"]).unwrap();
+        std::fs::write(Path::new(&bot).join("remote"), "remote").unwrap();
+        git(&bot, &["add", "."]).unwrap();
+        git(&bot, &["commit", "-m", "remote advance"]).unwrap();
+        git(&bot, &["push", "origin", "feature"]).unwrap();
+        execution.head_commit = Some(git(path, &["rev-parse", "HEAD"]).unwrap());
+        execution.runtime_config_baseline =
+            Some(super::super::runtime_config::RuntimeConfigBaseline {
+                working_sha256: format!("{:x}", Sha256::digest(b"local runtime")),
+                head_blob: git(path, &["rev-parse", "HEAD:jean.json"]).unwrap(),
+            });
+        std::fs::write(Path::new(path).join("jean.json"), "local runtime").unwrap();
+        let plan = prepare_remote_integration(&execution).unwrap().unwrap();
+        execute_remote_integration(&execution, &plan).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(Path::new(path).join("jean.json")).unwrap(),
+            "local runtime"
+        );
+    }
+    #[test]
+    fn missing_first_publication_branch_is_not_created_and_pr_deletion_is_refused() {
+        let (_dir, mut execution, _bot) = fixture();
+        let path = execution.repository_path.clone();
+        git(&path, &["push", "origin", "--delete", "feature"]).unwrap();
+        assert!(prepare_remote_integration(&execution).unwrap().is_none());
+        let target = publication_remote(&path).unwrap();
+        assert!(private_git(
+            &path,
+            &["ls-remote", "--heads", &target, "refs/heads/feature"]
+        )
+        .unwrap()
+        .is_empty());
+        execution.pr_number = Some(4);
+        assert!(prepare_remote_integration(&execution).is_err());
+        execution.pr_number = None;
+        git(
+            &path,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "/nonexistent/jean-integration-remote",
+            ],
+        )
+        .unwrap();
+        execution.publication_remote_identity = Some(capture_remote_identity(&path).unwrap());
+        assert!(prepare_remote_integration(&execution).is_err());
+        assert_eq!(
+            git(&path, &["rev-parse", "HEAD"]).unwrap(),
+            execution.head_commit.unwrap()
+        );
+    }
 }

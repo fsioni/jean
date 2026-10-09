@@ -53,6 +53,23 @@ PR identity is attached to the worktree under the project storage lock, and guar
 self-assignment is confirmed before CI. Interrupted publication resumes without
 silently creating a second PR or rerunning implementation.
 
+For an already published feature branch, a remote bot/user commit during review
+is handled before publication: fetch its exact SHA, simulate a local merge with
+`merge-tree`, persist a private integration intent, then integrate only a clean
+attributable tree. This is a local feature-branch merge, never a PR merge, reset,
+autostash or force-push. Hooks and rerere are disabled. A real merge conflict or
+unrelated operation leaves the worktree untouched and refuses publication.
+
+After integration all commit-dependent evidence is invalidated, the same owner
+returns to independent review, and CI/preview/acceptance are still required.
+Correction budgets are preserved. Integration preparation is bounded to three
+persisted attempts; a precise late ancestry refusal before push gets at most two
+additional preparation retries per drive. Unknown network/push failures are not
+blindly retried. Interrupted integration accepts only the exact planned parents
+and tree; a foreign HEAD or incomplete Git operation is not adopted or reset.
+A feature already pushed before PR creation uses the same path. A genuinely
+unpublished branch still uses the initial remote-base guard above.
+
 A functional failure found during acceptance returns to correction, then independent
 review, Git sync, CI, preview verification and a new acceptance pass. Failed mandatory
 criteria cannot be hidden by an agent's `passed` summary. This loop shares the same
@@ -222,7 +239,7 @@ No automated migration guesses ownership of historical conflicting executions.
 
 ## Privacy and practical limits
 
-No automated comments, report attachments, extra ticket status changes, merge,
+No automated comments, report attachments, extra ticket status changes, PR merge,
 closure or production writes. A local, editable colleague-facing draft contains
 verified functional criteria and remaining checks, not internal orchestration
 limitations. Copying it does not publish it.
