@@ -98,7 +98,8 @@ export function getNewWorktreeDraftId(projectId: string | null): string {
 export interface NewSessionComposerSettings {
   backend: CliBackend
   model: string
-  executionMode: ExecutionMode
+  /** Only a user override is saved; undefined continues to inherit preferences. */
+  executionMode?: ExecutionMode
   baseBranch: string
   customName: string
 }
@@ -224,11 +225,14 @@ export function NewSessionComposer({
       initialSettings?.model ??
       resolveDefaultModelForBackend(defaultBackend, preferences)
   )
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>(
-    initialSettings?.executionMode ??
-      preferences?.default_execution_mode ??
-      'plan'
-  )
+  const [executionModeOverride, setExecutionMode] = useState<
+    ExecutionMode | undefined
+  >(initialSettings?.executionMode)
+  const executionMode =
+    executionModeOverride ?? preferences?.default_execution_mode ?? 'yolo'
+  // Do not create/send under a guessed default while preferences are loading.
+  const permissionsReady =
+    executionModeOverride !== undefined || preferences !== undefined
   const [baseBranch, setBaseBranch] = useState(
     initialSettings?.baseBranch ?? defaultBranch ?? 'main'
   )
@@ -360,11 +364,18 @@ export function NewSessionComposer({
     onSettingsChange?.({
       backend,
       model,
-      executionMode,
+      executionMode: executionModeOverride,
       baseBranch,
       customName,
     })
-  }, [backend, model, executionMode, baseBranch, customName, onSettingsChange])
+  }, [
+    backend,
+    model,
+    executionModeOverride,
+    baseBranch,
+    customName,
+    onSettingsChange,
+  ])
 
   useEffect(() => {
     if (
@@ -394,6 +405,7 @@ export function NewSessionComposer({
     )
     if (
       !projectId ||
+      !permissionsReady ||
       isCreating ||
       hasInvalidName ||
       ((message || hasAttachments) && (areBackendsLoading || !backendAvailable))
@@ -1041,6 +1053,7 @@ export function NewSessionComposer({
             type="submit"
             disabled={
               !projectId ||
+              !permissionsReady ||
               isCreating ||
               hasInvalidName ||
               (hasConversationContent &&
@@ -1050,13 +1063,15 @@ export function NewSessionComposer({
           >
             {isCreating
               ? 'Creating…'
-              : areBackendsLoading
-                ? 'Checking backends…'
-                : hasConversationContent && !backendAvailable
-                  ? 'No backend available'
-                  : hasConversationContent
-                    ? submitLabel
-                    : submitLabel.replace(' & start', '')}{' '}
+              : !permissionsReady
+                ? 'Loading permissions…'
+                : areBackendsLoading
+                  ? 'Checking backends…'
+                  : hasConversationContent && !backendAvailable
+                    ? 'No backend available'
+                    : hasConversationContent
+                      ? submitLabel
+                      : submitLabel.replace(' & start', '')}{' '}
             {!isCreating && !isMobile && (
               <span className="ml-1 opacity-60">↵</span>
             )}

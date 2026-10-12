@@ -1,3 +1,4 @@
+import { stripSkillResultMetadata } from '@/lib/skill-result-metadata'
 import {
   lazy,
   Suspense,
@@ -495,10 +496,7 @@ export function headingBefore(source: string, offset: number): string | null {
     const match =
       /^#{1,6}\s+(.+?)\s*#*$/.exec(line) ?? /^\*\*(.+)\*\*:?$/.exec(line)
     if (!match?.[1]) continue
-    const text = match[1]
-      .replace(/[*_`]/g, '')
-      .replace(/:$/, '')
-      .trim()
+    const text = match[1].replace(/[*_`]/g, '').replace(/:$/, '').trim()
     if (text) return text
   }
   return null
@@ -1019,6 +1017,7 @@ const Markdown = memo(function Markdown({
   compact = false,
   tableKey,
 }: MarkdownProps) {
+  const visibleChildren = stripSkillResultMetadata(children)
   // Apply remend preprocessing for streaming content to auto-close incomplete
   // markdown. remend strips a single trailing space (incomplete-markdown
   // heuristic) — restore it so space-bearing stream tails don't disappear
@@ -1026,13 +1025,13 @@ const Markdown = memo(function Markdown({
   const content = streaming
     ? (() => {
         const hadTrailingSpace =
-          children.endsWith(' ') && !children.endsWith('  ')
-        const repaired = remend(children)
+          visibleChildren.endsWith(' ') && !visibleChildren.endsWith('  ')
+        const repaired = remend(visibleChildren)
         return hadTrailingSpace && !repaired.endsWith(' ')
           ? `${repaired} `
           : repaired
       })()
-    : children
+    : visibleChildren
 
   const contextValue = useMemo(
     () => ({

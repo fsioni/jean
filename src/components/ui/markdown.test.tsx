@@ -24,6 +24,29 @@ vi.mock('@/lib/table-rows-prompt', async importOriginal => ({
 }))
 
 describe('Markdown', () => {
+  it.each([false, true])(
+    'hides completed and truncated skill metadata (streaming=%s)',
+    streaming => {
+      const { container, rerender } = render(
+        <Markdown streaming={streaming}>
+          {
+            'Retour humain\n<!-- jean-skill-result:{"v":1,"skill":"ticket-fix","outcome":"ci_passed"} -->'
+          }
+        </Markdown>
+      )
+      expect(container).toHaveTextContent('Retour humain')
+      expect(container).not.toHaveTextContent('jean-skill-result')
+      expect(container).not.toHaveTextContent('ci_passed')
+      rerender(
+        <Markdown streaming={streaming}>
+          {'Retour humain\n<!-- jean-skill-result:{"v":1,'}
+        </Markdown>
+      )
+      expect(container).toHaveTextContent('Retour humain')
+      expect(container).not.toHaveTextContent('jean-skill-result')
+    }
+  )
+
   it('pins a table with its exact markdown source and shares state by key', () => {
     useChatStore.setState({ pinnedTables: {} })
     const table = '| Name | Value |\n| --- | --- |\n| **a** | `1` |'

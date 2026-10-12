@@ -37,6 +37,7 @@ import {
 import { linearQueryKeys, loadLinearIssueContext } from '@/services/linear'
 import type { WorktreeFile } from '@/types/chat'
 import { SlashPopover, type SlashPopoverHandle } from './SlashPopover'
+import { WorktreeSkillSuggestions } from './WorktreeSkillSuggestions'
 import {
   ContextMentionPopover,
   type ContextMentionPopoverHandle,
@@ -1242,6 +1243,16 @@ export const ChatInput = memo(function ChatInput({
     ]
   )
 
+  // Suggestions attach the native badge without consuming an in-progress /query.
+  const handleSuggestedSkillSelect = useCallback(
+    (skill: PendingSkill) => {
+      if (!activeSessionId) return
+      useChatStore.getState().addPendingSkill(activeSessionId, skill)
+      inputRef.current?.focus()
+    },
+    [activeSessionId, inputRef]
+  )
+
   // Handle skill selection from / mention popover
   const handleSkillSelect = useCallback(
     (skill: PendingSkill) => {
@@ -1350,6 +1361,16 @@ export const ChatInput = memo(function ChatInput({
         className="sr-only"
         aria-label="Attach files"
         onChange={handleFileInputChange}
+      />
+      <WorktreeSkillSuggestions
+        projectId={activeProjectId}
+        worktreePath={activeWorktreePath}
+        sessionId={activeSessionId}
+        backend={selectedBackend}
+        installedBackends={installedBackends}
+        disabled={isSending}
+        executionMode={executionMode}
+        onSelect={handleSuggestedSkillSelect}
       />
       <Textarea
         ref={inputRef}

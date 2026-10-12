@@ -12,6 +12,11 @@ import {
   type PromptAttachmentMetadata,
 } from './message-content-utils'
 
+const suggestionsMock = vi.hoisted(() => vi.fn((_props: unknown) => null))
+vi.mock('./WorktreeSkillSuggestions', () => ({
+  WorktreeSkillSuggestions: (props: unknown) => suggestionsMock(props),
+}))
+
 const processAttachmentFile = vi.fn()
 const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>
 const { mobileState, nativeState, slashPopoverMock } = vi.hoisted(() => ({
@@ -148,6 +153,23 @@ vi.mock('@/store/chat-store', () => ({
 }))
 
 describe('ChatInput attachments', () => {
+  it('attaches a suggested skill without changing a slash query or sending', () => {
+    renderInput()
+    const input = screen.getByRole('textbox', { name: 'Prompt' })
+    fireEvent.change(input, { target: { value: '/ticket-fix' } })
+    const props = suggestionsMock.mock.calls.at(-1)?.[0] as {
+      onSelect: (skill: unknown) => void
+    }
+    const skill = {
+      id: 'skill-1',
+      name: 'ticket-fix',
+      path: '/repo/.agents/skills/ticket-fix/SKILL.md',
+    }
+    props.onSelect(skill)
+    expect(input).toHaveValue('/ticket-fix')
+    expect(storeState.addPendingSkill).toHaveBeenCalledWith('session-1', skill)
+  })
+
   const renderInput = (
     activeSessionId = 'session-1',
     investigateIssuePrompt?: string,
