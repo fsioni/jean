@@ -574,7 +574,7 @@ function MobileBackendActions({
             )}
           >
             <Zap className="size-4 text-destructive" />
-            Start yolo
+            Start with Full access
           </button>
         )}
       </div>
@@ -672,7 +672,7 @@ function NativeBackendChoice({
             )}
           >
             <Zap className="size-3.5 text-destructive" />
-            Yolo
+            Full access
           </button>
         )}
         <Kbd className="h-7 min-w-7 shrink-0 text-[10px]">{shortcut}</Kbd>

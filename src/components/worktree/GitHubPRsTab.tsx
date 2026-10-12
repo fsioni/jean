@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import {
   Loader2,
   Search,
@@ -21,6 +21,7 @@ import { BulkInvestigateBar } from './BulkInvestigateBar'
 import { SelectAllControl } from './ItemSelectCheckbox'
 import { useMultiSelect } from './hooks/useMultiSelect'
 import type { GitHubPullRequest } from '@/types/github'
+import type { GetContextLinkMatches } from './ContextLinkBadge'
 
 export interface GitHubPRsTabProps {
   searchQuery: string
@@ -46,6 +47,7 @@ export interface GitHubPRsTabProps {
   searchInputRef: React.RefObject<HTMLInputElement | null>
   onGhLogin: () => void
   isGhInstalled: boolean
+  getContextMatches?: GetContextLinkMatches
 }
 
 const getPRKey = (pr: GitHubPullRequest) => pr.number
@@ -74,8 +76,24 @@ export function GitHubPRsTab({
   searchInputRef,
   onGhLogin,
   isGhInstalled,
+  getContextMatches,
 }: GitHubPRsTabProps) {
   const multi = useMultiSelect(prs, getPRKey)
+  const matchesByNumber = useMemo(
+    () =>
+      new Map(
+        getContextMatches
+          ? prs.map(
+              pr =>
+                [
+                  pr.number,
+                  getContextMatches({ type: 'pr', id: pr.number }),
+                ] as const
+            )
+          : []
+      ),
+    [prs, getContextMatches]
+  )
 
   const handleBulkInvestigate = useCallback(async () => {
     if (!onBulkInvestigatePRs || multi.selectedItems.length < 1) return
@@ -204,6 +222,7 @@ export function GitHubPRsTab({
                 index={index}
                 isSelected={index === selectedIndex}
                 isCreating={creatingFromNumber === pr.number}
+                contextMatches={matchesByNumber.get(pr.number)}
                 isStacking={stackingFromPR === pr.number}
                 isChecked={multi.isChecked(pr.number)}
                 onCheckedChange={checked => multi.toggle(pr.number, checked)}

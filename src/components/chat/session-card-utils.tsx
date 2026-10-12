@@ -28,7 +28,10 @@ import {
   preferResolvedCliCommand,
 } from '@/services/cli-binary'
 import { findPlanFilePath, resolvePlanContent } from './tool-call-utils'
-import { shouldShowPermissionApproval } from './permission-approval-utils'
+import {
+  isLivePermissionRequest,
+  shouldShowPermissionApproval,
+} from './permission-approval-utils'
 
 /**
  * Lossless session status for canvas/sidebar/tabs/summaries.
@@ -169,7 +172,7 @@ export const statusConfig: Record<
     indicatorStatus: 'running',
   },
   yoloing: {
-    label: 'Yoloing',
+    label: 'Full access',
     indicatorStatus: 'running',
   },
   reviewing: {
@@ -625,6 +628,7 @@ export function computeSessionCardData(
     isSending: sessionSending,
     executionMode,
     isCodexBackend: session.backend === 'codex',
+    hasLiveRequest: sessionDenials.some(isLivePermissionRequest),
   })
 
   // Determine status — lossless priority matrix (actionable first, then active,

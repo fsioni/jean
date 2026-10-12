@@ -1067,6 +1067,15 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+        "get_context_link_usage" => {
+            let project_path: Option<String> = field_opt(&args, "projectPath", "project_path")?;
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            to_value(crate::projects::get_context_link_usage(
+                app,
+                project_path,
+                project_id,
+            )?)
+        }
         "list_loaded_advisory_contexts" => {
             let session_id: String = field(&args, "sessionId", "session_id")?;
             let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
@@ -2071,6 +2080,64 @@ pub async fn dispatch_command(
         }
 
         // =====================================================================
+        // Server Projects
+        // =====================================================================
+        "save_server_project" => {
+            let project_id: Option<String> = field_opt(&args, "projectId", "project_id")?;
+            let name: String = from_field(&args, "name")?;
+            let server: crate::projects::types::ProjectServer = from_field(&args, "server")?;
+            let parent_id: Option<String> = field_opt(&args, "parentId", "parent_id")?;
+            let system_prompt: Option<String> = field_opt(&args, "systemPrompt", "system_prompt")?;
+            let result = crate::projects::save_server_project(
+                app.clone(),
+                project_id,
+                name,
+                server,
+                parent_id,
+                system_prompt,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
+        "ensure_local_server_project" => {
+            let result = crate::projects::ensure_local_server_project(app.clone()).await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
+        "list_ssh_public_keys" => to_value(crate::projects::list_ssh_public_keys().await?),
+        "server_user_setup_script" => {
+            let user: String = from_field(&args, "user")?;
+            let public_key: String = field(&args, "publicKey", "public_key")?;
+            let access: crate::projects::ServerUserAccess = from_field(&args, "access")?;
+            to_value(crate::projects::server_user_setup_script(user, public_key, access).await?)
+        }
+        "setup_server_user" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            let root_user: String = field(&args, "rootUser", "root_user")?;
+            let user: String = from_field(&args, "user")?;
+            let public_key: String = field(&args, "publicKey", "public_key")?;
+            let access: crate::projects::ServerUserAccess = from_field(&args, "access")?;
+            let result = crate::projects::setup_server_user(
+                app.clone(),
+                project_id,
+                root_user,
+                user,
+                public_key,
+                access,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects"]);
+            to_value(result)
+        }
+        "remove_server_project" => {
+            let project_id: String = field(&args, "projectId", "project_id")?;
+            crate::projects::remove_server_project(app.clone(), project_id).await?;
+            emit_cache_invalidation(app, &["projects"]);
+            Ok(Value::Null)
+        }
+
+        // =====================================================================
         // Folder Management
         // =====================================================================
         "create_folder" => {
@@ -2320,6 +2387,8 @@ pub async fn dispatch_command(
                 field_opt(&args, "selectedExecutionMode", "selected_execution_mode")?;
             let table_checked_rows: Option<std::collections::HashMap<String, Vec<u32>>> =
                 field_opt(&args, "tableCheckedRows", "table_checked_rows")?;
+            let hidden_table_checklists: Option<Vec<String>> =
+                field_opt(&args, "hiddenTableChecklists", "hidden_table_checklists")?;
             let pinned_tables: Option<Vec<crate::chat::types::PinnedTable>> =
                 field_opt(&args, "pinnedTables", "pinned_tables")?;
             crate::chat::update_session_state(
@@ -2350,6 +2419,7 @@ pub async fn dispatch_command(
                 enabled_mcp_servers,
                 selected_execution_mode,
                 table_checked_rows,
+                hidden_table_checklists,
                 pinned_tables,
                 field_opt(&args, "selectedPermissionMode", "selected_permission_mode")?,
             )
@@ -2931,10 +3001,6 @@ pub async fn dispatch_command(
             let result = crate::agent_browser::check_agent_browser_update(app.clone()).await?;
             to_value(result)
         }
-        "ensure_agent_browser_profile" => {
-            let result = crate::agent_browser::ensure_agent_browser_profile(app.clone()).await?;
-            to_value(result)
-        }
         "install_agent_browser" => {
             let result = crate::agent_browser::install_agent_browser(app.clone()).await?;
             emit_cache_invalidation(app, &["agent-browser"]);
@@ -3001,6 +3067,14 @@ pub async fn dispatch_command(
         }
         "uninstall_codex_cli" => {
             crate::codex_cli::uninstall_codex_cli(app.clone()).await?;
+            Ok(Value::Null)
+        }
+
+        "respond_claude_permission" => {
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let rpc_id: u64 = field(&args, "rpcId", "rpc_id")?;
+            let approved: bool = from_field(&args, "approved")?;
+            crate::chat::respond_claude_permission(session_id, rpc_id, approved)?;
             Ok(Value::Null)
         }
 
@@ -4235,6 +4309,10 @@ pub async fn dispatch_command(
 
         // Unknown command
         // =====================================================================
+        // Agents: a separate (boxed) function keeps this function's stack frame small.
+        agent_command if AGENT_COMMANDS.contains(&agent_command) => {
+            Box::pin(dispatch_agents_command(app, agent_command, &args)).await
+        }
         _ => Err(format!("Unknown command: {command}")),
     }
 }
@@ -4254,11 +4332,126 @@ fn emit_cache_invalidation(app: &AppHandle, keys: &[&str]) {
 // Helper functions for JSON deserialization
 // =============================================================================
 
-fn to_value<T: serde::Serialize>(val: T) -> Result<Value, String> {
+const AGENT_COMMANDS: &[&str] = &[
+    "get_jean_agent_workdir",
+    "get_agent_workdir",
+    "list_agents",
+    "get_agent_details",
+    "create_agent",
+    "update_agent",
+    "delete_agent",
+    "decide_agent_approval",
+    "cancel_agent_schedule",
+    "save_agent_memory",
+    "update_agent_memory",
+    "delete_agent_memory",
+    "export_agent_memory",
+    "mark_agent_notifications_read",
+];
+
+/// Agent commands (see `crate::agents::commands`).
+async fn dispatch_agents_command(
+    app: &AppHandle,
+    command: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    {
+        match command {
+            "get_jean_agent_workdir" => to_value(crate::agents::agent_workdir(app, "jean")?),
+            "get_agent_workdir" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                to_value(crate::agents::agent_workdir(app, &agent_id)?)
+            }
+            "list_agents" => to_value(crate::agents::commands::list_agents(app).await?),
+            "get_agent_details" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                to_value(crate::agents::commands::get_agent_details(app, &agent_id)?)
+            }
+            "create_agent" => {
+                let name: String = from_field(args, "name")?;
+                let description: Option<String> = from_field_opt(args, "description")?;
+                let icon: Option<String> = from_field_opt(args, "icon")?;
+                let role_prompt: Option<String> = field_opt(args, "rolePrompt", "role_prompt")?;
+                to_value(crate::agents::commands::create_agent(
+                    app,
+                    &name,
+                    description.as_deref().unwrap_or(""),
+                    icon.as_deref().unwrap_or("blue"),
+                    role_prompt.as_deref().unwrap_or(""),
+                )?)
+            }
+            "update_agent" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                let patch: crate::agents::db::AgentPatch = from_field(args, "patch")?;
+                to_value(crate::agents::commands::update_agent(app, &agent_id, patch).await?)
+            }
+            "delete_agent" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                crate::agents::commands::delete_agent(app, &agent_id)?;
+                Ok(Value::Null)
+            }
+            "decide_agent_approval" => {
+                let approval_id: i64 = field(args, "approvalId", "approval_id")?;
+                let approve: bool = from_field(args, "approve")?;
+                to_value(crate::agents::commands::decide_approval(app, approval_id, approve).await?)
+            }
+            "cancel_agent_schedule" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                let schedule_id: i64 = field(args, "scheduleId", "schedule_id")?;
+                crate::agents::commands::cancel_schedule(app, &agent_id, schedule_id)?;
+                Ok(Value::Null)
+            }
+            "save_agent_memory" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                let content: String = from_field(args, "content")?;
+                let kind: String = from_field(args, "kind")?;
+                let shared: Option<bool> = from_field_opt(args, "shared")?;
+                let pinned: Option<bool> = from_field_opt(args, "pinned")?;
+                to_value(crate::agents::commands::save_memory(
+                    app,
+                    &agent_id,
+                    &content,
+                    &kind,
+                    shared.unwrap_or(false),
+                    pinned.unwrap_or(false),
+                )?)
+            }
+            "update_agent_memory" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                let memory_id: i64 = field(args, "memoryId", "memory_id")?;
+                let patch: crate::agents::db::MemoryPatch = from_field(args, "patch")?;
+                to_value(crate::agents::commands::update_memory(
+                    app, &agent_id, memory_id, patch,
+                )?)
+            }
+            "delete_agent_memory" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                let memory_id: i64 = field(args, "memoryId", "memory_id")?;
+                crate::agents::commands::delete_memory(app, &agent_id, memory_id)?;
+                Ok(Value::Null)
+            }
+            "mark_agent_notifications_read" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                crate::agents::commands::mark_notifications_read(app, &agent_id)?;
+                Ok(Value::Null)
+            }
+            "export_agent_memory" => {
+                let agent_id: String = field(args, "agentId", "agent_id")?;
+                to_value(crate::agents::commands::export_memory(app, &agent_id)?)
+            }
+            _ => Err(format!("Unknown command: {command}")),
+        }
+    }
+}
+
+pub(crate) fn to_value<T: serde::Serialize>(val: T) -> Result<Value, String> {
     serde_json::to_value(val).map_err(|e| format!("Serialization error: {e}"))
 }
 
-fn from_field<T: serde::de::DeserializeOwned>(args: &Value, field: &str) -> Result<T, String> {
+pub(crate) fn from_field<T: serde::de::DeserializeOwned>(
+    args: &Value,
+    field: &str,
+) -> Result<T, String> {
     args.get(field)
         .ok_or_else(|| format!("Missing field: {field}"))
         .and_then(|v| {
@@ -4266,7 +4459,7 @@ fn from_field<T: serde::de::DeserializeOwned>(args: &Value, field: &str) -> Resu
         })
 }
 
-fn from_field_opt<T: serde::de::DeserializeOwned>(
+pub(crate) fn from_field_opt<T: serde::de::DeserializeOwned>(
     args: &Value,
     field: &str,
 ) -> Result<Option<T>, String> {
@@ -4279,7 +4472,7 @@ fn from_field_opt<T: serde::de::DeserializeOwned>(
 }
 
 /// Try camelCase field first, then snake_case. For required fields.
-fn field<T: serde::de::DeserializeOwned>(
+pub(crate) fn field<T: serde::de::DeserializeOwned>(
     args: &Value,
     camel: &str,
     snake: &str,
@@ -4288,7 +4481,7 @@ fn field<T: serde::de::DeserializeOwned>(
 }
 
 /// Try camelCase field first, then snake_case. For optional fields.
-fn field_opt<T: serde::de::DeserializeOwned>(
+pub(crate) fn field_opt<T: serde::de::DeserializeOwned>(
     args: &Value,
     camel: &str,
     snake: &str,

@@ -761,7 +761,8 @@ export function AutoFixPane({ projectId }: { projectId: string }) {
             </Label>
             <p className="mt-1 text-xs text-muted-foreground">
               Poll open GitHub issues, create one Jean worktree per issue, and
-              draft a focused plan. Optionally let Mr. Robot yolo the plan too.
+              draft a focused plan. Optionally let Mr. Robot run the plan with
+              Full access too.
             </p>
           </div>
           <Switch

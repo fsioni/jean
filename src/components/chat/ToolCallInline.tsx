@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { usePreferences } from '@/services/preferences'
 import { useChatStore } from '@/store/chat-store'
 import { useVisibilityAwareTicker } from '@/hooks/useVisibilityAwareTicker'
@@ -602,7 +602,7 @@ interface ToolCallInlineProps {
  * Collapsible inline display for a single tool call (non-Task)
  * Used for standalone tools or as sub-items within a Task
  */
-export function ToolCallInline({
+export const ToolCallInline = memo(function ToolCallInline({
   toolCall,
   className,
   onFileClick,
@@ -614,8 +614,11 @@ export function ToolCallInline({
     `tool:${toolCall.id}`,
     preferences?.expand_tool_calls_by_default ?? false
   )
-  const { icon, label, detail, filePath, expandedContent } =
-    getToolDisplay(toolCall)
+  // Builds JSON/diff content, so only recompute when the tool call changes
+  const { icon, label, detail, filePath, expandedContent } = useMemo(
+    () => getToolDisplay(toolCall),
+    [toolCall]
+  )
 
   const handleFileClick = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -659,7 +662,7 @@ export function ToolCallInline({
             {isToolCallError(toolCall) ? <ToolErrorBadge /> : null}
             <span className="ml-auto flex min-w-0 flex-1 items-center justify-end">
               {isStreaming && isIncomplete ? (
-                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
               ) : (
                 <ChevronRight
                   className={cn(
@@ -692,7 +695,7 @@ export function ToolCallInline({
       </div>
     </Collapsible>
   )
-}
+})
 
 interface TaskCallInlineProps {
   taskToolCall: ToolCall
@@ -718,7 +721,7 @@ interface TaskCallInlineProps {
  * Collapsible inline display for Task tool calls with nested sub-tools
  * Shows the Task as a container with all its sub-agent tool calls inside
  */
-export function TaskCallInline({
+export const TaskCallInline = memo(function TaskCallInline({
   taskToolCall,
   subToolCalls,
   allToolCalls,
@@ -771,7 +774,7 @@ export function TaskCallInline({
             <Loader2
               className={cn(
                 subToolCalls.length === 0 && 'ml-auto',
-                'h-3 w-3 shrink-0 animate-spin text-muted-foreground/50'
+                'h-3.5 w-3.5 shrink-0 animate-spin text-foreground'
               )}
             />
           ) : (
@@ -800,7 +803,9 @@ export function TaskCallInline({
       </div>
     </Collapsible>
   )
-}
+})
+
+const EMPTY_TOOL_CALLS: ToolCall[] = []
 
 interface TaskCallDetailsProps {
   /** Instructions given to the subagent */
@@ -831,6 +836,18 @@ export function TaskCallDetails({
   isStreaming,
   isIncomplete,
 }: TaskCallDetailsProps) {
+  // Group once so nested Task rows get stable sub-tool arrays per render
+  const subToolsByParent = useMemo(() => {
+    const byParent = new Map<string, ToolCall[]>()
+    for (const tc of allToolCalls ?? []) {
+      if (!tc.parent_tool_use_id) continue
+      const calls = byParent.get(tc.parent_tool_use_id) ?? []
+      calls.push(tc)
+      byParent.set(tc.parent_tool_use_id, calls)
+    }
+    return byParent
+  }, [allToolCalls])
+
   return (
     <div className={cn('space-y-2', className)}>
       {/* Show prompt/instructions */}
@@ -850,9 +867,8 @@ export function TaskCallDetails({
                 taskToolCall={subTool}
                 subToolCalls={
                   nestedSubTools?.[subTool.id] ??
-                  (allToolCalls ?? []).filter(
-                    t => t.parent_tool_use_id === subTool.id
-                  )
+                  subToolsByParent.get(subTool.id) ??
+                  EMPTY_TOOL_CALLS
                 }
                 allToolCalls={allToolCalls}
                 nestedSubTools={nestedSubTools}
@@ -904,7 +920,7 @@ interface StackedGroupProps {
  * Collapsible container for multiple stacked items (thinking + tools)
  * Groups consecutive stackable items into a single visual block
  */
-export function StackedGroup({
+export const StackedGroup = memo(function StackedGroup({
   items,
   className,
   onFileClick,
@@ -968,7 +984,7 @@ export function StackedGroup({
             {summary}
           </span>
           {isStreaming && isIncomplete ? (
-            <Loader2 className="ml-auto h-3 w-3 shrink-0 animate-spin text-muted-foreground/50" />
+            <Loader2 className="ml-auto h-3.5 w-3.5 shrink-0 animate-spin text-foreground" />
           ) : (
             <ChevronRight
               className={cn(
@@ -996,7 +1012,7 @@ export function StackedGroup({
       </div>
     </Collapsible>
   )
-}
+})
 
 interface SubThinkingItemProps {
   thinking: string
@@ -1053,14 +1069,20 @@ interface SubToolItemProps {
  * Compact sub-tool item displayed within a Task or ToolCallGroup
  * Even more minimal than ToolCallInline - just icon, label, and detail inline
  */
-function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
+const SubToolItem = memo(function SubToolItem({
+  toolCall,
+  onFileClick,
+}: SubToolItemProps) {
   const { data: preferences } = usePreferences()
   const [isOpen, setIsOpen] = useRememberedExpansion(
     `subtool:${toolCall.id}`,
     preferences?.expand_tool_calls_by_default ?? false
   )
-  const { icon, label, detail, filePath, expandedContent } =
-    getToolDisplay(toolCall)
+  // Builds JSON/diff content, so only recompute when the tool call changes
+  const { icon, label, detail, filePath, expandedContent } = useMemo(
+    () => getToolDisplay(toolCall),
+    [toolCall]
+  )
 
   const handleFileClick = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -1129,7 +1151,7 @@ function SubToolItem({ toolCall, onFileClick }: SubToolItemProps) {
       </div>
     </Collapsible>
   )
-}
+})
 
 interface ToolDisplay {
   icon: React.ReactNode

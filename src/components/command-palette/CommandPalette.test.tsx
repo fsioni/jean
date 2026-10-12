@@ -9,6 +9,7 @@ const {
   markConnectionSwitch,
   selectConnection,
   selectProject,
+  openServerProject,
   setCommandPaletteOpen,
   showToast,
   warnRemoteVersionMismatch,
@@ -24,6 +25,7 @@ const {
   markConnectionSwitch: vi.fn(),
   selectConnection: vi.fn(),
   selectProject: vi.fn(),
+  openServerProject: vi.fn(),
   setCommandPaletteOpen: vi.fn(),
   showToast: vi.fn(),
   warnRemoteVersionMismatch: vi.fn(() => false),
@@ -65,7 +67,12 @@ vi.mock('@/services/preferences', () => ({
   usePreferences: () => ({ data: undefined }),
 }))
 
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({}),
+}))
+
 vi.mock('@/services/projects', () => ({
+  openServerProject,
   useProjects: () => ({
     data: [
       {
@@ -103,6 +110,20 @@ vi.mock('@/services/projects', () => ({
         name: 'Local Tool',
         path: '/projects/local-tool',
         is_folder: false,
+      },
+      {
+        id: 'server-1',
+        name: 'devserver',
+        path: '',
+        is_folder: false,
+        server: { host: 'dev.example.com', user: 'deploy' },
+      },
+      {
+        id: 'server-legacy',
+        name: 'old-copy',
+        path: '',
+        is_folder: false,
+        server: { host: 'old.example.com', jean_connection_id: 'remote-1' },
       },
     ],
   }),
@@ -225,5 +246,21 @@ describe('CommandPalette projects', () => {
     render(<CommandPalette />)
 
     expect(screen.getAllByRole('option')[0]).toHaveTextContent('Build Tool')
+  })
+
+  it('lists servers in their own group and opens them as servers', () => {
+    render(<CommandPalette />)
+
+    const serverRow = screen.getByText('devserver').closest('[cmdk-item]')
+    const group = serverRow?.closest('[cmdk-group]')
+    expect(group).toHaveTextContent(/^Servers/)
+    expect(group).not.toHaveTextContent('Local Tool')
+    expect(serverRow).toHaveTextContent('deploy@dev.example.com')
+    expect(screen.queryByText('old-copy')).not.toBeInTheDocument()
+
+    fireEvent.click(serverRow as Element)
+
+    expect(openServerProject).toHaveBeenCalledWith('server-1', {})
+    expect(selectProject).not.toHaveBeenCalled()
   })
 })

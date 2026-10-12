@@ -667,7 +667,7 @@ describe('AutoFixPane', () => {
     })
   })
 
-  it('shows custom Claude providers for planning and yolo', async () => {
+  it('shows custom Claude providers for planning and Full access', async () => {
     const user = userEvent.setup()
     preferencesMock.custom_cli_profiles = [
       {

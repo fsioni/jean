@@ -1040,7 +1040,6 @@ export function useGitOperations({
       queryClient,
       preferences?.magic_prompts?.code_review,
       preferences?.magic_prompt_models?.code_review_model,
-      preferences?.magic_code_review_configs,
       preferences?.magic_prompt_backends,
       preferences?.default_backend,
       preferences?.magic_prompt_providers,

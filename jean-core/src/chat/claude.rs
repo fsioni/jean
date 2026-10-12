@@ -1,5 +1,7 @@
 use super::coalesce::ChunkCoalescer;
-use super::run_log::{claude_subagent_usage, tool_result_content_to_string, tool_result_is_error};
+use super::run_log::{
+    apply_claude_subagent_usage, tool_result_content_to_string, tool_result_is_error,
+};
 use super::types::{
     is_claude_compaction_summary_text, CompactMetadata, ContentBlock, EffortLevel,
     PermissionDenial, PermissionDeniedEvent, SubagentUsage, ThinkingLevel, ToolCall, UsageData,
@@ -62,8 +64,7 @@ Always use ASD-STE100 Simplified Technical English when you talk to me.\n\
 - Do not re-run a passing check when the code it covers has not changed since.\n\
 - Write new tests only for behavior that can break silently: business logic, parsing/serialization, state transitions, persistence, and a regression test for each fixed bug.\n\
 - Do NOT write tests that only check DOM markup, CSS classes, snapshots, static text or prompt copy, constants, simple prop pass-through, library/framework behavior, or that only assert mocks were called. Verify UI changes in the running app instead.\n\
-- Before UI, HTTP, browser, or end-to-end verification, call Jean MCP `get_run_environments` and test against the returned url/port/command when a Run environment is available.\n\
-- For the current selected project, if there is no other browser testing method, use the Agent Browser when it is available.\n\
+- If a UI check needs a browser and no other browser tool is available, use the Agent Browser.\n\
 \n\
 ### 6. Demand Elegance (Balanced)\n\
 - For non-trivial changes: pause and ask \"is there a more elegant way?\"\n\
@@ -106,7 +107,7 @@ Always use ASD-STE100 Simplified Technical English when you talk to me.\n\
 ## Jean Run Environment\n\
 - When you need to test a running app (UI, HTTP, browser, smoke, e2e), call Jean MCP `get_run_environments` first (pass this worktreeId when known).\n\
 - If an environment is running, test against its `url`, port, and startup command. Do not guess localhost ports or start a second dev server when Jean already has one.\n\
-- If nothing is running and verification needs a live server, say so and use the returned/startup command rather than inventing a different command or port.\n\
+- If nothing is running and verification needs a live server, start it with Jean MCP `start_run_environment`. Do not start a dev server by hand. If no Run command is configured, say so; do not invent a command or port.\n\
 - In how-to-test notes, include the exact URL/port you used.\n\
 \n\
 ## Important!\n\
@@ -891,16 +892,12 @@ fn build_claude_args(
     // Chrome browser integration (beta)
     if chrome_enabled {
         args.push("--chrome".to_string());
-        // Claude in Chrome asks for per-site approval even in bypassPermissions
-        // mode (allow rules do not skip it), and headless runs deny every ask.
-        // In YOLO, route every ask to Jean MCP, which approves it.
-        if execution_mode == Some("yolo") {
-            if let Some(tool) = jean_permission_prompt_tool(mcp_config) {
-                args.push("--permission-prompt-tool".to_string());
-                args.push(tool);
-            }
-        }
     }
+
+    let (prompt_args, prompt_env) =
+        permission_prompt_args(execution_mode, chrome_enabled, mcp_config);
+    args.extend(prompt_args);
+    env_vars.extend(prompt_env);
 
     // Build combined system prompt parts
     // Claude CLI only uses the LAST --append-system-prompt, so we must combine all prompts
@@ -919,14 +916,18 @@ fn build_claude_args(
     if let Ok(prefs_path) = crate::get_preferences_path(app) {
         if let Ok(contents) = std::fs::read_to_string(&prefs_path) {
             if let Ok(prefs) = serde_json::from_str::<crate::AppPreferences>(&contents) {
-                let prompt = prefs
-                    .magic_prompts
-                    .global_system_prompt
-                    .as_deref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(DEFAULT_GLOBAL_SYSTEM_PROMPT);
-                system_prompt_parts.push(prompt.to_string());
+                let prompt = crate::projects::server_system_prompt(app, worktree_id)
+                    .unwrap_or_else(|| {
+                        prefs
+                            .magic_prompts
+                            .global_system_prompt
+                            .as_deref()
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(DEFAULT_GLOBAL_SYSTEM_PROMPT)
+                            .to_string()
+                    });
+                system_prompt_parts.push(prompt);
             }
         }
     }
@@ -1341,6 +1342,10 @@ fn build_claude_args(
 
     // Debug env vars
     env_vars.push(("JEAN_SESSION_ID".to_string(), session_id.to_string()));
+    env_vars.push((
+        crate::agent_browser::SESSION_ENV.to_string(),
+        crate::agent_browser::session_name(session_id),
+    ));
     env_vars.push(("JEAN_WORKTREE_ID".to_string(), worktree_id.to_string()));
     // Jean MCP recursion-depth chain. Always set so a Claude spawned by another
     // Jean-spawned Claude can be capped at the configured depth.
@@ -1454,6 +1459,36 @@ fn jean_permission_prompt_tool(mcp_config: Option<&str>) -> Option<String> {
         "mcp__{server_name}__{}",
         crate::jean_mcp_core::CLAUDE_PERMISSION_PROMPT_TOOL
     ))
+}
+
+/// `--permission-prompt-tool` args and env. Headless runs deny every
+/// permission ask, so route asks to Jean MCP: Supervised shows a live approval
+/// card and waits for the user; YOLO + Chrome approves Claude in Chrome's
+/// per-site asks, which bypassPermissions does not skip. Without Jean MCP,
+/// Supervised falls back to the approval card after the turn (from the
+/// result's `permission_denials`).
+fn permission_prompt_args(
+    execution_mode: Option<&str>,
+    chrome_enabled: bool,
+    mcp_config: Option<&str>,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let live_prompts = execution_mode == Some("supervised");
+    if !live_prompts && !(chrome_enabled && execution_mode == Some("yolo")) {
+        return (Vec::new(), Vec::new());
+    }
+    let Some(tool) = jean_permission_prompt_tool(mcp_config) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut env_vars = Vec::new();
+    if live_prompts {
+        // The user may take minutes to answer; some CLI versions stop MCP
+        // tool calls after 60s and treat that as a denial.
+        env_vars.push((
+            "MCP_TOOL_TIMEOUT".to_string(),
+            super::claude_permissions::LIVE_PROMPT_MCP_TIMEOUT_MS.to_string(),
+        ));
+    }
+    (vec!["--permission-prompt-tool".to_string(), tool], env_vars)
 }
 
 /// Execute Claude CLI in detached mode.
@@ -1862,20 +1897,15 @@ pub fn tail_claude_output(
                 flush_pending_chunks(app, session_id, worktree_id, &run_id, &mut chunk_coalescer);
             }
 
-            if let Some((tool_use_id, subagent_usage)) = claude_subagent_usage(&msg) {
-                if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == tool_use_id) {
-                    if tc.subagent_usage.as_ref() != Some(&subagent_usage) {
-                        tc.subagent_usage = Some(subagent_usage.clone());
-                        let event = SubagentUsageEvent {
-                            session_id: session_id.to_string(),
-                            worktree_id: worktree_id.to_string(),
-                            tool_use_id,
-                            usage: subagent_usage,
-                        };
-                        if let Err(e) = app.emit_all("chat:subagent_usage", &event) {
-                            log::error!("Failed to emit subagent_usage: {e}");
-                        }
-                    }
+            if let Some((tool_use_id, usage)) = apply_claude_subagent_usage(&mut tool_calls, &msg) {
+                let event = SubagentUsageEvent {
+                    session_id: session_id.to_string(),
+                    worktree_id: worktree_id.to_string(),
+                    tool_use_id,
+                    usage,
+                };
+                if let Err(e) = app.emit_all("chat:subagent_usage", &event) {
+                    log::error!("Failed to emit subagent_usage: {e}");
                 }
             }
 
@@ -2451,6 +2481,12 @@ pub fn tail_claude_output(
                                 .filter_map(|d| {
                                     let tool_name = d.get("tool_name")?.as_str()?;
                                     let tool_input = d.get("tool_input")?;
+                                    let tool_use_id = d.get("tool_use_id")?.as_str()?;
+
+                                    // The user already denied this live
+                                    if super::claude_permissions::take_denied_live(tool_use_id) {
+                                        return None;
+                                    }
 
                                     // Skip plan file cleanup denials (benign Claude housekeeping)
                                     if tool_name == "Bash" {
@@ -2471,7 +2507,7 @@ pub fn tail_claude_output(
 
                                     Some(PermissionDenial {
                                         tool_name: tool_name.to_string(),
-                                        tool_use_id: d.get("tool_use_id")?.as_str()?.to_string(),
+                                        tool_use_id: tool_use_id.to_string(),
                                         tool_input: tool_input.clone(),
                                         rpc_id: None,
                                     })
@@ -3240,6 +3276,41 @@ mod tests {
     }
 
     #[test]
+    fn permission_prompt_tool_routes_supervised_and_yolo_chrome_to_jean_mcp() {
+        let server = crate::jean_mcp_config::current_mode().server_name();
+        let config = format!(r#"{{"mcpServers":{{"{server}":{{}}}}}}"#);
+        let tool = format!("mcp__{server}__claude_permission_prompt");
+
+        let (args, env) = permission_prompt_args(Some("supervised"), false, Some(&config));
+        assert_eq!(
+            args,
+            vec!["--permission-prompt-tool".to_string(), tool.clone()]
+        );
+        assert!(env.iter().any(|(k, _)| k == "MCP_TOOL_TIMEOUT"));
+
+        let (args, env) = permission_prompt_args(Some("yolo"), true, Some(&config));
+        assert_eq!(args, vec!["--permission-prompt-tool".to_string(), tool]);
+        assert!(env.is_empty());
+
+        for (mode, chrome) in [
+            ("yolo", false),
+            ("build", true),
+            ("auto", true),
+            ("plan", true),
+        ] {
+            let (args, _) = permission_prompt_args(Some(mode), chrome, Some(&config));
+            assert!(
+                args.is_empty(),
+                "{mode} chrome={chrome} must not add the tool"
+            );
+        }
+
+        // Without Jean MCP, Supervised keeps the after-turn approval card.
+        let (args, env) = permission_prompt_args(Some("supervised"), false, None);
+        assert!(args.is_empty() && env.is_empty());
+    }
+
+    #[test]
     fn merge_claude_settings_overlays_runtime_keys_on_profile() {
         let profile = serde_json::json!({
             "env": {"ANTHROPIC_API_KEY": "secret"},
@@ -3365,8 +3436,10 @@ mod tests {
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("get_run_environments"));
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT
             .contains("test against its `url`, port, and startup command"));
-        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("use the Agent Browser when it is available"));
-        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("no other browser testing method"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("start_run_environment"));
+        assert!(!DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("use the returned/startup command"));
+        assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT
+            .contains("no other browser tool is available, use the Agent Browser"));
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT.contains("VERY IMPORTANT: Keep Code Simple"));
         assert!(DEFAULT_GLOBAL_SYSTEM_PROMPT
             .contains("Always implement the simplest maintainable solution"));

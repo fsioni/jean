@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
+import { act, fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { Markdown, headingBefore } from './markdown'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
@@ -75,7 +75,7 @@ describe('Markdown', () => {
     expect(useChatStore.getState().pinnedTables['session-1']).toBeUndefined()
   })
 
-  it('adds a row to the prompt on row click, but not on link clicks', () => {
+  it('adds a row to the prompt on row click, but not on link clicks', async () => {
     mockSetRow.mockReset()
     const table =
       '| Name | Link |\n| --- | --- |\n| a | [docs](https://x.dev) |'
@@ -89,6 +89,8 @@ describe('Markdown', () => {
     fireEvent.click(screen.getByRole('link', { name: 'docs' }))
     expect(mockSetRow).not.toHaveBeenCalled()
 
+    const focusChat = vi.fn()
+    window.addEventListener('focus-chat-input', focusChat)
     fireEvent.click(screen.getByText('a'))
     expect(mockSetRow).toHaveBeenCalledWith(
       's1',
@@ -97,7 +99,23 @@ describe('Markdown', () => {
       expect.any(Array),
       ''
     )
-    expect(screen.getByLabelText(/row 1/i)).toBeTruthy()
+    // One click adds the row and opens the note form with focus in it.
+    const note = screen.getByLabelText(/row 1/i)
+    await waitFor(() => expect(document.activeElement).toBe(note))
+    expect(focusChat).not.toHaveBeenCalled()
+
+    // Enter saves the note, then focus goes on to the chat input.
+    fireEvent.change(note, { target: { value: 'fix it' } })
+    fireEvent.keyDown(note, { key: 'Enter' })
+    expect(mockSetRow).toHaveBeenLastCalledWith(
+      's1',
+      't1',
+      0,
+      expect.any(Array),
+      'fix it'
+    )
+    await waitFor(() => expect(focusChat).toHaveBeenCalledTimes(1))
+    window.removeEventListener('focus-chat-input', focusChat)
   })
 
   it('checks the checklist row when the row is added to the prompt', () => {
@@ -114,6 +132,25 @@ describe('Markdown', () => {
     expect(
       useChatStore.getState().tableCheckedRows.s2?.t2 ?? new Set()
     ).toEqual(new Set([1]))
+  })
+
+  it('checks the row in the background when checklist mode is off', () => {
+    mockSetRow.mockReset()
+    useChatStore.setState({ tableCheckedRows: {}, hiddenTableChecklists: {} })
+    render(
+      <Markdown sessionId="s3" tableKey="t3">
+        {'| Name |\n| --- |\n| a |\n| b |'}
+      </Markdown>
+    )
+
+    fireEvent.click(screen.getByText('b'))
+    // No checklist column while checklist mode is off.
+    expect(screen.queryByLabelText(/Toggle row/)).toBeNull()
+
+    act(() => useChatStore.getState().enableTableChecklist('s3', 't3'))
+    expect(
+      (screen.getByLabelText('Toggle row 2') as HTMLElement).dataset.state
+    ).toBe('checked')
   })
 
   it('supports keyboard row navigation, add with note, and removal', () => {
@@ -175,6 +212,89 @@ describe('Markdown', () => {
       0,
       expect.any(Array),
       null
+    )
+  })
+
+  it('keeps focus on the next note form when one form closes another', async () => {
+    useChatStore.setState({
+      pendingTextFiles: {
+        s4: [{ id: 'tf', tableRows: { tableKey: 't4', rows: [0, 1] } }],
+      },
+    } as never)
+    render(
+      <Markdown sessionId="s4" tableKey="t4">
+        {'| Name |\n| --- |\n| a |\n| b |'}
+      </Markdown>
+    )
+
+    fireEvent.click(screen.getByText('a'))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByLabelText(/Row 1 is in the prompt/)
+      )
+    )
+
+    // A click on the next row closes the first form and opens the next one.
+    // The first form's deferred close must not pull focus back to its row.
+    const rowB = screen.getByText('b')
+    fireEvent.pointerDown(rowB)
+    fireEvent.click(rowB)
+    await act(() => new Promise(resolve => setTimeout(resolve, 20)))
+    expect(screen.queryByLabelText(/Row 1 is in the prompt/)).toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByLabelText(/Row 2 is in the prompt/)
+    )
+  })
+
+  it('keeps a typed note when the user clicks its row or outside the form', async () => {
+    mockSetRow.mockReset()
+    useChatStore.setState({
+      pendingTextFiles: {
+        s5: [{ id: 'tf', tableRows: { tableKey: 't5', rows: [0] } }],
+      },
+    } as never)
+    render(
+      <Markdown sessionId="s5" tableKey="t5">
+        {'| Name |\n| --- |\n| a |\n| b |'}
+      </Markdown>
+    )
+    const rowA = screen.getByText('a')
+    const noteLabel = /Row 1 is in the prompt/
+
+    fireEvent.click(rowA)
+    fireEvent.change(screen.getByLabelText(noteLabel), {
+      target: { value: 'draft' },
+    })
+    // Radix starts to listen for outside clicks one tick after it opens.
+    await act(() => new Promise(resolve => setTimeout(resolve, 20)))
+
+    // A click on the row of the open form keeps the form and the draft.
+    fireEvent.pointerDown(rowA)
+    fireEvent.click(rowA)
+    const note = screen.getByLabelText(noteLabel) as HTMLTextAreaElement
+    expect(note.value).toBe('draft')
+    expect(document.activeElement).toBe(note)
+
+    // Escape discards the draft and returns focus to the row.
+    fireEvent.keyDown(note, { key: 'Escape' })
+    await act(() => new Promise(resolve => setTimeout(resolve, 20)))
+    expect(screen.queryByLabelText(noteLabel)).toBeNull()
+    expect(mockSetRow).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(rowA.closest('tr'))
+
+    // A click outside the form saves a changed note.
+    fireEvent.click(rowA)
+    fireEvent.change(screen.getByLabelText(noteLabel), {
+      target: { value: 'kept' },
+    })
+    await act(() => new Promise(resolve => setTimeout(resolve, 20)))
+    fireEvent.pointerDown(document.body)
+    expect(mockSetRow).toHaveBeenCalledWith(
+      's5',
+      't5',
+      0,
+      expect.any(Array),
+      'kept'
     )
   })
 

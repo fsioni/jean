@@ -219,18 +219,7 @@ export function useToolbarHandlers({
 
       persistToolbarBackendAndModel(backend, model)
     },
-    [
-      persistToolbarBackendAndModel,
-      preferences?.selected_codex_model,
-      preferences?.selected_cursor_model,
-      preferences?.selected_commandcode_model,
-      preferences?.selected_grok_model,
-      preferences?.selected_kimi_model,
-      preferences?.selected_model,
-      preferences?.selected_opencode_model,
-      preferences?.selected_pi_model,
-      piModelOptions,
-    ]
+    [persistToolbarBackendAndModel, preferences, piModelOptions]
   )
 
   const handleToolbarBackendModelChange = useCallback(
@@ -403,6 +392,7 @@ export function useToolbarHandlers({
       activeSessionIdRef,
       activeWorktreeIdRef,
       activeWorktreePathRef,
+      queryClient,
       selectedBackend,
       setExecutionMode,
     ]

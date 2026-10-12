@@ -181,9 +181,7 @@ describe('PreferencesDialog', () => {
       throw new Error('Expected header actions to be rendered')
     }
     await user.click(
-      within(headerActions).getByRole('button', {
-        name: 'Close',
-      })
+      within(headerActions).getByRole('button', { name: 'Close' })
     )
 
     await waitFor(() => {

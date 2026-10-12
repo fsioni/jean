@@ -229,6 +229,40 @@ describe('finishNewSessionFlow', () => {
     })
   })
 
+  it('persists selected settings for an empty conversation', async () => {
+    const invoke = vi.fn(async command => {
+      if (command === 'get_sessions') return { sessions: [session] }
+      return undefined
+    })
+    await finishNewSessionFlow({
+      pendingWorktree: worktree,
+      waitForWorktree: vi.fn().mockResolvedValue(worktree),
+      invoke: invoke as never,
+      sessionSettings: {
+        backend: 'codex',
+        model: 'gpt-5',
+        executionMode: 'plan',
+      },
+    })
+    const common = {
+      worktreeId: worktree.id,
+      worktreePath: worktree.path,
+      sessionId: session.id,
+    }
+    expect(invoke).toHaveBeenCalledWith('set_session_model', {
+      ...common,
+      model: 'gpt-5',
+    })
+    expect(invoke).toHaveBeenCalledWith('set_session_backend', {
+      ...common,
+      backend: 'codex',
+    })
+    expect(invoke).toHaveBeenCalledWith('update_session_state', {
+      ...common,
+      selectedExecutionMode: 'plan',
+    })
+  })
+
   it('creates a session when the backend did not create one', async () => {
     const invoke = vi.fn(async command => {
       if (command === 'get_sessions') return { sessions: [] }

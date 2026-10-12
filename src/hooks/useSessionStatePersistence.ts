@@ -87,6 +87,7 @@ interface SessionState {
   selectedExecutionMode: ExecutionMode | null
   selectedPermissionMode: PermissionMode | undefined
   tableCheckedRows: Record<string, number[]>
+  hiddenTableChecklists: string[]
   pinnedTables: PinnedTable[]
 }
 
@@ -181,6 +182,7 @@ export function useSessionStatePersistence() {
         executionModes,
         permissionModes,
         tableCheckedRows,
+        hiddenTableChecklists,
         pinnedTables,
       } = useChatStore.getState()
 
@@ -228,6 +230,7 @@ export function useSessionStatePersistence() {
             ([key, set]) => [key, Array.from(set).sort((a, b) => a - b)]
           )
         ),
+        hiddenTableChecklists: hiddenTableChecklists[sessionId] ?? [],
         pinnedTables: pinnedTables[sessionId] ?? [],
       }
     },
@@ -281,6 +284,7 @@ export function useSessionStatePersistence() {
         selectedExecutionMode: state.selectedExecutionMode,
         selectedPermissionMode: state.selectedPermissionMode,
         tableCheckedRows: state.tableCheckedRows,
+        hiddenTableChecklists: state.hiddenTableChecklists,
         pinnedTables: state.pinnedTables,
       })
     }, 500)
@@ -615,6 +619,16 @@ export function useSessionStatePersistence() {
         }
       }
 
+      if (
+        session.hidden_table_checklists &&
+        session.hidden_table_checklists.length > 0
+      ) {
+        updates.hiddenTableChecklists = {
+          ...currentState.hiddenTableChecklists,
+          [activeSessionId]: session.hidden_table_checklists,
+        }
+      }
+
       // Load pinned tables
       if (session.pinned_tables && session.pinned_tables.length > 0) {
         updates.pinnedTables = {
@@ -711,6 +725,8 @@ export function useSessionStatePersistence() {
     let prevPermissionMode = useChatStore.getState().permissionModes[sessionId]
     let prevTableCheckedRows =
       useChatStore.getState().tableCheckedRows[sessionId]
+    let prevHiddenTableChecklists =
+      useChatStore.getState().hiddenTableChecklists[sessionId]
     let prevPinnedTables = useChatStore.getState().pinnedTables[sessionId]
 
     const unsubscribe = useChatStore.subscribe(state => {
@@ -742,6 +758,8 @@ export function useSessionStatePersistence() {
       const currentExecutionMode = state.executionModes[sessionId]
       const currentPermissionMode = state.permissionModes[sessionId]
       const currentTableCheckedRows = state.tableCheckedRows[sessionId]
+      const currentHiddenTableChecklists =
+        state.hiddenTableChecklists[sessionId]
       const currentPinnedTables = state.pinnedTables[sessionId]
 
       const hasChanges =
@@ -767,6 +785,7 @@ export function useSessionStatePersistence() {
         currentExecutionMode !== prevExecutionMode ||
         currentPermissionMode !== prevPermissionMode ||
         currentTableCheckedRows !== prevTableCheckedRows ||
+        currentHiddenTableChecklists !== prevHiddenTableChecklists ||
         currentPinnedTables !== prevPinnedTables
 
       if (hasChanges) {
@@ -792,6 +811,7 @@ export function useSessionStatePersistence() {
         prevExecutionMode = currentExecutionMode
         prevPermissionMode = currentPermissionMode
         prevTableCheckedRows = currentTableCheckedRows
+        prevHiddenTableChecklists = currentHiddenTableChecklists
         prevPinnedTables = currentPinnedTables
 
         const currentState = getCurrentSessionState(sessionId)

@@ -108,11 +108,7 @@ function CloseWorktreeDialogContent({
           <AlertDialogAction
             autoFocus
             onClick={onConfirm}
-            className={
-              isDelete
-                ? 'bg-destructive text-white hover:bg-destructive/90'
-                : undefined
-            }
+            variant={isDelete ? 'destructive' : undefined}
           >
             {isDelete
               ? 'Delete'

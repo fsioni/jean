@@ -26,6 +26,9 @@ const ROUTED_ARGUMENT_KEYS = new Set([
   'parent_id',
   'activeSessionId',
   'active_session_id',
+  // Agents: each Jean server has its own agents
+  'agentId',
+  'agent_id',
 ])
 
 const PATH_ARGUMENT_KEYS = new Set([
@@ -319,6 +322,8 @@ export function decorateServerResult<T>(
       'clone_project',
       'init_project',
       'create_folder',
+      'save_server_project',
+      'setup_server_user',
       'rename_folder',
       'move_item',
       'update_project_settings',

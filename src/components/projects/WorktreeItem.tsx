@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect, useMemo } from 'react'
+import { memo, useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import { StatusIndicator } from '@/components/ui/status-indicator'
 import type { IndicatorStatus } from '@/components/ui/status-indicator'
 import { ArrowDownUp, ChevronDown } from '@/components/icons/reicon'
@@ -26,7 +26,7 @@ import { useAiPipelineValidations } from '@/services/ai-pipeline'
 import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
 import { isAskUserQuestion, isPlanToolCall, type Session } from '@/types/chat'
 import {
-  computeSessionCardData,
+  createSessionCardDataCache,
   groupCardsByStatus,
   statusConfig,
 } from '@/components/chat/session-card-utils'
@@ -48,7 +48,122 @@ interface WorktreeItemProps {
   defaultBranch: string
 }
 
-export function WorktreeItem({
+interface WorktreeSessionListProps {
+  worktreeId: string
+  sessions: Session[]
+  isSelected: boolean
+  isNarrowSidebar: boolean
+  onSessionSelect: (sessionId: string) => void
+  onSessionMiddleClose: (session: Session) => void
+}
+
+/**
+ * Expanded session list for a sidebar worktree row. Mounted only while the row
+ * is expanded, so collapsed rows never subscribe to the live chat-store maps
+ * used for card status derivation.
+ */
+const WorktreeSessionList = memo(function WorktreeSessionList({
+  worktreeId,
+  sessions,
+  isSelected,
+  isNarrowSidebar,
+  onSessionSelect,
+  onSessionMiddleClose,
+}: WorktreeSessionListProps) {
+  // Active session for this worktree (reactive subscription)
+  const activeSessionId = useChatStore(
+    state => state.activeSessionIds[worktreeId]
+  )
+  const namingSessionIds = useChatStore(state => state.namingSessionIds)
+  const storeState = useCanvasStoreState()
+  // Per-session cache: a store update for one session only recomputes that
+  // session's card instead of rescanning every session's messages.
+  const sessionCardDataCache = useMemo(() => createSessionCardDataCache(), [])
+
+  const sessionGroups = useMemo(
+    () =>
+      groupCardsByStatus(
+        sessions.map(s => sessionCardDataCache(s, storeState))
+      ),
+    [sessions, sessionCardDataCache, storeState]
+  )
+
+  if (sessionGroups.length === 0) return null
+
+  return (
+    <div
+      className={cn(
+        'border-l border-border/40 py-0.5',
+        isNarrowSidebar ? 'ml-6' : 'ml-9'
+      )}
+    >
+      {sessionGroups.map(group => {
+        const groupConfig = statusConfig[group.indicatorStatus]
+        return (
+          <div key={group.key}>
+            <div className="flex items-center gap-1.5 pl-3 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <StatusIndicator
+                status={groupConfig.indicatorStatus}
+                shape={groupConfig.indicatorShape}
+                label={group.title}
+                className="h-1.5 w-1.5 shrink-0"
+              />
+              <span>{group.title}</span>
+              <span className="text-muted-foreground/60">
+                {group.cards.length}
+              </span>
+            </div>
+            {group.cards.map(card => {
+              const config = statusConfig[card.status]
+              const isGeneratingName =
+                namingSessionIds[card.session.id] ?? false
+              return (
+                <button
+                  type="button"
+                  key={card.session.id}
+                  className={cn(
+                    'flex w-full items-center gap-1.5 pl-5 py-1 cursor-pointer text-sm truncate text-left',
+                    activeSessionId === card.session.id && isSelected
+                      ? 'text-foreground bg-primary/10 font-medium'
+                      : activeSessionId === card.session.id
+                        ? 'text-foreground/80 hover:text-foreground hover:bg-accent/50'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                  )}
+                  onClick={e => {
+                    e.stopPropagation()
+                    onSessionSelect(card.session.id)
+                  }}
+                  {...middleClickClose(() =>
+                    onSessionMiddleClose(card.session)
+                  )}
+                >
+                  <StatusIndicator
+                    status={config.indicatorStatus}
+                    shape={config.indicatorShape}
+                    label={config.label}
+                    className="h-1.5 w-1.5 shrink-0"
+                  />
+                  <span
+                    className="flex min-w-0 items-center gap-1.5 truncate text-xs"
+                    title={`${config.label}: ${card.session.name || 'Untitled'}`}
+                  >
+                    <span className="truncate">
+                      {isGeneratingName
+                        ? 'Generating…'
+                        : card.session.name || 'Untitled'}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+})
+
+export const WorktreeItem = memo(function WorktreeItem({
   worktree,
   projectId,
   defaultBranch,
@@ -67,23 +182,13 @@ export function WorktreeItem({
   const isChatRunning = useChatStore(state =>
     state.isWorktreeRunning(worktree.id)
   )
-  const isQuestionAnswered = useChatStore(state => state.isQuestionAnswered)
-  const sendingSessionKey = useChatStore(state => {
-    const ids: string[] = []
-    for (const [sessionId, isSending] of Object.entries(
-      state.sendingSessionIds
-    )) {
-      if (isSending && state.sessionWorktreeMap[sessionId] === worktree.id) {
-        ids.push(sessionId)
-      }
-    }
-    return ids.sort().join('|')
-  })
+  // Subscribe to the answered-questions data (not the isQuestionAnswered
+  // getter) so persisted-question badges update when a question is answered.
+  const answeredQuestions = useChatStore(state => state.answeredQuestions)
   // Check if worktree has a loading operation (commit, pr, review, merge, pull)
   const loadingOperation = useChatStore(
     state => state.worktreeLoadingOperations[worktree.id] ?? null
   )
-  const namingSessionIds = useChatStore(state => state.namingSessionIds)
   const isSelected = selectedWorktreeId === worktree.id
   const isBase = isBaseSession(worktree)
 
@@ -115,6 +220,19 @@ export function WorktreeItem({
       session => !technicalIds.has(session.id)
     )
   }, [validations, sessionsData?.sessions, worktree.id])
+  const sessionList = visibleSessions
+
+  // Key of this worktree's currently-sending sessions, used to recompute the
+  // persisted pending-question/plan memos below. Only scans this worktree's
+  // sessions (no whole-map scan, no sort/join per store update).
+  const sendingSessionKey = useChatStore(state => {
+    if (!sessionList) return ''
+    let key = ''
+    for (const session of sessionList) {
+      if (state.sendingSessionIds[session.id]) key += `${session.id}|`
+    }
+    return key
+  })
 
   // Canonical worktree actions — computed once here and passed to
   // WorktreeContextMenu so the hook isn't run twice per row. The middle-click
@@ -196,19 +314,15 @@ export function WorktreeItem({
       }
       if (
         lastAssistantMsg?.tool_calls?.some(
-          tc => isAskUserQuestion(tc) && !isQuestionAnswered(session.id, tc.id)
+          tc =>
+            isAskUserQuestion(tc) && !answeredQuestions[session.id]?.has(tc.id)
         )
       ) {
         return true
       }
     }
     return false
-  }, [
-    sessionsData?.sessions,
-    sendingSessionKey,
-    isQuestionAnswered,
-    useChatStore,
-  ])
+  }, [sessionsData?.sessions, sendingSessionKey, answeredQuestions])
 
   // Check if any session has unanswered ExitPlanMode in persisted messages (solid)
   // Uses plan_approved / approved_plan_message_ids (matching session-card-utils.tsx)
@@ -236,7 +350,7 @@ export function WorktreeItem({
       }
     }
     return false
-  }, [sessionsData?.sessions, sendingSessionKey, useChatStore])
+  }, [sessionsData?.sessions, sendingSessionKey])
 
   // Check if any session is explicitly waiting for user input
   const isExplicitlyWaiting = useChatStore(state => {
@@ -296,23 +410,6 @@ export function WorktreeItem({
     loadingOperation,
     isReviewing,
   ])
-
-  // Active session for this worktree (reactive subscription)
-  const activeSessionId = useChatStore(
-    state => state.activeSessionIds[worktree.id]
-  )
-
-  const storeState = useCanvasStoreState()
-
-  // Card data is only rendered by the expanded session list, so skip the
-  // O(sessions × messages) computation entirely for collapsed rows.
-  const sessionGroups = useMemo(() => {
-    if (!isExpanded) return []
-    const sessions = visibleSessions
-    return groupCardsByStatus(
-      sessions.map(s => computeSessionCardData(s, storeState))
-    )
-  }, [isExpanded, visibleSessions, storeState])
 
   const handleChevronClick = useCallback(
     (e: React.MouseEvent) => {
@@ -738,77 +835,17 @@ export function WorktreeItem({
         )}
       </div>
 
-      {/* Expandable session list grouped by status */}
-      {isExpanded && sessionGroups.length > 0 && (
-        <div
-          className={cn(
-            'border-l border-border/40 py-0.5',
-            isNarrowSidebar ? 'ml-6' : 'ml-9'
-          )}
-        >
-          {sessionGroups.map(group => {
-            const groupConfig = statusConfig[group.indicatorStatus]
-            return (
-              <div key={group.key}>
-                <div className="flex items-center gap-1.5 pl-3 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  <StatusIndicator
-                    status={groupConfig.indicatorStatus}
-                    shape={groupConfig.indicatorShape}
-                    label={group.title}
-                    className="h-1.5 w-1.5 shrink-0"
-                  />
-                  <span>{group.title}</span>
-                  <span className="text-muted-foreground/60">
-                    {group.cards.length}
-                  </span>
-                </div>
-                {group.cards.map(card => {
-                  const config = statusConfig[card.status]
-                  const isGeneratingName =
-                    namingSessionIds[card.session.id] ?? false
-                  return (
-                    <button
-                      type="button"
-                      key={card.session.id}
-                      className={cn(
-                        'flex w-full items-center gap-1.5 pl-5 py-1 cursor-pointer text-sm truncate text-left',
-                        activeSessionId === card.session.id && isSelected
-                          ? 'text-foreground bg-primary/10 font-medium'
-                          : activeSessionId === card.session.id
-                            ? 'text-foreground/80 hover:text-foreground hover:bg-accent/50'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                      )}
-                      onClick={e => {
-                        e.stopPropagation()
-                        handleSessionSelect(card.session.id)
-                      }}
-                      {...middleClickClose(() =>
-                        handleSessionMiddleClose(card.session)
-                      )}
-                    >
-                      <StatusIndicator
-                        status={config.indicatorStatus}
-                        shape={config.indicatorShape}
-                        label={config.label}
-                        className="h-1.5 w-1.5 shrink-0"
-                      />
-                      <span
-                        className="flex min-w-0 items-center gap-1.5 truncate text-xs"
-                        title={`${config.label}: ${card.session.name || 'Untitled'}`}
-                      >
-                        <span className="truncate">
-                          {isGeneratingName
-                            ? 'Generating…'
-                            : card.session.name || 'Untitled'}
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </div>
+      {/* Expandable session list grouped by status. Only mounted while
+          expanded so collapsed rows skip the live card-status subscriptions. */}
+      {isExpanded && sessionList && (
+        <WorktreeSessionList
+          worktreeId={worktree.id}
+          sessions={sessionList}
+          isSelected={isSelected}
+          isNarrowSidebar={isNarrowSidebar}
+          onSessionSelect={handleSessionSelect}
+          onSessionMiddleClose={handleSessionMiddleClose}
+        />
       )}
 
       <CloseWorktreeDialog
@@ -831,4 +868,4 @@ export function WorktreeItem({
       />
     </div>
   )
-}
+})

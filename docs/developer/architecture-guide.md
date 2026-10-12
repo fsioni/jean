@@ -840,6 +840,11 @@ read-only audit for a correction/publication request.
 
 ### Inherited permissions in the new-session composer
 
+Session settings (backend, model and execution mode) are passed to
+`finishNewSessionFlow` independently of the optional queued prompt. Creating an
+empty worktree must persist explicit choices too, rather than silently inheriting
+different backend defaults for its first session.
+
 `NewSessionComposerSettings.executionMode` is an optional **explicit override**,
 not a snapshot of the application's default. Without it, the composer derives
 its effective mode from the loaded preferences. Saving/reopening a draft does

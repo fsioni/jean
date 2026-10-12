@@ -854,6 +854,63 @@ describe('NewSessionComposer', () => {
     ).toEqual([])
   })
 
+  it('keeps explicit Plan and backend/model choices with an empty prompt and global Full Access', async () => {
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    const worktree = {
+      id: 'empty-plan-worktree',
+      path: '/repo/empty-plan',
+      name: 'empty-plan',
+    } as never
+    flowMocks.finish.mockResolvedValue({
+      worktree,
+      session: { id: 'empty-plan-session' },
+    })
+    render(
+      <NewSessionComposer
+        {...baseProps}
+        createWorktree={vi.fn().mockResolvedValue(worktree)}
+        initialSettings={{
+          backend: 'codex',
+          model: 'gpt-5',
+          executionMode: 'plan',
+          baseBranch: '',
+          customName: '',
+        }}
+      />
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Create worktree\s*↵$/ })
+    )
+    await waitFor(() => expect(flowMocks.finish).toHaveBeenCalledOnce())
+    expect(flowMocks.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedMessage: undefined,
+        sessionSettings: {
+          backend: 'codex',
+          model: 'gpt-5',
+          executionMode: 'plan',
+        },
+      })
+    )
+    await waitFor(() =>
+      expect(
+        useChatStore.getState().getExecutionMode('empty-plan-session')
+      ).toBe('plan')
+    )
+    expect(useChatStore.getState().selectedBackends['empty-plan-session']).toBe(
+      'codex'
+    )
+    expect(useChatStore.getState().selectedModels['empty-plan-session']).toBe(
+      'gpt-5'
+    )
+    expect(flowMocks.startPrompt).not.toHaveBeenCalled()
+  })
+
   it('starts a conversation when an attachment is added without text', async () => {
     const pendingWorktree = {
       id: 'worktree-with-attachment',

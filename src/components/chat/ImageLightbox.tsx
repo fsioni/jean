@@ -53,7 +53,13 @@ export function ImageLightbox({
         className={`cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-md ${className ?? ''}`}
       >
         {children ?? (
-          <img src={assetSrc} alt={alt} className={thumbnailClassName} />
+          <img
+            src={assetSrc}
+            alt={alt}
+            className={thumbnailClassName}
+            loading="lazy"
+            decoding="async"
+          />
         )}
       </button>
 

@@ -13,6 +13,7 @@ import {
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { LucideIcon } from '@/components/icons/reicon'
 import { useGhLogin } from '@/hooks/useGhLogin'
+import { useContextLinkUsage } from '@/hooks/useContextLinkUsage'
 import {
   Dialog,
   DialogContent,
@@ -122,12 +123,23 @@ function NewWorktreeModalContent() {
 
   // Hooks
   const data = useNewWorktreeData(searchQuery, includeClosed)
-  const handlers = useNewWorktreeHandlers(data, {
-    setActiveTab: handleTabChange,
-    setSearchQuery,
-    setSelectedItemIndex,
-    setIncludeClosed,
+  // Existing worktrees/sessions per source (duplicate guard)
+  const { getMatches: getContextMatches } = useContextLinkUsage({
+    enabled: newWorktreeModalOpen,
+    projectId: data.selectedProjectId,
+    projectPath: data.selectedProject?.path ?? null,
   })
+  const handlers = useNewWorktreeHandlers(
+    data,
+    {
+      setActiveTab: handleTabChange,
+      setSearchQuery,
+      setSelectedItemIndex,
+      setIncludeClosed,
+    },
+    undefined,
+    getContextMatches
+  )
   const handleComposerSettingsChange = useCallback(
     (settings: NewSessionComposerSettings) => {
       draftProjectIdRef.current = data.selectedProjectId
@@ -465,6 +477,7 @@ function NewWorktreeModalContent() {
                 searchInputRef={searchInputRef}
                 onGhLogin={triggerGhLogin}
                 isGhInstalled={isGhInstalled}
+                getContextMatches={getContextMatches}
               />
             )}
 
@@ -493,6 +506,7 @@ function NewWorktreeModalContent() {
                 searchInputRef={searchInputRef}
                 onGhLogin={triggerGhLogin}
                 isGhInstalled={isGhInstalled}
+                getContextMatches={getContextMatches}
               />
             )}
 
@@ -534,6 +548,7 @@ function NewWorktreeModalContent() {
                   handlers.handleBulkInvestigateSecurity
                 }
                 isBulkInvestigating={handlers.isBulkInvestigating}
+                getContextMatches={getContextMatches}
               />
             )}
 
@@ -559,6 +574,7 @@ function NewWorktreeModalContent() {
                 creatingFromId={handlers.creatingFromLinearId}
                 isBulkInvestigating={handlers.isBulkInvestigating}
                 searchInputRef={searchInputRef}
+                getContextMatches={getContextMatches}
               />
             )}
 

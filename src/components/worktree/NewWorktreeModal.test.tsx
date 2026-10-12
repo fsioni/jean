@@ -46,6 +46,9 @@ vi.mock('./hooks/useNewWorktreeData', () => ({
     createBaseSession: {},
   }),
 }))
+vi.mock('@/hooks/useContextLinkUsage', () => ({
+  useContextLinkUsage: () => ({ getMatches: () => [] }),
+}))
 vi.mock('./hooks/useNewWorktreeHandlers', () => ({
   useNewWorktreeHandlers: () => ({}),
 }))

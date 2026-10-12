@@ -1,7 +1,7 @@
 {
   "name": "jean",
   "private": true,
-  "version": "1.0.9",
+  "version": "1.0.10",
   "type": "module",
   "author": "Andras Bacsai",
   "copyright": "Copyright © 2025 Andras Bacsai. All rights reserved.",
@@ -51,6 +51,7 @@
     "fix:all": "bun run lint:fix && bun run format && bun run rust:fmt && bun run rust:clippy:fix",
     "build:analyze": "vite build && echo '\\n📊 Bundle analysis complete. Check dist/ folder sizes or use a tool like webpack-bundle-analyzer on the dist folder.'",
     "release:prepare": "node scripts/prepare-release.js",
+    "dmg:background": "node scripts/render-dmg-background.mjs",
     "task:complete": "node scripts/complete-task.js",
     "task:rename-done": "node scripts/complete-task.js --rename-existing",
     "version:bump": "node scripts/bump-version.js",
@@ -143,5 +144,8 @@
     "typescript-eslint": "^8.38.0",
     "vite": "^7.2.0",
     "vitest": "^4.0.7"
+  },
+  "overrides": {
+    "shiki": "3.23.0"
   }
 }

@@ -35,20 +35,29 @@ import {
   canOpenInTerminal,
 } from '@/lib/environment'
 import { useUIStore } from '@/store/ui-store'
+import type { ProjectServer } from '@/types/projects'
+import {
+  canOpenServerInFinder,
+  openServerIn,
+} from '@/components/projects/servers/server-open'
 
 interface OpenInButtonProps {
   worktreePath: string
   serverId?: string
   branch?: string | null
   className?: string
+  /** Server project: open its home directory (remote over SSH), no GitHub */
+  server?: ProjectServer | null
 }
 
 export function OpenInButton({
   worktreePath,
   serverId,
-  branch,
+  branch: worktreeBranch,
   className,
+  server,
 }: OpenInButtonProps) {
+  const branch = server ? null : worktreeBranch
   const { data: preferences } = usePreferences()
   const openPreferencesPane = useUIStore(state => state.openPreferencesPane)
   const openInEditor = useOpenWorktreeInEditor()
@@ -56,12 +65,23 @@ export function OpenInButton({
   const openInFinder = useOpenWorktreeInFinder()
   const openOnGitHub = useOpenBranchOnGitHub()
 
-  const canFinder = canOpenInFinder(serverId)
+  const canFinder =
+    canOpenInFinder(serverId) &&
+    (!server || canOpenServerInFinder(server, serverId))
   const canEditor = canOpenInEditor()
   const canTerminal = canOpenInTerminal()
 
   const openAction = useCallback(
     (target: string) => {
+      if (server) {
+        void openServerIn(
+          server,
+          target === 'terminal' || target === 'finder' ? target : 'editor',
+          { editor: preferences?.editor, terminal: preferences?.terminal },
+          serverId
+        )
+        return
+      }
       switch (target) {
         case 'terminal':
           openInTerminal.mutate({
@@ -88,6 +108,8 @@ export function OpenInButton({
       openOnGitHub,
       worktreePath,
       branch,
+      server,
+      serverId,
       preferences?.editor,
       preferences?.terminal,
     ]

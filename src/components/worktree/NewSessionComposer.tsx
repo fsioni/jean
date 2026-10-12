@@ -500,15 +500,16 @@ export function NewSessionComposer({
         waitForSetup,
         invoke,
         queuedMessage,
+        sessionSettings: { backend, model, executionMode },
         createFreshSession: source?.type === 'base',
       })
 
       store.registerWorktreePath(result.worktree.id, result.worktree.path)
       store.addUserInitiatedSession(result.session.id)
+      store.setSelectedBackend(result.session.id, backend)
+      store.setSelectedModel(result.session.id, model)
+      store.setExecutionMode(result.session.id, executionMode)
       if (queuedMessage) {
-        store.setSelectedBackend(result.session.id, backend)
-        store.setSelectedModel(result.session.id, model)
-        store.setExecutionMode(result.session.id, executionMode)
         store.setLastSentMessage(result.session.id, queuedMessage.message)
         store.addSendingSession(result.session.id)
         void startNewSessionPrompt(

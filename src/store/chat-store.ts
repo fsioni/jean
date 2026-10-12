@@ -108,6 +108,10 @@ interface ChatUIState {
   // Presence of tableKey = checklist mode enabled for that table
   tableCheckedRows: Record<string, Record<string, Set<number>>>
 
+  // Tables with tracked checked rows but checklist UI off: sessionId → tableKeys
+  // (e.g. rows checked by adding a row comment while checklist mode is off)
+  hiddenTableChecklists: Record<string, string[]>
+
   // Pinned tables per session, in pin order (persisted)
   pinnedTables: Record<string, PinnedTable[]>
 
@@ -351,6 +355,8 @@ interface ChatUIState {
     tableKey: string,
     rowIndex: number
   ) => void
+  /** Check a row; when checklist mode is off, the check is kept hidden */
+  checkTableRow: (sessionId: string, tableKey: string, rowIndex: number) => void
   togglePinnedTable: (sessionId: string, table: PinnedTable) => void
   /** Rename table keys of pins and checklists, e.g. when a message id changes */
   renameTableKeys: (sessionId: string, rename: (key: string) => string) => void
@@ -771,11 +777,25 @@ interface ChatUIState {
   removeSendingWorktree: (worktreeId: string) => void
 }
 
+function withoutHiddenTable(
+  hidden: Record<string, string[]>,
+  sessionId: string,
+  tableKey: string
+): Record<string, string[]> {
+  const keys = hidden[sessionId]
+  if (!keys?.includes(tableKey)) return hidden
+  const nextKeys = keys.filter(k => k !== tableKey)
+  if (nextKeys.length > 0) return { ...hidden, [sessionId]: nextKeys }
+  const { [sessionId]: _removed, ...rest } = hidden
+  return rest
+}
+
 const SESSION_SCOPED_RECORD_KEYS = [
   'reviewResults',
   'fixedReviewFindings',
   'fixedFindings',
   'tableCheckedRows',
+  'hiddenTableChecklists',
   'pinnedTables',
   'sendingSessionIds',
   'sendStartedAt',
@@ -934,6 +954,7 @@ export const useChatStore = create<ChatUIState>()(
       reviewSidebarVisible: false,
       fixedReviewFindings: {},
       tableCheckedRows: {},
+      hiddenTableChecklists: {},
       pinnedTables: {},
       worktreePaths: {},
       sendingSessionIds: {},
@@ -1127,6 +1148,17 @@ export const useChatStore = create<ChatUIState>()(
         set(
           state => {
             const sessionTables = state.tableCheckedRows[sessionId] ?? {}
+            const hidden = state.hiddenTableChecklists[sessionId]
+            if (hidden?.includes(tableKey)) {
+              // Show the rows that were checked while checklist mode was off
+              return {
+                hiddenTableChecklists: withoutHiddenTable(
+                  state.hiddenTableChecklists,
+                  sessionId,
+                  tableKey
+                ),
+              }
+            }
             if (tableKey in sessionTables) return state
             return {
               tableCheckedRows: {
@@ -1149,16 +1181,22 @@ export const useChatStore = create<ChatUIState>()(
             if (!sessionTables || !(tableKey in sessionTables)) return state
             const { [tableKey]: _removed, ...restTables } = sessionTables
             const nextSession = restTables
+            const hiddenTableChecklists = withoutHiddenTable(
+              state.hiddenTableChecklists,
+              sessionId,
+              tableKey
+            )
             if (Object.keys(nextSession).length === 0) {
               const { [sessionId]: __, ...restSessions } =
                 state.tableCheckedRows
-              return { tableCheckedRows: restSessions }
+              return { tableCheckedRows: restSessions, hiddenTableChecklists }
             }
             return {
               tableCheckedRows: {
                 ...state.tableCheckedRows,
                 [sessionId]: nextSession,
               },
+              hiddenTableChecklists,
             }
           },
           undefined,
@@ -1189,6 +1227,37 @@ export const useChatStore = create<ChatUIState>()(
           'toggleTableRowChecked'
         ),
 
+      checkTableRow: (sessionId, tableKey, rowIndex) =>
+        set(
+          state => {
+            const sessionTables = state.tableCheckedRows[sessionId] ?? {}
+            const existing = sessionTables[tableKey]
+            if (existing?.has(rowIndex)) return state
+            const next: Partial<ChatUIState> = {
+              tableCheckedRows: {
+                ...state.tableCheckedRows,
+                [sessionId]: {
+                  ...sessionTables,
+                  [tableKey]: new Set(existing).add(rowIndex),
+                },
+              },
+            }
+            if (!existing) {
+              // Checklist mode is off: track the check without showing it
+              next.hiddenTableChecklists = {
+                ...state.hiddenTableChecklists,
+                [sessionId]: [
+                  ...(state.hiddenTableChecklists[sessionId] ?? []),
+                  tableKey,
+                ],
+              }
+            }
+            return next
+          },
+          undefined,
+          'checkTableRow'
+        ),
+
       togglePinnedTable: (sessionId, table) =>
         set(
           state => {
@@ -1213,10 +1282,12 @@ export const useChatStore = create<ChatUIState>()(
           state => {
             const pins = state.pinnedTables[sessionId]
             const checked = state.tableCheckedRows[sessionId]
+            const hidden = state.hiddenTableChecklists[sessionId]
             const pinsChanged = pins?.some(p => rename(p.key) !== p.key)
             const checkedChanged =
               checked && Object.keys(checked).some(k => rename(k) !== k)
-            if (!pinsChanged && !checkedChanged) return state
+            const hiddenChanged = hidden?.some(k => rename(k) !== k)
+            if (!pinsChanged && !checkedChanged && !hiddenChanged) return state
             const next: Partial<ChatUIState> = {}
             if (pins && pinsChanged) {
               next.pinnedTables = {
@@ -1230,6 +1301,12 @@ export const useChatStore = create<ChatUIState>()(
                 [sessionId]: Object.fromEntries(
                   Object.entries(checked).map(([k, rows]) => [rename(k), rows])
                 ),
+              }
+            }
+            if (hidden && hiddenChanged) {
+              next.hiddenTableChecklists = {
+                ...state.hiddenTableChecklists,
+                [sessionId]: hidden.map(rename),
               }
             }
             return next
@@ -1956,7 +2033,8 @@ export const useChatStore = create<ChatUIState>()(
               !existing ||
               (prev?.total_tokens === usage.total_tokens &&
                 prev.tool_uses === usage.tool_uses &&
-                prev.duration_ms === usage.duration_ms)
+                prev.duration_ms === usage.duration_ms &&
+                prev.model === usage.model)
             ) {
               return state
             }
