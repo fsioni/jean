@@ -130,23 +130,12 @@ export function useUIStatePersistence() {
   const { mutateAsync: saveUIState } = useSaveUIState()
   const [isInitialized, setIsInitialized] = useState(false)
 
-  // Create stable debounced save function
+  // Create stable debounced save function. The UI state snapshot is built
+  // when the timer fires (or is flushed), not on every store change, so bursts
+  // of store updates only serialize the state once.
   const debouncedSaveRef = useRef<ReturnType<
-    typeof debounce<(state: UIState) => void>
+    typeof debounce<() => void>
   > | null>(null)
-
-  // Initialize debounced save function
-  useEffect(() => {
-    debouncedSaveRef.current = debounce((state: UIState) => {
-      logger.debug('Saving UI state (debounced)')
-      void saveUIState(state)
-    }, 500)
-
-    return () => {
-      debouncedSaveRef.current?.flush()
-      debouncedSaveRef.current?.cancel()
-    }
-  }, [saveUIState])
 
   // The last active session is part of the debounced UI-state snapshot. Flush
   // it when the native window is closing so a recent session switch is not
@@ -275,6 +264,19 @@ export function useUIStatePersistence() {
       version: 1, // Reset for first release
     }
   }, [])
+
+  // Initialize debounced save function
+  useEffect(() => {
+    debouncedSaveRef.current = debounce(() => {
+      logger.debug('Saving UI state (debounced)')
+      void saveUIState(getCurrentUIState())
+    }, 500)
+
+    return () => {
+      debouncedSaveRef.current?.flush()
+      debouncedSaveRef.current?.cancel()
+    }
+  }, [getCurrentUIState, saveUIState])
 
   useEffect(() => {
     registerUIStateRelaunchSaver(async () => {
@@ -1151,8 +1153,7 @@ export function useUIStatePersistence() {
       if (selectedProjectChanged || pinnedCanvasSettingsChanged) {
         prevSelectedProjectId = state.selectedProjectId
         prevPinnedCanvasSettings = nextPinnedCanvasSettings
-        const currentState = getCurrentUIState()
-        debouncedSaveRef.current?.(currentState)
+        debouncedSaveRef.current?.()
       }
     })
 
@@ -1173,8 +1174,7 @@ export function useUIStatePersistence() {
         prevSessionTerminalIds = state.sessionTerminalIds
         prevSessionPrimarySurface = state.sessionPrimarySurface
         prevSeenFailedWorkflowRunIds = state.seenFailedWorkflowRunIds
-        const currentState = getCurrentUIState()
-        debouncedSaveRef.current?.(currentState)
+        debouncedSaveRef.current?.()
       }
     })
 
@@ -1225,8 +1225,7 @@ export function useUIStatePersistence() {
         prevDismissedSetupScripts = state.dismissedSetupScripts
         prevReviewSidebarVisible = state.reviewSidebarVisible
         prevLastOpenedPerProject = state.lastOpenedPerProject
-        const currentState = getCurrentUIState()
-        debouncedSaveRef.current?.(currentState)
+        debouncedSaveRef.current?.()
       }
     })
 
@@ -1237,8 +1236,7 @@ export function useUIStatePersistence() {
       if (terminalsChanged || activeIdsChanged) {
         prevTerminalInstances = state.terminals
         prevTerminalActiveIds = state.activeTerminalIds
-        const currentState = getCurrentUIState()
-        debouncedSaveRef.current?.(currentState)
+        debouncedSaveRef.current?.()
       }
     })
 
@@ -1264,8 +1262,7 @@ export function useUIStatePersistence() {
         }
         prevBrowserTabs = state.tabs
         prevBrowserActiveTabIds = state.activeTabIds
-        const currentState = getCurrentUIState()
-        debouncedSaveRef.current?.(currentState)
+        debouncedSaveRef.current?.()
       }
     })
 
@@ -1281,7 +1278,7 @@ export function useUIStatePersistence() {
       debouncedSaveRef.current?.cancel()
       logger.debug('UI state persistence subscriptions cleaned up')
     }
-  }, [isInitialized, getCurrentUIState])
+  }, [isInitialized])
 
   return { isInitialized }
 }

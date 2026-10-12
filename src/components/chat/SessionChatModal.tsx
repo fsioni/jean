@@ -2,6 +2,7 @@ import { WorktreeValidationHeader } from '@/components/ai-pipeline/WorktreeValid
 import { useAiPipelineValidations } from '@/services/ai-pipeline'
 import { validationSessionIds } from '@/lib/ai-pipeline-presentation'
 import {
+  memo,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -82,7 +83,7 @@ import { DevToolsDropdown } from './DevToolsDropdown'
 import { DEFAULT_KEYBINDINGS, formatShortcutDisplay } from '@/types/keybindings'
 import {
   buildNativeClientSessionInput,
-  computeSessionCardData,
+  createSessionCardDataCache,
   getResumeCommand,
   isActionableWaitingStatus,
   statusConfig,
@@ -223,7 +224,7 @@ interface SessionChatModalProps {
   onRequestCloseWorktree: () => void
 }
 
-export function SessionChatModal({
+export const SessionChatModal = memo(function SessionChatModal({
   worktreeId,
   worktreePath,
   worktree,
@@ -378,11 +379,14 @@ export function SessionChatModal({
     tabSessions.find(session => session.id === currentSessionId) ?? null
   // Canonical store state shared with canvas for consistent status derivation.
   const storeState = useCanvasStoreState()
+  // Per-session card cache: a store update for one session only recomputes
+  // that session's card instead of rescanning every tab's messages.
+  const sessionCardDataCache = useMemo(() => createSessionCardDataCache(), [])
   // Compute card data once per session — same derivation as ProjectCanvasView,
   // so canvas badges and modal tab badges stay in sync.
   const cards = useMemo(
-    () => tabSessions.map(s => computeSessionCardData(s, storeState)),
-    [storeState, tabSessions]
+    () => tabSessions.map(s => sessionCardDataCache(s, storeState)),
+    [sessionCardDataCache, storeState, tabSessions]
   )
 
   const cardForSession = useCallback(
@@ -1029,6 +1033,25 @@ export function SessionChatModal({
 
   if (!isOpen || !worktreeId) return null
 
+  const worktreeMenu = !zenMode && worktree && project && (
+    <WorktreeDropdownMenu
+      worktree={worktree}
+      projectId={project.id}
+      projectPath={project.path}
+      uncommittedAdded={uncommittedAdded}
+      uncommittedRemoved={uncommittedRemoved}
+      branchDiffAdded={isBase ? 0 : branchDiffAdded}
+      branchDiffRemoved={isBase ? 0 : branchDiffRemoved}
+      onUncommittedDiffClick={handleUncommittedDiffClick}
+      onBranchDiffClick={handleBranchDiffClick}
+      onToggleTerminal={handleToggleModalTerminal}
+      onToggleBrowser={isNativeApp() ? handleToggleModalBrowser : undefined}
+      packageScripts={packageScripts}
+      onRunPackageScript={handlePackageScript}
+      serverProject={project.server ? project : null}
+    />
+  )
+
   return (
     <>
       <div
@@ -1087,6 +1110,7 @@ export function SessionChatModal({
                     )}
                     {isBase ? 'Base Session' : (worktree?.name ?? 'Worktree')}
                   </h2>
+                  {isMobile && worktreeMenu}
                   {worktree && (
                     <>
                       <WorktreeCiStatus
@@ -1105,7 +1129,12 @@ export function SessionChatModal({
                     </>
                   )}
                   {!zenMode && stackedBaseBranch && (
-                    <span className="inline-flex shrink min-w-0 items-center gap-1 rounded border border-border/50 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                    <span
+                      className={cn(
+                        'inline-flex min-w-0 items-center gap-1 rounded border border-border/50 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground',
+                        isMobile ? 'shrink-0' : 'shrink'
+                      )}
+                    >
                       <GitBranchPlus className="h-2.5 w-2.5" />
                       <span className="max-w-16 sm:max-w-40 truncate">
                         {stackedBaseBranch}
@@ -1132,25 +1161,7 @@ export function SessionChatModal({
                       onBranchDiffClick={handleBranchDiffClick}
                     />
                   )}
-                  {!zenMode && worktree && project && (
-                    <WorktreeDropdownMenu
-                      worktree={worktree}
-                      projectId={project.id}
-                      projectPath={project.path}
-                      uncommittedAdded={uncommittedAdded}
-                      uncommittedRemoved={uncommittedRemoved}
-                      branchDiffAdded={isBase ? 0 : branchDiffAdded}
-                      branchDiffRemoved={isBase ? 0 : branchDiffRemoved}
-                      onUncommittedDiffClick={handleUncommittedDiffClick}
-                      onBranchDiffClick={handleBranchDiffClick}
-                      onToggleTerminal={handleToggleModalTerminal}
-                      onToggleBrowser={
-                        isNativeApp() ? handleToggleModalBrowser : undefined
-                      }
-                      packageScripts={packageScripts}
-                      onRunPackageScript={handlePackageScript}
-                    />
-                  )}
+                  {!isMobile && worktreeMenu}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {isMobile && (
@@ -1187,7 +1198,7 @@ export function SessionChatModal({
                   )}
                   {!zenMode && (
                     <>
-                      {!isMobile && (
+                      {!isMobile && !project?.server && (
                         <>
                           <HeaderSurfaceToggle
                             label="Terminal"
@@ -1219,6 +1230,7 @@ export function SessionChatModal({
                           worktreePath={worktreePath}
                           serverId={worktree?.serverId}
                           branch={worktree?.branch}
+                          server={project?.server}
                         />
                         <ScriptsButton
                           projectId={worktree?.project_id}
@@ -1578,4 +1590,4 @@ export function SessionChatModal({
       />
     </>
   )
-}
+})

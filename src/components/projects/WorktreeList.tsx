@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
   ChevronDown,
@@ -111,7 +111,7 @@ interface SortableWorktreeProps {
   closestEdge: Edge | null
 }
 
-function SortableWorktree({
+const SortableWorktree = memo(function SortableWorktree({
   worktree,
   projectId,
   projectPath,
@@ -201,7 +201,7 @@ function SortableWorktree({
       />
     </div>
   )
-}
+})
 
 function cnWorktreeDragClass(disabled: boolean, isDragging: boolean) {
   return cn(

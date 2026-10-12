@@ -31,6 +31,7 @@ import type {
   Question,
   QuestionAnswer,
   ReviewFinding,
+  ToolCall,
 } from '@/types/chat'
 import {
   getAskUserQuestions,
@@ -43,6 +44,7 @@ import { MessageItem } from './MessageItem'
 import { getProviderChangeBeforeMessage } from './message-settings-labels'
 import { ProviderChangeSeparator } from './ProviderChangeSeparator'
 import { EditedFilesDisplay } from './EditedFilesDisplay'
+import { parseServerResourceKey } from '@/lib/server-resource'
 import { AskUserQuestion } from './AskUserQuestion'
 import { SteeredPromptGroup } from './SteeredPromptGroup'
 import { buildTimeline, coalesceContentBlocks } from './tool-call-utils'
@@ -65,6 +67,7 @@ import {
 } from './recap-utils'
 
 const SCROLL_THRESHOLD = 300
+const EMPTY_TOOL_CALLS: ToolCall[] = []
 
 interface CompactMessageListProps {
   messages: ChatMessage[]
@@ -381,7 +384,7 @@ interface CompactActivityRowProps {
   editedFilesShownExternally?: boolean
 }
 
-function CompactActivityRow({
+const CompactActivityRow = memo(function CompactActivityRow({
   group,
   total,
   renderMessage,
@@ -505,7 +508,7 @@ function CompactActivityRow({
       </span>
     </Collapsible>
   )
-}
+})
 
 interface CompactQuestionMessageProps {
   message: ChatMessage
@@ -583,12 +586,16 @@ function CompactQuestionMessage({
     }
     return Boolean(stripped.content && stripped.content.trim() !== '')
   }, [stripped])
+  const activityGroup = useMemo(
+    () => [{ message: stripped, globalIndex }],
+    [stripped, globalIndex]
+  )
 
   return (
     <>
       {hasNonQuestionContent && (
         <CompactActivityRow
-          group={[{ message: stripped, globalIndex }]}
+          group={activityGroup}
           total={1}
           renderMessage={renderMessage}
           hasFollowUpFor={hasFollowUpFor}
@@ -858,6 +865,31 @@ export const CompactMessageList = memo(
         return items
       }, [messages, lastIndex, hasFollowUpMap])
 
+      // Tool calls of the latest compact group, surfaced as edited files
+      // under the row. Memoized so EditedFilesDisplay gets a stable array.
+      const latestCompactToolCalls = useMemo(() => {
+        const last = renderItems[renderItems.length - 1]
+        if (!last || last.kind !== 'compact') return EMPTY_TOOL_CALLS
+        return last.messages.flatMap(({ message }) => message.tool_calls ?? [])
+      }, [renderItems])
+
+      // Once the latest turn finishes, its surfaced edited files also list
+      // the turn checkpoint's changes made without file tools (e.g. Bash).
+      const latestTurnUserMessageId = useMemo(() => {
+        if (isSending) return undefined
+        const last = renderItems[renderItems.length - 1]
+        if (!last || last.kind !== 'compact') return undefined
+        const firstIndex = last.messages[0]?.globalIndex ?? 0
+        for (let i = firstIndex - 1; i >= 0; i--) {
+          const message = messages[i]
+          if (message?.role === 'user') return message.id
+        }
+        return undefined
+      }, [renderItems, messages, isSending])
+      const ownerServerId = parseServerResourceKey(
+        worktreeId ?? sessionId
+      )?.serverId
+
       const renderMessageItem = useCallback(
         (
           item: { message: ChatMessage; globalIndex: number },
@@ -872,7 +904,7 @@ export const CompactMessageList = memo(
             message={item.message}
             getMessages={getMessages}
             messageIndex={item.globalIndex}
-            totalMessages={totalMessages}
+            isLastMessage={item.globalIndex === totalMessages - 1}
             lastPlanMessageIndex={lastPlanMessageIndex}
             hasFollowUpMessage={extra.hasFollowUpMessage}
             sessionId={sessionId}
@@ -911,7 +943,7 @@ export const CompactMessageList = memo(
           />
         ),
         [
-          messages,
+          getMessages,
           totalMessages,
           lastPlanMessageIndex,
           sessionId,
@@ -1207,10 +1239,8 @@ export const CompactMessageList = memo(
             const surfaceRecap = latestTextIsRecap && showLatestText
             const surfacedLatestToolCalls =
               isLatestCompact && (showLatestText || hasCancelledMessage)
-                ? item.messages.flatMap(
-                    ({ message }) => message.tool_calls ?? []
-                  )
-                : []
+                ? latestCompactToolCalls
+                : EMPTY_TOOL_CALLS
             return (
               <div key={item.key}>
                 <CompactActivityRow
@@ -1239,6 +1269,11 @@ export const CompactMessageList = memo(
                       <EditedFilesDisplay
                         toolCalls={surfacedLatestToolCalls}
                         worktreePath={worktreePath}
+                        serverId={
+                          ownerServerId === 'local' ? undefined : ownerServerId
+                        }
+                        worktreeId={worktreeId ?? undefined}
+                        turnUserMessageId={latestTurnUserMessageId}
                       />
                     )}
                   </div>

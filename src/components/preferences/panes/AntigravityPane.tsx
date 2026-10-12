@@ -188,6 +188,7 @@ export function AntigravityPane() {
       </SettingsSection>
       <SettingsSection title="Default model" variant="card">
         <select
+          aria-label="Default model"
           className="h-9 w-full rounded-md border bg-background px-3 text-sm"
           value={preferences?.selected_antigravity_model ?? 'antigravity/auto'}
           onChange={event =>

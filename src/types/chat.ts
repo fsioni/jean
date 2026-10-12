@@ -157,6 +157,8 @@ export interface SubagentUsage {
   total_tokens: number
   tool_uses: number
   duration_ms: number
+  /** Model the subagent runs on (e.g. `claude-opus-5-5`) */
+  model?: string
 }
 
 export interface PlanStep {
@@ -361,6 +363,8 @@ export interface Session {
   enabled_mcp_servers?: string[]
   /** Per-table checklist state: tableKey -> checked row indices */
   table_checked_rows?: Record<string, number[]>
+  /** Table keys with checked rows tracked while checklist mode is off */
+  hidden_table_checklists?: string[]
   /** Tables pinned for quick access, in pin order */
   pinned_tables?: PinnedTable[]
   /** Unix timestamp when session was last opened/viewed by the user */
@@ -1329,7 +1333,7 @@ export interface SubAgent {
   status: 'in_progress' | 'completed' | 'errored' | 'interrupted'
   /** Completion message from agents_states */
   message?: string
-  /** Bold label before the prompt (e.g. Claude subagent_type) */
+  /** Bold label before the prompt (e.g. Claude subagent model or type) */
   label?: string
   /** Number of tool calls the agent made (Claude only) */
   toolCount?: number

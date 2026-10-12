@@ -205,6 +205,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   q: 'check-github-issues',
   c: 'commit',
   p: 'commit-and-push',
+  l: 'commit-in-session',
   h: 'comment-and-close-issue',
   t: 'sync',
   d: 'pull',
@@ -378,6 +379,13 @@ export function MagicModal() {
   const project = worktree
     ? projects?.find(p => p.id === worktree.project_id)
     : null
+  const isServerProject = !!project?.server
+  // Magic commands (git, GitHub, review) do not apply to servers (Servers tab).
+  useEffect(() => {
+    if (!magicModalOpen || !isServerProject) return
+    setMagicModalOpen(false)
+    toast.info('Magic commands are not available for servers')
+  }, [isServerProject, magicModalOpen, setMagicModalOpen])
   const opencodeModelOptions = useMemo(() => {
     const models = availableOpencodeModels?.length
       ? availableOpencodeModels
@@ -2177,6 +2185,7 @@ ${resolveInstructions}`
       isOnCanvas,
       executeGitDirectly,
       hasIssueContexts,
+      hasSentryContexts,
       hasPrContexts,
       hasAdvisoryContexts,
       activeSessionId,
@@ -2283,6 +2292,7 @@ ${resolveInstructions}`
         </span>
         {!mobile && (
           <kbd
+            data-web-visible
             className={cn(
               'rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground shadow-[0_2px_0_var(--btn-edge)] transition-[translate,box-shadow] duration-[80ms] group-active:translate-y-0.5 group-active:shadow-none',
               edgeNeutral

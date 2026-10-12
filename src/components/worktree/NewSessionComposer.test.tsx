@@ -14,23 +14,33 @@ const {
   projectServiceState,
   dragAndDropMocks,
 } = vi.hoisted(() => ({
-    flowMocks: {
-      finish: vi.fn(),
-      startPrompt: vi.fn().mockResolvedValue(undefined),
-      tracker: {
-        waitForCreated: vi.fn(),
-        waitForSetup: vi.fn(),
-        dispose: vi.fn(),
-      },
+  flowMocks: {
+    finish: vi.fn(),
+    startPrompt: vi.fn().mockResolvedValue(undefined),
+    tracker: {
+      waitForCreated: vi.fn(),
+      waitForSetup: vi.fn(),
+      dispose: vi.fn(),
     },
-    backendState: {
-      installedBackends: ['claude', 'codex'],
-      isLoading: false,
-    },
-    preferenceMocks: { patch: vi.fn() },
-    projectServiceState: { remotes: undefined as undefined | unknown[] },
-    dragAndDropMocks: { useDragAndDropImages: vi.fn() },
-  }))
+  },
+  backendState: {
+    installedBackends: ['claude', 'codex'],
+    isLoading: false,
+  },
+  preferenceMocks: {
+    patch: vi.fn(),
+    data: undefined as
+      | undefined
+      | {
+          default_backend: string
+          default_execution_mode: 'plan' | 'build' | 'yolo'
+          custom_cli_profiles: never[]
+          favorite_base_branches: string[]
+        },
+  },
+  projectServiceState: { remotes: undefined as undefined | unknown[] },
+  dragAndDropMocks: { useDragAndDropImages: vi.fn() },
+}))
 
 vi.mock('@/components/chat/hooks/useDragAndDropImages', () => ({
   useDragAndDropImages: dragAndDropMocks.useDragAndDropImages,
@@ -44,14 +54,7 @@ vi.mock('./new-session-flow', async importOriginal => ({
 }))
 
 vi.mock('@/services/preferences', () => ({
-  usePreferences: () => ({
-    data: {
-      default_backend: 'claude',
-      default_execution_mode: 'plan',
-      custom_cli_profiles: [],
-      favorite_base_branches: [],
-    },
-  }),
+  usePreferences: () => ({ data: preferenceMocks.data }),
   usePatchPreferences: () => ({ mutate: preferenceMocks.patch }),
 }))
 vi.mock('@/hooks/useInstalledBackends', () => ({
@@ -79,8 +82,16 @@ vi.mock('@/components/chat/toolbar/MobileBackendModelPickerSheet', () => ({
     open ? <div>Select Backend &amp; Model</div> : null,
 }))
 vi.mock('@/components/chat/toolbar/ExecutionModeDropdown', () => ({
-  ExecutionModeDropdown: ({ executionMode }: { executionMode: string }) => (
-    <button type="button">{executionMode} mode</button>
+  ExecutionModeDropdown: ({
+    executionMode,
+    onSetExecutionMode,
+  }: {
+    executionMode: string
+    onSetExecutionMode?: (mode: 'plan') => void
+  }) => (
+    <button type="button" onClick={() => onSetExecutionMode?.('plan')}>
+      {executionMode} mode
+    </button>
   ),
 }))
 vi.mock('@/components/chat/ChatInput', () => {
@@ -152,6 +163,12 @@ const baseProps = {
 describe('NewSessionComposer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'plan',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -161,6 +178,137 @@ describe('NewSessionComposer', () => {
     backendState.installedBackends = ['claude', 'codex']
     backendState.isLoading = false
     projectServiceState.remotes = undefined
+  })
+
+  it('inherits Full Access when preferences load after mounting instead of persisting Plan', () => {
+    preferenceMocks.data = undefined
+    const onSettingsChange = vi.fn()
+    const view = render(
+      <NewSessionComposer {...baseProps} onSettingsChange={onSettingsChange} />
+    )
+    expect(
+      onSettingsChange.mock.calls.at(-1)?.[0].executionMode
+    ).toBeUndefined()
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    view.rerender(
+      <NewSessionComposer {...baseProps} onSettingsChange={onSettingsChange} />
+    )
+    expect(screen.getByText('yolo mode')).toBeInTheDocument()
+  })
+
+  it('does not overwrite an explicit Plan selection when defaults change', () => {
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    const settings = {
+      backend: 'claude' as const,
+      model: '',
+      executionMode: 'plan' as const,
+      baseBranch: 'main',
+      customName: '',
+    }
+    const view = render(
+      <NewSessionComposer {...baseProps} initialSettings={settings} />
+    )
+    preferenceMocks.data.default_execution_mode = 'build'
+    view.rerender(
+      <NewSessionComposer {...baseProps} initialSettings={settings} />
+    )
+    expect(screen.getByText('plan mode')).toBeInTheDocument()
+  })
+
+  it('keeps inheritance across composer remounts', () => {
+    preferenceMocks.data = undefined
+    const onSettingsChange = vi.fn()
+    const view = render(
+      <NewSessionComposer {...baseProps} onSettingsChange={onSettingsChange} />
+    )
+    const settings = onSettingsChange.mock.calls.at(-1)?.[0]
+    view.unmount()
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    render(<NewSessionComposer {...baseProps} initialSettings={settings} />)
+    expect(screen.getByText('yolo mode')).toBeInTheDocument()
+  })
+
+  it('sends Full Access to the created session after late preferences load', async () => {
+    preferenceMocks.data = undefined
+    const worktree = {
+      id: 'permissions-worktree',
+      path: '/repo/permissions-worktree',
+      name: 'permissions-worktree',
+    } as never
+    flowMocks.finish.mockResolvedValue({
+      worktree,
+      session: { id: 'permissions-session' },
+    })
+    const createWorktree = vi.fn().mockResolvedValue(worktree)
+    const view = render(
+      <NewSessionComposer {...baseProps} createWorktree={createWorktree} />
+    )
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    view.rerender(
+      <NewSessionComposer {...baseProps} createWorktree={createWorktree} />
+    )
+    fireEvent.change(screen.getByLabelText('Prompt'), {
+      target: { value: 'Run the selected skill' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Create worktree & start\s*↵$/ })
+    )
+    await waitFor(() => expect(flowMocks.startPrompt).toHaveBeenCalled())
+    expect(flowMocks.startPrompt).toHaveBeenCalledWith(
+      expect.any(Function),
+      worktree,
+      expect.objectContaining({ id: 'permissions-session' }),
+      expect.objectContaining({ executionMode: 'yolo' })
+    )
+    expect(
+      useChatStore.getState().getExecutionMode('permissions-session')
+    ).toBe('yolo')
+  })
+
+  it('preserves a user choice made before preferences finish loading', () => {
+    preferenceMocks.data = undefined
+    const view = render(<NewSessionComposer {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'yolo mode' }))
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    view.rerender(<NewSessionComposer {...baseProps} />)
+    expect(
+      screen.getByRole('button', { name: 'plan mode' })
+    ).toBeInTheDocument()
+  })
+
+  it('waits for permissions before allowing creation without an explicit mode', () => {
+    preferenceMocks.data = undefined
+    render(<NewSessionComposer {...baseProps} />)
+    expect(
+      screen.getByRole('button', {
+        name: /Create worktree|Loading permissions/,
+      })
+    ).toBeDisabled()
   })
 
   it('routes dropped images to the modal prompt draft', () => {
@@ -704,6 +852,63 @@ describe('NewSessionComposer', () => {
     expect(
       useChatStore.getState().getQueuedMessages('session-without-prompt')
     ).toEqual([])
+  })
+
+  it('keeps explicit Plan and backend/model choices with an empty prompt and global Full Access', async () => {
+    preferenceMocks.data = {
+      default_backend: 'claude',
+      default_execution_mode: 'yolo',
+      custom_cli_profiles: [],
+      favorite_base_branches: [],
+    }
+    const worktree = {
+      id: 'empty-plan-worktree',
+      path: '/repo/empty-plan',
+      name: 'empty-plan',
+    } as never
+    flowMocks.finish.mockResolvedValue({
+      worktree,
+      session: { id: 'empty-plan-session' },
+    })
+    render(
+      <NewSessionComposer
+        {...baseProps}
+        createWorktree={vi.fn().mockResolvedValue(worktree)}
+        initialSettings={{
+          backend: 'codex',
+          model: 'gpt-5',
+          executionMode: 'plan',
+          baseBranch: '',
+          customName: '',
+        }}
+      />
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Create worktree\s*↵$/ })
+    )
+    await waitFor(() => expect(flowMocks.finish).toHaveBeenCalledOnce())
+    expect(flowMocks.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedMessage: undefined,
+        sessionSettings: {
+          backend: 'codex',
+          model: 'gpt-5',
+          executionMode: 'plan',
+        },
+      })
+    )
+    await waitFor(() =>
+      expect(
+        useChatStore.getState().getExecutionMode('empty-plan-session')
+      ).toBe('plan')
+    )
+    expect(useChatStore.getState().selectedBackends['empty-plan-session']).toBe(
+      'codex'
+    )
+    expect(useChatStore.getState().selectedModels['empty-plan-session']).toBe(
+      'gpt-5'
+    )
+    expect(flowMocks.startPrompt).not.toHaveBeenCalled()
   })
 
   it('starts a conversation when an attachment is added without text', async () => {

@@ -207,6 +207,30 @@ pub fn current_mode() -> JeanMcpInstallMode {
     JeanMcpInstallMode::current()
 }
 
+/// Codex threads share the persistent `~/.codex/config.toml` Jean MCP entry,
+/// whose session env is a fixed label. This per-thread config override gives
+/// Jean MCP the real calling session (needed for agent tools and approvals).
+pub fn codex_session_config_override(session_id: &str) -> Option<(String, serde_json::Value)> {
+    let path = dirs::home_dir()?.join(".codex").join("config.toml");
+    codex_session_config_override_at(&path, current_mode().server_name(), session_id)
+}
+
+fn codex_session_config_override_at(
+    path: &Path,
+    server_name: &str,
+    session_id: &str,
+) -> Option<(String, serde_json::Value)> {
+    let doc = std::fs::read_to_string(path)
+        .ok()?
+        .parse::<toml_edit::DocumentMut>()
+        .ok()?;
+    doc.get("mcp_servers")?.get(server_name)?;
+    Some((
+        format!("mcp_servers.{server_name}.env.{JEAN_MCP_SESSION_ENV}"),
+        serde_json::Value::from(session_id),
+    ))
+}
+
 pub fn get_stable_launcher_command() -> String {
     let Ok(exe) = std::env::current_exe() else {
         return "jean".to_string();
@@ -1085,6 +1109,21 @@ mod tests {
             socket: "/tmp/jean.sock".to_string(),
             token: "tok".to_string(),
         }
+    }
+
+    #[test]
+    fn codex_session_override_targets_existing_jean_entry_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[mcp_servers.jean]\ncommand = \"jean\"\n").unwrap();
+        let (key, value) = codex_session_config_override_at(&path, "jean", "s-1").unwrap();
+        assert_eq!(key, "mcp_servers.jean.env.JEAN_MCP_SESSION");
+        assert_eq!(value, serde_json::json!("s-1"));
+        assert!(codex_session_config_override_at(&path, "jean-dev", "s-1").is_none());
+        assert!(
+            codex_session_config_override_at(&dir.path().join("missing.toml"), "jean", "s-1")
+                .is_none()
+        );
     }
 
     #[test]

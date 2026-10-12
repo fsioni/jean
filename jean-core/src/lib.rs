@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod agent_browser;
+pub mod agents;
 mod ai_pipeline;
 mod antigravity_cli;
 mod auto_fix;
@@ -236,6 +237,8 @@ pub struct AppPreferences {
     pub magic_prompt_modes: MagicPromptModes, // Per-prompt execution modes for chat-style magic prompts
     #[serde(default)]
     pub magic_models_auto_initialized: bool, // Whether magic prompt models were auto-set based on installed backends
+    #[serde(default)]
+    pub commit_close_issue: bool, // Commit magic: add "Closes #N" for the worktree's linked GitHub issue
     #[serde(default = "default_file_edit_mode")]
     pub file_edit_mode: String, // How to edit files: inline (Pierre) or external (VS Code, etc.)
     #[serde(default)]
@@ -272,6 +275,8 @@ pub struct AppPreferences {
     pub auto_archive_on_pr_merged: bool, // Auto-archive worktrees when their PR is merged
     #[serde(default)]
     pub debug_mode_enabled: bool, // Show debug panel in chat sessions (default: false)
+    #[serde(default)]
+    pub agents_enabled: bool, // Experimental: show the Agents tab (default: false)
     #[serde(default)]
     pub default_enabled_mcp_servers: Vec<String>, // MCP server names enabled by default (empty = none)
     #[serde(default)]
@@ -926,8 +931,9 @@ mod tests {
         assert!(prompt.contains("Jean Run Environment"));
         assert!(prompt.contains("get_run_environments"));
         assert!(prompt.contains("test against its `url`, port, and startup command"));
-        assert!(prompt.contains("use the Agent Browser when it is available"));
-        assert!(prompt.contains("no other browser testing method"));
+        assert!(prompt.contains("start_run_environment"));
+        assert!(!prompt.contains("use the returned/startup command"));
+        assert!(prompt.contains("no other browser tool is available, use the Agent Browser"));
         assert!(prompt.contains("VERY IMPORTANT: Keep Code Simple"));
         assert!(prompt.contains("Always implement the simplest maintainable solution"));
         assert!(prompt.contains("Clickable References"));
@@ -1423,6 +1429,9 @@ pub struct MagicPrompts {
     pub parallel_execution: Option<String>,
     #[serde(default)]
     pub global_system_prompt: Option<String>,
+    /// Replaces the global system prompt for sessions of server projects
+    #[serde(default)]
+    pub server_system_prompt: Option<String>,
     #[serde(default)]
     pub provider_switch_handoff: Option<String>,
     #[serde(default)]
@@ -2150,8 +2159,7 @@ fn default_global_system_prompt() -> String {
 - Do not re-run a passing check when the code it covers has not changed since.
 - Write new tests only for behavior that can break silently: business logic, parsing/serialization, state transitions, persistence, and a regression test for each fixed bug.
 - Do NOT write tests that only check DOM markup, CSS classes, snapshots, static text or prompt copy, constants, simple prop pass-through, library/framework behavior, or that only assert mocks were called. Verify UI changes in the running app instead.
-- Before UI, HTTP, browser, or end-to-end verification, call Jean MCP `get_run_environments` and test against the returned url/port/command when a Run environment is available.
-- For the current selected project, if there is no other browser testing method, use the Agent Browser when it is available.
+- If a UI check needs a browser and no other browser tool is available, use the Agent Browser.
 
 ### 6. Demand Elegance (Balanced)
 - For non-trivial changes: pause and ask "is there a more elegant way?"
@@ -2194,7 +2202,7 @@ fn default_global_system_prompt() -> String {
 ## Jean Run Environment
 - When you need to test a running app (UI, HTTP, browser, smoke, e2e), call Jean MCP `get_run_environments` first (pass this worktreeId when known).
 - If an environment is running, test against its `url`, port, and startup command. Do not guess localhost ports or start a second dev server when Jean already has one.
-- If nothing is running and verification needs a live server, say so and use the returned/startup command rather than inventing a different command or port.
+- If nothing is running and verification needs a live server, start it with Jean MCP `start_run_environment`. Do not start a dev server by hand. If no Run command is configured, say so; do not invent a command or port.
 - In how-to-test notes, include the exact URL/port you used.
 
 ## Important!
@@ -2604,7 +2612,7 @@ impl MagicPrompts {
     /// This ensures users who never customized a prompt get auto-updated defaults.
     fn migrate_defaults(&mut self) {
         type DefaultEntry<'a> = (fn() -> String, &'a mut Option<String>);
-        let defaults: [DefaultEntry; 18] = [
+        let defaults: [DefaultEntry; 19] = [
             (
                 default_investigate_issue_prompt,
                 &mut self.investigate_issue,
@@ -2629,6 +2637,10 @@ impl MagicPrompts {
                 &mut self.parallel_execution,
             ),
             (default_global_system_prompt, &mut self.global_system_prompt),
+            (
+                crate::projects::default_server_system_prompt,
+                &mut self.server_system_prompt,
+            ),
             (
                 default_provider_switch_handoff_prompt,
                 &mut self.provider_switch_handoff,
@@ -2707,6 +2719,7 @@ impl Default for AppPreferences {
             magic_prompt_efforts: MagicPromptReasoningEfforts::default(),
             magic_prompt_modes: MagicPromptModes::default(),
             magic_models_auto_initialized: false,
+            commit_close_issue: false,
             file_edit_mode: default_file_edit_mode(),
             ai_language: String::new(),
             waiting_sound: default_waiting_sound(),
@@ -2725,6 +2738,7 @@ impl Default for AppPreferences {
             auto_pull_base_branch: default_auto_pull_base_branch(),
             auto_archive_on_pr_merged: default_auto_archive_on_pr_merged(),
             debug_mode_enabled: false,
+            agents_enabled: false,
             default_effort_level: default_effort_level(),
             default_enabled_mcp_servers: Vec::new(),
             known_mcp_servers: Vec::new(),
@@ -3538,6 +3552,7 @@ pub async fn get_server_capabilities() -> Result<ServerCapabilitiesEnvelope, Str
         ("session_naming", "Session naming", default_session_naming_prompt()),
         ("parallel_execution", "Parallel execution", default_parallel_execution_prompt()),
         ("global_system_prompt", "Global system prompt", default_global_system_prompt()),
+        ("server_system_prompt", "Server system prompt", crate::projects::default_server_system_prompt()),
         ("provider_switch_handoff", "Provider switch handoff", default_provider_switch_handoff_prompt()),
         ("investigate_security_alert", "Investigate security alert", default_investigate_security_alert_prompt()),
         ("investigate_advisory", "Investigate advisory", default_investigate_advisory_prompt()),
@@ -4685,6 +4700,19 @@ fn resolve_headless_token_required(
     }
 }
 
+/// Worker stack size of Jean's tokio runtimes. Debug builds keep very large
+/// async frames (the command and Jean MCP dispatchers), and any Jean MCP call
+/// overflowed tokio's 2 MiB default stack there.
+pub const RUNTIME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Multi-thread tokio runtime for the app and server entry points.
+pub fn build_tokio_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(RUNTIME_THREAD_STACK_SIZE)
+        .build()
+}
+
 /// Initialize the shared runtime used by both transport adapters.
 pub fn initialize_runtime(context: &RuntimeContext) -> Result<(), String> {
     let (broadcaster, _) = http_server::WsBroadcaster::new();
@@ -4714,6 +4742,11 @@ pub fn initialize_runtime(context: &RuntimeContext) -> Result<(), String> {
     task_manager.start();
     context.manage(task_manager);
     auto_fix::scheduler::start_auto_fix_scheduler(context.clone());
+    // Agents keep working without clients: open their database and start the loop.
+    match agents::init(context) {
+        Ok(()) => agents::start(context.clone()),
+        Err(error) => log::error!("Agents are unavailable: {error}"),
+    }
 
     let jenkins_signal = jenkins::JenkinsPollSignal::default();
     context.manage(jenkins_signal.clone());
@@ -4784,7 +4817,7 @@ pub async fn start_runtime_services(context: RuntimeContext) -> Result<(), Strin
             }
         }
 
-        match agent_browser::install_agent_browser_mcp(context, None).await {
+        match agent_browser::install_agent_browser_mcp(context.clone(), None).await {
             Ok(results) => {
                 for result in results
                     .into_iter()
@@ -4798,6 +4831,14 @@ pub async fn start_runtime_services(context: RuntimeContext) -> Result<(), Strin
                 }
             }
             Err(error) => log::warn!("Failed to activate required agent-browser MCP: {error}"),
+        }
+
+        match async_runtime::spawn_blocking(move || agent_browser::import_legacy_profile(&context))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => log::warn!("{error}"),
+            Err(error) => log::warn!("Legacy agent-browser profile import task failed: {error}"),
         }
     });
 

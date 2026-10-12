@@ -396,3 +396,13 @@ local Git validation and periodic remote verification before completing the
 project-wide list. A slow remote check can therefore delay another worktree's
 refresh. Do not reuse an old Ready snapshot as fresh evidence to hide that
 latency; transport errors are surfaced as stale/unavailable instead.
+
+### Long-running CI and deployment waits
+
+CI and preview Waiting results continue to be polled every 60 seconds, without
+a 30-minute timeout or poll-count blocker. Jenkins queue/build/deployment time is
+not a user-action requirement, even beyond one hour. Explicit failed, blocked or
+access-error results still follow the normal correction/blocking rules. Pausing
+and persisted recovery remain supported. Other external waits retain the
+30-minute safety budget. Existing timeout-blocked runs require an explicit resume
+once after updating; no paused execution is resumed implicitly.

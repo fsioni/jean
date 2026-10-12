@@ -207,8 +207,10 @@ export async function finishNewSessionFlow(deps: {
   waitForSetup?: (worktreeId: string) => Promise<void>
   invoke: Invoke
   queuedMessage?: QueuedMessage
+  sessionSettings?: Pick<QueuedMessage, 'backend' | 'model' | 'executionMode'>
   createFreshSession?: boolean
 }): Promise<{ worktree: Worktree; session: Session }> {
+  const settings = deps.sessionSettings ?? deps.queuedMessage
   const setup = deps.waitForSetup?.(deps.pendingWorktree.id)
   const worktree = await deps.waitForWorktree(deps.pendingWorktree.id)
   await setup
@@ -221,31 +223,31 @@ export async function finishNewSessionFlow(deps: {
     (await deps.invoke<Session>('create_session', {
       worktreeId: worktree.id,
       worktreePath: worktree.path,
-      backend: deps.queuedMessage?.backend,
+      backend: settings?.backend,
     }))
 
-  if (deps.queuedMessage) {
+  if (settings) {
     await deps.invoke('set_session_model', {
       worktreeId: worktree.id,
       worktreePath: worktree.path,
       sessionId: session.id,
-      model: deps.queuedMessage.model,
+      model: settings.model,
     })
   }
-  if (deps.queuedMessage?.backend) {
+  if (settings?.backend) {
     await deps.invoke('set_session_backend', {
       worktreeId: worktree.id,
       worktreePath: worktree.path,
       sessionId: session.id,
-      backend: deps.queuedMessage.backend,
+      backend: settings.backend,
     })
   }
-  if (deps.queuedMessage) {
+  if (settings) {
     await deps.invoke('update_session_state', {
       worktreeId: worktree.id,
       worktreePath: worktree.path,
       sessionId: session.id,
-      selectedExecutionMode: deps.queuedMessage.executionMode,
+      selectedExecutionMode: settings.executionMode,
     })
   }
   return { worktree, session }

@@ -324,7 +324,7 @@ export function useChatWindowEvents({
     }
     window.addEventListener('cancel-prompt', handler)
     return () => window.removeEventListener('cancel-prompt', handler)
-  }, []) // isModal is constant for the lifetime of ChatWindow
+  }, [isModal]) // isModal is constant for the lifetime of ChatWindow
 
   // Context commands (save/load/run-script)
   useEffect(() => {

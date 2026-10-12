@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, Copy, XCircle } from '@/components/icons/reicon'
 import { toast } from 'sonner'
-import { useDeleteWorktree } from '@/services/projects'
 import { copyToClipboard } from '@/lib/clipboard'
 import {
   Dialog,
@@ -16,8 +15,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 export interface TeardownOutputDetail {
   output: string
   success: boolean
-  worktreeId?: string
-  projectId?: string
 }
 
 /**
@@ -27,7 +24,6 @@ export interface TeardownOutputDetail {
  * from toast action buttons in projects.ts event listeners.
  */
 export function TeardownOutputDialog() {
-  const deleteWorktree = useDeleteWorktree()
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<TeardownOutputDetail | null>(null)
   const [copied, setCopied] = useState(false)
@@ -77,29 +73,6 @@ export function TeardownOutputDialog() {
               : 'The teardown script failed. The worktree was not deleted.'}
           </DialogDescription>
         </DialogHeader>
-        {detail?.worktreeId && detail.projectId && !success && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Delete without running teardown again. Resources managed by the
-              script may need manual cleanup.
-            </p>
-            <Button
-              variant="destructive"
-              disabled={deleteWorktree.isPending}
-              onClick={() => {
-                if (!detail.worktreeId || !detail.projectId) return
-                deleteWorktree.mutate({
-                  worktreeId: detail.worktreeId,
-                  projectId: detail.projectId,
-                  skipTeardown: true,
-                })
-                setOpen(false)
-              }}
-            >
-              Delete without teardown
-            </Button>
-          </div>
-        )}
         {detail?.output && (
           <ScrollArea className="max-h-[50vh] select-text cursor-text">
             <div className="mb-2 flex justify-end">

@@ -502,26 +502,28 @@ export const ChatToolbar = memo(function ChatToolbar({
           <div className={zenMode ? 'hidden' : 'contents'}>
             <DockBurgerButton className="flex @xl:hidden" />
 
-            <MobileToolbarMenu
-              isDisabled={false}
-              hasOpenPr={hasOpenPr}
-              hasIssueContexts={loadedIssueContexts.length > 0}
-              hasSentryContexts={loadedSentryContexts.length > 0}
-              hasPrContexts={loadedPRContexts.length > 0}
-              hasAdvisoryContexts={loadedAdvisoryContexts.length > 0}
-              onSaveContext={onSaveContext}
-              onLoadContext={onLoadContext}
-              onCommit={onCommit}
-              onCommitAndPush={onCommitAndPush}
-              onRevertLastCommit={handleRevertLastCommit}
-              onOpenPr={onOpenPr}
-              onReview={onReview}
-              onMerge={onMerge}
-              onMergePr={onMergePr}
-              handleSyncClick={handleSyncClick}
-              handlePullClick={handlePullClick}
-              handlePushClick={handlePushClick}
-            />
+            {onOpenMagicModal && (
+              <MobileToolbarMenu
+                isDisabled={false}
+                hasOpenPr={hasOpenPr}
+                hasIssueContexts={loadedIssueContexts.length > 0}
+                hasSentryContexts={loadedSentryContexts.length > 0}
+                hasPrContexts={loadedPRContexts.length > 0}
+                hasAdvisoryContexts={loadedAdvisoryContexts.length > 0}
+                onSaveContext={onSaveContext}
+                onLoadContext={onLoadContext}
+                onCommit={onCommit}
+                onCommitAndPush={onCommitAndPush}
+                onRevertLastCommit={handleRevertLastCommit}
+                onOpenPr={onOpenPr}
+                onReview={onReview}
+                onMerge={onMerge}
+                onMergePr={onMergePr}
+                handleSyncClick={handleSyncClick}
+                handlePullClick={handlePullClick}
+                handlePushClick={handlePushClick}
+              />
+            )}
 
             <MobileSettingsMenu
               isDisabled={false}

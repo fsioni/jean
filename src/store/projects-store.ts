@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { LabelData } from '@/types/chat'
-import type { WorktreeSortMode } from '@/types/projects'
+import type { Project, WorktreeSortMode } from '@/types/projects'
 
 export interface ProjectCanvasSettings {
   worktreeSortMode?: WorktreeSortMode
@@ -9,6 +9,7 @@ export interface ProjectCanvasSettings {
   labels?: LabelData[]
 }
 
+/** Panel view inside the Workspace rail section. */
 export type SidebarTab = 'projects' | 'recent'
 
 interface ProjectsUIState {
@@ -41,6 +42,9 @@ interface ProjectsUIState {
   // Add project dialog state
   addProjectDialogOpen: boolean
   addProjectParentFolderId: string | null
+
+  // Add/edit server dialog state (null = closed, no project = add)
+  serverDialog: { project?: Project } | null
 
   // Project settings dialog state
   projectSettingsDialogOpen: boolean
@@ -96,6 +100,7 @@ interface ProjectsUIState {
     open: boolean,
     parentFolderId?: string | null
   ) => void
+  setServerDialog: (serverDialog: { project?: Project } | null) => void
   setSidebarActiveTab: (tab: SidebarTab) => void
   openProjectSettings: (projectId: string, pane?: string) => void
   closeProjectSettings: () => void
@@ -142,6 +147,7 @@ export const useProjectsStore = create<ProjectsUIState>()(
       pinnedRecentSessionIds: [],
       addProjectDialogOpen: false,
       addProjectParentFolderId: null,
+      serverDialog: null,
       projectSettingsDialogOpen: false,
       projectSettingsProjectId: null,
       projectSettingsInitialPane: null,
@@ -502,6 +508,9 @@ export const useProjectsStore = create<ProjectsUIState>()(
           undefined,
           'setAddProjectDialogOpen'
         ),
+
+      setServerDialog: serverDialog =>
+        set({ serverDialog }, undefined, 'setServerDialog'),
 
       openProjectSettings: (projectId, pane) =>
         set(

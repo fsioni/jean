@@ -1397,7 +1397,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: claudeCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<ClaudeAuthStatus>({
-        queryKey: claudeCliQueryKeys.auth(),
+        queryKey: [...claudeCliQueryKeys.auth(), serverId],
       })
 
       if (result?.authenticated) {
@@ -1416,6 +1416,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     cliStatus?.supports_auth_command,
     openCliLoginModal,
     queryClient,
+    serverId,
   ])
 
   const handleGhLogin = useCallback(async () => {
@@ -1427,7 +1428,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       // Invalidate cache and refetch to get fresh status
       await queryClient.invalidateQueries({ queryKey: ghCliQueryKeys.auth() })
       const result = await queryClient.fetchQuery<GhAuthStatus>({
-        queryKey: ghCliQueryKeys.auth(),
+        queryKey: [...ghCliQueryKeys.auth(), serverId],
       })
 
       if (result?.authenticated) {
@@ -1440,7 +1441,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
     // Not authenticated, open login modal
     openCliLoginModal('gh', ghStatus.path, ['auth', 'login'])
-  }, [ghStatus?.path, openCliLoginModal, queryClient])
+  }, [ghStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleCodexLogin = useCallback(async () => {
     if (!codexStatus?.path) return
@@ -1451,7 +1452,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: codexCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<CodexAuthStatus>({
-        queryKey: codexCliQueryKeys.auth(),
+        queryKey: [...codexCliQueryKeys.auth(), serverId],
       })
 
       if (result?.authenticated) {
@@ -1464,7 +1465,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
 
     // Not authenticated, open login modal (device-code auth for terminal/headless)
     openCliLoginModal('codex', codexStatus.path, loginArgsForBackend('codex'))
-  }, [codexStatus?.path, openCliLoginModal, queryClient])
+  }, [codexStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleCodeRabbitLogin = useCallback(async () => {
     if (!coderabbitStatus?.path) return
@@ -1498,7 +1499,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: opencodeCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<OpenCodeAuthStatus>({
-        queryKey: opencodeCliQueryKeys.auth(),
+        queryKey: [...opencodeCliQueryKeys.auth(), serverId],
       })
 
       if (result?.authenticated) {
@@ -1510,7 +1511,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
 
     openCliLoginModal('opencode', opencodeStatus.path, ['auth', 'login'])
-  }, [opencodeStatus?.path, openCliLoginModal, queryClient])
+  }, [opencodeStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleClaudeRelogin = useCallback(() => {
     if (!cliStatus?.path) return
@@ -1547,7 +1548,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: cursorCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<CursorAuthStatus>({
-        queryKey: cursorCliQueryKeys.auth(),
+        queryKey: [...cursorCliQueryKeys.auth(), serverId],
       })
 
       if (result?.authenticated) {
@@ -1559,7 +1560,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
 
     openCliLoginModal('cursor', cursorStatus.path, ['login'])
-  }, [cursorStatus?.path, openCliLoginModal, queryClient])
+  }, [cursorStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleCursorRelogin = useCallback(() => {
     if (!cursorStatus?.path) return
@@ -1595,7 +1596,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: piCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<PiAuthStatus>({
-        queryKey: piCliQueryKeys.auth(),
+        queryKey: [...piCliQueryKeys.auth(), serverId],
       })
       if (result?.authenticated) {
         toast.success('PI CLI is already authenticated')
@@ -1605,7 +1606,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       setCheckingPiAuth(false)
     }
     openCliLoginModal('pi', piStatus.path, [])
-  }, [piStatus?.path, openCliLoginModal, queryClient])
+  }, [piStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handlePiRelogin = useCallback(() => {
     if (!piStatus?.path) return
@@ -1627,7 +1628,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: commandcodeCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<CommandCodeAuthStatus>({
-        queryKey: commandcodeCliQueryKeys.auth(),
+        queryKey: [...commandcodeCliQueryKeys.auth(), serverId],
       })
       if (result?.authenticated) {
         toast.success('Command Code CLI is already authenticated')
@@ -1637,7 +1638,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       setCheckingCommandCodeAuth(false)
     }
     openCliLoginModal('commandcode', commandcodeStatus.path, ['login'])
-  }, [commandcodeStatus?.path, openCliLoginModal, queryClient])
+  }, [commandcodeStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleCommandCodeRelogin = useCallback(() => {
     if (!commandcodeStatus?.path) return
@@ -1663,7 +1664,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: grokCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<GrokAuthStatus>({
-        queryKey: grokCliQueryKeys.auth(),
+        queryKey: [...grokCliQueryKeys.auth(), serverId],
       })
       if (result?.authenticated) {
         toast.success('Grok CLI is already authenticated')
@@ -1673,7 +1674,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       setCheckingGrokAuth(false)
     }
     openCliLoginModal('grok', grokStatus.path, ['login'])
-  }, [grokStatus?.path, openCliLoginModal, queryClient])
+  }, [grokStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleGrokRelogin = useCallback(() => {
     if (!grokStatus?.path) return
@@ -1695,7 +1696,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
         queryKey: kimiCliQueryKeys.auth(),
       })
       const result = await queryClient.fetchQuery<KimiAuthStatus>({
-        queryKey: kimiCliQueryKeys.auth(),
+        queryKey: [...kimiCliQueryKeys.auth(), serverId],
       })
       if (result?.authenticated) {
         toast.success('Kimi Code CLI is already authenticated')
@@ -1705,7 +1706,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
       setCheckingKimiAuth(false)
     }
     openCliLoginModal('kimi', kimiStatus.path, ['login'])
-  }, [kimiStatus?.path, openCliLoginModal, queryClient])
+  }, [kimiStatus?.path, openCliLoginModal, queryClient, serverId])
 
   const handleKimiRelogin = useCallback(() => {
     if (!kimiStatus?.path) return
@@ -4722,7 +4723,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             <AlertDialogAction
               onClick={handleDeleteAllArchives}
               disabled={isDeleting}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              variant="destructive"
             >
               {isDeleting ? 'Deleting...' : 'Delete All'}
             </AlertDialogAction>
@@ -4794,7 +4795,7 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
             <AlertDialogAction
               onClick={handleConfirmDeleteCli}
               disabled={isDeletingCli}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              variant="destructive"
             >
               {isDeletingCli ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>

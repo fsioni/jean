@@ -784,6 +784,7 @@ pub async fn add_project(
         sentry_base_url: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
+        server: None,
     };
 
     data.add_project(project.clone());
@@ -949,6 +950,7 @@ pub async fn init_project(
         sentry_base_url: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
+        server: None,
     };
 
     data.add_project(project.clone());
@@ -1012,6 +1014,7 @@ pub async fn clone_project(
         sentry_base_url: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
+        server: None,
     };
 
     data.add_project(project.clone());
@@ -9229,6 +9232,17 @@ fn get_recent_commits(repo_path: &str, count: u32) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Insert an extra rule into the prompt's "Rules:" list, or append it.
+fn add_commit_prompt_rule(prompt: &str, rule: &str) -> String {
+    match prompt.find("Rules:\n") {
+        Some(index) => {
+            let insert_at = index + "Rules:\n".len();
+            format!("{}- {rule}\n{}", &prompt[..insert_at], &prompt[insert_at..])
+        }
+        None => format!("{prompt}\n\nAdditional rule:\n- {rule}"),
+    }
+}
+
 /// Stage only specific files. Resets the index first to ensure a clean state.
 fn stage_specific_files(repo_path: &str, files: &[String]) -> Result<(), String> {
     // Reset staging area to ensure only the specified files are staged
@@ -9631,6 +9645,11 @@ pub async fn create_commit_with_ai(
 ) -> Result<CreateCommitResponse, String> {
     log::trace!("Creating commit for: {worktree_path}");
 
+    let preferences = crate::load_preferences_sync(&app).unwrap_or_default();
+    let worktree = load_projects_data(&app)
+        .ok()
+        .and_then(|d| d.worktrees.into_iter().find(|w| w.path == worktree_path));
+
     // 1. Check for uncommitted changes
     let status = get_git_status(&worktree_path)?;
     if status.trim().is_empty() {
@@ -9682,19 +9701,20 @@ pub async fn create_commit_with_ai(
         .replace("{diff}", &diff)
         .replace("{recent_commits}", &recent_commits)
         .replace("{remote_info}", "");
+    let prompt = match worktree.as_ref().and_then(|w| w.issue_number) {
+        Some(issue_number) if preferences.commit_close_issue => add_commit_prompt_rule(
+            &prompt,
+            &format!("Add a \"Closes #{issue_number}\" footer line so the commit closes GitHub issue #{issue_number}."),
+        ),
+        _ => prompt,
+    };
 
     // 6. Generate commit message with Claude CLI
-    let commit_magic_backend = crate::get_preferences_path(&app)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str::<crate::AppPreferences>(&c).ok())
-        .and_then(|p| p.magic_prompt_backends.commit_message_backend);
-    let worktree_id = load_projects_data(&app).ok().and_then(|d| {
-        d.worktrees
-            .iter()
-            .find(|w| w.path == worktree_path)
-            .map(|w| w.id.clone())
-    });
+    let commit_magic_backend = preferences
+        .magic_prompt_backends
+        .commit_message_backend
+        .clone();
+    let worktree_id = worktree.as_ref().map(|w| w.id.clone());
     let response = generate_commit_message(
         &app,
         &prompt,
@@ -10938,6 +10958,7 @@ async fn update_review_session_state(
         None,
         None,
         None,
+        None, // hidden_table_checklists
         None, // pinned_tables
         None, // selected_permission_mode
     )
@@ -13005,6 +13026,7 @@ pub async fn create_folder(
         sentry_base_url: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
+        server: None,
     };
 
     data.add_project(folder.clone());
@@ -15574,6 +15596,7 @@ mod tests {
             sentry_base_url: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings: None,
+            server: None,
         };
 
         attach_default_avatar(&mut project);
@@ -15718,6 +15741,7 @@ mod tests {
             sentry_project_slug: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings: None,
+            server: None,
         };
         save_projects_data(
             &app,
@@ -15885,6 +15909,18 @@ Body
             "Claude CLI failed: reached max turns before producing structured output"
         );
         assert!(!result.contains("Looking at the diff"));
+    }
+
+    #[test]
+    fn add_commit_prompt_rule_inserts_into_rules_or_appends() {
+        let with_rules = add_commit_prompt_rule("Intro\n\nRules:\n- Existing\n\nDiff", "New rule");
+        assert_eq!(
+            with_rules,
+            "Intro\n\nRules:\n- New rule\n- Existing\n\nDiff"
+        );
+
+        let custom = add_commit_prompt_rule("Custom prompt", "New rule");
+        assert_eq!(custom, "Custom prompt\n\nAdditional rule:\n- New rule");
     }
 
     #[test]

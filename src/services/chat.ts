@@ -1045,6 +1045,7 @@ export function useUpdateSessionState() {
       selectedExecutionMode,
       selectedPermissionMode,
       tableCheckedRows,
+      hiddenTableChecklists,
       pinnedTables,
     }: {
       worktreeId: string
@@ -1125,6 +1126,7 @@ export function useUpdateSessionState() {
       selectedExecutionMode?: ExecutionMode | null
       selectedPermissionMode?: PermissionMode
       tableCheckedRows?: Record<string, number[]>
+      hiddenTableChecklists?: string[]
       pinnedTables?: PinnedTable[]
     }): Promise<void> => {
       if (!isTauri()) {
@@ -1155,6 +1157,7 @@ export function useUpdateSessionState() {
         selectedExecutionMode,
         selectedPermissionMode,
         tableCheckedRows,
+        hiddenTableChecklists,
         pinnedTables,
       })
       logger.debug('Session state updated')

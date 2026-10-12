@@ -909,7 +909,7 @@ fn retry_remote_divergence(error: &str, retries: &mut u8) -> bool {
 }
 
 async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
-    let mut waits = 0;
+    let mut waits: u32 = 0;
     let mut git_sync_races = 0;
     loop {
         let mut execution = get(app, id)?;
@@ -1260,14 +1260,14 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
         engine::apply_result(&mut execution, result)?;
         save_worker_checked(app, &mut execution, Some(&identity))?;
         if execution.status == ValidationStatus::Waiting {
-            waits += 1;
+            waits = waits.saturating_add(1);
             let elapsed = execution
                 .waiting_since
                 .as_deref()
                 .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
                 .map(|time| chrono::Utc::now().signed_duration_since(time).num_seconds())
                 .unwrap_or(0);
-            if waits >= 30 || elapsed >= 1800 {
+            if external_wait_expired(execution.step, waits, elapsed) {
                 engine::block(
                     &mut execution,
                     "Attente externe dépassée (30 minutes) ; reprise explicite disponible",
@@ -1280,6 +1280,13 @@ async fn drive(app: &AppHandle, id: &str) -> Result<(), String> {
             waits = 0;
         }
     }
+}
+
+fn external_wait_expired(step: ValidationStep, polls: u32, elapsed_seconds: i64) -> bool {
+    // A running/queued CI or pending deployment is not a user-action blocker.
+    // Their checks still report explicit failures/access errors normally.
+    !matches!(step, ValidationStep::Ci | ValidationStep::Preview)
+        && (polls >= 30 || elapsed_seconds >= 1800)
 }
 
 fn assert_acceptance_version(
@@ -2323,6 +2330,20 @@ mod tests {
         execution.head_commit =
             Some(steps::git(&execution.repository_path, &["rev-parse", "HEAD"]).unwrap());
         (temporary, app, execution)
+    }
+
+    #[test]
+    fn long_ci_and_preview_keep_waiting_without_manual_resume() {
+        for step in [ValidationStep::Ci, ValidationStep::Preview] {
+            for seconds in [1800, 3601, 10800, 86400] {
+                assert!(
+                    !external_wait_expired(step, 1440, seconds),
+                    "{step:?} {seconds}"
+                );
+            }
+        }
+        assert!(external_wait_expired(ValidationStep::Acceptance, 30, 1800));
+        assert!(!external_wait_expired(ValidationStep::Acceptance, 1, 60));
     }
 
     fn remote_integration_drive_fixture(

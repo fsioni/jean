@@ -26,6 +26,12 @@ export interface ClientViewState {
   file_browser_size: number
   right_sidebar_visible: boolean
   zen_mode: boolean
+  /** Open left rail section; Agents shows only while the feature is on */
+  rail_section: 'workspace' | 'agents'
+  /** Agent open on the Agents page */
+  selected_agent_id: string
+  /** Agents sidebar server filter: 'all' or a server ID */
+  agents_server_filter: string
   terminal_visible_by_worktree: Record<string, boolean>
   terminal_panel_open: Record<string, boolean>
   terminal_visible: boolean
@@ -62,6 +68,9 @@ export const defaultClientViewState: ClientViewState = {
   file_browser_size: 280,
   right_sidebar_visible: false,
   zen_mode: false,
+  rail_section: 'workspace',
+  selected_agent_id: 'jean',
+  agents_server_filter: 'all',
   terminal_visible_by_worktree: {},
   terminal_panel_open: {},
   terminal_visible: false,
@@ -191,6 +200,9 @@ function parseClientViewState(value: unknown): ClientViewState {
     value.sidebar_active_tab === 'recent'
   )
     assign('sidebar_active_tab', value.sidebar_active_tab)
+  // The old Servers tab is now a section of the Projects view
+  else if (value.sidebar_active_tab === 'servers')
+    assign('sidebar_active_tab', 'projects')
   assign(
     'pinned_recent_session_ids',
     stringArray(value.pinned_recent_session_ids)
@@ -228,6 +240,12 @@ function parseClientViewState(value: unknown): ClientViewState {
   ] as const) {
     assign(key, recordOf(value[key], isBoolean))
   }
+  if (value.rail_section === 'workspace' || value.rail_section === 'agents')
+    assign('rail_section', value.rail_section)
+  if (isString(value.selected_agent_id) && value.selected_agent_id)
+    assign('selected_agent_id', value.selected_agent_id)
+  if (isString(value.agents_server_filter) && value.agents_server_filter)
+    assign('agents_server_filter', value.agents_server_filter)
   if (isDockMode(value.modal_terminal_dock_mode))
     assign('modal_terminal_dock_mode', value.modal_terminal_dock_mode)
   if (isDockMode(value.browser_modal_dock_mode))

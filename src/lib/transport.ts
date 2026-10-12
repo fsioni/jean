@@ -219,6 +219,8 @@ const DESKTOP_ONLY_COMMANDS = new Set([
   'start_http_server',
   'stop_http_server',
   'install_remote_jean_server',
+  'list_ssh_config_hosts',
+  'test_ssh_connection',
   'browser_create',
   'browser_navigate',
   'browser_back',
@@ -249,6 +251,8 @@ const LOCAL_SHELL_COMMANDS = new Set([
   // survive client exit, and the remote WS may be down while loading/switching.
   'has_running_sessions',
   'install_remote_jean_server',
+  'list_ssh_config_hosts',
+  'test_ssh_connection',
   'browser_create',
   'browser_navigate',
   'browser_back',

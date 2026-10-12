@@ -399,6 +399,9 @@ pub struct SubagentUsage {
     pub total_tokens: u64,
     pub tool_uses: u64,
     pub duration_ms: u64,
+    /// Model the subagent runs on (e.g. `claude-opus-5-5`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// A permission denial when a tool requires approval
@@ -955,6 +958,9 @@ pub struct Session {
     /// Key = "{messageId}:{markdownOffset}". Presence = checklist mode on.
     #[serde(default)]
     pub table_checked_rows: HashMap<String, Vec<u32>>,
+    /// Table keys whose checked rows are tracked while checklist mode is off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_table_checklists: Vec<String>,
     /// Tables pinned by the user for quick access, in pin order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned_tables: Vec<PinnedTable>,
@@ -1116,6 +1122,7 @@ impl Session {
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
             table_checked_rows: HashMap::new(),
+            hidden_table_checklists: vec![],
             pinned_tables: vec![],
             last_run_status: None,
             last_run_execution_mode: None,
@@ -1479,6 +1486,7 @@ impl SessionMetadata {
             pending_plan_message_id: self.pending_plan_message_id.clone(),
             enabled_mcp_servers: self.enabled_mcp_servers.clone(),
             table_checked_rows: self.table_checked_rows.clone(),
+            hidden_table_checklists: self.hidden_table_checklists.clone(),
             pinned_tables: self.pinned_tables.clone(),
             // Populate from last run for status recovery on app restart
             last_run_status: last_run.map(|r| r.status.clone()),
@@ -1548,6 +1556,7 @@ impl SessionMetadata {
         self.pending_plan_message_id = session.pending_plan_message_id.clone();
         self.enabled_mcp_servers = session.enabled_mcp_servers.clone();
         self.table_checked_rows = session.table_checked_rows.clone();
+        self.hidden_table_checklists = session.hidden_table_checklists.clone();
         self.pinned_tables = session.pinned_tables.clone();
         self.label = session.label.clone();
         self.scheduled_wakeup = session.scheduled_wakeup.clone();
@@ -1987,6 +1996,9 @@ pub struct SessionMetadata {
     /// Per-table checklist state: tableKey -> checked row indices.
     #[serde(default)]
     pub table_checked_rows: HashMap<String, Vec<u32>>,
+    /// Table keys whose checked rows are tracked while checklist mode is off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_table_checklists: Vec<String>,
     /// Tables pinned by the user for quick access, in pin order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned_tables: Vec<PinnedTable>,
@@ -2148,6 +2160,7 @@ impl SessionMetadata {
             pending_plan_message_id: None,
             enabled_mcp_servers: None,
             table_checked_rows: HashMap::new(),
+            hidden_table_checklists: vec![],
             pinned_tables: vec![],
             label: None,
             queued_messages: vec![],

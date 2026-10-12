@@ -1350,7 +1350,7 @@ fn spawn_auto_yolo_start(app: AppHandle, entry: PendingAutoYolo) {
                 record_project_error(
                     &entry.project_id,
                     format!(
-                        "Gave up auto-yolo for session {} after {AUTO_FIX_MAX_ATTEMPTS} attempts: {err}",
+                        "Gave up running the plan with Full access for session {} after {AUTO_FIX_MAX_ATTEMPTS} attempts: {err}",
                         entry.session_id
                     ),
                 );
@@ -1400,6 +1400,7 @@ fn project_from_pending_auto_yolo(entry: &PendingAutoYolo) -> Project {
         sentry_base_url: None,
         linked_project_ids: Vec::new(),
         auto_fix_settings: None,
+        server: None,
     }
 }
 
@@ -1483,6 +1484,7 @@ async fn approve_plan_and_start_yolo(
         None,
         Some(Some("yolo".to_string())),
         None,
+        None, // hidden_table_checklists
         None, // pinned_tables
         None, // selected_permission_mode
     )
@@ -1717,6 +1719,7 @@ mod tests {
             sentry_base_url: None,
             linked_project_ids: Vec::new(),
             auto_fix_settings,
+            server: None,
         }
     }
 

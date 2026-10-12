@@ -117,7 +117,12 @@ export function ChatSearchBar({ scrollContainerRef }: ChatSearchBarProps) {
       }
       highlightActiveMatch(0, found)
     },
-    [scrollContainerRef, clearHighlights, highlightActiveMatch]
+    [
+      scrollContainerRef,
+      clearHighlights,
+      highlightActiveMatch,
+      supportsHighlightAPI,
+    ]
   )
 
   const navigateToMatch = useCallback(

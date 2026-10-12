@@ -23,6 +23,7 @@ import type { RecentWorktreeItem } from '@/types/projects'
 import { disposeTerminal, startHeadless } from '@/lib/terminal-instances'
 import { toast } from 'sonner'
 import { useCommandContext } from './use-command-context'
+import { useLatestRef } from './useLatestRef'
 import { usePreferences } from '@/services/preferences'
 import { logger } from '@/lib/logger'
 import {
@@ -208,6 +209,9 @@ export function applyCacheInvalidationKeys(
         queryClient.invalidateQueries({
           queryKey: ['recent-worktrees'],
         })
+        break
+      case 'agents':
+        queryClient.invalidateQueries({ queryKey: ['agents'] })
         break
       case 'unread-sessions':
         // A new run started: the session is no longer "finished".
@@ -885,6 +889,9 @@ function executeKeybindingAction(
 
 export function useMainWindowEventListeners() {
   const commandContext = useCommandContext()
+  // Listeners read the latest context through a ref so they are registered
+  // once instead of being torn down whenever the context object changes.
+  const commandContextRef = useLatestRef(commandContext)
   const queryClient = useQueryClient()
   const { data: preferences } = usePreferences()
 
@@ -966,7 +973,11 @@ export function useMainWindowEventListeners() {
         logger.debug('Cancel prompt shortcut matched', { shortcut })
         e.preventDefault()
         e.stopPropagation()
-        executeKeybindingAction('cancel_prompt', commandContext, queryClient)
+        executeKeybindingAction(
+          'cancel_prompt',
+          commandContextRef.current,
+          queryClient
+        )
         return
       }
 
@@ -1118,7 +1129,7 @@ export function useMainWindowEventListeners() {
         }
         e.preventDefault()
         e.stopPropagation()
-        executeKeybindingAction(action, commandContext, queryClient)
+        executeKeybindingAction(action, commandContextRef.current, queryClient)
         return
       }
     }
@@ -1170,14 +1181,14 @@ export function useMainWindowEventListeners() {
           const ui = useUIStore.getState()
           // Package already installed this session — prompt restart, don't re-offer download
           if (ui.updateReadyVersion) {
-            commandContext.showToast(
+            commandContextRef.current.showToast(
               `Update ${ui.updateReadyVersion} is ready — restart to apply`,
               'success'
             )
             return
           }
           if (ui.isUpdateInstalling) {
-            commandContext.showToast(
+            commandContextRef.current.showToast(
               'Update download already in progress',
               'info'
             )
@@ -1194,20 +1205,23 @@ export function useMainWindowEventListeners() {
               // Show the update modal (same as auto-check on startup)
               useUIStore.getState().setUpdateModalVersion(update.version)
             } else {
-              commandContext.showToast(
+              commandContextRef.current.showToast(
                 'You are running the latest version',
                 'success'
               )
             }
           } catch (error) {
             logger.error('Update check failed:', { error: String(error) })
-            commandContext.showToast('Failed to check for updates', 'error')
+            commandContextRef.current.showToast(
+              'Failed to check for updates',
+              'error'
+            )
           }
         }),
 
         listenLocal('menu-preferences', () => {
           logger.debug('Preferences menu event received')
-          commandContext.openPreferences()
+          commandContextRef.current.openPreferences()
         }),
 
         listenLocal('menu-toggle-left-sidebar', () => {
@@ -1238,7 +1252,7 @@ export function useMainWindowEventListeners() {
           logger.debug('Magic menu event received from native menu')
           executeKeybindingAction(
             'open_magic_modal',
-            commandContext,
+            commandContextRef.current,
             queryClient
           )
         }),
@@ -1247,21 +1261,25 @@ export function useMainWindowEventListeners() {
           logger.debug('Toggle terminal menu event received from native menu')
           executeKeybindingAction(
             'toggle_terminal',
-            commandContext,
+            commandContextRef.current,
             queryClient
           )
         }),
 
         listenLocal('menu-toggle-browser', () => {
           logger.debug('Toggle browser menu event received from native menu')
-          executeKeybindingAction('toggle_browser', commandContext, queryClient)
+          executeKeybindingAction(
+            'toggle_browser',
+            commandContextRef.current,
+            queryClient
+          )
         }),
 
         listenLocal('menu-quick-menu', () => {
           logger.debug('Quick menu event received from native menu')
           executeKeybindingAction(
             'open_quick_menu',
-            commandContext,
+            commandContextRef.current,
             queryClient
           )
         }),
@@ -1439,7 +1457,7 @@ export function useMainWindowEventListeners() {
         }
       })
     }
-  }, [commandContext, queryClient])
+  }, [commandContextRef, queryClient])
 
   // Window close / quit confirmation is owned by useNativeWindowCloseGuard at
   // App root so it stays active during preloading (MainWindow unmounted).

@@ -1,3 +1,5 @@
+import { stripSkillResultMetadata } from '@/lib/skill-result-metadata'
+
 /** Regex to extract image paths from message content */
 const IMAGE_ATTACHMENT_REGEX =
   /\[Image attached: (.+?) - Use the Read tool to view this image\]/g
@@ -209,7 +211,9 @@ export function extractSkillPaths(content: string): string[] {
 
 /** Remove skill attachment markers from content for cleaner display */
 export function stripSkillMarkers(content: string): string {
-  return content.replace(SKILL_ATTACHMENT_REGEX, '').trim()
+  return stripSkillResultMetadata(
+    content.replace(SKILL_ATTACHMENT_REGEX, '')
+  ).trim()
 }
 
 /** Strip all attachment markers from message content */

@@ -422,10 +422,12 @@ describe('NewSessionModeModal', () => {
       screen.getByRole('button', { name: 'Start normal' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Start yolo' })
+      screen.getByRole('button', { name: 'Start with Full access' })
     ).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start yolo' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Start with Full access' })
+    )
 
     expect(screen.getByText('Claude sessions')).toBeInTheDocument()
   })
@@ -537,7 +539,7 @@ describe('NewSessionModeModal', () => {
     )
   })
 
-  it('opens the native Claude session picker before starting a yolo session', async () => {
+  it('opens the native Claude session picker before starting a Full access session', async () => {
     mutate.mockImplementation(
       (
         _args: unknown,

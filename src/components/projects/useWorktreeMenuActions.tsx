@@ -35,6 +35,7 @@ export function useWorktreeMenuActions({
   const [showStandbyDialog, setShowStandbyDialog] = useState(false)
   const [showFinishConfirm, setShowFinishConfirm] = useState(false)
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false)
+  const [deleteSkipTeardown, setDeleteSkipTeardown] = useState(false)
   const archiveWorktree = useArchiveWorktree()
   const closeBaseSession = useCloseBaseSession()
   const deleteWorktree = useDeleteWorktree()
@@ -116,10 +117,19 @@ export function useWorktreeMenuActions({
     preferences?.removal_behavior,
   ])
 
+  const openDeleteConfirm = useCallback((skipTeardown: boolean) => {
+    setDeleteSkipTeardown(skipTeardown)
+    setShowDeleteConfirm(true)
+  }, [])
+
   const handleDelete = useCallback(() => {
-    deleteWorktree.mutate({ worktreeId: worktree.id, projectId })
+    deleteWorktree.mutate({
+      worktreeId: worktree.id,
+      projectId,
+      skipTeardown: deleteSkipTeardown,
+    })
     setShowDeleteConfirm(false)
-  }, [deleteWorktree, worktree.id, projectId])
+  }, [deleteWorktree, worktree.id, projectId, deleteSkipTeardown])
 
   const handleSetStandby = useCallback(
     (reason: string, standbyUntil: number) => {
@@ -163,6 +173,7 @@ export function useWorktreeMenuActions({
     setIsContextMenuOpen,
     canFinishPr,
     linkedTaskId,
+    deleteSkipTeardown,
     isBase,
     isStandby,
     hasMessages,
@@ -177,6 +188,7 @@ export function useWorktreeMenuActions({
     handleOpenInTerminal,
     handleOpenInEditor,
     handleArchiveOrClose,
+    openDeleteConfirm,
     handleDelete,
     handleSetStandby,
     handleClearStandby,

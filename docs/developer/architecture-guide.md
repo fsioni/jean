@@ -797,3 +797,61 @@ Current official references:
 - https://antigravity.google/docs/cli/permissions
 - https://antigravity.google/docs/cli/mcp
 - https://antigravity.google/docs/cli/gcli-migration
+
+### Optional project skill suggestions in the composer
+
+`WorktreeSkillSuggestions` sits directly above the message input. It currently
+scopes suggestions to Planexpo and only selects an available project-local skill
+for the active backend. Selection uses the same `addPendingSkill` attachment path as
+`SlashPopover`, without consuming any in-progress slash query; it never substitutes a
+prompt, sends a message, starts a session or dispatches the AI pipeline.
+
+Suggestions are shortcuts, not validation evidence. They use cached worktree
+facts, treat CI older than five minutes as unknown, and consider unpushed commits and project-local uncommitted files. Dirty-line
+counts trigger an existing Git diff query; unknown local changes suppress CI
+suggestions until resolved. Runtime `jean.json` edits alone must not permanently
+prevent preview suggestions. The skill itself verifies the actual Git/CI/preview
+state before taking action. Sending sessions, closed/merged PRs, unavailable
+project-local skills and already-attached skills hide the corresponding actions.
+The wrapping row uses the same component on desktop, web and mobile, without
+keyboard-only hints. It does not infer review findings from assistant prose.
+
+Composer recommendations now follow the active conversation, not a standalone
+Git/CI menu. `readSkillConversationContext` reads native user skill attachments
+and `$skill` invocations, then the assistant's optional `jean-skill-result` JSON
+comment. Private skills report one allowlisted outcome after their human reply.
+The comment is removed from rendered feedback; it remains in the persisted chat,
+so recommendations survive reload without a second store or pipeline.
+
+A newer user request invalidates the old outcome. A natural-language request may
+receive a new known-skill outcome from its assistant response; explicit skill
+invocations must match the reported skill. User-supplied, malformed, mismatched or
+cancelled result comments never establish an outcome. No conversation means no
+recommendation; accepted/blocked results do not create an artificial next step.
+Older skill replies without metadata can offer alternatives, but never an invented
+success verdict. Git/CI facts only constrain those conversational recommendations.
+The metadata never authorizes execution or changes the native selection payload.
+
+When an action skill is already attached while the composer is in Plan mode,
+the suggestions row shows an explicit Plan → Build warning. It does not change
+execution mode, permissions, draft or submission behavior. Private action skills
+must stop with that precise mode prerequisite rather than substitute a lengthy
+read-only audit for a correction/publication request.
+
+### Inherited permissions in the new-session composer
+
+Session settings (backend, model and execution mode) are passed to
+`finishNewSessionFlow` independently of the optional queued prompt. Creating an
+empty worktree must persist explicit choices too, rather than silently inheriting
+different backend defaults for its first session.
+
+`NewSessionComposerSettings.executionMode` is an optional **explicit override**,
+not a snapshot of the application's default. Without it, the composer derives
+its effective mode from the loaded preferences. Saving/reopening a draft does
+not accidentally turn a temporary fallback into a permanent Plan selection.
+
+Creation and prompt submission wait for preferences unless the user has already
+chosen a mode. The mode captured when creation starts is retained for that queued
+prompt; subsequent preference updates do not change an operation already started.
+Explicit Plan selections and existing session policies remain unchanged. This
+applies to the common PR, existing-branch and fresh-worktree composer paths.
